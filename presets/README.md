@@ -1584,6 +1584,74 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.82.0
+
+**`satz import <scope> --as <estate>` refuses an estate that impersonates no service
+account, and sweeps nothing.** `--as` borrows the estate's IaC service account; a
+local-mode estate (`deployment_mode = "local"`, or none bound) impersonates nobody,
+and `--no-impersonate` keeps any estate off its account, so the sweep would read as
+your own Application Default Credentials while naming the estate. `satz whoami
+<estate>.satz` prints the mode an estate runs in.
+
+```
+error: --as yaml/acme.satz: the estate runs in local mode and impersonates no service account, so the sweep would read as your own Application Default Credentials while naming the estate. Drop --as to sweep as your own credentials. Nothing was swept.
+```
+
+**The edit:** drop `--as` — `satz import <scope> -o <file>` reads as your own
+credentials, which is what the refused run would have done — or drop
+`--no-impersonate`, or switch the estate to cloud mode (`satz migrate <estate>.satz
+--mode cloud`). Nothing an estate compiles to changes.
+
+**`satz import <scope> --into <estate>` and `--as <estate>` refuse a scope outside
+the estate's organisation, and sweep nothing.** The scope must be
+`organizations/<customer_organization_id>` or a folder or project inside it; a
+folder or project is walked up through Resource Manager as the estate's identity,
+and a walk that cannot be read is refused too. An estate that binds no
+`customer_organization_id` is refused, because there is nothing to compare.
+
+```
+error: import: the scope is organizations/222222222222, and yaml/acme.satz is bound to organizations/123456789012 — a sweep of another organisation would write its resources into this estate. Sweep a scope inside organizations/123456789012, or name the estate bound to organizations/222222222222. Nothing was swept.
+```
+
+**The edit:** name the estate that belongs to the organisation you sweep, or sweep
+without `--into`/`--as` into a new file. An estate without `customer_organization_id`
+binds it in its `params`: `grep -n customer_organization_id <estate>.satz` shows
+whether it does. Nothing an estate compiles to changes.
+
+**`satz import <dir or .tf>` refuses to write an estate without an organisation.**
+The hcl shape binds the estate to the organisation its configuration names (a
+literal `organizations/<n>` parent, an `org_id`, an org policy's parent). A
+configuration that names none — and every `--wrap-all` import, which translates
+nothing — is refused until `--organization <n>` names it; a flag that contradicts
+the configuration, and a configuration that names two organisations, are refused.
+Where the hcl shape used to write a header line asking for
+`customer_organization_id` by hand, it now writes nothing.
+
+```
+error: import: no organization id — --wrap-all translates nothing, so nothing in the configuration names one, and every estate is bound to one: a folder's parent and an organization grant's `org_id` are written from `customer_organization_id`. Nothing written. Name it with `--organization <n>`.
+```
+
+**The edit:** add `--organization <n>` to the command; import two organisations'
+files in two runs. An estate an earlier import wrote is not re-read.
+
+**`satz import <scope> --generate-unmapped` refuses when `<base>-generated.satz` is
+already there, and sweeps nothing.** That file is the provider's output an earlier
+run wrote for the operator to merge; a second run replaced it. `ls yaml/*-generated.satz`
+lists them.
+
+```
+error: yaml/discovered-generated.satz exists — an earlier --generate-unmapped run wrote it, and this run would replace it. Merge what you keep of it into the estate, delete it, and run again. Nothing was swept.
+```
+
+**The edit:** merge what you keep into the estate, delete the file, run again.
+
+**A live sweep in which Cloud Asset Inventory refused every asset type it asked for
+ends with nothing written.** That is the scope ListAssets cannot read — a
+nonexistent or misspelt `folders/<n>` or `projects/<id>` — however few types were
+asked; a one-type sweep (`--only`) used to report the type as unserved and write an
+empty estate. **The edit:** correct the scope. A type refused while others of the
+same sweep are served is still left out and named at the end of the run.
+
 ### v0.81.0
 
 **A `.py` action runs through `uv`, and is refused when `uv` is not on PATH.** An

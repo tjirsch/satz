@@ -412,7 +412,9 @@ pub(crate) enum Commands {
         /// The account the estate applies with is the one that holds
         /// roles/cloudasset.viewer on the organisation. Without an estate the
         /// sweep runs as your own credentials. `--into` names an estate
-        /// already, and binds the same way.
+        /// already, and binds the same way. Refused for a local-mode estate and
+        /// under `--no-impersonate`: there is no account to borrow. Either flag
+        /// sweeps only the estate's organisation or a folder/project inside it.
         #[arg(long = "as", value_name = "ESTATE", conflicts_with = "into")]
         as_estate: Option<PathBuf>,
         /// hcl shape: carry every block verbatim inside `hcl trust` (the
@@ -429,8 +431,9 @@ pub(crate) enum Commands {
         /// fact carries — wins over the inference from the names found
         #[arg(long)]
         customer_shortname: Option<String>,
-        /// state shape: the organization the state belongs to, for a state
-        /// that names none — a live sweep reads it from its own root
+        /// state and hcl shapes: the organization the source belongs to, for a
+        /// state or a `.tf` tree that names none (every `--wrap-all` import) —
+        /// a live sweep reads it from its own root
         #[arg(long, value_name = "N")]
         organization: Option<String>,
         /// live shape: ask the provider for the resources this import leaves
@@ -1610,10 +1613,10 @@ Thumbs.db
                 return Err("--as applies to the live shape (organizations/…, folders/…, projects/…): it names the estate whose IaC service account reads the scope, and the state and hcl shapes read a file, calling no Google API".into());
             }
             // The live shape reads the organization from the root it sweeps and
-            // from the assets' ancestors, and the hcl shape from the `.tf` it
-            // reads: only a state can name none, so only a state takes the flag.
-            if organization.is_some() && shape != "state" {
-                return Err("--organization applies to the state shape: a live sweep reads the organization from its root (organizations/<n>) and from the assets' ancestors, and the hcl shape from the configuration it reads".into());
+            // from the assets' ancestors. A state and a `.tf` tree can name none,
+            // so those two take the flag, and refuse to write an estate without one.
+            if organization.is_some() && shape == "org" {
+                return Err("--organization applies to the state and hcl shapes: a live sweep reads the organization from its root (organizations/<n>) and from the assets' ancestors".into());
             }
             match shape.as_str() {
                 "yaml" => {
@@ -1626,7 +1629,8 @@ Thumbs.db
                         return Err("--generate-unmapped is the live shape's: the hcl shape already READS `tofu plan -generate-config-out` output — point `satz import` at the file it wrote".into());
                     }
                     let output = output.unwrap_or_else(|| PathBuf::from("imported-hcl.satz"));
-                    import_hcl(&src, output, wrap_all, cli.verbose, &runtime_config)
+                    let final_output = crate::import::satz_output_path(&runtime_config.yaml_dir, output);
+                    import_hcl(&src, final_output, wrap_all, organization.as_deref(), cli.verbose, &runtime_config)
                 }
                 "state" | "org" => {
                     let mut cfg = cfg_opt.ok_or_else(|| missing_import_config(&runtime_config.presets_dir))?;
@@ -1682,18 +1686,32 @@ Thumbs.db
                         // no estate to be and the sweep reads as the caller, like
                         // `init` — which is what the organisation has to allow.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
+                        let as_only = as_estate.is_some();
                         let bind = import_binds_to(into_path.clone(), as_estate.map(|estate| estate_path(estate, &runtime_config)));
                         // `--generate-unmapped` runs `tofu` against the platform, so it
                         // is told the same answer: the binding is satz's own, and the
                         // provider block the child reads with carries it.
                         let mut impersonate = None;
+                        let mut identity = crate::discovery::SweepIdentity::Caller;
                         if let Some(estate) = &bind {
+                            // `--as` that borrows no account is refused before anything
+                            // is bound or swept: it would read as the caller, which the
+                            // bare form already does, while claiming to be the estate
+                            let target = estate_impersonation_target(estate, &runtime_config)?;
+                            identity = sweep_identity(estate, target, crate::gcp::impersonation_disabled(), as_only)?;
                             impersonate = configure_estate_impersonation(estate, &runtime_config)?;
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
+                        // the scope has to be the estate's organisation or inside it: a
+                        // sweep of another one would write that organisation's
+                        // resources into this estate, read as this estate's account
+                        if let Some(estate) = &bind {
+                            let org = estate_organization(estate, &runtime_config)?;
+                            crate::import::refuse_scope_outside(&parent, &org, estate).await?;
+                        }
                         match into_path {
-                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, generate_unmapped, impersonate, &tool_config, &runtime_config).await,
-                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, impersonate, &tool_config, &runtime_config).await,
+                            Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, generate_unmapped, &identity, impersonate, &tool_config, &runtime_config).await,
+                            None => import_org(&parent, output, cfg, filtered, on_collision, customer_shortname.as_deref(), cli.verbose, generate_unmapped, &identity, impersonate, &tool_config, &runtime_config).await,
                         }
                     }
                 }
@@ -3864,6 +3882,14 @@ fn emitted_provider(hcl_dir: &Path) -> Result<EmittedProvider, String> {
     Ok(default_google_provider(body.blocks()))
 }
 
+/// The `billing_project` of the default `google` provider in an emitted
+/// `providers.tf` text — what `import --into --generate-unmapped` bills its child
+/// to, so it bills where the estate does.
+pub(crate) fn emitted_billing_project(providers_tf: &str) -> Result<Option<String>, String> {
+    let body = hcl::parse(providers_tf).map_err(|e| format!("the emitted providers.tf: {}", e))?;
+    Ok(default_google_provider(body.blocks()).billing_project)
+}
+
 /// [`emitted_provider`]'s reading, over parsed blocks.
 fn default_google_provider<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>) -> EmittedProvider {
     let string_attr = |b: &hcl::Block, key: &str| -> Option<String> {
@@ -4189,6 +4215,66 @@ pub(crate) fn estate_as_typed(estate: &Path, runtime_config: &ToolConfig) -> Str
 /// work. clap refuses the two flags together, so the order here settles nothing.
 fn import_binds_to(into: Option<PathBuf>, as_estate: Option<PathBuf>) -> Option<PathBuf> {
     into.or(as_estate)
+}
+
+/// As whom a live import given an estate reads the scope, from what the estate
+/// impersonates (`target`, `estate_impersonation_target`) and `--no-impersonate`.
+///
+/// `--as` exists to borrow the estate's IaC service account, so an `--as` that
+/// borrows none is refused: a local-mode estate impersonates nobody, and
+/// `--no-impersonate` keeps the run off the account — either way the sweep would
+/// read as the caller, which the bare form already does. `--into` writes into the
+/// estate, and runs as whatever the estate runs as: its account, or the caller's
+/// credentials for a local-mode estate or under `--no-impersonate`, said as such.
+fn sweep_identity(
+    estate: &Path,
+    target: Option<String>,
+    no_impersonate: bool,
+    as_only: bool,
+) -> Result<crate::discovery::SweepIdentity, String> {
+    use crate::discovery::SweepIdentity;
+    let named = estate.display().to_string();
+    let refused = |why: &str, instead: &str| {
+        format!(
+            "--as {}: {}, so the sweep would read as your own Application Default Credentials while naming the estate. \
+             Drop --as to sweep as your own credentials{}. Nothing was swept.",
+            named, why, instead
+        )
+    };
+    match (target, no_impersonate) {
+        (None, _) if as_only => Err(refused("the estate runs in local mode and impersonates no service account", "")),
+        (Some(_), true) if as_only => Err(refused(
+            "--no-impersonate keeps the run off the service account the estate names",
+            ", or drop --no-impersonate to read the scope as that account",
+        )),
+        (None, _) => Ok(SweepIdentity::LocalMode { estate: named }),
+        (Some(_), true) => Ok(SweepIdentity::NoImpersonate { estate: named }),
+        (Some(account), false) => Ok(SweepIdentity::Estate { account, estate: named }),
+    }
+}
+
+/// The organisation an estate is bound to — its `customer_organization_id` — which
+/// every live import given the estate checks the swept scope against. Refused
+/// when the estate binds none, because the check then has nothing to compare.
+fn estate_organization(estate: &Path, runtime_config: &ToolConfig) -> Result<String, Box<dyn std::error::Error>> {
+    let params = satz_estate_params(estate, &runtime_config.include_dirs)?;
+    params
+        .get("customer_organization_id")
+        .and_then(|v| match v {
+            serde_yaml::Value::String(s) => Some(s.clone()),
+            serde_yaml::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .map(|o| o.trim_start_matches("organizations/").to_string())
+        .filter(|o| !o.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "{} binds no customer_organization_id, so satz cannot tell whether the scope is inside the organisation the estate is bound to. \
+                 Bind it in the estate's params. Nothing was swept.",
+                estate.display()
+            )
+            .into()
+        })
 }
 
 /// Configure the identity live estate commands run as: on a
@@ -4952,7 +5038,7 @@ mod command_groups {
         (
             "import",
             Identity::HumanOrEstate(
-                "bare, the scope is read with the caller's own credentials; given an estate — `--into` or `--as` — with that estate's service account",
+                "bare, the scope is read with the caller's own credentials; given an estate — `--into` or `--as` — as that estate runs: its service account, or the caller's credentials for a local-mode `--into` (an `--as` that lends no account is refused)",
             ),
         ),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
@@ -7248,6 +7334,60 @@ mod import_identity {
             panic!("import")
         };
         assert_eq!(import_binds_to(into, as_estate), None);
+    }
+
+    /// `--as` borrows the estate's service account; one that borrows none is
+    /// refused, naming why and what to run instead. `--into` writes into the
+    /// estate and runs as whatever it runs as, said as such — never "no estate
+    /// was named".
+    #[test]
+    fn as_whom_an_estate_sweeps_and_when_as_is_refused() {
+        use crate::discovery::SweepIdentity;
+        let estate = Path::new("yaml/acme.satz");
+        let local = sweep_identity(estate, None, false, true).unwrap_err();
+        assert!(local.contains("runs in local mode") && local.contains("Drop --as"), "{local}");
+        assert!(local.contains("Nothing was swept"), "{local}");
+        let pinned = sweep_identity(estate, Some(SA.into()), true, true).unwrap_err();
+        assert!(pinned.contains("--no-impersonate") && pinned.contains("Drop --as"), "{pinned}");
+        assert!(pinned.contains("drop --no-impersonate to read the scope as that account"), "{pinned}");
+        assert_eq!(
+            sweep_identity(estate, Some(SA.into()), false, true),
+            Ok(SweepIdentity::Estate { account: SA.into(), estate: "yaml/acme.satz".into() })
+        );
+        assert_eq!(sweep_identity(estate, None, false, false), Ok(SweepIdentity::LocalMode { estate: "yaml/acme.satz".into() }));
+        assert_eq!(
+            sweep_identity(estate, Some(SA.into()), true, false),
+            Ok(SweepIdentity::NoImpersonate { estate: "yaml/acme.satz".into() })
+        );
+    }
+
+    /// The scope is checked against the organisation the estate binds, and an
+    /// estate that binds none cannot be checked, so it is refused.
+    #[test]
+    fn the_estate_names_the_organisation_its_sweeps_are_held_to() {
+        // its own directory: `estate()` rewrites the shared one under the other tests
+        let dir = std::env::temp_dir().join(format!("satz-import-organisation-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("acme.satz");
+        let text = "estate acme\n\nparams {\n  deployment_mode = \"local\"\n}\n\nterraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n";
+        std::fs::write(&path, text).unwrap();
+        let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        cfg.include_dirs = Vec::new();
+        let e = estate_organization(&path, &cfg).unwrap_err().to_string();
+        assert!(e.contains("binds no customer_organization_id") && e.contains("Nothing was swept"), "{e}");
+        std::fs::write(&path, text.replace("params {\n", "params {\n  customer_organization_id = \"123456789012\"\n")).unwrap();
+        assert_eq!(estate_organization(&path, &cfg).unwrap(), "123456789012");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--into --generate-unmapped` bills its child where the estate bills: the
+    /// default provider's `billing_project`, not a per-project alias's.
+    #[test]
+    fn the_child_bills_where_the_estates_default_provider_does() {
+        let tf = "provider \"google\" {\n  alias           = \"log\"\n  billing_project = \"acme-log-001\"\n}\n\
+                  provider \"google\" {\n  alias           = \"google\"\n  billing_project = \"acme-infra-001\"\n}\n";
+        assert_eq!(emitted_billing_project(tf).unwrap().as_deref(), Some("acme-infra-001"));
+        assert_eq!(emitted_billing_project("provider \"google\" {\n  alias = \"google\"\n}\n").unwrap(), None);
     }
 
     /// `--into` names the estate already, and the two answers could differ.

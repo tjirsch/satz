@@ -261,24 +261,29 @@ fn prune(map: &mut serde_yaml::Mapping, declared: &Declared, project_ctx: Option
 }
 
 /// The delta's subtraction applied to what the sweep could not map
-/// (`--generate-unmapped`): a skipped resource whose relative resource name IS a
-/// live id the estate already resolved to is declared, so the provider is not
-/// asked for its configuration. Everything else is handed on.
+/// (`--generate-unmapped`): a skipped resource whose import id IS a live id the
+/// estate already resolved to is declared, so the provider is not asked for its
+/// configuration. Everything else is handed on.
 ///
+/// `id_of` is the import id the fallback would write for the resource
+/// (`Discovered::skipped_import_id`) — the same derivation, so a DNS zone Cloud
+/// Asset names by its number is compared by the name the estate declares it by.
 /// The test is equality of the id, the same identity the rest of the delta runs
 /// on. A resource whose type the estate declares under an id of another form
 /// stays in the list and is generated for — satz does not decide two ids are the
-/// same object because they look alike.
+/// same object because they look alike. A resource with no id is handed on, and
+/// the fallback refuses it with the reason.
 ///
 /// Returns `(handed on, (what, declared address) of the ones left out)`.
 pub(crate) fn undeclared(
     skipped: &[crate::discovery::Skipped],
     declared: &Declared,
+    id_of: &dyn Fn(&crate::discovery::Skipped) -> Result<String, String>,
 ) -> (Vec<crate::discovery::Skipped>, Vec<(String, String)>) {
     let mut keep = Vec::new();
     let mut already = Vec::new();
     for s in skipped {
-        match crate::discovery::asset_resource_name(&s.what).and_then(|id| declared.ids.get(id)) {
+        match id_of(s).ok().and_then(|id| declared.ids.get(&id)) {
             Some(address) => already.push((s.what.clone(), address.clone())),
             None => keep.push(s.clone()),
         }
@@ -502,6 +507,10 @@ folder:
     /// `--generate-unmapped` with `--into`: what the estate already declares by
     /// that live id is not handed to the provider; everything else is, including
     /// a resource of a declared type whose id the estate does not carry.
+    ///
+    /// The zones are named as Cloud Asset names them, by number, and the estate
+    /// declares one by its name: compared through the id the fallback would write,
+    /// it is the same zone and is not generated a second time.
     #[test]
     fn the_fallback_leaves_out_what_the_estate_declares_by_id() {
         use crate::discovery::{SkipReason, Skipped};
@@ -512,16 +521,30 @@ folder:
             what: what.into(),
             reason: SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()),
         };
+        let names = std::collections::BTreeMap::from([
+            ("//dns.googleapis.com/projects/acme-net/managedZones/1111".to_string(), "corp".to_string()),
+            ("//dns.googleapis.com/projects/acme-net/managedZones/2222".to_string(), "lab".to_string()),
+        ]);
+        let id_of = |s: &Skipped| {
+            crate::discovery::import_id(
+                &s.tf_type,
+                &s.what,
+                Some("projects/{project}/managedZones/{name}"),
+                &serde_yaml::Mapping::new(),
+                &names,
+            )
+        };
         let (keep, already) = undeclared(
             &[
-                skipped("//dns.googleapis.com/projects/acme-net/managedZones/corp"),
-                skipped("//dns.googleapis.com/projects/acme-net/managedZones/lab"),
+                skipped("//dns.googleapis.com/projects/acme-net/managedZones/1111"),
+                skipped("//dns.googleapis.com/projects/acme-net/managedZones/2222"),
             ],
             &declared,
+            &id_of,
         );
-        assert_eq!(already, vec![("//dns.googleapis.com/projects/acme-net/managedZones/corp".to_string(), "google_dns_managed_zone.corp".to_string())]);
+        assert_eq!(already, vec![("//dns.googleapis.com/projects/acme-net/managedZones/1111".to_string(), "google_dns_managed_zone.corp".to_string())]);
         assert_eq!(keep.len(), 1);
-        assert!(keep[0].what.ends_with("/lab"), "{:?}", keep[0]);
+        assert!(keep[0].what.ends_with("/2222"), "{:?}", keep[0]);
     }
 
     #[test]

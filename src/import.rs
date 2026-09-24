@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{Config, ImportConfig};
 use crate::fsx;
+use crate::generate_config;
 use crate::schema::ResourceRegistry;
 use crate::{pipeline_b_generate, reject_yaml_dialect};
 use crate::settings::{ToolConfig};
@@ -28,7 +29,7 @@ pub(crate) fn import_state(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let enabled_types = Some(cfg.resource_types.into_iter().filter(|(_, v)| v.import).map(|(k, _)| k).collect());
+    let enabled_types = Some(cfg.resource_types.iter().filter(|(_, v)| v.import).map(|(k, _)| k.clone()).collect());
     println!("Reading infrastructure state...");
     let state_val: serde_json::Value = if let Some(path) = state_json {
         let content = fsx::read_to_string(&path)?;
@@ -49,7 +50,8 @@ pub(crate) fn import_state(
     };
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision);
+    let discoverer = crate::discovery::Discoverer::new(state_val, Some(registry), enabled_types, filtered, on_collision)
+        .with_import_templates(&cfg);
     let mut found = discoverer.discover()?;
     let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
     // the state shape has no ADC: what the data carries, and the flag. A state
@@ -69,7 +71,7 @@ pub(crate) fn import_state(
     let org = organization_of(&found.config, organization.as_deref().or(stated.as_deref()));
     let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), None, customer_shortname);
     vocab.apply_billing(&mut found.config);
-    write_imported(&found.config, output, org.as_deref(), registry, &vocab, runtime_config)?;
+    write_imported(&found.config, satz_output_path(&runtime_config.yaml_dir, output), org.as_deref(), registry, &vocab)?;
     crate::discovery::report_skipped(&found, &discoverer.filtered_types, verbose);
     if verbose {
         crate::discovery::Discoverer::print_summary(&found.config);
@@ -80,9 +82,10 @@ pub(crate) fn import_state(
 /// The live shape of `satz import`: one Cloud Asset Inventory sweep under
 /// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
 ///
-/// `impersonate` is the service account the run is bound to: `--as <estate>`
-/// reads the scope as that estate's IaC service account, and without it the
-/// sweep runs as the caller's own credentials.
+/// `identity` is as whom the sweep reads: `--as <estate>` reads the scope as that
+/// estate's IaC service account, and without it the sweep runs as the caller's
+/// own credentials. `impersonate` is the same answer as the account the
+/// `--generate-unmapped` child is told to act as.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_org(
     parent: &str,
@@ -93,16 +96,21 @@ pub(crate) async fn import_org(
     customer_shortname: Option<&str>,
     verbose: bool,
     generate_unmapped: bool,
+    identity: &crate::discovery::SweepIdentity,
     impersonate: Option<String>,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("import: root {}", parent);
+    let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+    if generate_unmapped {
+        crate::generate_config::refuse_existing_output(&final_output)?;
+    }
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let org_hint = cfg.root.as_ref().and_then(|r| r.organization.clone())
         .or_else(|| parent.strip_prefix("organizations/").map(String::from));
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision, identity).await?;
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
@@ -118,12 +126,16 @@ pub(crate) async fn import_org(
     let org = organization_of(&found.config, org_hint.as_deref());
     let vocab = crate::vocabulary::Vocabulary::infer(&found.config, org.as_deref(), Some(&facts), customer_shortname);
     vocab.apply_billing(&mut found.config);
-    let written = write_imported(&found.config, output, org_hint.as_deref(), &registry, &vocab, runtime_config)?;
+    let written = write_imported(&found.config, final_output, org_hint.as_deref(), &registry, &vocab)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
     if generate_unmapped {
         // Nothing declared to subtract — a new file declares nothing — so the
-        // whole skipped list, read as whoever the sweep above it read as.
-        generate_unmapped_config(&found, &found.skipped, &[], &registry, &written, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
+        // whole skipped list, read as whoever the sweep above it read as, billed
+        // where the estate just written bills.
+        let quota = quota_project_choice(&found.config).map(|(id, _)| id);
+        let child = generate_config::ChildProvider { impersonate: impersonate.as_deref(), quota_project: quota.as_deref() };
+        let org = organization_of(&found.config, org_hint.as_deref());
+        generate_unmapped_config(&found, &found.skipped, &[], &registry, &written, child, org.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -139,11 +151,17 @@ pub(crate) async fn import_org(
 /// stays: with a refused import id it is what the operator edits, and the two
 /// commands it names finish the job by hand.
 ///
-/// It runs as the identity the run is bound to — `impersonate` is the estate's IaC
-/// service account whenever the sweep was given an estate (`--into` or `--as`), and
-/// `None` when it was given none and stayed on the caller's Application Default
-/// Credentials (`IDENTITIES`, `src/main.rs`). The child inherits the environment;
-/// the provider block carries the impersonation.
+/// It runs as the identity the run is bound to — `child.impersonate` is the
+/// estate's IaC service account whenever the sweep was given an estate (`--into`
+/// or `--as`), and `None` when it was given none and stayed on the caller's
+/// Application Default Credentials (`IDENTITIES`, `src/main.rs`) — and bills
+/// where the estate it reads for bills: `child.quota_project` is the
+/// `billing_project` of the estate's own default provider under `--into`, and
+/// the project the file a plain sweep wrote names otherwise. The child inherits
+/// the environment; the provider block carries both.
+///
+/// `organization` is the organisation the generated file's estate is bound to,
+/// which the HCL import refuses to write without.
 ///
 /// `already` is what the estate declares by that live id under `--into`: reported
 /// here with the rest, never generated for.
@@ -159,13 +177,13 @@ fn generate_unmapped_config(
     already: &[(String, String)],
     registry: &ResourceRegistry,
     base: &Path,
-    impersonate: Option<&str>,
+    child: generate_config::ChildProvider<'_>,
+    organization: Option<&str>,
     verbose: bool,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::generate_config;
-    let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t), &found.asset_names);
+    let plan = generate_config::plan(skipped, &|t| registry.resources.contains_key(t), &|s| found.skipped_import_id(s));
     // The third count is `--into`'s alone: a plain sweep has no estate to declare
     // anything, so the line does not offer a zero to read.
     let declared = if already.is_empty() { String::new() } else { format!(", {} the estate declares", already.len()) };
@@ -191,11 +209,7 @@ fn generate_unmapped_config(
         }
     }
     let providers = providers_for(&plan.candidates, registry, tool_config);
-    let (work_dir, out_name) = generate_config::output_names(base);
-    // the same project the estate's own `providers` block names, so the child
-    // bills and asks for quota where the estate does
-    let quota = quota_project_choice(&found.config).map(|(id, _)| id);
-    let child = generate_config::ChildProvider { impersonate, quota_project: quota.as_deref() };
+    let (work_dir, out_file) = generate_config::output_names(base);
     let by_hand = || {
         format!(
             "The import blocks are in {} — correct the ids the provider refused, then \
@@ -216,7 +230,7 @@ fn generate_unmapped_config(
     }
     println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.file.display());
     let src = generated.file.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.file.display()))?;
-    import_hcl(src, PathBuf::from(out_name), false, verbose, runtime_config)
+    import_hcl(src, out_file, false, organization, verbose, runtime_config)
 }
 
 /// What the provider did with each resource it was asked for: one line per
@@ -287,15 +301,15 @@ fn providers_for(
         .collect()
 }
 
+/// Write a discovered estate to `final_output` — the path `satz_output_path`
+/// resolved — and hand the path back.
 pub(crate) fn write_imported(
     config: &Config,
-    output: PathBuf,
+    final_output: PathBuf,
     org_hint: Option<&str>,
     registry: &ResourceRegistry,
     vocab: &crate::vocabulary::Vocabulary,
-    runtime_config: &ToolConfig,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let final_output = satz_output_path(&runtime_config.yaml_dir, output);
     for line in vocab.report() {
         println!("{}", line);
     }
@@ -374,6 +388,52 @@ pub(crate) async fn resolve_import_parent(
     }
     let org = root.organization.as_deref().ok_or("root has neither organization, folder nor project")?;
     Ok(format!("organizations/{}", org.trim_start_matches("organizations/")))
+}
+
+/// Refused unless the swept scope is the estate's organisation or inside it
+/// (ADR 0069): a sweep of another organisation run as this estate's service
+/// account would write that organisation's resources into this estate.
+///
+/// `organizations/<n>` is compared as written; a folder or a project is walked up
+/// through Resource Manager, as the identity the run is bound to, to the
+/// organisation above it. A walk that cannot be read is a refusal too — satz does
+/// not sweep a scope it could not place.
+pub(crate) async fn refuse_scope_outside(parent: &str, org: &str, estate: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let found = if parent.starts_with("organizations/") {
+        parent.to_string()
+    } else {
+        let unreadable = |e: String| {
+            format!(
+                "import: which organisation {} belongs to cannot be read ({}), so satz cannot tell whether it is inside organizations/{}, the one {} is bound to. Nothing was swept.",
+                parent,
+                e,
+                org,
+                estate.display()
+            )
+        };
+        let token = crate::gcp::access_token().await.map_err(|e| unreadable(format!("no token: {}", e)))?;
+        crate::gcp::resourcemanager::organization_of(&reqwest::Client::new(), &token, parent).await.map_err(unreadable)?
+    };
+    Ok(scope_verdict(parent, &found, org, estate)?)
+}
+
+/// The verdict of [`refuse_scope_outside`], once the scope's organisation is known.
+fn scope_verdict(parent: &str, found: &str, org: &str, estate: &Path) -> Result<(), String> {
+    let want = format!("organizations/{}", org.trim_start_matches("organizations/"));
+    if found == want {
+        return Ok(());
+    }
+    let place = if found == parent { String::new() } else { format!(", which is inside {}", found) };
+    Err(format!(
+        "import: the scope is {}{}, and {} is bound to {} — a sweep of another organisation would write its resources into this estate. \
+         Sweep a scope inside {}, or name the estate bound to {}. Nothing was swept.",
+        parent,
+        place,
+        estate.display(),
+        want,
+        want,
+        found
+    ))
 }
 
 pub(crate) fn satz_output_path(yaml_dir: &str, output: PathBuf) -> PathBuf {
@@ -602,7 +662,19 @@ pub(crate) async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: boo
 
 /// The hcl shape: literal resource blocks become Satz resources, the rest is
 /// carried verbatim inside `hcl trust` (`--wrap-all`: everything), one estate.
-pub(crate) fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bool, runtime_config: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// `final_output` is where the estate is written, resolved already.
+/// `organization` is `--organization`, or the organisation the sweep that ran
+/// `--generate-unmapped` read: the estate is bound to one, and the import refuses
+/// to write it without one (`satz_hcl::import`).
+pub(crate) fn import_hcl(
+    src: &str,
+    final_output: PathBuf,
+    wrap_all: bool,
+    organization: Option<&str>,
+    verbose: bool,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let src_path = Path::new(src);
     let mut files: Vec<PathBuf> = if src_path.is_dir() {
         let mut v: Vec<PathBuf> = std::fs::read_dir(src_path)?
@@ -626,8 +698,8 @@ pub(crate) fn import_hcl(src: &str, output: PathBuf, wrap_all: bool, verbose: bo
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
-    let imported = satz_hcl::import(&inputs, name, wrap_all, &RegistrySchema(Some(&registry)))?;
-    let final_output = satz_output_path(&runtime_config.yaml_dir, output);
+    let organization = organization.map(|o| o.trim_start_matches("organizations/"));
+    let imported = satz_hcl::import(&inputs, name, wrap_all, organization, &RegistrySchema(Some(&registry)))?;
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
@@ -683,10 +755,16 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
 
 /// The live shape with `--into`: the delta against what the estate declares.
 ///
-/// `impersonate` is the identity the command is bound to — the estate's IaC
-/// service account, or `None` for a local-mode estate. The sweep runs as it
-/// already; `--generate-unmapped` passes it to the `tofu` child so the fallback
-/// reads the platform as the same principal.
+/// `identity` is as whom the sweep reads — the estate's IaC service account, or the
+/// caller's own credentials for a local-mode estate or under `--no-impersonate` —
+/// and `impersonate` the same answer as the account `--generate-unmapped`'s child
+/// acts as. The child bills where the estate bills: the `billing_project` of the
+/// estate's own default `google` provider, as the compile emits it.
+///
+/// Everything the run writes is composed in memory first; the packs, the
+/// estate's `use` lines and the removal of a pack nothing is left in reach disk
+/// only once every step that can refuse has run, so a refusal leaves the estate
+/// and its packs as they were.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_delta(
     parent: &str,
@@ -696,6 +774,7 @@ pub(crate) async fn import_delta(
     on_collision: crate::discovery::OnCollision,
     verbose: bool,
     generate_unmapped: bool,
+    identity: &crate::discovery::SweepIdentity,
     impersonate: Option<String>,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
@@ -703,6 +782,13 @@ pub(crate) async fn import_delta(
     use crate::delta;
     reject_yaml_dialect(&estate, "import --into")?;
     println!("import: root {} → into {}", parent, estate.display());
+    let yaml_dir = Path::new(&runtime_config.yaml_dir);
+    // Named after this scope's packs, not after the estate: two scopes imported
+    // into one estate keep their own files, the way their packs do.
+    let generated_base = yaml_dir.join(delta::pack_name(parent, None));
+    if generate_unmapped {
+        generate_config::refuse_existing_output(&generated_base)?;
+    }
 
     // 1. what the estate already covers, by live id (adopt's resolution, dry)
     let out = pipeline_b_generate(&estate, tool_config, runtime_config)?;
@@ -732,7 +818,7 @@ pub(crate) async fn import_delta(
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
-    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision).await?;
+    let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision, identity).await?;
     attach_billing_accounts(&mut found.config).await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
@@ -743,11 +829,13 @@ pub(crate) async fn import_delta(
     // 3. subtract
     let d = delta::subtract(top, &declared);
 
-    // 4. packs + `use` lines
-    let yaml_dir = Path::new(&runtime_config.yaml_dir);
-    let mut estate_text = fsx::read_to_string(&estate)?;
-    let estate_before = estate_text.clone();
-    let mut written: Vec<String> = Vec::new();
+    // 4. packs + `use` lines, in memory
+    let estate_before = fsx::read_to_string(&estate)?;
+    let mut estate_text = estate_before.clone();
+    // (file name, text) of every pack this run writes, and (file name, why) of
+    // every pack an earlier run wrote that nothing is left in reach of
+    let mut packs: Vec<(String, String)> = Vec::new();
+    let mut stale: Vec<(String, String)> = Vec::new();
     let header = |what: &str| {
         vec![
             format!("Imported from {} — what the estate did not declare {}.", parent, what),
@@ -760,36 +848,30 @@ pub(crate) async fn import_delta(
     if d.top.is_empty() {
         // nothing left at the top level: an earlier run's pack goes, with its use
         if yaml_dir.join(&top_name).exists() {
-            fsx::remove_file(yaml_dir.join(&top_name))?;
             if let Some(t) = delta::remove_use(&estate_text, &top_name) {
                 estate_text = t;
             }
-            println!("  removed {} (nothing left to import at the top level)", yaml_dir.join(&top_name).display());
+            stale.push((top_name.clone(), "nothing left to import at the top level".to_string()));
         }
-    }
-    if !d.top.is_empty() {
-        let name = delta::pack_name(parent, None);
+    } else {
         let mut top = d.top.clone();
         condense_document(&mut top, found.organization.as_deref(), &[], &registry);
-        let satz = satz_core::migrate::convert_value(&top, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
-        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
-        if let Some(t) = delta::add_use(&estate_text, &name, None)? {
+        let satz = satz_core::migrate::convert_value(&top, "pack", &top_name.trim_end_matches(".satz").replace('-', "_"), &[], &header("at the top level"))?;
+        packs.push((top_name.clone(), satz_core::migrate::normalize_type_keys(&satz, &is_type)));
+        if let Some(t) = delta::add_use(&estate_text, &top_name, None)? {
             estate_text = t;
         }
-        written.push(name);
     }
     let mut hints: Vec<String> = Vec::new();
-    // packs first, then the `use` lines bottom-up so earlier line numbers
-    // stay valid (an insert shifts everything below it)
+    // the `use` lines go in bottom-up so earlier line numbers stay valid (an
+    // insert shifts everything below it)
     let mut inserts: Vec<(u32, String)> = Vec::new();
     for (address, children) in &d.under {
         let name = delta::pack_name(parent, Some(address));
         let mut children = children.clone();
         condense_document(&mut children, found.organization.as_deref(), &[], &registry);
         let satz = satz_core::migrate::convert_value(&children, "pack", &name.trim_end_matches(".satz").replace('-', "_"), &[], &header(&format!("under {}", address)))?;
-        let satz = satz_core::migrate::normalize_type_keys(&satz, &is_type);
-        fsx::write_generated_satz(yaml_dir.join(&name), &satz)?;
+        packs.push((name.clone(), satz_core::migrate::normalize_type_keys(&satz, &is_type)));
         let origin = declared.containers.values().find(|(a, _)| a == address).and_then(|(_, o)| o.clone());
         match origin {
             Some((file, line)) if Path::new(&file) == estate.as_path() || Path::new(&file).ends_with(&estate) => {
@@ -798,7 +880,6 @@ pub(crate) async fn import_delta(
             Some((file, line)) => hints.push(format!("{} is declared in {}:{} (not the estate) — add `use \"{}\"` inside that block by hand", address, file, line, name)),
             None => hints.push(format!("{} has no declaring line — add `use \"{}\"` inside its block by hand", address, name)),
         }
-        written.push(name);
     }
     inserts.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (line, name) in inserts {
@@ -813,14 +894,24 @@ pub(crate) async fn import_delta(
         }
         let name = delta::pack_name(parent, Some(address));
         if yaml_dir.join(&name).exists() {
-            fsx::remove_file(yaml_dir.join(&name))?;
             if let Some(t) = delta::remove_use(&estate_text, &name) {
                 estate_text = t;
             }
-            println!("  removed {} (nothing left to import under {})", yaml_dir.join(&name).display(), address);
+            stale.push((name, format!("nothing left to import under {}", address)));
         }
     }
+
+    // everything that could refuse has run: the packs, then the estate that uses
+    // them, then the packs it no longer uses
+    for (name, text) in &packs {
+        fsx::write_generated_satz(yaml_dir.join(name), text)?;
+    }
     fsx::write_edited_satz(&estate, &estate_before, &estate_text)?;
+    for (name, why) in &stale {
+        fsx::remove_file(yaml_dir.join(name))?;
+        println!("  removed {} ({})", yaml_dir.join(name).display(), why);
+    }
+    let written: Vec<&String> = packs.iter().map(|(name, _)| name).collect();
 
     // 5. report
     println!();
@@ -851,11 +942,13 @@ pub(crate) async fn import_delta(
         println!("import: nothing to add — the estate already declares everything the sweep found.");
     }
     if generate_unmapped {
-        // Named after this scope's packs, not after the estate: two scopes
-        // imported into one estate keep their own files, the way their packs do.
-        let base = yaml_dir.join(delta::pack_name(parent, None));
-        let (unmapped, already) = delta::undeclared(&found.skipped, &declared);
-        generate_unmapped_config(&found, &unmapped, &already, &registry, &base, impersonate.as_deref(), verbose, tool_config, runtime_config)?;
+        let (unmapped, already) = delta::undeclared(&found.skipped, &declared, &|s| found.skipped_import_id(s));
+        // the project the estate's own default provider bills to, as the compile
+        // emitted it — the estate's, never one chosen from the sweep
+        let quota = crate::emitted_billing_project(&out.providers_tf)?;
+        let child = generate_config::ChildProvider { impersonate: impersonate.as_deref(), quota_project: quota.as_deref() };
+        let org = out.org_id.clone().or_else(|| found.organization.clone());
+        generate_unmapped_config(&found, &unmapped, &already, &registry, &generated_base, child, org.as_deref(), verbose, tool_config, runtime_config)?;
     }
     Ok(())
 }
@@ -1333,6 +1426,26 @@ folder:
         assert_eq!(infer_org_id(&v), None, "a policy name is not an org reference");
         assert_eq!(satz_output_path("yaml", PathBuf::from("discovered.yaml")), PathBuf::from("yaml/discovered.satz"));
         assert_eq!(satz_output_path("yaml", PathBuf::from("/abs/x.satz")), PathBuf::from("/abs/x.satz"));
+    }
+}
+
+#[cfg(test)]
+mod scope_in_organisation {
+    //! `import --into A` / `--as A` sweeps a scope as A's service account and
+    //! writes (or reads) A's resources: a scope of another organisation is refused
+    //! before anything is swept (ADR 0069).
+    use super::*;
+
+    #[test]
+    fn a_scope_in_the_estates_organisation_passes_and_any_other_is_refused() {
+        let estate = Path::new("yaml/acme.satz");
+        scope_verdict("organizations/123456789012", "organizations/123456789012", "123456789012", estate).expect("its own organisation");
+        scope_verdict("folders/123456789", "organizations/123456789012", "123456789012", estate).expect("a folder inside it");
+        let e = scope_verdict("organizations/222222222222", "organizations/222222222222", "123456789012", estate).unwrap_err();
+        assert!(e.contains("the scope is organizations/222222222222, and yaml/acme.satz is bound to organizations/123456789012"), "{e}");
+        assert!(e.contains("Nothing was swept"), "{e}");
+        let e = scope_verdict("projects/acme-net", "organizations/222222222222", "123456789012", estate).unwrap_err();
+        assert!(e.contains("projects/acme-net, which is inside organizations/222222222222"), "{e}");
     }
 }
 

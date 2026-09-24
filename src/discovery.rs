@@ -14,6 +14,9 @@ pub struct Discoverer {
     pub filtered_types: HashSet<String>,
     /// What to do with a grant two folders or two projects both hold.
     pub on_collision: OnCollision,
+    /// The import-config rows' `import_id` templates, by Terraform type: how a
+    /// grant's scope is written in its import id ([`grant_import_id`]).
+    pub import_templates: BTreeMap<String, String>,
 }
 
 /// Asset types per ListAssets request. The quota counts requests
@@ -209,6 +212,46 @@ fn row_for_asset<'a>(
     }
 }
 
+/// As whom a live sweep reads the scope, and why — printed when the sweep starts
+/// and repeated by every refusal, because "as whom" is the first thing either
+/// answer needs and the gRPC client names no identity of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SweepIdentity {
+    /// The IaC service account of the estate `--into` or `--as` names.
+    Estate { account: String, estate: String },
+    /// No estate was named: the caller's own Application Default Credentials.
+    Caller,
+    /// `--into` names a local-mode estate, whose identity IS the caller's
+    /// Application Default Credentials.
+    LocalMode { estate: String },
+    /// `--into` names a cloud-mode estate and `--no-impersonate` keeps the run on
+    /// the caller's Application Default Credentials.
+    NoImpersonate { estate: String },
+}
+
+impl std::fmt::Display for SweepIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SweepIdentity::Estate { account, estate } => {
+                write!(f, "{}, the IaC service account of {}", account, estate)
+            }
+            SweepIdentity::Caller => {
+                f.write_str("the caller's own Application Default Credentials: no estate was named, so there is no service account to be")
+            }
+            SweepIdentity::LocalMode { estate } => write!(
+                f,
+                "the caller's own Application Default Credentials: {} runs in local mode, which impersonates no service account",
+                estate
+            ),
+            SweepIdentity::NoImpersonate { estate } => write!(
+                f,
+                "the caller's own Application Default Credentials: --no-impersonate keeps the run off the service account {} names",
+                estate
+            ),
+        }
+    }
+}
+
 /// What a failed Cloud Asset sweep says, given the failures and the identity the
 /// requests ran as.
 ///
@@ -218,31 +261,39 @@ fn row_for_asset<'a>(
 /// else, so a sweep on the caller's own Application Default Credentials is
 /// denied the scope. Anything else is about the TABLE: an asset type ListAssets
 /// does not serve is named in its own message.
-///
-/// The identity is always named, because "as whom" is the first thing either
-/// answer needs and no output above says it when the run never minted a token.
-fn fetch_refusal(errors: &[String], identity: Option<&str>) -> String {
+fn fetch_refusal(errors: &[String], identity: &SweepIdentity) -> String {
     let denied = errors.iter().any(|e| is_denied(e));
-    let who = match identity {
-        Some(sa) => format!("The sweep ran as {}, the service account the estate it was given impersonates.", sa),
-        None => "The sweep ran as the caller's own Application Default Credentials: no estate was named, \
-                 so there is no service account to be."
-            .to_string(),
-    };
-    let cause = if denied {
-        "Cloud Asset Inventory refused the scope, which is a question about the credential: \
-         roles/cloudasset.viewer on the organisation is the IaC service account's, not the caller's. \
-         Name the estate whose account holds it — `--as <estate>` to read the scope as it, `--into <estate>` \
-         to write the delta into it."
-    } else {
-        "An asset type ListAssets refuses is named in the message: leave its row out with --exclude, \
-         and correct the table with scripts/update_import_config.py --probe."
+    let cause = match (denied, identity) {
+        (false, _) => {
+            "An asset type ListAssets refuses is named in the message: leave its row out with --exclude, \
+             and correct the table with scripts/update_import_config.py --probe."
+        }
+        (true, SweepIdentity::Estate { .. }) => {
+            "Cloud Asset Inventory refused the scope, which is a question about the credential: \
+             that service account needs roles/cloudasset.viewer on the scope — on an estate satz set up it \
+             holds it on the organisation, so a scope outside that organisation is refused."
+        }
+        (true, SweepIdentity::Caller) => {
+            "Cloud Asset Inventory refused the scope, which is a question about the credential: \
+             roles/cloudasset.viewer on the organisation is the IaC service account's, not the caller's. \
+             Name the estate whose account holds it — `--as <estate>` to read the scope as it, `--into <estate>` \
+             to write the delta into it."
+        }
+        (true, SweepIdentity::LocalMode { .. }) => {
+            "Cloud Asset Inventory refused the scope, which is a question about the credential: a local-mode \
+             estate runs as whoever is logged in, so those credentials need roles/cloudasset.viewer on the scope."
+        }
+        (true, SweepIdentity::NoImpersonate { .. }) => {
+            "Cloud Asset Inventory refused the scope, which is a question about the credential: drop \
+             --no-impersonate to read the scope as the estate's service account, which holds \
+             roles/cloudasset.viewer on an organisation satz set up."
+        }
     };
     format!(
-        "import aborted — {} request(s) failed, nothing written:\n  {}\n{}\n{}",
+        "import aborted — {} request(s) failed, nothing written:\n  {}\nThe sweep ran as {}.\n{}",
         errors.len(),
         errors.join("\n  "),
-        who,
+        identity,
         cause
     )
 }
@@ -293,31 +344,64 @@ pub fn asset_resource_name(full_name: &str) -> Option<&str> {
     path.split_once('/').map(|(_, p)| p).filter(|p| !p.is_empty())
 }
 
-/// The asset types whose Cloud Asset name carries a number where the provider's
-/// import id carries the resource's own name, so the sweep keeps that name.
-///
+/// A collection whose Cloud Asset name carries a number where the provider's
+/// import id carries the name the resource calls itself, so the sweep keeps that
+/// name off the resource's own data.
+struct NamedByData {
+    /// The Cloud Asset type whose data states the name.
+    asset_type: &'static str,
+    /// The service its full resource name starts with.
+    service: &'static str,
+    /// The path segment the number follows.
+    collection: &'static str,
+    /// The field of the asset data that holds the name.
+    key: &'static str,
+    /// Whether an id through this collection is refused when the sweep did not
+    /// read the name. A DNS zone is: the provider imports it by nothing else. A
+    /// project is not: the provider imports by the number too, and a path that
+    /// names the project by its id already has nothing to look up.
+    required: bool,
+}
+
 /// Cloud Asset names a DNS managed zone `//dns.googleapis.com/projects/<p>/
 /// managedZones/<numeric id>`; `google_dns_managed_zone` imports by
 /// `projects/<p>/managedZones/<zone name>` and `google_dns_record_set` by that
-/// same path plus `/rrsets/<name>/<type>`. The name is in the zone asset's own
-/// data, so one sweep answers both.
-const NAMED_BY_DATA: [&str; 1] = ["dns.googleapis.com/ManagedZone"];
+/// same path plus `/rrsets/<name>/<type>`. Cloud Asset names most project-scoped
+/// resources `projects/<project number>/…`; imported that way the provider keeps
+/// the number as `project` and the declared id then forces a replacement, so the
+/// id names the project by the `projectId` its Project asset states.
+const NAMED_BY_DATA: [NamedByData; 2] = [
+    NamedByData {
+        asset_type: "dns.googleapis.com/ManagedZone",
+        service: "dns.googleapis.com",
+        collection: "managedZones",
+        key: "name",
+        required: true,
+    },
+    NamedByData {
+        asset_type: "cloudresourcemanager.googleapis.com/Project",
+        service: "cloudresourcemanager.googleapis.com",
+        collection: "projects",
+        key: "projectId",
+        required: false,
+    },
+];
 
 /// `full resource name → the name the resource calls itself`, for the asset
-/// types of [`NAMED_BY_DATA`]. An asset whose data states no `name` is left out;
-/// what depends on it then says the name is not in the sweep rather than
-/// importing by the number.
+/// types of [`NAMED_BY_DATA`]. An asset whose data states no name is left out;
+/// an id through a `required` collection then says the name is not in the sweep
+/// rather than importing by the number.
 fn names_by_asset_name(assets: &[Asset]) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for asset in assets {
-        if !NAMED_BY_DATA.contains(&asset.asset_type.as_str()) {
+        let Some(row) = NAMED_BY_DATA.iter().find(|r| r.asset_type == asset.asset_type) else {
             continue;
-        }
+        };
         let name = asset
             .resource
             .as_ref()
             .and_then(|r| r.data.as_ref())
-            .and_then(|d| d.get("name"))
+            .and_then(|d| d.get(row.key))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty());
         if let Some(name) = name {
@@ -325,6 +409,118 @@ fn names_by_asset_name(assets: &[Asset]) -> BTreeMap<String, String> {
         }
     }
     out
+}
+
+/// The provider's import id for one live resource, from its Cloud Asset full
+/// resource name — the ONE derivation the mapped route writes as `"import-id"`,
+/// `--generate-unmapped` writes into an `import` block and `--into` subtracts by
+/// (ADR 0068).
+///
+/// 1. The asset's relative resource name, with every segment [`NAMED_BY_DATA`]
+///    names rewritten to the name the sweep read (`asset_names`, the sweep's own
+///    `Discovered::asset_names`): a DNS zone's number becomes its name, a project
+///    number its id.
+/// 2. `google_compute_instance_settings` is a singleton Cloud Asset names
+///    `…/instanceSettings/InstanceSettings`; the provider's collection path ends
+///    at `instanceSettings`. The one rewrite the template language cannot state.
+/// 3. With the import-config row's `import_id` template, the template is the id:
+///    each `{key}` is the path segment standing where the template puts it
+///    (`template_segments`), else — for `{project}` — the path's project, else the
+///    resource's own attribute of that name in `values`. A placeholder none of
+///    the three fills refuses the resource, naming the placeholder: the path is
+///    not the format the row states the provider imports by. Without a template
+///    the path is the id.
+pub fn import_id(
+    tf_type: &str,
+    full_name: &str,
+    template: Option<&str>,
+    values: &serde_yaml::Mapping,
+    asset_names: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let mut path = provider_path(full_name, asset_names)?;
+    if tf_type == "google_compute_instance_settings" {
+        path = path.strip_suffix("/InstanceSettings").map(str::to_string).ok_or_else(|| {
+            format!(
+                "{} imports by the collection path `projects/<p>/zones/<z>/instanceSettings`, and `{}` does not end in the /InstanceSettings Cloud Asset appends",
+                tf_type, path
+            )
+        })?;
+    }
+    let Some(template) = template else { return Ok(path) };
+    let placed = template_segments(template, &path);
+    let project = path.strip_prefix("projects/").and_then(|r| r.split('/').next()).map(str::to_string);
+    render_template(template, |key| {
+        placed
+            .get(key)
+            .cloned()
+            .or_else(|| if key == "project" { project.clone() } else { None })
+            .or_else(|| {
+                values.get(serde_yaml::Value::String(key.to_string())).and_then(|v| match v {
+                    serde_yaml::Value::String(s) if !s.is_empty() => Some(s.clone()),
+                    serde_yaml::Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
+            })
+    })
+    .map_err(|key| {
+        format!(
+            "{} imports by `{}`, and neither the asset name {} nor what the sweep read of it states `{}`",
+            tf_type, template, full_name, key
+        )
+    })
+}
+
+/// A template with every `{key}` replaced by what `value` answers for it, or the
+/// first key it has no answer for.
+fn render_template(template: &str, value: impl Fn(&str) -> Option<String>) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('}') else {
+            return Err(rest[start..].to_string());
+        };
+        let key = &rest[start + 1..start + end];
+        out.push_str(&value(key).ok_or_else(|| key.to_string())?);
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// A Cloud Asset full resource name as the provider's path: the service dropped,
+/// and every segment [`NAMED_BY_DATA`] names by a number rewritten to the name
+/// the sweep read for it.
+fn provider_path(full_name: &str, asset_names: &BTreeMap<String, String>) -> Result<String, String> {
+    let relative = asset_resource_name(full_name)
+        .ok_or_else(|| format!("`{}` is not a Cloud Asset resource name, so there is no id to import by", full_name))?;
+    let service = full_name.trim_start_matches("//").split('/').next().unwrap_or_default();
+    let original: Vec<&str> = relative.split('/').collect();
+    let mut segs: Vec<String> = original.iter().map(|s| s.to_string()).collect();
+    for i in 0..original.len().saturating_sub(1) {
+        for row in &NAMED_BY_DATA {
+            if original[i] != row.collection {
+                continue;
+            }
+            // a project heads the path of every service's asset; any other
+            // collection is its own service's
+            if !(row.service == service || (row.collection == "projects" && i == 0)) {
+                continue;
+            }
+            let container = format!("//{}/{}", row.service, original[..=i + 1].join("/"));
+            match asset_names.get(&container) {
+                Some(name) => segs[i + 1] = name.clone(),
+                None if row.required => {
+                    return Err(format!(
+                        "{} is not among the assets this sweep read, and `{}` imports by the name the {} states rather than by the number Cloud Asset gives it — sweep {} as well",
+                        container, full_name, row.asset_type, row.asset_type
+                    ))
+                }
+                None => {}
+            }
+        }
+    }
+    Ok(segs.join("/"))
 }
 
 /// What an import produced: the estate, and everything it left out.
@@ -347,8 +543,27 @@ pub struct Discovered {
     /// managed zone by its numeric id; the zone and every record set in it
     /// import by the zone's name, which is in the zone asset's own data.
     pub asset_names: BTreeMap<String, String>,
+    /// The `import_id` template of every import-config row that states one, by
+    /// Terraform type: what [`import_id`] renders a skipped resource's id from.
+    pub import_templates: BTreeMap<String, String>,
     /// What the import rewrote on the way and says so: one line each.
     pub notes: Vec<String>,
+}
+
+impl Discovered {
+    /// The import id of a resource the sweep skipped — [`import_id`] over what the
+    /// sweep holds for it: its asset name, its row's template and the names the
+    /// sweep read. Nothing of the asset's data was carried, so a template that
+    /// needs an attribute the path does not state refuses it.
+    pub fn skipped_import_id(&self, s: &Skipped) -> Result<String, String> {
+        import_id(
+            &s.tf_type,
+            &s.what,
+            self.import_templates.get(&s.tf_type).map(String::as_str),
+            &serde_yaml::Mapping::new(),
+            &self.asset_names,
+        )
+    }
 }
 
 /// An asset type the sweep asked for and Cloud Asset Inventory refused by name.
@@ -466,6 +681,24 @@ where
     Ok(out)
 }
 
+/// The sweep-wide half of [`sweep_batch`]'s rule: when ListAssets refused EVERY
+/// type the whole sweep asked for, the scope is what it could not read, however
+/// the types were batched — a sweep of one type included, whose one batch cannot
+/// tell an unserved type from an unreadable scope. `asked` counts the requests
+/// across every batch, one per content type and asset type; `None` when at least
+/// one was served.
+fn every_type_refused(asked: usize, refused: &[(String, String)], parent: &str) -> Option<String> {
+    if asked == 0 || refused.len() < asked {
+        return None;
+    }
+    Some(format!(
+        "Cloud Asset Inventory refused every asset type the sweep asked for ({}), so it is the scope {} it cannot read — check that it exists and is spelled organizations/<n>, folders/<n> or projects/<id>: {}",
+        types_label(&refused.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()),
+        parent,
+        refused[0].1
+    ))
+}
+
 /// Why a value the source carried is not in the imported estate.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DropReason {
@@ -521,7 +754,7 @@ fn take_dropped() -> Vec<DroppedAttr> {
 /// `ARCHIVED`. No name alignment can see this (the two fields share no name),
 /// so the pairs stand here, keyed by the type and the path they sit at, and a
 /// test reads each from the asset data it comes from.
-fn translate_api_values(map: &mut serde_yaml::Mapping, tf_type: &str, at: &str) {
+fn translate_api_values(map: &mut serde_yaml::Mapping, tf_type: &str, what: &str, at: &str) {
     let rows: &[(&str, &str, &str, &str)] = &[
         // (tf type, path, API key, provider key)
         ("google_storage_bucket", "lifecycle_rule.condition.", "is_live", "with_state"),
@@ -531,7 +764,17 @@ fn translate_api_values(map: &mut serde_yaml::Mapping, tf_type: &str, at: &str) 
             continue;
         }
         let Some(v) = map.remove(serde_yaml::Value::String((*from).to_string())) else { continue };
-        let Some(live) = v.as_bool() else { continue };
+        let Some(live) = v.as_bool() else {
+            // the API states this fact as a boolean; anything else is not a
+            // value `with_state` can be translated from, and it is reported
+            note_dropped(
+                tf_type,
+                what,
+                &format!("{}{}", at, from),
+                DropReason::NotCarried(format!("`{}` is {:?}, not the boolean `{}` is translated from", from, v, to)),
+            );
+            continue;
+        };
         map.insert(
             serde_yaml::Value::String((*to).to_string()),
             serde_yaml::Value::String(if live { "LIVE" } else { "ARCHIVED" }.to_string()),
@@ -764,17 +1007,32 @@ fn pin_attr(registry: Option<&ResourceRegistry>, tf_type: &str) -> Option<String
     }
 }
 
-/// The import id of a grant, from its parent's identity — the same
-/// derivation as the `import_id` templates adopt renders:
-/// `<parent> <role> <member>` (`b/<bucket>` for bucket grants, the bare
-/// number for the organization).
-pub fn grant_import_id(tf_type: &str, parent: &str, role: &str, member: &str) -> String {
-    let parent = match tf_type {
-        "google_storage_bucket_iam_member" => format!("b/{}", parent.trim_start_matches("b/")),
-        "google_organization_iam_member" => parent.trim_start_matches("organizations/").to_string(),
+/// Every import-config row's `import_id` template, by Terraform type.
+fn import_templates(config: &ImportConfig) -> BTreeMap<String, String> {
+    config.resource_types.iter().filter_map(|(t, row)| row.import_id.clone().map(|id| (t.clone(), id))).collect()
+}
+
+/// The import id of a grant, `<scope> <role> <member>`, with the scope written the
+/// way the type's import-config `import_id` template writes it — the template adopt
+/// renders, so an imported grant and an adopted one carry the same id.
+///
+/// `parent` is the value of the grant's scope attribute (`org_id`, `bucket`, a
+/// topic's path). The template's scope part is everything before ` {role}`: a
+/// literal prefix before one placeholder (`b/{bucket}`) is the provider's spelling
+/// of that scope and is written once, whether or not `parent` already carries it;
+/// a bare placeholder (`{org_id}`) or a path template
+/// (`projects/{project}/topics/{topic}`) is `parent` as the scope states it. A type
+/// with no template is `parent` as well — the generic grant form.
+pub fn grant_import_id(template: Option<&str>, parent: &str, role: &str, member: &str) -> String {
+    let scope_part = template.and_then(|t| t.strip_suffix(" {role} {member}")).unwrap_or("");
+    let scope = match (scope_part.find('{'), scope_part.matches('{').count()) {
+        (Some(start), 1) if start > 0 && scope_part.ends_with('}') => {
+            let prefix = &scope_part[..start];
+            format!("{}{}", prefix, parent.strip_prefix(prefix).unwrap_or(parent))
+        }
         _ => parent.to_string(),
     };
-    format!("{} {} {}", parent, role, member)
+    format!("{} {} {}", scope, role, member)
 }
 
 /// What an `import_id` template's placeholders stand for in an asset path:
@@ -846,7 +1104,16 @@ impl Discoverer {
             enabled_types,
             filtered_types,
             on_collision,
+            import_templates: BTreeMap::new(),
         }
+    }
+
+    /// The import-config's `import_id` templates, which write a grant's scope into
+    /// its import id the way adopt renders it. Without them every grant is
+    /// `<scope attribute> <role> <member>`.
+    pub fn with_import_templates(mut self, config: &ImportConfig) -> Self {
+        self.import_templates = import_templates(config);
+        self
     }
 
     fn is_type_enabled(&self, tf_type: &str) -> bool {
@@ -1010,6 +1277,7 @@ impl Discoverer {
             // a state file names every resource by its Terraform address, so
             // there is no Cloud Asset name to key anything by
             asset_names: BTreeMap::new(),
+            import_templates: BTreeMap::new(),
         })
     }
 
@@ -1087,7 +1355,7 @@ impl Discoverer {
                     .collect();
                 *map = renamed;
             }
-            translate_api_values(map, tf_type, at);
+            translate_api_values(map, tf_type, what, at);
             for key in blacklist {
                 map.remove(serde_yaml::Value::String(key.to_string()));
             }
@@ -1173,14 +1441,18 @@ impl Discoverer {
             }
 
             map.retain(|k, v| {
-                // An empty string ON AN ATTRIBUTE THE SCHEMA NAMES is a value:
+                // An empty string on a REQUIRED attribute is a value (ADR 0067):
                 // a subscription's `expiration_policy.ttl = ""` is "never
-                // expires", and dropped it becomes Google's 31-day default,
-                // after which the subscription deletes itself. Only the
-                // schema tells the two apart, so a key it does not name is
-                // still empty vocabulary and goes.
+                // expires", and dropped it takes the block with it and becomes
+                // Google's 31-day default, after which the subscription deletes
+                // itself. On an optional attribute the provider reads an unset
+                // string as `""`, so leaving it out is the same setting — and an
+                // enum the provider validates (`network_interface.nic_type`)
+                // refuses `""` at plan time.
                 if v.as_str().is_some_and(|s| s.is_empty()) {
-                    return k.as_str().is_some_and(|k| schema.is_some_and(|s| s.attributes.contains_key(k)));
+                    return k.as_str().is_some_and(|k| {
+                        schema.and_then(|s| s.attributes.get(k)).is_some_and(|a| a.required)
+                    });
                 }
                 !Self::is_empty_value(v)
             });
@@ -1266,12 +1538,12 @@ impl Discoverer {
                 let Some(scope_value) = values[pin.as_str()].as_str().filter(|v| !v.is_empty()) else {
                     return Err(format!("state: {} `{}` has no `{}`", tf_type, tf_name, pin));
                 };
-                let id = grant_import_id(tf_type, scope_value, &role, &member);
+                let id = grant_import_id(self.import_templates.get(tf_type).map(String::as_str), scope_value, &role, &member);
                 push_pinned_grant(&mut p.extra, tf_type, &pin, scope_value, &member, &role, Some(id));
                 return Ok(());
             }
             let parent = p.project_id.clone();
-            let id = grant_import_id(tf_type, &parent, &role, &member);
+            let id = grant_import_id(self.import_templates.get(tf_type).map(String::as_str), &parent, &role, &member);
             if !p.extra.contains_key(tf_type) { p.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = p.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
@@ -1303,7 +1575,7 @@ impl Discoverer {
                 .clone()
                 .or_else(|| values["folder"].as_str().filter(|s| !s.is_empty()).map(String::from))
                 .ok_or_else(|| format!("state: {} `{}` names no folder and the folder it sits in carries no id — a grant is imported by `<scope> <role> <member>`", tf_type, tf_name))?;
-            let id = grant_import_id(tf_type, &parent, &role, &member);
+            let id = grant_import_id(self.import_templates.get(tf_type).map(String::as_str), &parent, &role, &member);
             if !f.extra.contains_key(tf_type) { f.extra.insert(tf_type.to_string(), serde_yaml::Value::Mapping(serde_yaml::Mapping::new())); }
             if let Some(serde_yaml::Value::Mapping(members_map)) = f.extra.get_mut(tf_type) {
                 let member_key = serde_yaml::Value::String(member);
@@ -1335,7 +1607,7 @@ impl Discoverer {
                     format!("state: {} `{}` names no scope — one of {} carries it, and a grant is imported by `<scope> <role> <member>`", tf_type, tf_name, scope_attrs.join(", "))
                 })?
                 .to_string();
-            let id = grant_import_id(tf_type, &parent, &role, &member);
+            let id = grant_import_id(self.import_templates.get(tf_type).map(String::as_str), &parent, &role, &member);
 
             if tf_type == "google_organization_iam_member" {
                 if c.organization_iam_member.is_none() { c.organization_iam_member = Some(HashMap::new()); }
@@ -1420,9 +1692,13 @@ impl Discoverer {
         discovery_config: Option<ImportConfig>,
         registry: Option<&ResourceRegistry>,
         on_collision: OnCollision,
+        identity: &SweepIdentity,
     ) -> Result<Discovered, Box<dyn std::error::Error>> {
         use google_cloud_gax::options::RequestOptionsBuilder;
-        let client = crate::gcp::asset_service().await?;
+        println!("import: sweeping {} as {}", parent, identity);
+        let client = crate::gcp::asset_service()
+            .await
+            .map_err(|e| format!("the Cloud Asset Inventory client cannot be built with the credentials of {}: {}", identity, e))?;
         let quota_project = crate::org_policy::resolve_quota_project();
 
         let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
@@ -1478,6 +1754,8 @@ impl Discoverer {
         let rows = rows_by_asset_type(discovery_config.as_ref());
 
         let mut refused: Vec<(String, String)> = Vec::new();
+        // one request per content type and asset type: what `every_type_refused` counts against
+        let asked: usize = type_map.values().map(|t| t.len()).sum();
         for (ctype_int, asset_types) in type_map {
             let ctype = ContentType::from(ctype_int as i32);
             let asset_types: Vec<String> = asset_types.into_iter().collect();
@@ -1550,7 +1828,10 @@ impl Discoverer {
         // A type the API refuses BY NAME is the exception (ADR 0060): it is out
         // of the sweep, in `unserved`, and the run says so at the end.
         if !fetch_errors.is_empty() {
-            return Err(fetch_refusal(&fetch_errors, crate::gcp::impersonation_target().as_deref()).into());
+            return Err(fetch_refusal(&fetch_errors, identity).into());
+        }
+        if let Some(scope) = every_type_refused(asked, &refused, parent) {
+            return Err(format!("import aborted — nothing written: {}\nThe sweep ran as {}.", scope, identity).into());
         }
         let mut unserved: Vec<UnservedType> = refused
             .into_iter()
@@ -1578,7 +1859,7 @@ impl Discoverer {
 
         let organization = all_assets.iter().find_map(|a| organization_from_ancestors(&a.ancestors));
         let asset_names = names_by_asset_name(&all_assets);
-        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry, discovery_config.as_ref())?;
+        let (mut config, mut skipped) = Self::construct_config_from_assets(all_assets, registry, discovery_config.as_ref(), &asset_names)?;
         qualify_duplicate_keys(&mut config);
         let notes = resolve_grant_collisions(&mut config, on_collision)?;
         for (tf_type, name) in unscoped {
@@ -1589,13 +1870,15 @@ impl Discoverer {
             });
         }
 
-        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved, asset_names })
+        let import_templates = discovery_config.as_ref().map(import_templates).unwrap_or_default();
+        Ok(Discovered { config, skipped, dropped_attrs: take_dropped(), organization, notes, unserved, asset_names, import_templates })
     }
 
     fn construct_config_from_assets(
         assets: Vec<Asset>,
         registry: Option<&ResourceRegistry>,
         discovery_config: Option<&ImportConfig>,
+        asset_names: &BTreeMap<String, String>,
     ) -> Result<(Config, Vec<Skipped>), String> {
         let mut config = Config::default();
         let mut skipped: Vec<Skipped> = Vec::new();
@@ -1676,7 +1959,7 @@ impl Discoverer {
                  Self::discover_iam_policy(tf_type, asset, res_config, registry, &scope, &scope_id, &mut skipped, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name });
              } else if tf_type == "google_project_service" {
                  Self::discover_google_project_service(tf_type, asset, res_config, registry, &scope_id, &mut project_map, &gcp_id_to_yaml_name);
-             } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
+             } else if let Err(reason) = Self::discover_generic_resource(tf_type, asset, res_config, registry, &scope, &scope_id, asset_names, Sinks { config: &mut config, folder_map: &mut folder_map, project_map: &mut project_map, gcp_id_to_yaml_name: &gcp_id_to_yaml_name }) {
                  skipped.push(Skipped { tf_type: tf_type.to_string(), what: asset.name.clone(), reason });
              }
         }
@@ -2045,7 +2328,7 @@ impl Discoverer {
                                  if config.organization_iam_member.is_none() { config.organization_iam_member = Some(HashMap::new()); }
                                  if let Some(ref mut members_map) = config.organization_iam_member {
                                      let roles = members_map.entry(member.clone()).or_insert_with(Vec::<serde_yaml::Value>::new);
-                                     push_grant(roles, role, Some(grant_import_id(tf_type, scope_id, role, member)));
+                                     push_grant(roles, role, Some(grant_import_id(res_config.import_id.as_deref(), scope_id, role, member)));
                                  }
                              }
                          } else if scope == "folder" {
@@ -2056,7 +2339,7 @@ impl Discoverer {
                                             let member_key = serde_yaml::Value::String(member.clone());
                                             if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                                                push_grant(roles, role, Some(grant_import_id(tf_type, scope_id, role, member)));
+                                                push_grant(roles, role, Some(grant_import_id(res_config.import_id.as_deref(), scope_id, role, member)));
                                             }
                                       }
                                  }
@@ -2073,7 +2356,7 @@ impl Discoverer {
                                           } else {
                                               Self::asset_path(asset).to_string()
                                           };
-                                          let id = grant_import_id(tf_type, &scope_value, role, member);
+                                          let id = grant_import_id(res_config.import_id.as_deref(), &scope_value, role, member);
                                           push_pinned_grant(&mut p.extra, tf_type, &pin, &scope_value, member, role, Some(id));
                                       } else {
                                           p.extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
@@ -2081,7 +2364,7 @@ impl Discoverer {
                                             let member_key = serde_yaml::Value::String(member.clone());
                                             if !members_map.contains_key(&member_key) { members_map.insert(member_key.clone(), serde_yaml::Value::Sequence(Vec::new())); }
                                             if let Some(serde_yaml::Value::Sequence(roles)) = members_map.get_mut(&member_key) {
-                                                push_grant(roles, role, Some(grant_import_id(tf_type, &project_id, role, member)));
+                                                push_grant(roles, role, Some(grant_import_id(res_config.import_id.as_deref(), &project_id, role, member)));
                                             }
                                       }
                                   }
@@ -2097,6 +2380,7 @@ impl Discoverer {
     /// A resource that is not a container, a policy or a grant. Returns the
     /// reason when it cannot be expressed — the caller records it; nothing
     /// is dropped in silence.
+    #[allow(clippy::too_many_arguments)]
     fn discover_generic_resource(
          tf_type: &str,
          asset: &Asset,
@@ -2104,6 +2388,7 @@ impl Discoverer {
          registry: Option<&ResourceRegistry>,
          scope: &str,
          scope_id: &str,
+         asset_names: &BTreeMap<String, String>,
          sinks: Sinks<'_>,
     ) -> Result<(), SkipReason> {
          let Sinks { config, folder_map, project_map, gcp_id_to_yaml_name } = sinks;
@@ -2140,83 +2425,34 @@ impl Discoverer {
               return Err(SkipReason::Unmapped("no attribute of the asset data is in the provider schema".into()));
           }
           Self::complete_required(tf_type, asset, registry, res_config.import_id.as_deref(), &mut resource_val)?;
-          // the live shape has no `id` field (that is the state shape's); the
-          // asset path IS the resource name the provider imports by —
-          // `tofu plan` on the import block validates it
-          let id_key = serde_yaml::Value::String("import-id".into());
-          let (extra, project_id) = match scope {
-              "organization" => (&mut config.extra, None),
+          // the live shape has no `id` field (that is the state shape's): the id
+          // is derived from the asset name, the row's template and what the
+          // sweep read, the one way every route derives it — `tofu plan` on the
+          // import block validates it
+          let extra = match scope {
+              "organization" => &mut config.extra,
               "folder" => {
                   let f = gcp_id_to_yaml_name.get(scope_id).and_then(|f_yaml| folder_map.get_mut(f_yaml));
-                  (&mut f.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?.extra, None)
+                  &mut f.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?.extra
               }
               "project" => {
                   let p = gcp_id_to_yaml_name.get(scope_id).and_then(|p_yaml| project_map.get_mut(p_yaml));
-                  let p = p.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?;
-                  let id = p.project_id.clone();
-                  (&mut p.extra, Some(id))
+                  &mut p.ok_or_else(|| SkipReason::ParentNotFound(scope_id.to_string()))?.extra
               }
               other => return Err(SkipReason::Unmapped(format!("asset scope `{}` has no place in the estate", other))),
           };
-          {
-              // Cloud Asset names project-scoped resources by project NUMBER;
-              // imported that way the provider keeps the number as `project`
-              // and the declared id then forces a replacement — so the import
-              // id names the project by id
-              let mut path = Self::asset_path(asset).to_string();
-              if let Some(pid) = &project_id {
-                  let by_number = format!("projects/{}/", scope_id);
-                  if path.starts_with(&by_number) {
-                      path = format!("projects/{}/{}", pid, &path[by_number.len()..]);
-                  }
-              }
-              // The row's `import_id` template is the provider's own import
-              // format and wins where it renders (`{project} {name}` for a log
-              // metric — not a path at all); the asset path is the fallback
-              // for rows without one.
-              let import_id = res_config
-                  .import_id
-                  .as_deref()
-                  .and_then(|t| Self::render_import_template(t, &resource_val, project_id.as_deref()))
-                  .unwrap_or(path);
-              let mut with_id = serde_yaml::Mapping::new();
-              with_id.insert(id_key, serde_yaml::Value::String(import_id));
-              with_id.extend(resource_val);
-              resource_val = with_id;
-          }
+          let id = import_id(tf_type, &asset.name, res_config.import_id.as_deref(), &resource_val, asset_names)
+              .map_err(SkipReason::Unmapped)?;
+          let mut with_id = serde_yaml::Mapping::new();
+          with_id.insert(serde_yaml::Value::String("import-id".into()), serde_yaml::Value::String(id));
+          with_id.extend(resource_val);
+          let resource_val = with_id;
           let policy_map_val = serde_yaml::Value::Mapping(resource_val);
           extra.entry(tf_type.to_string()).or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
           if let Some(serde_yaml::Value::Mapping(m)) = extra.get_mut(tf_type) {
               m.insert(serde_yaml::Value::String(sanitized_key), policy_map_val);
           }
           Ok(())
-    }
-
-    /// Render an `import_id` template from the resource's own values:
-    /// `{project}` is the containing project id, every other `{key}` the
-    /// attribute of that name. `None` when a placeholder has no value — the
-    /// caller falls back to the asset path rather than emitting a half id.
-    fn render_import_template(template: &str, values: &serde_yaml::Mapping, project_id: Option<&str>) -> Option<String> {
-        let mut out = String::new();
-        let mut rest = template;
-        while let Some(start) = rest.find('{') {
-            out.push_str(&rest[..start]);
-            let end = rest[start..].find('}')?;
-            let key = &rest[start + 1..start + end];
-            let v = if key == "project" {
-                project_id.map(str::to_string)
-            } else {
-                values.get(serde_yaml::Value::String(key.to_string())).and_then(|v| match v {
-                    serde_yaml::Value::String(s) => Some(s.clone()),
-                    serde_yaml::Value::Number(n) => Some(n.to_string()),
-                    _ => None,
-                })
-            }?;
-            out.push_str(&v);
-            rest = &rest[start + end + 1..];
-        }
-        out.push_str(rest);
-        Some(out)
     }
 
     /// `//logging.googleapis.com/projects/p/sinks/x` → `projects/p/sinks/x`
@@ -2965,6 +3201,18 @@ fn parents_left_out<'a>(skipped: &'a [Skipped], filtered_off: &HashSet<String>) 
 
 /// The end of every import: what was left out, and why. Never silent — a
 /// partial estate is fine, an unexplained one is not.
+/// The line a run with no skipped resource ends on. "Every resource the source had
+/// is in the estate" is true only when nothing else was lost either: an asset type
+/// Cloud Asset Inventory refused leaves all of its resources out, and an attribute
+/// the provider names and satz did not place is a setting an apply resets.
+fn nothing_skipped_line(unserved: &[UnservedType], lost: &[&DroppedAttr]) -> String {
+    if unserved.is_empty() && lost.is_empty() {
+        "import: nothing skipped — every resource the source had is in the estate.".to_string()
+    } else {
+        "import: no resource skipped — the estate is short of what is listed above.".to_string()
+    }
+}
+
 pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbose: bool) {
     for n in &found.notes {
         println!("{}", n);
@@ -3009,7 +3257,7 @@ pub fn report_skipped(found: &Discovered, filtered_off: &HashSet<String>, verbos
         }
     }
     if skipped.is_empty() && filtered_off.is_empty() {
-        println!("import: nothing skipped — every resource the source had is in the estate.");
+        println!("{}", nothing_skipped_line(&found.unserved, &lost));
         return;
     }
     // A resource needs its parent in the estate. When `--only`/`--exclude` left the
@@ -3798,28 +4046,6 @@ mod row_selection_tests {
         }
         assert!(checked >= 4, "the four parent-scoped templates are checked, not {checked}");
     }
-
-    /// Cloud Asset names a DNS managed zone by its numeric id; the provider
-    /// imports the zone, and every record set in it, by the zone's name. The
-    /// sweep keeps that name off the zone's own data.
-    #[test]
-    fn the_sweep_keeps_the_name_a_dns_managed_zone_calls_itself() {
-        let zone = asset("dns.googleapis.com/ManagedZone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890")
-            .set_resource(
-                google_cloud_asset_v1::model::Resource::new()
-                    .set_data(serde_json::json!({"name": "corp", "dnsName": "corp.example."}).as_object().unwrap().clone()),
-            );
-        let topic = asset("pubsub.googleapis.com/Topic", "//pubsub.googleapis.com/projects/acme-net/topics/events").set_resource(
-            google_cloud_asset_v1::model::Resource::new()
-                .set_data(serde_json::json!({"name": "projects/acme-net/topics/events"}).as_object().unwrap().clone()),
-        );
-        let names = names_by_asset_name(&[zone, topic]);
-        assert_eq!(
-            names,
-            BTreeMap::from([("//dns.googleapis.com/projects/acme-net/managedZones/1234567890".to_string(), "corp".to_string())]),
-            "only the types whose Cloud Asset name carries a number the provider does not import by"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -3838,9 +4064,9 @@ mod fetch_refusal_tests {
 
     #[test]
     fn a_refused_scope_names_the_credential_and_the_flags_that_change_it() {
-        let msg = fetch_refusal(&[DENIED.to_string()], None);
+        let msg = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::Caller);
         assert!(msg.contains("nothing written"), "{msg}");
-        assert!(msg.contains("Application Default Credentials"), "the identity it ran as is not named: {msg}");
+        assert!(msg.contains("Application Default Credentials: no estate was named"), "the identity it ran as is not named: {msg}");
         assert!(msg.contains("roles/cloudasset.viewer"), "the role the estate's account holds is not named: {msg}");
         assert!(msg.contains("--as <estate>") && msg.contains("--into <estate>"), "neither flag is offered: {msg}");
         assert!(!msg.contains("--exclude"), "a denied scope is not an asset-type problem: {msg}");
@@ -3849,16 +4075,32 @@ mod fetch_refusal_tests {
     #[test]
     fn a_refused_scope_under_an_estate_names_the_service_account_it_ran_as() {
         let sa = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
-        let msg = fetch_refusal(&[DENIED.to_string()], Some(sa));
-        assert!(msg.contains(sa), "the service account the run bound is not named: {msg}");
+        let who = SweepIdentity::Estate { account: sa.to_string(), estate: "yaml/acme.satz".to_string() };
+        let msg = fetch_refusal(&[DENIED.to_string()], &who);
+        assert!(msg.contains(sa) && msg.contains("yaml/acme.satz"), "the service account the run bound is not named: {msg}");
         assert!(msg.contains("roles/cloudasset.viewer"), "{msg}");
+        assert!(!msg.contains("no estate was named"), "an estate was named: {msg}");
+    }
+
+    /// An estate that was named but whose run reads as the caller says why, and
+    /// never that no estate was named: a local-mode estate runs as the caller's
+    /// credentials, and `--no-impersonate` keeps a cloud-mode one off its account.
+    #[test]
+    fn a_named_estate_that_reads_as_the_caller_says_why() {
+        let local = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::LocalMode { estate: "yaml/acme.satz".into() });
+        assert!(local.contains("yaml/acme.satz runs in local mode"), "{local}");
+        assert!(!local.contains("no estate was named"), "{local}");
+        let pinned = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::NoImpersonate { estate: "yaml/acme.satz".into() });
+        assert!(pinned.contains("--no-impersonate keeps the run off the service account yaml/acme.satz names"), "{pinned}");
+        assert!(pinned.contains("drop --no-impersonate"), "{pinned}");
+        assert!(!pinned.contains("no estate was named"), "{pinned}");
     }
 
     /// Anything that is not a refusal is still the table's problem, and still says
     /// as whom the sweep ran.
     #[test]
     fn a_type_list_assets_does_not_serve_still_points_at_the_table() {
-        let msg = fetch_refusal(&["1 type(s) x/Y: INVALID_ARGUMENT: unsupported asset type".to_string()], None);
+        let msg = fetch_refusal(&["1 type(s) x/Y: INVALID_ARGUMENT: unsupported asset type".to_string()], &SweepIdentity::Caller);
         assert!(msg.contains("--exclude") && msg.contains("update_import_config.py --probe"), "{msg}");
         assert!(msg.contains("Application Default Credentials"), "{msg}");
         assert!(!msg.contains("cloudasset.viewer"), "{msg}");
@@ -3987,21 +4229,78 @@ mod sweep_batch_tests {
         assert!(refused.is_empty(), "the whole table was reported as retired: {:?}", refused);
     }
 
-    /// The report the run ends with names the type, the rows that asked for it,
-    /// what the API said, and both ways to stop asking.
+    /// A sweep of ONE type whose one request is refused cannot tell, inside the
+    /// batch, an unserved type from an unreadable scope. Across the sweep it can:
+    /// every type it asked for was refused, so it is the scope, and the run ends
+    /// on it instead of writing an empty estate and a "type not served" line.
+    #[tokio::test]
+    async fn a_one_type_sweep_refused_for_its_scope_is_an_error() {
+        let bad_scope = |_: Vec<String>| {
+            std::future::ready(Err::<Vec<Asset>, String>("INVALID_ARGUMENT: parent is not a valid scope".to_string()))
+        };
+        let mut refused = Vec::new();
+        let got = sweep_batch(vec![GONE.to_string()], bad_scope, &mut refused).await.expect("one type: the batch cannot tell");
+        assert!(got.is_empty());
+        let err = every_type_refused(1, &refused, "folders/1").expect("every type of the sweep was refused: the scope is the error");
+        assert!(err.contains("scope folders/1 it cannot read"), "{err}");
+        assert!(err.contains("INVALID_ARGUMENT: parent is not a valid scope"), "the API's words are kept: {err}");
+    }
+
+    /// One type refused while another batch of the same sweep was served is an
+    /// unserved type, however small its own batch was.
+    #[tokio::test]
+    async fn a_type_refused_beside_one_served_is_unserved_not_a_bad_scope() {
+        let mut refused = Vec::new();
+        sweep_batch(vec!["example.googleapis.com/Type000".to_string()], api(&[GONE]), &mut refused).await.expect("served");
+        sweep_batch(vec![GONE.to_string()], api(&[GONE]), &mut refused).await.expect("one type: kept as unserved");
+        assert_eq!(refused.len(), 1);
+        assert_eq!(every_type_refused(2, &refused, "organizations/123456789012"), None);
+        assert_eq!(every_type_refused(0, &[], "organizations/123456789012"), None, "a sweep that asked for nothing refused nothing");
+    }
+
+    /// The report says how many types were refused, gives each its own line with
+    /// the rows that asked for it and the first line of what the API said — a
+    /// multi-line error does not take the report over — and ends on the two ways
+    /// to stop asking. A type no row asked for prints no empty parentheses.
     #[test]
     fn the_report_names_the_type_and_the_rows_that_asked_for_it() {
-        let lines = unserved_report(&[UnservedType {
-            asset_type: GONE.to_string(),
-            tf_types: vec!["google_apigee_security_profile_v2".to_string()],
-            error: "INVALID_ARGUMENT: asset type is not supported".to_string(),
-        }])
-        .join("\n");
-        assert!(lines.contains(GONE), "{lines}");
-        assert!(lines.contains("google_apigee_security_profile_v2"), "{lines}");
-        assert!(lines.contains("INVALID_ARGUMENT"), "{lines}");
-        assert!(lines.contains("--exclude") && lines.contains("update_import_config.py"), "{lines}");
+        let lines = unserved_report(&[
+            UnservedType {
+                asset_type: GONE.to_string(),
+                tf_types: vec!["google_apigee_security_profile_v2".to_string(), "google_apigee_other".to_string()],
+                error: "INVALID_ARGUMENT: asset type is not supported\n  details: a second line".to_string(),
+            },
+            UnservedType { asset_type: "x.googleapis.com/Y".to_string(), tf_types: vec![], error: "INVALID_ARGUMENT: no".to_string() },
+        ]);
+        assert_eq!(lines.len(), 4, "a header, one line per type, the remedy: {lines:#?}");
+        assert!(lines[0].starts_with("import: 2 asset type(s)"), "{}", lines[0]);
+        assert_eq!(
+            lines[1],
+            format!("  - {} (google_apigee_security_profile_v2, google_apigee_other): INVALID_ARGUMENT: asset type is not supported", GONE)
+        );
+        assert_eq!(lines[2], "  - x.googleapis.com/Y: INVALID_ARGUMENT: no");
+        assert!(lines[3].contains("--exclude") && lines[3].contains("update_import_config.py --cai-types"), "{}", lines[3]);
         assert!(unserved_report(&[]).is_empty(), "a sweep that was refused nothing says nothing");
+    }
+
+    /// "Every resource the source had is in the estate" is said only when it is
+    /// true: a type Cloud Asset Inventory refused, or an attribute satz did not
+    /// place, is a loss the line would contradict.
+    #[test]
+    fn nothing_skipped_is_said_only_when_nothing_was_lost() {
+        let all_there = nothing_skipped_line(&[], &[]);
+        assert!(all_there.contains("every resource the source had is in the estate"), "{all_there}");
+        let unserved = [UnservedType { asset_type: GONE.to_string(), tf_types: vec![], error: "INVALID_ARGUMENT".to_string() }];
+        let short = nothing_skipped_line(&unserved, &[]);
+        assert!(!short.contains("every resource the source had"), "{short}");
+        assert!(short.contains("short of what is listed above"), "{short}");
+        let lost = DroppedAttr {
+            tf_type: "google_storage_bucket".into(),
+            what: "b".into(),
+            path: "lifecycle_rule.condition.is_live".into(),
+            why: DropReason::NotCarried("not a boolean".into()),
+        };
+        assert!(!nothing_skipped_line(&[], &[&lost]).contains("every resource the source had"));
     }
 }
 
@@ -4222,8 +4521,8 @@ mod nested_segment_ids {
 
 #[cfg(test)]
 mod meaningful_empty_values {
-    //! An empty string the provider schema names is a VALUE, and survives the
-    //! import.
+    //! An empty string on a required attribute the provider schema names is a
+    //! VALUE, and survives the import.
     //!
     //! Measured on a live organisation: a Pub/Sub subscription set to never
     //! expire (`expiration_policy.ttl = ""`) came back without its
@@ -4284,6 +4583,27 @@ mod meaningful_empty_values {
         assert!(out.get("filter").is_none(), "an attribute nothing carries is not written empty:\n{yaml}");
     }
 
+    /// An empty string on an OPTIONAL attribute is dropped (ADR 0067): the
+    /// provider reads an unset string as `""`, so leaving it out is the same
+    /// setting, and an enum it validates refuses `""` at plan time
+    /// (`network_interface.nic_type` measured). `ttl` above is required and stays.
+    #[test]
+    fn an_empty_string_on_an_optional_attribute_is_dropped() {
+        let reg = registry();
+        let (_, schema) = reg.find_resource("google_pubsub_subscription").expect("subscription schema");
+        let filter = &schema.block.attributes["filter"];
+        assert!(filter.optional && !filter.required, "`filter` is optional; without that this test proves nothing");
+        let out = imported(serde_json::json!({
+            "name": "projects/acme-infra-001/subscriptions/never",
+            "topic": "projects/acme-infra-001/topics/audit",
+            "filter": "",
+            "expiration_policy": [{"ttl": ""}],
+        }));
+        let yaml = serde_yaml::to_string(&out).expect("yaml");
+        assert!(out.get("filter").is_none(), "{yaml}");
+        assert_eq!(out["expiration_policy"][0]["ttl"].as_str(), Some(""), "the required one stays:\n{yaml}");
+    }
+
     /// A key the schema does not name carries nothing when it is empty: that
     /// is API vocabulary, not a value.
     #[test]
@@ -4295,5 +4615,220 @@ mod meaningful_empty_values {
         }));
         let yaml = serde_yaml::to_string(&out).expect("yaml");
         assert!(out.get("detached").is_none(), "{yaml}");
+    }
+}
+
+#[cfg(test)]
+mod one_import_id {
+    //! One import id per live resource, whichever route writes it (ADR 0068).
+    //!
+    //! Found in review: the mapped route rendered the row's template and fell back
+    //! to the asset path, `--generate-unmapped` hard-coded three types and ignored
+    //! the template, and `--into`'s subtraction compared the raw asset path — so a
+    //! DNS zone Cloud Asset names by its number was generated a second time beside
+    //! the zone the estate declares by name.
+    use super::*;
+
+    /// The shipped rows' templates, as the run reads them.
+    fn template(tf_type: &str) -> Option<String> {
+        let config: ImportConfig =
+            serde_yaml::from_str(include_str!("../presets/import-config.yaml")).expect("the shipped table parses");
+        config.resource_types.get(tf_type).and_then(|r| r.import_id.clone())
+    }
+
+    /// What the sweep read: a zone's name and a project's id, by the full
+    /// resource names Cloud Asset gives them.
+    fn names() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("//dns.googleapis.com/projects/acme-net/managedZones/1234567890".to_string(), "corp".to_string()),
+            ("//cloudresourcemanager.googleapis.com/projects/100000000001".to_string(), "acme-net".to_string()),
+        ])
+    }
+
+    /// The id a skipped resource gets: nothing of its data was carried.
+    fn skipped_id(tf_type: &str, what: &str) -> Result<String, String> {
+        import_id(tf_type, what, template(tf_type).as_deref(), &serde_yaml::Mapping::new(), &names())
+    }
+
+    #[test]
+    fn the_import_id_per_type_is_the_one_the_provider_takes() {
+        let cases = [
+            // the log sinks, one per parent: the id is the parent path
+            ("google_logging_project_sink", "//logging.googleapis.com/projects/acme-net/sinks/audit", "projects/acme-net/sinks/audit"),
+            ("google_logging_folder_sink", "//logging.googleapis.com/folders/123456789/sinks/audit", "folders/123456789/sinks/audit"),
+            (
+                "google_logging_organization_sink",
+                "//logging.googleapis.com/organizations/123456789012/sinks/audit",
+                "organizations/123456789012/sinks/audit",
+            ),
+            (
+                "google_logging_billing_account_sink",
+                "//logging.googleapis.com/billingAccounts/012345-6789AB-CDEF01/sinks/audit",
+                "billingAccounts/012345-6789AB-CDEF01/sinks/audit",
+            ),
+            (
+                "google_logging_project_bucket_config",
+                "//logging.googleapis.com/projects/acme-net/locations/global/buckets/audit",
+                "projects/acme-net/locations/global/buckets/audit",
+            ),
+            (
+                "google_logging_organization_bucket_config",
+                "//logging.googleapis.com/organizations/123456789012/locations/global/buckets/audit",
+                "organizations/123456789012/locations/global/buckets/audit",
+            ),
+            // a singleton: Cloud Asset appends the kind, the provider imports the
+            // collection path the row's template states
+            (
+                "google_compute_instance_settings",
+                "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b/instanceSettings/InstanceSettings",
+                "projects/acme-net/zones/europe-west3-b/instanceSettings",
+            ),
+            // the zone, and a record set in it, by the zone's name rather than by
+            // the number Cloud Asset gives it
+            ("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890", "projects/acme-net/managedZones/corp"),
+            (
+                "google_dns_record_set",
+                "//dns.googleapis.com/projects/acme-net/managedZones/1234567890/rrsets/www.corp.example./A",
+                "projects/acme-net/managedZones/corp/rrsets/www.corp.example./A",
+            ),
+            // a project named by its number is named by its id
+            ("google_pubsub_topic", "//pubsub.googleapis.com/projects/100000000001/topics/events", "projects/acme-net/topics/events"),
+        ];
+        for (tf_type, what, want) in cases {
+            assert_eq!(skipped_id(tf_type, what).as_deref(), Ok(want), "{tf_type} from {what}");
+        }
+    }
+
+    /// A template that is not a path (`{project} {name}`) is the id on both
+    /// routes: rendered from the resource's own values where the sweep mapped it,
+    /// and refused by the placeholder it lacks where the sweep carried nothing —
+    /// the asset path is not the format the provider imports a log metric by.
+    #[test]
+    fn a_template_that_is_not_a_path_is_rendered_or_refused_never_replaced_by_the_path() {
+        let what = "//logging.googleapis.com/projects/100000000001/metrics/errors";
+        let t = template("google_logging_metric");
+        assert_eq!(t.as_deref(), Some("{project} {name}"), "the row this test is about");
+        let mut values = serde_yaml::Mapping::new();
+        values.insert("name".into(), "errors".into());
+        assert_eq!(import_id("google_logging_metric", what, t.as_deref(), &values, &names()).as_deref(), Ok("acme-net errors"));
+        let why = skipped_id("google_logging_metric", what).unwrap_err();
+        assert!(why.contains("`{project} {name}`") && why.contains("states `name`"), "{why}");
+    }
+
+    /// A record set whose zone the sweep did not read is refused by name: the
+    /// number Cloud Asset gives the zone is not an id the provider imports by,
+    /// and satz does not send it to find out.
+    #[test]
+    fn a_zone_the_sweep_did_not_read_is_refused_not_guessed() {
+        for (tf_type, what) in [
+            ("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/999"),
+            ("google_dns_record_set", "//dns.googleapis.com/projects/acme-net/managedZones/999/rrsets/www.corp.example./A"),
+        ] {
+            let why = skipped_id(tf_type, what).unwrap_err();
+            assert!(why.contains("is not among the assets this sweep read"), "{tf_type}: {why}");
+            assert!(why.contains("dns.googleapis.com/ManagedZone"), "{tf_type}: {why}");
+        }
+    }
+
+    /// A singleton whose name does not carry the kind is refused rather than
+    /// truncated: the rule says what the provider takes.
+    #[test]
+    fn an_instance_settings_name_without_the_kind_is_refused() {
+        let why = skipped_id("google_compute_instance_settings", "//compute.googleapis.com/projects/acme-net/zones/europe-west3-b").unwrap_err();
+        assert!(why.contains("does not end in the /InstanceSettings"), "{why}");
+    }
+
+    /// A project the sweep did not read keeps the number: the provider imports by
+    /// it too, and there is no id to put in its place.
+    #[test]
+    fn a_project_the_sweep_did_not_read_keeps_its_number() {
+        let id = import_id(
+            "google_pubsub_topic",
+            "//pubsub.googleapis.com/projects/200000000002/topics/events",
+            template("google_pubsub_topic").as_deref(),
+            &serde_yaml::Mapping::new(),
+            &names(),
+        );
+        assert_eq!(id.as_deref(), Ok("projects/200000000002/topics/events"));
+    }
+
+    /// The sweep keeps the name a zone and a project call themselves off their
+    /// own data, and nothing for any other type.
+    #[test]
+    fn the_sweep_keeps_the_names_its_ids_are_built_from() {
+        let data = |v: serde_json::Value| google_cloud_asset_v1::model::Resource::new().set_data(v.as_object().unwrap().clone());
+        let zone = Asset::new()
+            .set_asset_type("dns.googleapis.com/ManagedZone")
+            .set_name("//dns.googleapis.com/projects/acme-net/managedZones/1234567890")
+            .set_resource(data(serde_json::json!({"name": "corp", "dnsName": "corp.example."})));
+        let project = Asset::new()
+            .set_asset_type("cloudresourcemanager.googleapis.com/Project")
+            .set_name("//cloudresourcemanager.googleapis.com/projects/100000000001")
+            .set_resource(data(serde_json::json!({"projectId": "acme-net", "projectNumber": "100000000001"})));
+        let topic = Asset::new()
+            .set_asset_type("pubsub.googleapis.com/Topic")
+            .set_name("//pubsub.googleapis.com/projects/acme-net/topics/events")
+            .set_resource(data(serde_json::json!({"name": "projects/acme-net/topics/events"})));
+        assert_eq!(names_by_asset_name(&[zone, project, topic]), names());
+    }
+
+    /// A grant's scope is written the way its row's template writes it: the
+    /// template's literal prefix once, a bare placeholder or a path as the scope
+    /// states it, and the generic form for a type with no template.
+    #[test]
+    fn a_grant_id_writes_its_scope_the_way_the_template_does() {
+        let bucket = template("google_storage_bucket_iam_member");
+        assert_eq!(grant_import_id(bucket.as_deref(), "corp-logs", "roles/viewer", "group:a@example.com"), "b/corp-logs roles/viewer group:a@example.com");
+        assert_eq!(grant_import_id(bucket.as_deref(), "b/corp-logs", "roles/viewer", "group:a@example.com"), "b/corp-logs roles/viewer group:a@example.com");
+        let org = template("google_organization_iam_member");
+        assert_eq!(grant_import_id(org.as_deref(), "123456789012", "roles/viewer", "group:a@example.com"), "123456789012 roles/viewer group:a@example.com");
+        let topic = template("google_pubsub_topic_iam_member");
+        assert_eq!(
+            grant_import_id(topic.as_deref(), "projects/acme-net/topics/events", "roles/viewer", "group:a@example.com"),
+            "projects/acme-net/topics/events roles/viewer group:a@example.com"
+        );
+        assert_eq!(grant_import_id(None, "folders/123456789", "roles/viewer", "group:a@example.com"), "folders/123456789 roles/viewer group:a@example.com");
+    }
+
+    /// Every shipped grant template is one of the shapes [`grant_import_id`]
+    /// writes: a scope part and ` {role} {member}`.
+    #[test]
+    fn every_shipped_grant_template_ends_in_role_and_member() {
+        let config: ImportConfig =
+            serde_yaml::from_str(include_str!("../presets/import-config.yaml")).expect("the shipped table parses");
+        for (tf_type, row) in &config.resource_types {
+            let Some(t) = row.import_id.as_deref().filter(|_| tf_type.ends_with("_iam_member")) else { continue };
+            assert!(t.ends_with(" {role} {member}"), "{tf_type}: `{t}` is not `<scope> {{role}} {{member}}`");
+        }
+    }
+}
+
+#[cfg(test)]
+mod api_value_translation {
+    //! A value the API states in other terms than the provider.
+    use super::*;
+
+    /// A Cloud Storage lifecycle condition's `isLive` is a boolean; one that is
+    /// not cannot be translated into `with_state`, and is reported as a value the
+    /// estate does not carry rather than removed in silence.
+    #[test]
+    fn is_live_translates_when_it_is_a_boolean_and_is_reported_when_it_is_not() {
+        let at = "lifecycle_rule.condition.";
+        let _ = take_dropped();
+        let mut live = serde_yaml::Mapping::new();
+        live.insert("is_live".into(), true.into());
+        translate_api_values(&mut live, "google_storage_bucket", "logs", at);
+        assert_eq!(live.get("with_state").and_then(|v| v.as_str()), Some("LIVE"));
+        assert!(take_dropped().is_empty());
+
+        let mut odd = serde_yaml::Mapping::new();
+        odd.insert("is_live".into(), "yes".into());
+        translate_api_values(&mut odd, "google_storage_bucket", "logs", at);
+        assert!(odd.get("with_state").is_none() && odd.get("is_live").is_none(), "{odd:?}");
+        let dropped = take_dropped();
+        assert_eq!(dropped.len(), 1, "{dropped:?}");
+        assert_eq!(dropped[0].path, "lifecycle_rule.condition.is_live");
+        assert_eq!(dropped[0].what, "logs");
+        assert!(matches!(&dropped[0].why, DropReason::NotCarried(why) if why.contains("not the boolean")), "{dropped:?}");
     }
 }

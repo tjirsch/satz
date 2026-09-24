@@ -534,6 +534,26 @@ sweep reads as that account, the one `tofu` applies with.
 satz import organizations/123456789012 --as C0example.satz -o migration-discovery.satz
 ```
 
+The run prints as whom it sweeps before the first request, and a refusal repeats
+it. `--as` needs an estate that impersonates a service account: a local-mode
+estate impersonates none, and `--no-impersonate` keeps any estate off its account,
+so both are refused — the sweep would read as your own credentials, which the bare
+form does. `--as` and `--into` sweep only the organisation the estate is bound to
+(`customer_organization_id`) or a folder or project inside it; a folder or project
+is walked up through Resource Manager as the estate's identity, and a scope in
+another organisation, or one whose organisation cannot be read, is refused before
+the sweep.
+
+From a directory of `.tf` files the organisation is the one the configuration
+names — a literal `organizations/<n>` parent, an `org_id`, an org policy's
+parent. A configuration that names none, and every `--wrap-all` import, which
+translates nothing, is refused with nothing written until `--organization <n>`
+names it:
+
+```bash
+satz import ./terraform --wrap-all --organization 123456789012 -o migration-discovery.satz
+```
+
 The resource types marked `import: true` in `presets/import-config.yaml` are the
 default set. `--all` takes every type the source can deliver instead: from a state
 file every row, live every row with an `asset_type`. `--only` narrows either set,
@@ -556,8 +576,10 @@ refuse the whole request of a hundred types it stands in, naming none of them: s
 asks the request again in halves until the refusal is down to that one type, leaves
 it out and fetches the other 99. The run ends by naming each such type with the rows
 that asked for it, so what the estate is short of is on the screen; refresh the table
-or leave the rows out with `--exclude`. A scope the credential may not read, or a
-connection that broke, still ends the run with nothing written.
+or leave the rows out with `--exclude`. A scope the credential may not read, a
+connection that broke, and a sweep in which every type asked for was refused — a
+scope ListAssets cannot read, however few types were asked — end the run with
+nothing written.
 
 A live resource whose provider block would not plan is never written: a required
 attribute the asset data lacks is derived where it can be (`parent`,
@@ -569,7 +591,11 @@ never carries it and the emitter writes it from the node the resource is written
 under.
 Import ids of live resources are the asset path, with the project named by id (the
 provider keeps a project NUMBER on import and the declared id would then force a
-replacement). Verified on a test organization with folders, projects, services,
+replacement) and a DNS zone by its name, rendered through the import-config row's
+`import_id` template where it has one — the same id `--generate-unmapped` writes
+and `--into` subtracts by. An empty string is carried on a required attribute
+(`expiration_policy.ttl = ""` is never expires) and dropped on an optional one,
+which the provider reads as unset. Verified on a test organization with folders, projects, services,
 buckets, IAM, org policies, org/folder/project log sinks, a service account and an
 essential contact: `tofu plan` = every resource imported, nothing added or
 destroyed.

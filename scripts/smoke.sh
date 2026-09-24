@@ -996,7 +996,7 @@ grep -q '123456789012' tmp/import-conflict.txt || fail "the refusal did not name
 if "$satz" --config . import organizations/123456789012 --organization 123456789012 >tmp/import-org-flag.txt 2>&1; then
   fail "--organization must be refused on the live shape"
 fi
-grep -q 'applies to the state shape' tmp/import-org-flag.txt \
+grep -q 'applies to the state and hcl shapes' tmp/import-org-flag.txt \
   || fail "the live refusal did not say which shape --organization belongs to:\n$(cat tmp/import-org-flag.txt)"
 
 step "import --generate-unmapped: the fallback is the live shape's, plain or --into; the other shapes say so"
@@ -1026,17 +1026,33 @@ ls yaml | grep -q -- '-generate$' && fail "a run that reached no provider wrote 
 ls yaml | grep -q -- '-generated.satz' && fail "a run that reached no provider wrote a generated estate"
 
 step "import --as: the live sweep is told which estate's service account to read as"
-# Offline the run gets as far as the live sweep and stops there for want of
-# credentials, which is what this can assert; the binding itself is unit-tested
-# against a fixture estate (`import_identity`, src/main.rs).
+# smoke.satz runs in local mode and impersonates nobody: --as would read as the
+# caller while naming the estate, so it is refused before anything is swept.
+if "$satz" --config . import organizations/123456789012 --as smoke.satz >tmp/import-as-local.txt 2>&1; then
+  fail "--as on a local-mode estate must be refused"
+fi
+grep -q 'runs in local mode' tmp/import-as-local.txt \
+  || fail "the --as refusal did not say the estate runs in local mode:\n$(cat tmp/import-as-local.txt)"
+# The same estate in cloud mode names an account. Offline the run gets as far as
+# the live sweep and stops there for want of credentials, which is what this can
+# assert; the binding itself is unit-tested against a fixture estate
+# (`import_identity`, src/main.rs).
+sed 's/deployment_mode *= *"local"/deployment_mode = "cloud"/' yaml/smoke.satz > yaml/smoke-cloud.satz
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
-  "$satz" --config . import organizations/123456789012 --as smoke.satz >tmp/import-as.txt 2>&1; then
+  "$satz" --config . import organizations/123456789012 --as smoke-cloud.satz >tmp/import-as.txt 2>&1; then
   fail "a sweep must not succeed without credentials:\n$(cat tmp/import-as.txt)"
 fi
 grep -q 'import: root organizations/123456789012' tmp/import-as.txt \
   || fail "--as did not reach the live sweep:\n$(cat tmp/import-as.txt)"
 grep -qi 'credential\|token\|auth\|ADC' tmp/import-as.txt \
   || fail "the sweep stopped for a reason other than credentials:\n$(cat tmp/import-as.txt)"
+# the scope must be the estate's organisation or inside it
+if "$satz" --config . import organizations/222222222222 --as smoke-cloud.satz >tmp/import-as-other.txt 2>&1; then
+  fail "--as must refuse a scope outside the estate's organisation"
+fi
+grep -q 'is bound to organizations/123456789012' tmp/import-as-other.txt \
+  || fail "the refusal did not name the estate's organisation:\n$(cat tmp/import-as-other.txt)"
+rm -f yaml/smoke-cloud.satz
 # --into names the estate already, so the two together are refused, not reconciled
 if "$satz" --config . import organizations/123456789012 --as smoke.satz --into smoke.satz >tmp/import-as-into.txt 2>&1; then
   fail "--as and --into must be refused together"
@@ -1063,7 +1079,12 @@ fi
 grep -q 'pre-Satz YAML dialect' tmp/yaml-transpile.txt || fail "transpile's refusal did not name the dialect:\n$(cat tmp/yaml-transpile.txt)"
 
 step "import, hcl shape: literal resources become Satz, positional ones wrap; --wrap-all wraps every block"
-"$satz" --config . import tf --wrap-all -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt
+# --wrap-all translates nothing, so nothing names the organisation but the flag
+if "$satz" --config . import tf --wrap-all -o imported-hcl.satz >tmp/import-hcl-no-org.txt 2>&1; then
+  fail "--wrap-all without --organization must be refused"
+fi
+grep -q -- '--organization <n>' tmp/import-hcl-no-org.txt || fail "the refusal did not name the flag:\n$(cat tmp/import-hcl-no-org.txt)"
+"$satz" --config . import tf --wrap-all --organization 123456789012 -o imported-hcl.satz --verbose | tee tmp/import-hcl.txt
 grep -q 'wrapped verbatim' tmp/import-hcl.txt || fail "hcl import printed no summary"
 "$satz" --config . transpile imported-hcl.satz --output "$PWD/tmp/imported-hcl-hcl" 2>&1 | tee tmp/transpile-hcl.txt
 grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf || fail "the wrapped bucket did not reach main.tf"
@@ -1095,7 +1116,7 @@ grep -q 'so nothing was written' tmp/import-crossing.txt || fail "the refusal di
 grep -q 'references `google_storage_bucket.state`, which stays verbatim' tmp/import-crossing.txt || fail "the refusal did not name both sides:\n$(cat tmp/import-crossing.txt)"
 grep -q -- '--wrap-all' tmp/import-crossing.txt || fail "the refusal did not say what to do:\n$(cat tmp/import-crossing.txt)"
 [ ! -f yaml/imported-crossing.satz ] || fail "the refused import wrote an estate"
-"$satz" --config . import tf-crossing --wrap-all -o imported-crossing.satz >tmp/import-crossing-wrapped.txt 2>&1 \
+"$satz" --config . import tf-crossing --wrap-all --organization 123456789012 -o imported-crossing.satz >tmp/import-crossing-wrapped.txt 2>&1 \
   || fail "--wrap-all must still carry the same input:\n$(cat tmp/import-crossing-wrapped.txt)"
 "$satz" --config . transpile imported-crossing.satz --output "$PWD/tmp/imported-crossing-hcl" >/dev/null 2>&1 \
   || fail "the --wrap-all estate must transpile"

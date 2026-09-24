@@ -1,6 +1,6 @@
 # 0065 — a refused import id costs one resource, not the run
 
-- **Status:** accepted
+- **Status:** accepted; its per-type import id rules replaced by ADR-0068 (one import id per live resource)
 - **Date:** 2026-09-23
 - **Shipped in:** the release that follows
 

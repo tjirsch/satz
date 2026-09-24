@@ -2006,7 +2006,7 @@ impl ScopePin {
 /// A key inside a grant map is the scope attribute rather than a member when it
 /// cannot be an IAM member: every member is `<type>:<value>` except the two
 /// reserved all-principal forms, and no Terraform attribute name contains `:`.
-fn is_scope_attr_key(key: &str) -> bool {
+pub fn is_scope_attr_key(key: &str) -> bool {
     !key.contains(':') && key != "allUsers" && key != "allAuthenticatedUsers"
 }
 
