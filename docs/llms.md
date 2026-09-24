@@ -1,4 +1,4 @@
-# satz for llms
+# satz llms
 
 This page is for an agent that drives satz, usually through its MCP server, and
 writes Satz. It is the working subset of the language and the rules that keep what
@@ -60,8 +60,8 @@ params { region = "europe-west3" }
 
 google_storage_bucket {
   b {
-    location = region                    // as a value
-    name     = "{customer_shortname}-b"  // interpolated into a string
+    location = region                   // as a value
+    name     = "{customer_shortname}-b" // interpolated into a string
   }
 }
 ```
@@ -89,7 +89,7 @@ google_folder {
       infra {
         project_id      = infra_project_name
         billing_account = billing_account_infra
-        project_service = [ "storage.googleapis.com" ]
+        project_service = ["storage.googleapis.com"]
         google_storage_bucket {
           audit_logs {
             name     = "{customer_shortname}-audit-logs"
@@ -113,7 +113,7 @@ block sits:
 
 ```satz
 google_project_iam_member {
-  "group:gcp-auditors@{customer_domain}" = [ "roles/viewer" ]
+  "group:gcp-auditors@{customer_domain}" = ["roles/viewer"]
 }
 ```
 
@@ -127,8 +127,8 @@ the scope attribute in the map. Every other key is still a member:
 
 ```satz
 google_storage_bucket_iam_member {
-  bucket = "{customer_shortname}-audit-logs-archive"
-  "group:gcp-auditors@{customer_domain}" = [ "roles/storage.objectViewer" ]
+  bucket                                 = "{customer_shortname}-audit-logs-archive"
+  "group:gcp-auditors@{customer_domain}" = ["roles/storage.objectViewer"]
 }
 ```
 
@@ -154,8 +154,10 @@ be a Terraform reference. For a conditional grant, the role becomes an object:
 google_storage_bucket_iam_member {
   bucket = "audit-logs"
   "group:auditors@{customer_domain}" = [
-    { role = "roles/storage.objectViewer"
-      condition { title = "audit-objects-only" expression = "resource.name.startsWith('objects/audit')" } },
+    {
+      role = "roles/storage.objectViewer"
+      condition { title = "audit-objects-only" expression = "resource.name.startsWith('objects/audit')" }
+    },
   ]
 }
 ```
@@ -166,9 +168,9 @@ not add `google_cloud_identity_group_membership` to a pack.
 ## Packs
 
 ```satz
-use "presets/cis/CIS-GCP-Foundation-4.0.satz"                      // top level
-google_org_policy_policy { use "presets/x.satz" }               // as a map's content
-use "presets/x.satz" as google_org_policy_policy                // same, written flat
+use "presets/cis/CIS-GCP-Foundation-4.0.satz" // top level
+google_org_policy_policy { use "presets/x.satz" } // as a map's content
+use "presets/x.satz" as google_org_policy_policy // same, written flat
 use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
 ```
 
@@ -203,8 +205,8 @@ A pack says which control it discharges and what witnesses it:
 
 ```satz
 claim "cis-gcp" "4.0" "1.4" implements {
-  resources = [ "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation" ]
-  interpretation = "…what this actually enforces…"
+  resources        = ["google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation"]
+  interpretation   = "…what this actually enforces…"
   duty_rotate_keys = "A human must rotate the remaining keys quarterly."
 }
 ```
@@ -225,8 +227,8 @@ params { customer_shortname = "" }
 question customer_shortname {
   prompt   = "Short name identifying this customer"
   why      = "Project ids and bucket names derive from it, and those ids are globally unique."
-  reversal = recreate          // edit | state_surgery | recreate — cost to the ESTATE
-  blast    = none              // none | low | high — cost to the RUNNING organisation
+  reversal = recreate // edit | state_surgery | recreate — cost to the ESTATE
+  blast    = none     // none | low | high — cost to the RUNNING organisation
 }
 ```
 
