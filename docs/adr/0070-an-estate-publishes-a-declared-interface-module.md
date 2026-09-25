@@ -224,6 +224,52 @@ version that removes or renames an export, or changes its value's shape, gets a
 (ADR 0010), like any other refusal. Handing a new or changed interface to the teams is the
 build pipeline's job, not satz's.
 
+## Amendment — attach points, and checking a team's HCL against them
+
+The *Attach* protocol above had no declaration: nothing told a team which of the estate's
+objects it may attach to, and nothing stopped the estate from writing the membership a team
+attached to — its next apply would remove the team's attachment.
+
+**`export "<name>" = <value> attach ["<resource type>", …] [description "…"]` declares an
+attach point.** The capability is per export, not per interface (discussed with Thomas):
+one team's interface mixes reading `org_id`, attaching to the host VPC and requesting a
+firewall rule, so a read/write qualifier on the interface would say nothing true. Each
+team README shows a capability table: every export is read, an attach point also takes the
+types it names. A *request* column — the list param a central pack takes for the teams'
+contributions — joins the table when a pack declares one; none does yet, so the table
+has no such column.
+
+- **Spelling: a keyword clause after the value, like `description`**, in either order and
+  each once. The roadmap sketched `{ attach = [ … ] }`, a block after the value; the
+  export statement already carries a trailing keyword and a value (`description "…"`),
+  and a block would be a second shape for the same kind of thing on one statement.
+- **The types and their conflicts are data**, `presets/attach-points.yaml`, compiled into
+  satz for the reason the lookup table is. Per type: the argument that names the shared
+  object, and the estate's authoritative form of the membership — an attribute it must not
+  set, the entry its `lifecycle { ignore_changes }` must hold, or a type it must not
+  declare on the same node. Seeded with the shared-VPC service project, the perimeter
+  resource, the NCC spoke and `*_iam_member`. A type the table has no row for is refused.
+- **The perimeter needs both halves.** Not setting `status.resources` is not enough: the
+  provider treats an unset list as empty and removes every attached project, so the
+  perimeter must also ignore `status[0].resources`. The compile demands the
+  `lifecycle` line rather than writing it, because the emitter adds nothing an estate did
+  not declare except the documented derivations.
+- **`satz check-consumer <dir> [<estate>]`** reads the team's `.tf` files with
+  `crates/satz-hcl` and holds them to the compiled estate, offline: an attachment off an
+  attach point, an authoritative grant or an org policy on a node the estate manages, a
+  resource the estate declares too (by the lookup table's keys). A value reads the estate
+  when it is `module.<m>.<output>` of a module sourced from `interfaces/<interface>`, or a
+  literal equal to a value the estate publishes or writes; anything else is the team's own,
+  and the check says nothing about it. Without an estate argument it takes the one estate
+  in `yaml_dir`, and refuses naming them when there are several.
+- **It is an MCP tool, `satz_check_consumer`, read-only.** It reads files under the
+  server's root and compiles in memory, like `satz_transpile_check`; an agent writing a
+  team's HCL is the reader most likely to attach where it should not.
+
+**The design rule for central packs** — stub or central-only, decided per resource and by
+security as much as by the provider — is in `presets/README.md` ("A pack that publishes an
+interface").
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

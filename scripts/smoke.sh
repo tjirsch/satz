@@ -190,8 +190,9 @@ grep -q '^| `audit_bucket_name` | audit |' $si/archive-team/README.md || fail "t
 [ "$(grep -c 'output "audit__audit_bucket_name"' tmp/showcase-hcl/outputs.tf)" = 1 ] || fail "a used interface's export is not one root output:\n$(cat tmp/showcase-hcl/outputs.tf)"
 grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/*.tf && fail "an interface module reaches outside itself:\n$(cat $si/*/*.tf)"
 for m in core audit archive-team; do
-  [ "$(grep -c '^| `' $si/$m/README.md)" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
+  [ "$(sed -n '/^## Exports/,/^## Capabilities/p' $si/$m/README.md | grep -c '^| `')" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
 done
+grep -q '^| `archive_project_id` | yes | `google_project_iam_member` |' $si/archive-team/README.md || fail "the README's capability table does not show the attach point:\n$(cat $si/archive-team/README.md)"
 if command -v tofu >/dev/null 2>&1; then
   # moved away from the estate, a team's module still initialises and validates on its own
   rm -rf tmp/relocated && mkdir -p tmp/relocated/elsewhere && cp -R "$si/archive-team" tmp/relocated/elsewhere/satz-interface
@@ -212,6 +213,14 @@ PY
   || fail "the showcase without exports does not compile:\n$(cat tmp/no-exports.err)"
 [ -e tmp/showcase-hcl/outputs.tf ] && fail "outputs.tf survived a transpile of an estate that exports nothing"
 [ -e "$si" ] && fail "hcl/interfaces/ survived a transpile of an estate that exports nothing"
+
+step "check-consumer: a team's attachment at an attach point passes, one elsewhere is refused at its line"
+"$satz" --config . check-consumer consumer yaml/showcase.satz > tmp/consumer.txt 2>&1 && fail "check-consumer passed an attachment onto an export that takes none:\n$(cat tmp/consumer.txt)"
+grep -q 'consumer/main.tf:16' tmp/consumer.txt || fail "the refusal does not name the team's file and line:\n$(cat tmp/consumer.txt)"
+grep -q 'no attach point for `google_folder_iam_member`' tmp/consumer.txt || fail "the refusal does not say why:\n$(cat tmp/consumer.txt)"
+grep -q 'archive_readers' tmp/consumer.txt && fail "the attachment at an attach point was refused:\n$(cat tmp/consumer.txt)"
+mkdir -p tmp/consumer-ok && sed '/^# refused/,$d' consumer/main.tf > tmp/consumer-ok/main.tf
+"$satz" --config . check-consumer tmp/consumer-ok yaml/showcase.satz > tmp/consumer-ok.txt 2>&1 || fail "check-consumer refused a team that attaches only at attach points:\n$(cat tmp/consumer-ok.txt)"
 
 step "interface notice: bucket, topic, grant, notification, and the object that holds the interface"
 cp yaml/smoke.satz tmp/notice.satz
@@ -1524,6 +1533,7 @@ step "satz mcp: a real handshake, a real tool call, and the capability gate"
   printf '%s\n' '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"satz_update_prerequisites","arguments":{"estate":"smoke.satz","report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"showcase.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"satz_transpile_check","arguments":{"estate":"tmp/refuse.satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"satz_check_consumer","arguments":{"estate":"showcase.satz","dir":"consumer"}}}'
 } > tmp/mcp-in.jsonl
 # Satz text carries newlines and quotes, which do not survive a shell-quoted JSON
 # line: python writes this one.
@@ -1574,7 +1584,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
                       "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack", "satz_fmt",
-                      "satz_packs", "satz_add_pack", "satz_remove_pack"}, sorted(tools)
+                      "satz_packs", "satz_add_pack", "satz_remove_pack", "satz_check_consumer"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -1599,13 +1609,18 @@ for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", 
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
              "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets",
-             "satz_packs", "satz_add_pack", "satz_remove_pack"):
+             "satz_packs", "satz_add_pack", "satz_remove_pack", "satz_check_consumer"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
 assert tools["satz_require"]["annotations"]["readOnlyHint"] is True
 assert tools["satz_transpile"]["annotations"]["readOnlyHint"] is False
 assert tools["satz_packs"]["annotations"]["readOnlyHint"] is True
+assert tools["satz_check_consumer"]["annotations"]["readOnlyHint"] is True
+# satz_check_consumer: the team's one attachment off an attach point, at its line
+consumer = msgs[19]["result"]["structuredContent"]
+assert consumer["resources"] == 2, consumer
+assert [(f["kind"], f["file"].endswith("consumer/main.tf"), f["line"]) for f in consumer["findings"]] == [("consumer", True, 16)], consumer
 assert tools["satz_add_pack"]["annotations"]["readOnlyHint"] is False
 
 # the role gap an agent asks about: the smoke estate grants what it emits, and the

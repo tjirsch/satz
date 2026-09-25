@@ -1907,7 +1907,7 @@ interface "audit" {
 
 interface "archive-team" {
   use interface "audit"
-  export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The team's project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
 ```
@@ -1948,6 +1948,18 @@ interface "archive-team" {
   not a `type.label.attribute` of a `google_*` resource is refused.
 - **`description "…"`** follows the value on the same statement and becomes the
   output's `description` and the README's.
+- **`attach ["<resource type>", …]`** follows the value too, before or after the
+  description, and makes the export an attach point: the attachment resource types a team
+  may create in its own state against the exported object — a
+  `google_compute_shared_vpc_service_project` on a host project, a
+  `google_access_context_manager_service_perimeter_resource` on a perimeter, a
+  `google_<node>_iam_member` on a node. A type `presets/attach-points.yaml` has no row for
+  is refused, listing the rows. The compile refuses the estate's own authoritative form of
+  a membership a team attaches to: a perimeter whose `status.resources` the estate sets or
+  whose `lifecycle` does not ignore `status[0].resources`, and a `google_<node>_iam_policy`
+  or `google_<node>_iam_binding` on the node a member grant attaches to. The README's
+  capability table lists each export with what it takes, and `satz check-consumer` holds a
+  team's HCL to it ([workflows](workflows.md#writing-to-shared-infrastructure)).
 
 **Known now, or looked up.** Per reference, the compile decides what the value is:
 

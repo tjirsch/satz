@@ -52,6 +52,54 @@ pub(crate) fn lookups() -> BTreeMap<String, LookupRow> {
     serde_yaml::from_str(include_str!("../presets/interface-lookups.yaml")).expect("presets/interface-lookups.yaml parses")
 }
 
+/// One row of `presets/attach-points.yaml`: an attachment type an export may allow.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AttachRow {
+    /// the attachment's argument that names the shared object; `None` for `*_iam_member`,
+    /// whose node is every argument but the grant's own
+    #[serde(default)]
+    pub target: Option<String>,
+    pub central: Vec<Central>,
+}
+
+/// What in the estate conflicts with an attachment on the exported object.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Central {
+    /// `*` stands for the member type's prefix
+    #[serde(rename = "type")]
+    pub tf_type: String,
+    #[serde(default)]
+    pub sets: Option<String>,
+    #[serde(default)]
+    pub ignore: Option<String>,
+    #[serde(default)]
+    pub same_node: bool,
+}
+
+/// The attach-point table, compiled in for the reason the lookup table is.
+pub(crate) fn attach_points() -> BTreeMap<String, AttachRow> {
+    serde_yaml::from_str(include_str!("../presets/attach-points.yaml")).expect("presets/attach-points.yaml parses")
+}
+
+/// The member-grant row's key, and the suffix every member-grant type ends in.
+const MEMBER: &str = "*_iam_member";
+const MEMBER_SUFFIX: &str = "_iam_member";
+
+/// The row an attachment type falls under, with the prefix `*` stands for (a member
+/// grant's `google_project` in `google_project_iam_member`; empty for an exact row).
+pub(crate) fn attach_row<'t>(table: &'t BTreeMap<String, AttachRow>, tf_type: &str) -> Option<(&'t AttachRow, String)> {
+    if let Some(r) = table.get(tf_type) {
+        return Some((r, String::new()));
+    }
+    let prefix = tf_type.strip_suffix(MEMBER_SUFFIX).filter(|p| !p.is_empty())?;
+    table.get(MEMBER).map(|r| (r, prefix.to_string()))
+}
+
+/// The arguments of a grant that are the grant itself; every other one names the node.
+pub(crate) const GRANT_ARGS: &[&str] = &["role", "member", "members", "condition", "policy_data", "etag", "provider", "depends_on", "lifecycle", "count", "for_each"];
+
 /// One piece of an output value: text known now, or an HCL expression the plan evaluates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Part {
@@ -99,6 +147,10 @@ pub(crate) struct Output {
     /// the value in the root module
     pub root_value: String,
     pub how: How,
+    /// the attachment types a team may create against it
+    pub attach: Vec<String>,
+    /// the emitted resources its value reads, by address
+    pub targets: Vec<String>,
 }
 
 /// The interface of one estate.
@@ -138,6 +190,7 @@ pub(crate) fn build(
     google_version: Option<&str>,
 ) -> Result<Interface, Vec<Refusal>> {
     let table = lookups();
+    let attach_table = attach_points();
     let mut r = Resolver { manifest, table: &table, data: BTreeMap::new(), visiting: Vec::new() };
     let mut outputs = Vec::new();
     let mut refusals = Vec::new();
@@ -153,6 +206,10 @@ pub(crate) fn build(
                     }
                     How::Lookup(all.into_iter().collect())
                 };
+                let targets = addresses_in(&x.value);
+                for msg in attach_refusals(&x.attach, &targets, manifest, &attach_table) {
+                    refusals.push(Refusal { interface: x.interface.clone(), name: x.name.clone(), file: x.file.clone(), line: x.line, msg });
+                }
                 outputs.push(Output {
                     interface: x.interface.clone(),
                     name: x.name.clone(),
@@ -160,6 +217,8 @@ pub(crate) fn build(
                     module_value,
                     root_value,
                     how,
+                    attach: x.attach.clone(),
+                    targets,
                 });
             }
             Err(msg) => refusals.push(Refusal { interface: x.interface.clone(), name: x.name.clone(), file: x.file.clone(), line: x.line, msg }),
@@ -430,6 +489,101 @@ impl Resolver<'_> {
     }
 }
 
+/// The emitted resources an export's value reads: every `${type.label.…}` in it.
+fn addresses_in(v: &serde_yaml::Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |s: &str| {
+        let mut rest = s;
+        while let Some(i) = rest.find("${") {
+            let after = &rest[i + 2..];
+            let end = after.find('}').unwrap_or(after.len());
+            let parts: Vec<&str> = after[..end].trim().split('.').collect();
+            if let [t, l, ..] = parts.as_slice() {
+                let a = format!("{}.{}", t, l);
+                if !out.contains(&a) {
+                    out.push(a);
+                }
+            }
+            rest = &after[end..];
+        }
+    };
+    match v {
+        serde_yaml::Value::String(s) => add(s),
+        serde_yaml::Value::Sequence(items) => items.iter().filter_map(|i| i.as_str()).for_each(&mut add),
+        _ => {}
+    }
+    out
+}
+
+/// What an export's attach points refuse: an attachment type the table does not know,
+/// and — per resource the export reads — a membership the estate writes itself, a
+/// `lifecycle` that does not leave the attached members alone, or an authoritative
+/// resource on the same node.
+fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, table: &BTreeMap<String, AttachRow>) -> Vec<String> {
+    let mut out = Vec::new();
+    for t in attach {
+        let Some((row, prefix)) = attach_row(table, t) else {
+            out.push(format!(
+                "attach \"{}\": no attachment type satz knows — presets/attach-points.yaml names {}",
+                t,
+                table.keys().cloned().collect::<Vec<_>>().join(", ")
+            ));
+            continue;
+        };
+        for address in targets {
+            let Some(r) = manifest.resources.get(address) else { continue };
+            for c in &row.central {
+                let central_type = c.tf_type.replace('*', &prefix);
+                if c.same_node {
+                    for other in manifest.of_type(&central_type) {
+                        if on_node(other, r) {
+                            out.push(format!(
+                                "attach \"{}\": `{}` lets a team add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a team adds. Grant with `{}` in the estate instead",
+                                t,
+                                t,
+                                address,
+                                other.address(),
+                                t
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                if central_type != r.tf_type {
+                    continue;
+                }
+                if let Some(key) = &c.sets {
+                    if r.set.contains_key(key) {
+                        out.push(format!(
+                            "attach \"{}\": teams attach to `{}` in their own state, and the estate sets its `{}` — the list the attachments add to. Remove `{}` from `{}`",
+                            t, address, key, key, address
+                        ));
+                    }
+                }
+                if let Some(ignore) = &c.ignore {
+                    let held = r.set.get("lifecycle.ignore_changes").is_some_and(|l| l.replace(' ', "").contains(ignore.as_str()));
+                    if !held {
+                        out.push(format!(
+                            "attach \"{}\": teams attach to `{}` in their own state, and its `lifecycle` does not ignore `{}` — the estate's next apply would remove what they attached. Write `lifecycle {{ ignore_changes = [{}] }}` on `{}`",
+                            t, address, ignore, ignore, address
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether a grant `g` stands on the node `r`: an argument of the grant's node reads `r`,
+/// or carries a value `r` writes.
+fn on_node(g: &EmittedResource, r: &EmittedResource) -> bool {
+    let prefix = format!("{}.", r.address());
+    let node = |k: &String| !GRANT_ARGS.contains(&k.as_str());
+    g.refs.iter().filter(|(k, _)| node(k)).any(|(_, v)| v.starts_with(&prefix))
+        || g.attrs.iter().filter(|(k, v)| node(k) && !v.is_empty()).any(|(_, v)| r.attrs.values().any(|w| w == v))
+}
+
 /// Adjacent literal parts as one.
 fn merge_lits(parts: Vec<Part>) -> Vec<Part> {
     let mut out: Vec<Part> = Vec::new();
@@ -549,6 +703,13 @@ impl Output {
         }
     }
 
+    /// The text of a static string output, as a team's HCL would write it literally.
+    pub fn static_text(&self) -> Option<String> {
+        let How::Static(v) = &self.how else { return None };
+        let inner = v.strip_prefix('"')?.strip_suffix('"')?;
+        (!inner.contains('\\') && !inner.contains('"')).then(|| inner.to_string())
+    }
+
     /// Where the root module's local holds it.
     fn local_path(&self) -> String {
         match &self.interface {
@@ -577,7 +738,7 @@ impl Interface {
 
     /// The outputs of one module: the core exports, then the interface's own, then those
     /// of every interface it uses.
-    fn outputs_of(&self, module: &str) -> Vec<&Output> {
+    pub fn module_outputs(&self, module: &str) -> Vec<&Output> {
         let mut out: Vec<&Output> = self.outputs.iter().filter(|o| o.interface.is_none()).collect();
         for i in self.carried(module) {
             out.extend(self.outputs.iter().filter(|o| o.interface.as_deref() == Some(i)));
@@ -634,7 +795,7 @@ impl Interface {
     /// The data blocks one module's outputs read, by address.
     fn data_of(&self, module: &str) -> Vec<&DataBlock> {
         let mut used: BTreeSet<&String> = BTreeSet::new();
-        for o in self.outputs_of(module) {
+        for o in self.module_outputs(module) {
             if let How::Lookup(addrs) = &o.how {
                 used.extend(addrs);
             }
@@ -663,7 +824,7 @@ impl Interface {
     /// A module's `outputs.tf`.
     fn module_outputs_tf(&self, module: &str) -> String {
         let mut out = String::new();
-        for o in self.outputs_of(module) {
+        for o in self.module_outputs(module) {
             if !out.is_empty() {
                 out.push('\n');
             }
@@ -688,7 +849,7 @@ impl Interface {
 
     /// `hcl/interfaces/<module>/README.md`, which travels with the module.
     pub fn readme(&self, module: &str, version: &str, estate_path: &str, notice: Option<&Notice>) -> String {
-        let outputs = self.outputs_of(module);
+        let outputs = self.module_outputs(module);
         let mut s = String::new();
         s.push_str(&format!("# The `{}` interface of estate `{}`\n\n", module, self.estate));
         s.push_str(&format!(
@@ -760,8 +921,26 @@ impl Interface {
                 how
             ));
         }
-        s.push_str("\n## Attach points\n\n");
-        s.push_str("None are declared. A write to shared infrastructure goes into this estate as a contribution.\n\n");
+        s.push_str("\n## Capabilities\n\n");
+        if outputs.iter().all(|o| o.attach.is_empty()) {
+            s.push_str("Every value here is read. None is an attach point: a write to shared infrastructure goes into\n");
+            s.push_str("this estate as a contribution, through the estate's own change management.\n\n");
+        } else {
+            s.push_str("Every value is read. An attach point also takes the attachment resources named beside it, in your\n");
+            s.push_str("own state: they add your object to the shared one, and the estate leaves what you add alone.\n");
+            s.push_str("Any other write to shared infrastructure goes into this estate as a contribution. `satz\n");
+            s.push_str("check-consumer <your directory>` checks your HCL against this table.\n\n");
+            s.push_str("| Output | Read | Attach |\n|---|---|---|\n");
+            for o in &outputs {
+                let attach = if o.attach.is_empty() {
+                    "—".to_string()
+                } else {
+                    o.attach.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(", ")
+                };
+                s.push_str(&format!("| `{}` | yes | {} |\n", o.name, attach));
+            }
+            s.push('\n');
+        }
         s.push_str("## Change notice\n\n");
         match notice {
             Some(n) => {
@@ -842,7 +1021,7 @@ resource "google_cloud_identity_group" "g" {
 "#;
 
     fn export(name: &str, value: &str) -> ResolvedExport {
-        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, file: "e.satz".into(), line: 3 }
+        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, attach: Vec::new(), file: "e.satz".into(), line: 3 }
     }
 
     fn build_one(value: &str) -> Result<Interface, Vec<Refusal>> {
@@ -962,6 +1141,70 @@ resource "google_cloud_identity_group" "g" {
         let root = i.root_outputs_tf();
         assert_eq!(root.matches("output \"network__vpc\"").count(), 1, "{}", root);
         assert!(!root.contains("team_a__vpc"), "{}", root);
+    }
+
+    /// An attach point names a type the table knows, and the estate may not write the
+    /// membership it opens: a perimeter's `status.resources`, a perimeter whose lifecycle
+    /// does not ignore them, an authoritative grant on the node a member grant attaches to.
+    #[test]
+    fn an_attach_point_refuses_the_estate_s_own_authoritative_membership() {
+        const TF: &str = r#"
+resource "google_project" "team" {
+  project_id = "corp-team-001"
+}
+resource "google_access_context_manager_service_perimeter" "open" {
+  name   = "accessPolicies/1/servicePerimeters/open"
+  title  = "open"
+  parent = "accessPolicies/1"
+  lifecycle {
+    ignore_changes = [status[0].resources]
+  }
+}
+resource "google_access_context_manager_service_perimeter" "closed" {
+  name   = "accessPolicies/1/servicePerimeters/closed"
+  title  = "closed"
+  parent = "accessPolicies/1"
+  status {
+    resources = ["projects/1"]
+  }
+}
+resource "google_project_iam_binding" "team_viewers" {
+  project = google_project.team.project_id
+  role    = "roles/viewer"
+  members = []
+}
+"#;
+        let with = |value: &str, attach: &[&str]| ResolvedExport { attach: attach.iter().map(|a| a.to_string()).collect(), ..export("x", value) };
+        let run = |x: ResolvedExport| build("e", &[x], &[], &Manifest::parse(TF), "hashicorp/google", None);
+        let perimeter = "google_access_context_manager_service_perimeter_resource";
+        let i = run(with("${google_access_context_manager_service_perimeter.open.name}", &[perimeter])).unwrap();
+        assert_eq!(i.outputs[0].attach, [perimeter]);
+        assert_eq!(i.outputs[0].targets, ["google_access_context_manager_service_perimeter.open"]);
+        let readme = i.readme(CORE, "0.0.0", "satz/e.satz", None);
+        assert!(readme.contains(&format!("| `x` | yes | `{}` |", perimeter)), "{}", readme);
+
+        let e = run(with("${google_access_context_manager_service_perimeter.closed.name}", &[perimeter])).unwrap_err();
+        let msgs: Vec<&str> = e.iter().map(|r| r.msg.as_str()).collect();
+        assert!(msgs.iter().any(|m| m.contains("the estate sets its `status.resources`")), "{:?}", msgs);
+        assert!(msgs.iter().any(|m| m.contains("ignore_changes = [status[0].resources]")), "{:?}", msgs);
+
+        let e = run(with("${google_project.team.project_id}", &["google_project_iam_member"])).unwrap_err();
+        assert!(e[0].msg.contains("`google_project_iam_binding.team_viewers`"), "{}", e[0].msg);
+        assert!(run(with("${google_project.team.project_id}", &["google_folder_iam_member"])).is_ok(), "another node's grant type is no conflict");
+
+        let e = run(with("${google_project.team.project_id}", &["google_compute_instance"])).unwrap_err();
+        assert!(e[0].msg.contains("no attachment type satz knows") && e[0].msg.contains("*_iam_member"), "{}", e[0].msg);
+        assert!(run(with("${google_project.team.project_id}", &["google_compute_shared_vpc_service_project"])).is_ok());
+    }
+
+    #[test]
+    fn every_attach_row_is_an_attachment_with_a_target() {
+        for (t, row) in attach_points() {
+            assert!(t == MEMBER || row.target.is_some(), "{}: an attachment names what it joins", t);
+            for c in &row.central {
+                assert!(c.same_node || c.sets.is_some() || c.ignore.is_some(), "{}: `{}` says nothing", t, c.tf_type);
+            }
+        }
     }
 
     /// `hcl/interfaces/` is satz's: a transpile writes one folder per interface, removes

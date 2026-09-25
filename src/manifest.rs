@@ -64,6 +64,12 @@ pub(crate) struct EmittedResource {
     /// the `label {` line). `None` for resources derived from another block
     /// (memberships, exploded grants, project services).
     pub origin: Option<(String, u32)>,
+    /// Every attribute the block writes, top-level and one nested block down
+    /// (`status.resources`, `lifecycle.ignore_changes`), with its value as HCL text; the
+    /// first occurrence of a repeated key wins. What the interface's attach points are
+    /// judged against: a membership the estate writes itself, and the changes its
+    /// `lifecycle` leaves alone.
+    pub set: BTreeMap<String, String>,
 }
 
 impl EmittedResource {
@@ -223,10 +229,13 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
             }
         }
     }
+    let text = |e: &hcl::Expression| hcl::format::to_string(e).map(|t| t.trim().to_string()).unwrap_or_default();
+    let mut set: BTreeMap<String, String> = b.body().attributes().map(|a| (a.key().to_string(), text(a.expr()))).collect();
     let mut nested = BTreeMap::new();
     let mut nested_all: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for nb in b.body().blocks() {
         for a in nb.body().attributes() {
+            set.entry(format!("{}.{}", nb.identifier(), a.key())).or_insert_with(|| text(a.expr()));
             if let Some(v) = string_value(a.expr()) {
                 let key = format!("{}.{}", nb.identifier(), a.key());
                 nested_all.entry(key.clone()).or_default().push(v.clone());
@@ -268,6 +277,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         condition_expressions,
         import_id: None,
         origin: None,
+        set,
     })
 }
 

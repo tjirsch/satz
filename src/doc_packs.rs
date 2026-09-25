@@ -930,7 +930,15 @@ fn render(
                 interface,
                 x.name,
                 value_text(&x.value).replace('|', "\\|"),
-                x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;"),
+                {
+                    let d = x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;");
+                    let attach = x.attach.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(", ");
+                    match (d.is_empty(), attach.is_empty()) {
+                        (_, true) => d,
+                        (true, false) => format!("attach point for {}", attach),
+                        (false, false) => format!("{} — attach point for {}", d, attach),
+                    }
+                },
             ));
         }
         md.push('\n');
@@ -1319,6 +1327,9 @@ mod tests {
         let md = render(rel, &file, &h, None, &Catalogs::new(), &[], &Library::new()).unwrap();
         assert!(md.contains("- The module of `team-a` also carries the exports of `network` when `want_net` is true."), "{}", md);
         assert!(md.contains("| `network` | `vpc` |"), "{}", md);
+        let with_attach = src.replace("export \"vpc\" = \"v\"", "export \"vpc\" = \"v\" attach [\"google_compute_shared_vpc_service_project\"]");
+        let md = render(rel, &satz::parse(&with_attach).unwrap(), &h, None, &Catalogs::new(), &[], &Library::new()).unwrap();
+        assert!(md.contains("| attach point for `google_compute_shared_vpc_service_project` |"), "{}", md);
         assert!(!md.contains("use \"network\"") && md.matches("use interface").count() == 0, "{}", md);
     }
 

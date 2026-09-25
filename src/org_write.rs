@@ -82,6 +82,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::PackGraph { .. }
         | Commands::ReviewPack { .. }
         | Commands::Packs { .. }
+        | Commands::CheckConsumer { .. }
         | Commands::Questions { .. }
         | Commands::Require { .. }
         | Commands::Triage { .. }

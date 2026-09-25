@@ -1648,6 +1648,35 @@ breaking change: the version's row under [`## Changelog`](#changelog) names the 
 entry under [`## Breaking changes`](#breaking-changes) says what a team edits, and the
 release that ships it is a minor one. A new export breaks no one.
 
+**Each central resource a pack declares is a stub or central-only, and the choice is
+security's as much as the provider's.** It decides how a team changes it:
+
+- **Stub:** the pack declares the shared resource and exports it as an attach point
+  (`export … attach [ … ]`); it never writes the membership list itself, and teams add
+  their own members in their own state. The shared-VPC host (teams attach service
+  projects), a Network Connectivity Center hub (teams attach spokes), a perimeter with
+  per-member resources (teams attach projects; the pack writes `lifecycle {
+  ignore_changes = [status[0].resources] }` on it).
+- **Central-only:** the pack keeps the resource whole and takes the teams' entries as a
+  list param, which a team's contribution fills (`contributes_<param>`, ADR 0051); the
+  change is a pull request on the estate, reviewed like a rule change in a global firewall
+  or a route in a network hub. Global firewall policy rules (the provider could attach
+  them one by one as `google_compute_firewall_policy_rule`, and security keeps them
+  central), hub routes, DNS forwarding.
+
+A team README shows every export as read, and an attach point with the types it takes.
+
+## attach-points.yaml
+
+Not a pack: the attachment resource types an `export … attach [ … ]` may name, and what
+each one conflicts with in the estate — per type the argument that names the shared
+object, and the estate's authoritative form of the membership: an attribute the estate
+must not set (a perimeter's `status.resources`), the entry its `lifecycle { ignore_changes
+}` must hold, or a resource type the estate must not declare on the same node
+(`google_<node>_iam_policy` and `_iam_binding` beside `*_iam_member`). The table is
+compiled into satz; `satz check-consumer` reads the same rows to find a team's
+attachments ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
+
 ## interface-lookups.yaml
 
 Not a pack: how the interface modules under `hcl/interfaces/` read back what an estate emits,

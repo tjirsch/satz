@@ -365,6 +365,10 @@ pub struct ExportDecl {
     pub value: Value,
     /// Carried into the output's `description` and the interface README.
     pub description: Option<String>,
+    /// `attach ["<resource type>", …]`: the attachment resource types a team may create
+    /// in its own state against the exported object — an attach point. Empty: the export
+    /// is read, nothing more.
+    pub attach: Vec<String>,
     pub line: usize,
 }
 
@@ -1548,17 +1552,63 @@ impl P {
         if let Value::Obj(_) = value {
             return err(line, format!("export \"{}\": the value is a string, a number, a bool, a param or a list — an object is no output value here", name));
         }
-        let description = match self.peek() {
-            Some(Tok::Ident(d)) if d == "description" => {
-                self.next();
-                match self.next() {
-                    Some(Tok::Str(parts)) => Some(lit_str(&parts, line, "export … description")?),
-                    other => return err(line, format!("export \"{}\" description: expected a quoted text, found {:?}", name, other)),
+        // `attach [ … ]` and `description "…"` follow the value, each once, in either order.
+        let mut description = None;
+        let mut attach: Option<Vec<String>> = None;
+        loop {
+            match self.peek() {
+                Some(Tok::Ident(d)) if d == "description" => {
+                    self.next();
+                    if description.is_some() {
+                        return err(line, format!("export \"{}\": `description` is given twice", name));
+                    }
+                    match self.next() {
+                        Some(Tok::Str(parts)) => description = Some(lit_str(&parts, line, "export … description")?),
+                        other => return err(line, format!("export \"{}\" description: expected a quoted text, found {:?}", name, other)),
+                    }
                 }
+                Some(Tok::Ident(d)) if d == "attach" => {
+                    self.next();
+                    if attach.is_some() {
+                        return err(line, format!("export \"{}\": `attach` is given twice", name));
+                    }
+                    attach = Some(self.attach_list(&name, line)?);
+                }
+                _ => break,
             }
-            _ => None,
-        };
-        Ok(ExportDecl { name, value, description, line })
+        }
+        Ok(ExportDecl { name, value, description, attach: attach.unwrap_or_default(), line })
+    }
+
+    /// `["<resource type>", …]` after `attach`: at least one, each a provider resource type
+    /// and named once.
+    fn attach_list(&mut self, export: &str, line: usize) -> Result<Vec<String>, SatzError> {
+        if self.next() != Some(Tok::LBrack) {
+            return err(line, format!("export \"{}\" attach: expected a list of resource types, `attach [\"google_…\"]`", export));
+        }
+        let mut types: Vec<String> = Vec::new();
+        loop {
+            match self.next() {
+                Some(Tok::RBrack) => break,
+                Some(Tok::Comma) => {}
+                Some(Tok::Str(parts)) => {
+                    let t = lit_str(&parts, line, "export … attach")?;
+                    let ident = t.len() > "google_".len() && t.starts_with("google_") && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                    if !ident {
+                        return err(line, format!("export \"{}\" attach: \"{}\" is no provider resource type — `google_…`", export, t));
+                    }
+                    if types.contains(&t) {
+                        return err(line, format!("export \"{}\" attach: \"{}\" is named twice", export, t));
+                    }
+                    types.push(t);
+                }
+                other => return err(line, format!("export \"{}\" attach: expected a quoted resource type, found {:?}", export, other)),
+            }
+        }
+        if types.is_empty() {
+            return err(line, format!("export \"{}\" attach []: names no resource type — leave `attach` out for an export a team only reads", export));
+        }
+        Ok(types)
     }
 
     fn interface_stmt(&mut self, line: usize) -> Result<InterfaceDecl, SatzError> {
@@ -2359,7 +2409,14 @@ pub fn canonical_parts(file: &File) -> Canonical {
     }
     exports.sort_by(|a, b| (a.0, &a.1.name).cmp(&(b.0, &b.1.name)));
     for (i, x) in exports {
-        body.push_str(&format!("export({}|{}|{}|{})\n", i, x.name, canon_value(&x.value), x.description.as_deref().unwrap_or("")));
+        body.push_str(&format!(
+            "export({}|{}|{}|{}|[{}])\n",
+            i,
+            x.name,
+            canon_value(&x.value),
+            x.description.as_deref().unwrap_or(""),
+            x.attach.join(",")
+        ));
     }
     // What a team's module carries changes with the interfaces it uses.
     let mut uses: Vec<String> = file
@@ -2795,6 +2852,28 @@ action "scc-services" {
         assert!(e.msg.contains("'=' after the export name"), "{}", e.msg);
     }
 
+    /// `attach [ … ]` names the attachment types a team may create against the export; it
+    /// and `description` follow the value in either order, each once.
+    #[test]
+    fn an_export_declares_its_attach_points() {
+        let f = parse("estate e\nexport \"vpc\" = \"v\" attach [\"google_compute_shared_vpc_service_project\", \"google_project_iam_member\"] description \"d\"\nexport \"b\" = \"x\" description \"d\" attach [\"google_project_iam_member\"]\n").unwrap();
+        assert_eq!(f.exports[0].attach, ["google_compute_shared_vpc_service_project", "google_project_iam_member"]);
+        assert_eq!(f.exports[0].description.as_deref(), Some("d"));
+        assert_eq!((f.exports[1].attach.len(), f.exports[1].description.as_deref()), (1, Some("d")));
+        assert!(canonical(&f).contains("export(core|vpc|\"v\"|d|[google_compute_shared_vpc_service_project,google_project_iam_member])"), "{}", canonical(&f));
+        for (bad, says) in [
+            ("attach []", "names no resource type"),
+            ("attach [\"aws_x\"]", "no provider resource type"),
+            ("attach [\"google_a\", \"google_a\"]", "named twice"),
+            ("attach \"google_a\"", "expected a list"),
+            ("attach [\"google_a\"] attach [\"google_b\"]", "`attach` is given twice"),
+            ("description \"a\" description \"b\"", "`description` is given twice"),
+        ] {
+            let e = parse(&format!("estate e\nexport \"x\" = \"1\" {}\n", bad)).unwrap_err();
+            assert!(e.msg.contains(says), "{}: {}", bad, e.msg);
+        }
+    }
+
     #[test]
     fn an_interface_holds_exports_and_is_named_like_a_folder() {
         let f = parse("estate e\ninterface \"team-a\" {\n  export \"folder\" = \"x\" description \"d\"\n  export \"n\" = 1\n}\n").unwrap();
@@ -2818,7 +2897,7 @@ action "scc-services" {
         let e = parse("estate e\nexport \"a__b\" = 1\n").unwrap_err();
         assert!(e.msg.contains("output name"), "{}", e.msg);
         let c = canonical(&f);
-        assert!(c.contains("export(team-a|folder|\"x\"|d)"), "{}", c);
+        assert!(c.contains("export(team-a|folder|\"x\"|d|[])"), "{}", c);
     }
 
     /// `use interface` takes a name or a list of names and an optional `when`; it is no
@@ -2855,7 +2934,7 @@ action "scc-services" {
         let a = canonical(&parse("estate e\nexport \"b\" = \"2\"\nexport \"a\" = \"1\" description \"d\"\n").unwrap());
         let b = canonical(&parse("estate e\n\nexport \"a\" = \"1\" description \"d\"\nexport \"b\" = \"2\"\n").unwrap());
         assert_eq!(a, b, "the order of the statements means nothing");
-        assert!(a.contains("export(core|a|\"1\"|d)"), "{}", a);
+        assert!(a.contains("export(core|a|\"1\"|d|[])"), "{}", a);
         let c = canonical(&parse("estate e\nexport \"a\" = \"1\"\nexport \"b\" = \"2\"\n").unwrap());
         assert_ne!(a, c, "a description is meaning: it reaches the output");
     }
