@@ -81,6 +81,9 @@ kinds! {
     Providers => "providers",
     Action => "action",
     HclPassthrough => "hcl-passthrough",
+    /// an `export` satz cannot publish: a reference to nothing the estate emits, a value
+    /// only the cloud knows of a type satz has no lookup for
+    Export => "export",
     /// `review-pack`: a rule the preset library holds, judged on one pack
     Pack => "pack",
     /// `review-pack`: a token in the pack shaped like private data — an id, a domain, an

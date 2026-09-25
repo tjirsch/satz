@@ -1,0 +1,202 @@
+  account_id = "svc-iac-001"
+  billing_account = "012345-6789AB-CDEF01"
+  display_name = "Infrastructure"
+  display_name = "Primary IaC Provisioner"
+  display_name = "Team"
+  folder_id = google_folder.infra_folder.name
+  name = "acme-infra-001"
+  parent = "organizations/123456789012"
+  parent = google_folder.infra_folder.name
+  project = google_project.infra.project_id
+  project_id = "acme-infra-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_infra
+resource "google_folder" "infra_folder" {
+resource "google_folder" "team" {
+resource "google_project" "infra" {
+resource "google_service_account" "provisioner" {
+}
+}
+}
+}
+---tfvars---
+  "cis-gcp-5.0"
+]
+billing-account-infra = "012345-6789AB-CDEF01"
+compliance-frameworks = [
+customer-domain = "example.com"
+customer-id = "C0example"
+customer-longname = "Acme Corp."
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+default-region = "europe-west3"
+default-zone = "europe-west3-a"
+deployment-engine = "tofu"
+deployment-mode = "local"
+first-admin = "admin"
+infra-bucket-name = "acme-infra-001-state"
+infra-folder-name = "Infrastructure"
+infra-project-name = "acme-infra-001"
+svc-iac-account = "svc-iac-001"
+svc-iac-users-group = "svc-iac-users"
+---imports---
+
+---outputs.tf---
+locals {
+  satz_interface = {
+    interface = 1
+    estate    = "corpus_interface"
+    values = {
+      infra_folder         = google_folder.infra_folder.name
+      team_folder          = google_folder.team.name
+      infra_project_number = google_project.infra.number
+      provisioner_email    = google_service_account.provisioner.email
+      workload_pool_prefix = "principalSet://iam.googleapis.com/projects/${google_project.infra.number}/locations/global"
+      regions              = ["europe-west3", "europe-west4"]
+      organization_id      = "123456789012"
+      customer_domain      = "example.com"
+      customer_shortname   = "acme"
+      default_region       = "europe-west3"
+      infra_project_id     = "acme-infra-001"
+      iac_service_account  = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+    }
+  }
+}
+
+output "infra_folder" {
+  description = "The folder that holds the infrastructure project, folders/<number>"
+  value       = local.satz_interface.values.infra_folder
+}
+
+output "team_folder" {
+  value = local.satz_interface.values.team_folder
+}
+
+output "infra_project_number" {
+  value = local.satz_interface.values.infra_project_number
+}
+
+output "provisioner_email" {
+  value = local.satz_interface.values.provisioner_email
+}
+
+output "workload_pool_prefix" {
+  value = local.satz_interface.values.workload_pool_prefix
+}
+
+output "regions" {
+  value = local.satz_interface.values.regions
+}
+
+output "organization_id" {
+  description = "The organisation id"
+  value       = local.satz_interface.values.organization_id
+}
+
+output "customer_domain" {
+  description = "The customer's primary domain"
+  value       = local.satz_interface.values.customer_domain
+}
+
+output "customer_shortname" {
+  description = "The short name project ids, bucket names and group prefixes derive from"
+  value       = local.satz_interface.values.customer_shortname
+}
+
+output "default_region" {
+  description = "The default region for regional resources"
+  value       = local.satz_interface.values.default_region
+}
+
+output "infra_project_id" {
+  description = "The infrastructure project, which holds the state bucket"
+  value       = local.satz_interface.values.infra_project_id
+}
+
+output "iac_service_account" {
+  description = "The service account the estate is applied as"
+  value       = local.satz_interface.values.iac_service_account
+}
+---interface/versions.tf---
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "7.14.1"
+    }
+  }
+}
+---interface/main.tf---
+# reads back google_folder.infra_folder; needs resourcemanager.folders.list on the parent
+data "google_active_folder" "infra_folder" {
+  display_name = "Infrastructure"
+  parent       = "organizations/123456789012"
+}
+
+# reads back google_folder.team; needs resourcemanager.folders.list on the parent
+data "google_active_folder" "team" {
+  display_name = "Team"
+  parent       = data.google_active_folder.infra_folder.name
+}
+
+# reads back google_project.infra; needs resourcemanager.projects.get
+data "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+---interface/outputs.tf---
+output "infra_folder" {
+  description = "The folder that holds the infrastructure project, folders/<number>"
+  value       = data.google_active_folder.infra_folder.name
+}
+
+output "team_folder" {
+  value = data.google_active_folder.team.name
+}
+
+output "infra_project_number" {
+  value = data.google_project.infra.number
+}
+
+output "provisioner_email" {
+  value = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+}
+
+output "workload_pool_prefix" {
+  value = "principalSet://iam.googleapis.com/projects/${data.google_project.infra.number}/locations/global"
+}
+
+output "regions" {
+  value = ["europe-west3", "europe-west4"]
+}
+
+output "organization_id" {
+  description = "The organisation id"
+  value       = "123456789012"
+}
+
+output "customer_domain" {
+  description = "The customer's primary domain"
+  value       = "example.com"
+}
+
+output "customer_shortname" {
+  description = "The short name project ids, bucket names and group prefixes derive from"
+  value       = "acme"
+}
+
+output "default_region" {
+  description = "The default region for regional resources"
+  value       = "europe-west3"
+}
+
+output "infra_project_id" {
+  description = "The infrastructure project, which holds the state bucket"
+  value       = "acme-infra-001"
+}
+
+output "iac_service_account" {
+  description = "The service account the estate is applied as"
+  value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+}

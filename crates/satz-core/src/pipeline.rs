@@ -242,6 +242,24 @@ pub struct FrontEnd {
     /// contributed each entry. Already merged into `env` and `tfvars`; this is the
     /// record a reader is shown.
     pub contributions: Vec<Contribution>,
+    /// Declared `export`s from the estate and every file it actually `use`s, values
+    /// resolved against the finished parameter namespace, one per name. Like actions,
+    /// they bypass the fold: the emitter turns them into outputs.
+    pub exports: Vec<ResolvedExport>,
+    /// The name in the estate's header.
+    pub estate: Option<String>,
+}
+
+/// One `export "…" = …` with its value resolved, carried with the file that declared it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedExport {
+    pub name: String,
+    /// The value with every `{param}` resolved. A string may still carry `${…}`
+    /// references to what the estate emits; the emitter decides what each one is.
+    pub value: serde_yaml::Value,
+    pub description: Option<String>,
+    pub file: String,
+    pub line: usize,
 }
 
 /// One pack's notices, carried with the file that declared them (a fork declares its own).
@@ -644,7 +662,19 @@ pub fn compile_estate(
     let env = build_env(&file, &seed, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env.clone(), config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk {
+        types,
+        load,
+        genv: env.clone(),
+        config: BTreeMap::new(),
+        hcl: Vec::new(),
+        claims: Vec::new(),
+        questions: Vec::new(),
+        notices: Vec::new(),
+        actions: Vec::new(),
+        exports: Vec::new(),
+        use_chain: vec![file_name.to_string()],
+    };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let mut tfvars = w.genv;
     // An acknowledgement is not configuration: nothing reads it (`satz pack-graph`
@@ -656,6 +686,7 @@ pub fn compile_estate(
     }
     let config = w.config;
     let walked_actions = w.actions;
+    let walked_exports = w.exports;
     let mut hcl: Vec<HclPassthrough> = file
         .hcl_blocks
         .iter()
@@ -716,6 +747,35 @@ pub fn compile_estate(
         }
     }
 
+    // The estate's own exports first, then the `use`-visit order. One name is one
+    // output: the same name with the same value and description is one export (the
+    // fold's idempotence), a different one is a hard error naming both files.
+    let mut exports: Vec<ResolvedExport> = Vec::new();
+    let declared = file.exports.iter().map(|x| (file_name.to_string(), x)).chain(walked_exports.iter().map(|(f, x)| (f.clone(), x)));
+    for (f, x) in declared {
+        let r = ResolvedExport {
+            name: x.name.clone(),
+            value: resolve_value(&x.value, &tfvars, &f, x.line)?,
+            description: x.description.clone(),
+            file: f,
+            line: x.line,
+        };
+        match exports.iter().find(|e| e.name == r.name) {
+            Some(first) if first.value == r.value && first.description == r.description => {}
+            Some(first) => {
+                return perr(
+                    &r.file,
+                    r.line,
+                    format!(
+                        "export \"{}\": two different values — {}:{} and {}:{}; one name is one output, so keep one of them or rename the other",
+                        r.name, first.file, first.line, r.file, r.line
+                    ),
+                )
+            }
+            None => exports.push(r),
+        }
+    }
+
     // the estate's own questions first, then those of the packs it used
     let mut questions = Vec::new();
     if !file.questions.is_empty() {
@@ -727,7 +787,7 @@ pub fn compile_estate(
     if let Some(e) = deferred {
         return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
     }
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions })
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions, exports, estate: file.estate.clone() })
 }
 
 /// Resolve one action's arguments against the finished parameter namespace. An
@@ -1254,7 +1314,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -1294,6 +1354,9 @@ struct Walk<'a> {
     /// param namespace is only complete once the walk has finished, so resolving
     /// here would judge a pack's argument against a half-built environment.
     actions: Vec<(String, satz::ActionDecl)>,
+    /// Exports collected from every file the walk visits, unresolved for the reason
+    /// actions are.
+    exports: Vec<(String, satz::ExportDecl)>,
 }
 
 impl Walk<'_> {
@@ -1397,6 +1460,13 @@ impl Walk<'_> {
         self.questions.push(pack_questions(file, file_name));
     }
 
+    /// After the guard too: a pack switched off publishes nothing.
+    fn absorb_exports(&mut self, file: &satz::File, file_name: &str) {
+        for x in &file.exports {
+            self.exports.push((file_name.to_string(), x.clone()));
+        }
+    }
+
     /// After the guard too: a pack switched off asks for nothing to be run.
     fn absorb_notices(&mut self, file: &satz::File, file_name: &str) {
         if file.notices.is_empty() {
@@ -1468,6 +1538,7 @@ impl Walk<'_> {
         self.absorb_questions(&file, use_path);
         self.absorb_notices(&file, use_path);
         self.absorb_actions(&file, use_path);
+        self.absorb_exports(&file, use_path);
         self.use_chain.push(use_path.to_string());
         Ok(file)
     }
@@ -2479,6 +2550,45 @@ use "p.satz"
 mod estate_channel_tests {
     use super::*;
     use crate::algebra::TypeTable;
+
+    /// One name is one output: the same value from two files folds to one export, a
+    /// different value is refused naming both files, and a pack switched off exports
+    /// nothing.
+    #[test]
+    fn an_export_folds_once_and_two_values_for_one_name_are_refused() {
+        let load = |p: &str| -> Result<String, String> {
+            match p {
+                "same.satz" => Ok("pack same version \"1.0\"\n\nexport \"domain\" = \"{customer_domain}\"\n".into()),
+                "other.satz" => Ok("pack other version \"1.0\"\n\nexport \"domain\" = \"other.example\"\n".into()),
+                "off.satz" => Ok("pack off version \"1.0\"\n\nexport \"off\" = \"x\"\n".into()),
+                other => Err(format!("no load: {}", other)),
+            }
+        };
+        let estate = |extra: &str| {
+            format!(
+                "estate t\n\nparams {{\n  customer_domain = \"example.com\"\n  want_off = false\n}}\n\nexport \"domain\" = customer_domain description \"d\"\nuse \"same.satz\"\nuse \"off.satz\" when want_off\n{}",
+                extra
+            )
+        };
+        // the pack's export has no description, the estate's does: two different exports
+        let fe = compile_estate("t.satz", &estate(""), &Table, &load);
+        let e = fe.err().expect("a description is part of what an export publishes");
+        assert!(e.msg.contains("two different values"), "{}", e.msg);
+
+        let plain = estate("").replace(" description \"d\"", "");
+        let fe = compile_estate("t.satz", &plain, &Table, &load).unwrap();
+        assert_eq!(fe.exports.len(), 1, "{:?}", fe.exports);
+        assert_eq!(fe.exports[0].value, serde_yaml::Value::String("example.com".into()));
+        assert_eq!(fe.exports[0].file, "t.satz", "the estate's own export comes first");
+        assert_eq!(fe.estate.as_deref(), Some("t"));
+
+        let e = compile_estate("t.satz", &format!("{}use \"other.satz\"\n", plain), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("two different values") && e.msg.contains("t.satz:") && e.msg.contains("other.satz:"), "{}", e.msg);
+        assert_eq!(e.file, "other.satz");
+
+        let e = compile_estate("t.satz", "estate t\n\nexport \"x\" = nobody\n", &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("unknown param 'nobody'"), "{}", e.msg);
+    }
 
     struct Table;
     impl TypeResolver for Table {

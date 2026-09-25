@@ -21,6 +21,7 @@
   "question" "oneof"
   "action"
   "notice"
+  "export" "description"
   "suppress" "role"
   "hcl" "trust"
 ] @keyword
@@ -38,6 +39,7 @@
 (param name: (identifier) @variable)
 (question name: (identifier) @variable)
 (notice name: (identifier) @variable)
+(export name: (string) @variable)
 (use_statement type: (identifier) @type)
 (use_statement condition: (identifier) @variable)
 (suppress type: (identifier) @type)

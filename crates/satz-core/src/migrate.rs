@@ -291,6 +291,7 @@ const NEVER_A_TYPE_KEY: &[&str] = &[
     "action",
     "offers",
     "notice",
+    "export",
     "suppress",
     "project_service",
 ];

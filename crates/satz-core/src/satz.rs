@@ -342,6 +342,33 @@ pub struct NoticeDecl {
     pub line: usize,
 }
 
+/// `export "<name>" = <value> [description "…"]` — one value the estate publishes to
+/// the HCL that customer teams write beside it.
+///
+/// Every export becomes an output of the generated module `hcl/interface/` and of the
+/// root module's `outputs.tf`. The value is a param, a literal, or a string that carries
+/// `${{type.label.attr}}` references to what the estate emits; the compile decides per
+/// reference whether the value is known now (a literal output) or only in the cloud (a
+/// `data` source the consumer's plan reads). An export is a statement and no resource:
+/// it never enters the fold, and two files that export one name with different values
+/// are a hard error naming both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportDecl {
+    /// The output name: lowercase letters, digits and `_`, starting with a letter.
+    pub name: String,
+    pub value: Value,
+    /// Carried into the output's `description` and the interface README.
+    pub description: Option<String>,
+    pub line: usize,
+}
+
+/// An export name is an output name a consumer writes as `module.satz.<name>`.
+pub fn valid_export_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 #[derive(Debug, Default)]
 pub struct File {
     pub estate: Option<String>,
@@ -362,6 +389,8 @@ pub struct File {
     pub offers: Vec<OffersDecl>,
     /// `notice` statements — only a pack has any
     pub notices: Vec<NoticeDecl>,
+    /// `export` statements, in file order
+    pub exports: Vec<ExportDecl>,
 }
 
 /// A control claim as language syntax:
@@ -1434,6 +1463,38 @@ impl P {
         Ok(o)
     }
 
+    fn export_stmt(&mut self, line: usize) -> Result<ExportDecl, SatzError> {
+        let name = match self.next() {
+            Some(Tok::Str(parts)) => lit_str(&parts, line, "export: the name")?,
+            other => return err(line, format!("export: expected a quoted name, found {:?}", other)),
+        };
+        if !valid_export_name(&name) {
+            return err(
+                line,
+                format!(
+                    "export \"{}\": the name is an output name — lowercase letters, digits and `_`, starting with a letter",
+                    name
+                ),
+            );
+        }
+        self.expect(Tok::Eq, "'=' after the export name")?;
+        let value = self.value()?;
+        if let Value::Obj(_) = value {
+            return err(line, format!("export \"{}\": the value is a string, a number, a bool, a param or a list — an object is no output value here", name));
+        }
+        let description = match self.peek() {
+            Some(Tok::Ident(d)) if d == "description" => {
+                self.next();
+                match self.next() {
+                    Some(Tok::Str(parts)) => Some(lit_str(&parts, line, "export … description")?),
+                    other => return err(line, format!("export \"{}\" description: expected a quoted text, found {:?}", name, other)),
+                }
+            }
+            _ => None,
+        };
+        Ok(ExportDecl { name, value, description, line })
+    }
+
     fn use_stmt(&mut self, line: usize) -> Result<Entry, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => match parts.as_slice() {
@@ -1537,7 +1598,7 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "hcl", "notice", "offers", "pack", "params", "question", "suppress", "use"];
+    &["action", "claim", "estate", "export", "hcl", "notice", "offers", "pack", "params", "question", "suppress", "use"];
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
@@ -1678,6 +1739,19 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 p.next();
                 let o = p.offers_stmt(line)?;
                 file.offers.push(o);
+            }
+            // Before the generic arm, which would read `export "x"` as a resource map named
+            // `export` and then fail on the `=`.
+            Some(Tok::Ident(id)) if id == "export" => {
+                p.next();
+                let x = p.export_stmt(line)?;
+                if let Some(first) = file.exports.iter().find(|e| e.name == x.name) {
+                    return err(
+                        x.line,
+                        format!("export \"{}\": declared twice in this file (line {} and line {})", x.name, first.line, x.line),
+                    );
+                }
+                file.exports.push(x);
             }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
@@ -2063,6 +2137,13 @@ pub fn canonical_parts(file: &File) -> Canonical {
             a.phase
         ));
     }
+    // An export changes what the estate emits (an output), so it belongs to the body.
+    // The order of the statements means nothing: by name.
+    let mut exports: Vec<&ExportDecl> = file.exports.iter().collect();
+    exports.sort_by(|a, b| a.name.cmp(&b.name));
+    for x in exports {
+        body.push_str(&format!("export({}|{}|{})\n", x.name, canon_value(&x.value), x.description.as_deref().unwrap_or("")));
+    }
     Canonical { params, body }
 }
 
@@ -2441,6 +2522,43 @@ action "scc-services" {
     /// appear there would let a pack grow — or lose — an executable step while the
     /// drift check called the two versions identical.
     #[test]
+    fn an_export_is_a_name_a_value_and_an_optional_description() {
+        let f = parse("estate e\nexport \"org_id\" = customer_organization_id description \"The organisation\"\nexport \"folder\" = \"${{google_folder.a.name}}\"\nexport \"regions\" = [\"a\", \"b\"]\n").unwrap();
+        assert_eq!(f.exports.len(), 3);
+        assert_eq!(f.exports[0].name, "org_id");
+        assert_eq!(f.exports[0].value, Value::Ref("customer_organization_id".into()));
+        assert_eq!(f.exports[0].description.as_deref(), Some("The organisation"));
+        assert_eq!(f.exports[1].value, Value::Str(vec![StrPart::Lit("${google_folder.a.name}".into())]));
+        assert_eq!(f.exports[1].description, None);
+        assert!(matches!(f.exports[2].value, Value::List(_)));
+        assert_eq!(f.exports[2].line, 4);
+    }
+
+    #[test]
+    fn an_export_is_refused_twice_named_badly_named_or_an_object() {
+        let e = parse("estate e\nexport \"a\" = \"1\"\nexport \"a\" = \"2\"\n").unwrap_err();
+        assert!(e.msg.contains("declared twice") && e.msg.contains("line 2 and line 3"), "{}", e.msg);
+        for bad in ["A", "1a", "a-b", "_a"] {
+            let e = parse(&format!("estate e\nexport \"{}\" = \"1\"\n", bad)).unwrap_err();
+            assert!(e.msg.contains("output name"), "{}: {}", bad, e.msg);
+        }
+        let e = parse("estate e\nexport \"a\" = { b = 1 }\n").unwrap_err();
+        assert!(e.msg.contains("an object is no output value"), "{}", e.msg);
+        let e = parse("estate e\nexport \"a\" \"1\"\n").unwrap_err();
+        assert!(e.msg.contains("'=' after the export name"), "{}", e.msg);
+    }
+
+    #[test]
+    fn the_canonical_form_carries_the_exports_by_name() {
+        let a = canonical(&parse("estate e\nexport \"b\" = \"2\"\nexport \"a\" = \"1\" description \"d\"\n").unwrap());
+        let b = canonical(&parse("estate e\n\nexport \"a\" = \"1\" description \"d\"\nexport \"b\" = \"2\"\n").unwrap());
+        assert_eq!(a, b, "the order of the statements means nothing");
+        assert!(a.contains("export(a|\"1\"|d)"), "{}", a);
+        let c = canonical(&parse("estate e\nexport \"a\" = \"1\"\nexport \"b\" = \"2\"\n").unwrap());
+        assert_ne!(a, c, "a description is meaning: it reaches the output");
+    }
+
+    #[test]
     fn the_canonical_form_carries_the_action() {
         let with = parse("pack p\naction \"a\" {\n  reason = \"r\"\n  run = \"x.sh\"\n}\n").unwrap();
         let without = parse("pack p\n").unwrap();
@@ -2607,6 +2725,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  severity = error\n}\n".into(),
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
+        "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
     }
 }

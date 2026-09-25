@@ -20,6 +20,7 @@ ships it).
 | `presets/import-config.yaml` (rows) | `scripts/update_import_config.py --config-file … --schema-dir … --provider-version …` | the provider pin moves | `cargo test`: `provider_version` must equal the pin |
 | `presets/import-config.yaml` (`asset_type`) | `scripts/update_import_config.py --config-file … --cai-types <list>`, then `--probe <parent>` | the CAI list above changes; Google changes what ListAssets serves | smoke: *"every derivable asset_type is filled"*; a type ListAssets refuses: the live import leaves it out and names it with the rows that asked for it |
 | `presets/type-map.yaml` — in an estate's `presets_dir`, not in this repository | `satz map-types`, from the Discovery Documents and the provider schema | the provider pin moves; Google changes an API | **nothing** — an import without it still flattens nested values onto the attributes the provider schema names, and reports what it could not place; what the file adds is the renamed BLOCKS |
+| `presets/interface-lookups.yaml` (the data source, keys, permission and attributes per type the interface module reads back) | by hand, from the provider's data source schemas (`tofu providers schema -json`) | the provider pin moves; an export needs a type the table has no row for | the rows the showcase uses: smoke, `tofu validate` of `hcl/interface/`; the other rows: **nothing** |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
 | `presets/pack-graph.json` | `satz pack-graph` | any pack or the map's `offers` entries change | smoke: `pack-graph --check`; `cargo test` (`the_shipped_pack_graph_is_current`) |
@@ -40,11 +41,12 @@ ships it).
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
 Six have **no** automatic check, and the IaC role table has none for a changed
-role, nor the fonts for a face behind the crate: refresh them on their trigger.
+role, nor the fonts for a face behind the crate, nor the interface lookups for a row the
+showcase does not use: refresh them on their trigger.
 
 ## The provider schema fixture
 
-`tests/schemas/google.json` — 45 resource types, cut from the real provider.
+`tests/schemas/google.json` — 47 resource types, cut from the real provider.
 
 The corpus and the smoke estate classify types through this fixture exactly the way
 production classifies them through a real schema. A type missing from it loses

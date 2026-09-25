@@ -798,6 +798,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
     ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
+    ("export", "a value published to the HCL beside the estate, as an output of hcl/interface/: `export \"name\" = VALUE [description \"…\"]`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),

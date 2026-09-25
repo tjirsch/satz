@@ -180,6 +180,10 @@ google_folder {
     }
   }
 }
+
+// The folder, published to the HCL teams write beside the estate (hcl/interface/). Its
+// number exists once the folder does, so the interface module looks it up.
+export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;
 
 /// Where an offered pack's line goes in the estate satz writes: the menu, or inside the

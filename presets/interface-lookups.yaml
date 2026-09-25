@@ -1,0 +1,134 @@
+# How the interface module (hcl/interface/, docs/workflows.md) reads back what an
+# estate emits, per resource type. The table is compiled into satz; it sits beside
+# import-config.yaml because both say how a resource is found again by its natural key.
+#
+# An export whose value satz writes itself is a literal output and needs no row. An
+# export of an attribute only the cloud knows — a folder's `name`, a project's `number`
+# — becomes a `data` source here, looked up through the consumer's own provider and
+# credentials. An export that needs a lookup of a type with no row is refused at compile.
+#
+# data_source  the provider's data source that reads the resource back
+# permission   what the consumer's identity needs to perform the lookup
+# keys         resource attribute -> data source argument; each value is what satz
+#              writes on the resource, and a reference to another resource chains
+#              to that resource's own lookup
+# attributes   resource attribute -> the HCL expression that yields it, `{data}`
+#              standing for the data source (`data.<data_source>.<label>`)
+# derived      resource attribute -> a text over attributes satz writes, `{project}`
+#              included: known at compile time, so it is a literal output and no lookup
+
+google_folder:
+  data_source: google_active_folder
+  permission: resourcemanager.folders.list on the parent
+  keys:
+    display_name: display_name
+    parent: parent
+  attributes:
+    name: "{data}.name"
+    id: "{data}.name"
+    folder_id: 'trimprefix({data}.name, "folders/")'
+
+google_project:
+  data_source: google_project
+  permission: resourcemanager.projects.get
+  keys:
+    project_id: project_id
+  attributes:
+    number: "{data}.number"
+  derived:
+    id: "projects/{project_id}"
+
+google_compute_network:
+  data_source: google_compute_network
+  permission: compute.networks.get
+  keys:
+    name: name
+    project: project
+  attributes:
+    self_link: "{data}.self_link"
+    network_id: "{data}.network_id"
+    gateway_ipv4: "{data}.gateway_ipv4"
+  derived:
+    id: "projects/{project}/global/networks/{name}"
+
+google_compute_subnetwork:
+  data_source: google_compute_subnetwork
+  permission: compute.subnetworks.get
+  keys:
+    name: name
+    region: region
+    project: project
+  attributes:
+    self_link: "{data}.self_link"
+    gateway_address: "{data}.gateway_address"
+    subnetwork_id: "{data}.subnetwork_id"
+  derived:
+    id: "projects/{project}/regions/{region}/subnetworks/{name}"
+
+google_service_account:
+  data_source: google_service_account
+  permission: iam.serviceAccounts.get
+  keys:
+    account_id: account_id
+    project: project
+  attributes:
+    name: "{data}.name"
+    unique_id: "{data}.unique_id"
+  derived:
+    email: "{account_id}@{project}.iam.gserviceaccount.com"
+    member: "serviceAccount:{account_id}@{project}.iam.gserviceaccount.com"
+
+google_storage_bucket:
+  data_source: google_storage_bucket
+  permission: storage.buckets.get
+  keys:
+    name: name
+  attributes:
+    self_link: "{data}.self_link"
+    project_number: "{data}.project_number"
+  derived:
+    url: "gs://{name}"
+    id: "{name}"
+
+google_pubsub_topic:
+  data_source: google_pubsub_topic
+  permission: pubsub.topics.get
+  keys:
+    name: name
+    project: project
+  attributes: {}
+  derived:
+    id: "projects/{project}/topics/{name}"
+
+google_bigquery_dataset:
+  data_source: google_bigquery_dataset
+  permission: bigquery.datasets.get
+  keys:
+    dataset_id: dataset_id
+    project: project
+  attributes:
+    self_link: "{data}.self_link"
+  derived:
+    id: "projects/{project}/datasets/{dataset_id}"
+
+google_tags_tag_key:
+  data_source: google_tags_tag_key
+  permission: resourcemanager.tagKeys.get
+  keys:
+    parent: parent
+    short_name: short_name
+  attributes:
+    name: "{data}.name"
+    id: "{data}.id"
+    namespaced_name: "{data}.namespaced_name"
+
+google_tags_tag_value:
+  data_source: google_tags_tag_value
+  permission: resourcemanager.tagValues.get
+  keys:
+    parent: parent
+    short_name: short_name
+  attributes:
+    name: "{data}.name"
+    id: "{data}.id"
+    namespaced_name: "{data}.namespaced_name"

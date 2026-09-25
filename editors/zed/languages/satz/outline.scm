@@ -31,6 +31,10 @@
   "notice" @context
   name: (identifier) @name) @item
 
+(export
+  "export" @context
+  name: (string) @name) @item
+
 (hcl_block "hcl" @name) @item
 
 (block

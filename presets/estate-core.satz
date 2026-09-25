@@ -20,10 +20,13 @@
 // Which packs make up the estate — the security-group model included — is the
 // next pack, estate-map.satz: this one is the day-0 params and nothing else.
 //
-// This pack emits nothing. An estate that uses it and answers everything compiles
-// to exactly what `satz init` would have written.
+// This pack declares no resource. It publishes the day-0 answers every team beside
+// the estate needs as the estate's core exports — outputs of hcl/interface/, the
+// module a team's own HCL reads them from — so an estate has them without writing
+// an `export` of its own. Apart from those outputs, an estate that uses it and answers
+// everything compiles to exactly what `satz init` would have written.
 
-pack estate_core version "2.1"
+pack estate_core version "2.2"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -169,3 +172,12 @@ question compliance_frameworks {
   blast     = none
   recommend = ["cis-gcp-5.0"]
 }
+
+// ---- the core exports: what every team beside the estate reads ----------------
+
+export "organization_id"     = customer_organization_id description "The organisation id"
+export "customer_domain"     = customer_domain description "The customer's primary domain"
+export "customer_shortname"  = customer_shortname description "The short name project ids, bucket names and group prefixes derive from"
+export "default_region"      = default_region description "The default region for regional resources"
+export "infra_project_id"    = infra_project_name description "The infrastructure project, which holds the state bucket"
+export "iac_service_account" = "{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" description "The service account the estate is applied as"

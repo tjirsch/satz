@@ -1,0 +1,111 @@
+// Tells the teams whose HCL reads this estate's interface when an exported value
+// changes: one Pub/Sub message per apply that changes one.
+//
+//   use "presets/interface-notice.satz" when use_interface_notice
+//
+// The estate's exports (`export` statements, hcl/interface/) are what customer teams
+// read, in their own state and their own pipelines. This pack puts a notice behind
+// them, in four pieces in the infrastructure project:
+//
+//   1. a bucket that holds one object, `interface.json` — not the state bucket;
+//   2. a Pub/Sub topic;
+//   3. the grant that lets Cloud Storage's service agent publish to that topic;
+//   4. a storage notification: every new generation of an object in the bucket
+//      publishes one message to the topic.
+//
+// The object is the estate's exported values as JSON (`interface`, `estate`, `values`),
+// written from the root module's `local.satz_interface`, which satz emits beside the
+// outputs. Terraform rewrites the object only when its content changes, so an apply that
+// changes an exported value publishes one message and an apply that changes nothing
+// publishes none. The message names the object; the object holds the new values.
+//
+// A team subscribes in its own state — its own `google_pubsub_subscription` on the topic,
+// a push to its CI's webhook or a pull from a runner. The topic and the object are
+// exports of this pack (`interface_topic`, `interface_object`), so the interface module
+// and its README carry them, with the subscription to write.
+//
+// The service agent's address carries the project's number, which only exists once the
+// project does, so the pack reads it with the provider's
+// `google_storage_project_service_account` data source, in a trusted `hcl` block: satz
+// writes no `data` source of its own. The notification names its topic through the grant,
+// so it is created after the grant, and the object records the notification's id, so it
+// is written after the notification and its first generation is published too.
+//
+// NO CLAIM. No catalog control covers it.
+
+pack interface_notice version "1.0"
+
+params {
+  interface_notice_project     = infra_project_name
+  interface_notice_bucket_name = "{customer_shortname}-infra-001-interface"
+  interface_notice_topic_name  = "{customer_shortname}-satz-interface"
+  interface_notice_location    = default_region
+}
+
+question interface_notice_project {
+  prompt   = "Which project holds the bucket and the topic the interface notice publishes through?"
+  why      = "Whoever may read the topic learns when the estate's exported values change and reads them from the object. The infrastructure project keeps it with the estate's other plumbing. Moving it later is a new topic, and every team's subscription has to be written again."
+  reversal = recreate
+  blast    = low
+}
+
+// 1) The bucket and the object. The object's content is every exported value; the
+//    notification id in its metadata orders it after the notification.
+google_storage_bucket {
+  interface_notice {
+    name                        = interface_notice_bucket_name
+    project                     = interface_notice_project
+    location                    = interface_notice_location
+    uniform_bucket_level_access = true
+    public_access_prevention    = "enforced"
+  }
+}
+
+google_storage_bucket_object {
+  interface_notice {
+    bucket       = "${{google_storage_bucket.interface_notice.name}}"
+    name         = "interface.json"
+    content_type = "application/json"
+    content      = "${{jsonencode(local.satz_interface)}}"
+    metadata = {
+      notification = "${{google_storage_notification.interface_notice.notification_id}}"
+    }
+  }
+}
+
+// 2) The topic.
+google_pubsub_topic {
+  interface_notice {
+    name    = interface_notice_topic_name
+    project = interface_notice_project
+  }
+}
+
+// 3) The grant. Without it the notification is refused at creation.
+hcl trust "the storage service agent's address carries the project number, which the provider's data source reads" {
+  data "google_storage_project_service_account" "interface_notice" {
+    project = var.interface-notice-project
+  }
+}
+
+google_pubsub_topic_iam_member {
+  interface_notice_publisher {
+    topic   = "${{google_pubsub_topic.interface_notice.id}}"
+    project = interface_notice_project
+    role    = "roles/pubsub.publisher"
+    member  = "serviceAccount:${{data.google_storage_project_service_account.interface_notice.email_address}}"
+  }
+}
+
+// 4) The notification, on every new generation of an object in the bucket.
+google_storage_notification {
+  interface_notice {
+    bucket         = "${{google_storage_bucket.interface_notice.name}}"
+    topic          = "${{google_pubsub_topic_iam_member.interface_notice_publisher.topic}}"
+    payload_format = "JSON_API_V1"
+    event_types    = ["OBJECT_FINALIZE"]
+  }
+}
+
+export "interface_topic"  = "${{google_pubsub_topic.interface_notice.id}}" description "The topic that carries one message per apply that changes an exported value"
+export "interface_object" = "gs://{interface_notice_bucket_name}/interface.json" description "The object that holds the exported values as JSON"

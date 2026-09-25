@@ -905,6 +905,22 @@ fn render(
         }
         md.push('\n');
     }
+    // What the pack publishes to the HCL beside an estate that uses it: outputs of the
+    // root module and of `hcl/interface/`.
+    if !file.exports.is_empty() {
+        md.push_str("## Exports\n\n");
+        md.push_str("Outputs of the root module and of `hcl/interface/` in every estate that uses this pack.\n\n");
+        md.push_str("| output | value | description |\n|---|---|---|\n");
+        for x in &file.exports {
+            md.push_str(&format!(
+                "| `{}` | `{}` | {} |\n",
+                x.name,
+                value_text(&x.value).replace('|', "\\|"),
+                x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;"),
+            ));
+        }
+        md.push('\n');
+    }
     md.push_str("## Claims\n\n");
     if file.claims.is_empty() {
         md.push_str("_None — this pack proves no control by itself._\n\n");

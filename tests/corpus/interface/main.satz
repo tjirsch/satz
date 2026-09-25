@@ -1,0 +1,54 @@
+// Corpus case: the interface an estate publishes (hcl/interface/, outputs.tf). The
+// core exports come from estate-core; the estate adds its own — a written attribute
+// (static), a derived one (static), a folder two levels down (a lookup that chains to
+// its parent's), an embedded reference (a template) and a list. Snapshot-gated.
+
+estate corpus_interface
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_shortname       = "acme"
+  customer_longname        = "Acme Corp."
+  first_admin              = "admin"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "presets/estate-core.satz"
+
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    google_folder {
+      team {
+        display_name = "Team"
+      }
+    }
+    google_project {
+      infra {
+        project_id      = infra_project_name
+        billing_account = billing_account_infra
+        google_service_account {
+          provisioner {
+            account_id   = svc_iac_account
+            display_name = "Primary IaC Provisioner"
+          }
+        }
+      }
+    }
+  }
+}
+
+export "infra_folder"         = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
+export "team_folder"          = "${{google_folder.team.name}}"
+export "infra_project_number" = "${{google_project.infra.number}}"
+export "provisioner_email"    = "${{google_service_account.provisioner.email}}"
+export "workload_pool_prefix" = "principalSet://iam.googleapis.com/projects/${{google_project.infra.number}}/locations/global"
+export "regions"              = [default_region, "europe-west4"]
