@@ -254,7 +254,7 @@ interface "audit" {
 
 interface "archive-team" {
   use interface "audit"
-  export "archive_project_id" = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The team's project"
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The team's project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
 
