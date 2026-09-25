@@ -1625,6 +1625,21 @@ mod tests {
         assert_eq!((l.when.as_deref(), l.trailing.as_str(), l.commented), (Some("g"), "// note", false));
     }
 
+    /// `use interface` names an interface, not a pack: the scanner reads no line from it,
+    /// the compile reports no unmanaged pack for it, and switching a gate on leaves it be.
+    #[test]
+    fn a_use_interface_line_is_no_pack_line() {
+        let block = "\ninterface \"team-a\" {\n  use interface \"network\" when use_budget\n  use interface [\"dns\", \"logs\"]\n}\n";
+        let src = format!("{}{}", HEAD.replace("x = 1", "use_budget = false"), block);
+        assert!(scan(&src).uses.iter().all(|l| !l.written.contains("network") && !l.written.contains("dns")), "{:?}", scan(&src).uses);
+        assert_eq!(parse_use("use interface \"network\""), None);
+        assert!(messages(&src).iter().all(|m| !m.contains("network") && !m.contains("interface")), "{:?}", messages(&src));
+        let on = src.replace("use_budget = false", "use_budget = true");
+        let (out, _) = gate_on(&on, &graph(), "use_budget").unwrap();
+        assert!(out.contains(block), "{}", out);
+        assert!(out.contains("use \"presets/organization-budget.satz\" when use_budget"), "{}", out);
+    }
+
     #[test]
     fn a_gate_reads_the_estate_then_the_default_of_a_used_declaring_file() {
         let g = graph();

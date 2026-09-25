@@ -244,7 +244,14 @@ export "regions"              = [default_region, "europe-west4"]
 // --- `interface`: what one team reads, in a module of its own —
 //     hcl/interfaces/archive-team/ — beside the core exports above, which every
 //     interface module carries. The same interface in another file adds to it.
+//     `use interface` brings another interface's exports into the team's module
+//     too: `audit` is published once, and every team that uses it receives it.
+interface "audit" {
+  export "audit_bucket_name" = "${{google_storage_bucket.audit_logs.name}}" description "The audit log bucket"
+}
+
 interface "archive-team" {
+  use interface "audit"
   export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }

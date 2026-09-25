@@ -752,10 +752,33 @@ interface "team-a" {
 }
 ```
 
+A set several teams read — the shared network, the DNS zones — is an interface of its
+own, declared once, often by the pack that builds it. A team's interface takes it with
+`use interface`, and the team's module carries those exports beside its own:
+
+```
+interface "network" {
+  export "host_project" = "${{google_project.net_host.project_id}}"
+  export "vpc"          = "${{google_compute_network.shared.self_link}}"
+}
+
+interface "team-a" {
+  use interface ["network", "dns"]
+  use interface "logging" when want_team_logging
+  export "folder" = "${{google_folder.team_a.name}}"
+}
+```
+
+The team reads `module.satz.vpc` from its own folder, `hcl/interfaces/team-a/`, and the
+README says which interface each value comes from. A pack that removes or renames an
+export, or changes the shape of its value, breaks every team that reads it: that is a
+breaking change, with an entry under `## Breaking changes` in `presets/README.md`, and
+the release that ships it is a minor one.
+
 ### Sourcing the interface
 
-**Each team sources `hcl/interfaces/<team>/`**: the team's own exports and the core ones,
-complete on its own. `hcl/interfaces/core/` holds the core exports alone, for a
+**Each team sources `hcl/interfaces/<team>/`**: the team's own exports, those of every
+interface it uses, and the core ones, complete on its own. `hcl/interfaces/core/` holds the core exports alone, for a
 configuration that needs nothing else. A module names no file outside itself, takes no
 input variable, has no backend and reads no state. A team sources its folder from
 wherever its code lives:
@@ -781,7 +804,7 @@ resource "google_project" "team_a" {
 It needs the `google` provider in the calling configuration, at the version the estate
 pins (`versions.tf` in the folder). A copy of the folder works as well as the original:
 it is generated whole, and its `README.md` travels with it — the snippet above, every
-output with whether it is core and how it is obtained, and the estate and satz version
+output with the interface it comes from and how it is obtained, and the estate and satz version
 it came from. The root module's `tofu output` names a team's values
 `<team>__<export>`, with `-` written `_` (`team_a__folder`).
 

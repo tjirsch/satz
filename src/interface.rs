@@ -107,6 +107,9 @@ pub(crate) struct Interface {
     /// the estate's name, from its header
     pub estate: String,
     pub outputs: Vec<Output>,
+    /// every declared interface, by name, with the interfaces its module also carries
+    /// (`use interface`, transitively)
+    pub uses: BTreeMap<String, Vec<String>>,
     /// by address
     pub data: BTreeMap<String, DataBlock>,
     pub google_source: String,
@@ -129,6 +132,7 @@ pub(crate) struct Refusal {
 pub(crate) fn build(
     estate: &str,
     exports: &[satz_core::pipeline::ResolvedExport],
+    interfaces: &[satz_core::pipeline::ResolvedInterface],
     manifest: &Manifest,
     google_source: &str,
     google_version: Option<&str>,
@@ -169,6 +173,7 @@ pub(crate) fn build(
     Ok(Interface {
         estate: estate.to_string(),
         outputs,
+        uses: interfaces.iter().map(|i| (i.name.clone(), i.uses.clone())).collect(),
         data: r.data,
         google_source: google_source.to_string(),
         google_version: google_version.map(str::to_string),
@@ -554,17 +559,30 @@ impl Output {
 }
 
 impl Interface {
-    /// The modules written under `hcl/interfaces/`: `core`, then every named interface.
+    /// The modules written under `hcl/interfaces/`: `core`, then every declared interface
+    /// — one that holds only `use interface` lines included.
     pub fn modules(&self) -> Vec<String> {
-        let named: BTreeSet<&str> = self.outputs.iter().filter_map(|o| o.interface.as_deref()).collect();
+        let mut named: BTreeSet<&str> = self.outputs.iter().filter_map(|o| o.interface.as_deref()).collect();
+        named.extend(self.uses.keys().map(String::as_str));
         std::iter::once(CORE.to_string()).chain(named.into_iter().map(str::to_string)).collect()
     }
 
-    /// The outputs of one module: the core exports, then the interface's own.
+    /// The interfaces one module carries besides the core: its own, then each it uses.
+    fn carried<'a>(&'a self, module: &'a str) -> Vec<&'a str> {
+        if module == CORE {
+            return Vec::new();
+        }
+        std::iter::once(module).chain(self.uses.get(module).into_iter().flatten().map(String::as_str)).collect()
+    }
+
+    /// The outputs of one module: the core exports, then the interface's own, then those
+    /// of every interface it uses.
     fn outputs_of(&self, module: &str) -> Vec<&Output> {
-        let core = self.outputs.iter().filter(|o| o.interface.is_none());
-        let own = self.outputs.iter().filter(|o| module != CORE && o.interface.as_deref() == Some(module));
-        core.chain(own).collect()
+        let mut out: Vec<&Output> = self.outputs.iter().filter(|o| o.interface.is_none()).collect();
+        for i in self.carried(module) {
+            out.extend(self.outputs.iter().filter(|o| o.interface.as_deref() == Some(i)));
+        }
+        out
     }
 
     /// The root module's `outputs.tf`: the values in one local — the core ones, and one map
@@ -688,6 +706,14 @@ impl Interface {
                  estate carries; the table says which is which.\n\n",
                 module
             ));
+            let used = &self.carried(module)[1..];
+            if !used.is_empty() {
+                s.push_str(&format!(
+                    "It also carries the values of the interfaces it uses: {}. The column `From` names the\n\
+                     interface each value comes from.\n\n",
+                    used.iter().map(|u| format!("`{}`", u)).collect::<Vec<_>>().join(", ")
+                ));
+            }
         }
         s.push_str("## How to use it\n\n");
         s.push_str(&format!("```hcl\nmodule \"satz\" {{\n  source = \"<path or git URL>/{}/{}\"\n}}\n\n", DIR, module));
@@ -705,7 +731,7 @@ impl Interface {
         if outputs.is_empty() {
             s.push_str("None: the estate exports no core value.\n");
         } else {
-            s.push_str("| Output | Of | Description | How it is obtained |\n|---|---|---|---|\n");
+            s.push_str("| Output | From | Description | How it is obtained |\n|---|---|---|---|\n");
         }
         for o in &outputs {
             let how = match &o.how {
@@ -820,7 +846,7 @@ resource "google_cloud_identity_group" "g" {
     }
 
     fn build_one(value: &str) -> Result<Interface, Vec<Refusal>> {
-        build("e", &[export("x", value)], &Manifest::parse(MAIN_TF), "hashicorp/google", Some("7.14.1"))
+        build("e", &[export("x", value)], &[], &Manifest::parse(MAIN_TF), "hashicorp/google", Some("7.14.1"))
     }
 
     #[test]
@@ -885,7 +911,7 @@ resource "google_cloud_identity_group" "g" {
             in_interface("team-a", "folder", "${google_folder.team.name}"),
             in_interface("team-b", "project", "${google_project.infra.number}"),
         ];
-        let i = build("e", &exports, &Manifest::parse(MAIN_TF), "hashicorp/google", Some("7.14.1")).unwrap();
+        let i = build("e", &exports, &[], &Manifest::parse(MAIN_TF), "hashicorp/google", Some("7.14.1")).unwrap();
         assert_eq!(i.modules(), ["core", "team-a", "team-b"]);
         for (module, want) in [("core", vec!["org"]), ("team-a", vec!["org", "folder"]), ("team-b", vec!["org", "project"])] {
             let readme = i.readme(module, "0.0.0", "satz/e.satz", None);
@@ -914,6 +940,30 @@ resource "google_cloud_identity_group" "g" {
         assert!(root.contains("\"team-b\" = {"), "{}", root);
     }
 
+    /// A team's module carries the exports of every interface it uses, the README names
+    /// the interface each value comes from, and the root module still has each export once.
+    #[test]
+    fn a_module_carries_the_interfaces_it_uses_and_says_where_each_value_is_from() {
+        use satz_core::pipeline::ResolvedInterface;
+        let exports = [export("org", "123"), in_interface("network", "vpc", "v"), in_interface("team-a", "own", "1")];
+        let ri = |name: &str, uses: &[&str]| ResolvedInterface { name: name.into(), uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 };
+        let interfaces = [ri("network", &[]), ri("team-a", &["network"]), ri("team-b", &["network"])];
+        let i = build("e", &exports, &interfaces, &Manifest::parse(MAIN_TF), "hashicorp/google", None).unwrap();
+        assert_eq!(i.modules(), ["core", "network", "team-a", "team-b"], "an interface of uses alone is a module");
+        for (module, want) in [("team-a", vec!["org", "own", "vpc"]), ("team-b", vec!["org", "vpc"]), ("network", vec!["org", "vpc"])] {
+            let files = i.module_files(module);
+            let outputs_tf = &files.iter().find(|(n, _)| *n == "outputs.tf").unwrap().1;
+            let got: Vec<&str> = outputs_tf.lines().filter_map(|l| l.strip_prefix("output \"")).map(|l| l.trim_end_matches("\" {")).collect();
+            assert_eq!(got, want, "{}", module);
+        }
+        let readme = i.readme("team-a", "0.0.0", "satz/e.satz", None);
+        assert!(readme.contains("| `vpc` | network |") && readme.contains("| `own` | team-a |"), "{}", readme);
+        assert!(readme.contains("the interfaces it uses: `network`"), "{}", readme);
+        let root = i.root_outputs_tf();
+        assert_eq!(root.matches("output \"network__vpc\"").count(), 1, "{}", root);
+        assert!(!root.contains("team_a__vpc"), "{}", root);
+    }
+
     /// `hcl/interfaces/` is satz's: a transpile writes one folder per interface, removes
     /// the folder of an interface the estate no longer declares, and removes the directory
     /// and `outputs.tf` when the estate exports nothing.
@@ -924,7 +974,7 @@ resource "google_cloud_identity_group" "g" {
         std::fs::create_dir_all(&dir).unwrap();
         let manifest = Manifest::parse(MAIN_TF);
         let two = [export("org", "123"), in_interface("team-a", "a", "1"), in_interface("team-b", "b", "2")];
-        let i = build("e", &two, &manifest, "hashicorp/google", None).unwrap();
+        let i = build("e", &two, &[], &manifest, "hashicorp/google", None).unwrap();
         crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
         for m in ["core", "team-a", "team-b"] {
             for f in ["versions.tf", "outputs.tf", "README.md"] {
@@ -934,7 +984,7 @@ resource "google_cloud_identity_group" "g" {
         assert!(dir.join("outputs.tf").exists());
 
         let one = [export("org", "123"), in_interface("team-a", "a", "1")];
-        let i = build("e", &one, &manifest, "hashicorp/google", None).unwrap();
+        let i = build("e", &one, &[], &manifest, "hashicorp/google", None).unwrap();
         crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
         assert!(dir.join(DIR).join("team-a").exists());
         assert!(!dir.join(DIR).join("team-b").exists(), "the folder of a removed interface survived");

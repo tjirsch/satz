@@ -394,6 +394,20 @@ pub fn valid_interface_name(name: &str) -> bool {
 pub struct InterfaceDecl {
     pub name: String,
     pub exports: Vec<ExportDecl>,
+    /// `use interface "<name>"` / `use interface ["<a>", "<b>"]` lines, in file order
+    pub uses: Vec<InterfaceUse>,
+    pub line: usize,
+}
+
+/// `use interface "<name>" [when <param>]`, or the list form `use interface ["<a>",
+/// "<b>"] [when <param>]`, inside an `interface` block: the team's module carries the
+/// exports of the named interfaces too. The argument is an interface NAME, not a path,
+/// so it is no pack line and no tool that reads `use "<path>"` lines sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceUse {
+    pub names: Vec<String>,
+    /// the param that gates the line, as on a pack line
+    pub when: Option<String>,
     pub line: usize,
 }
 
@@ -1569,10 +1583,26 @@ impl P {
         }
         self.expect(Tok::LBrace, "'{' after the interface name")?;
         let mut exports: Vec<ExportDecl> = Vec::new();
+        let mut uses: Vec<InterfaceUse> = Vec::new();
         loop {
             let at = self.line();
             match self.next() {
                 Some(Tok::RBrace) => break,
+                Some(Tok::Ident(id)) if id == "use" => {
+                    let u = self.interface_use(&name, at)?;
+                    for n in &u.names {
+                        if let Some(first) = uses.iter().find(|x| x.names.contains(n)) {
+                            return err(
+                                u.line,
+                                format!(
+                                    "interface \"{}\": `use interface \"{}\"` is written twice (line {} and line {})",
+                                    name, n, first.line, u.line
+                                ),
+                            );
+                        }
+                    }
+                    uses.push(u);
+                }
                 Some(Tok::Ident(id)) if id == "export" => {
                     let x = self.export_stmt(at)?;
                     if let Some(first) = exports.iter().find(|e| e.name == x.name) {
@@ -1587,11 +1617,77 @@ impl P {
                     exports.push(x);
                 }
                 other => {
-                    return err(at, format!("interface \"{}\": holds `export` statements only, found {:?}", name, other))
+                    return err(
+                        at,
+                        format!("interface \"{}\": holds `export` statements and `use interface` lines only, found {:?}", name, other),
+                    )
                 }
             }
         }
-        Ok(InterfaceDecl { name, exports, line })
+        Ok(InterfaceDecl { name, exports, uses, line })
+    }
+
+    /// `use interface "<name>" [when <param>]` or `use interface ["<a>", …] [when <param>]`,
+    /// after the `use`.
+    fn interface_use(&mut self, within: &str, line: usize) -> Result<InterfaceUse, SatzError> {
+        match self.next() {
+            Some(Tok::Ident(k)) if k == "interface" => {}
+            other => {
+                return err(
+                    line,
+                    format!(
+                        "interface \"{}\": a `use` here brings in another interface — `use interface \"<name>\"`; a pack is used at the top level of a file, found {:?}",
+                        within, other
+                    ),
+                )
+            }
+        }
+        let name_of = |parts: &[StrPart]| -> Result<String, SatzError> {
+            let n = lit_str(parts, line, "use interface: the name")?;
+            if !valid_interface_name(&n) {
+                return err(line, format!("use interface \"{}\": an interface name is lowercase letters, digits and `-`, starting with a letter", n));
+            }
+            if n == CORE_INTERFACE {
+                return err(line, "use interface \"core\": every interface carries the core exports already — the line brings in nothing");
+            }
+            if n == within {
+                return err(line, format!("interface \"{}\": uses itself", within));
+            }
+            Ok(n)
+        };
+        let mut names = Vec::new();
+        match self.next() {
+            Some(Tok::Str(parts)) => names.push(name_of(&parts)?),
+            Some(Tok::LBrack) => loop {
+                match self.next() {
+                    Some(Tok::RBrack) => break,
+                    Some(Tok::Comma) => {}
+                    Some(Tok::Str(parts)) => {
+                        let n = name_of(&parts)?;
+                        if names.contains(&n) {
+                            return err(line, format!("use interface: \"{}\" is named twice", n));
+                        }
+                        names.push(n);
+                    }
+                    other => return err(line, format!("use interface [ … ]: expected a quoted interface name, found {:?}", other)),
+                }
+            },
+            other => return err(line, format!("use interface: expected a quoted interface name or a list of them, found {:?}", other)),
+        }
+        if names.is_empty() {
+            return err(line, "use interface []: names no interface");
+        }
+        let when = match self.peek() {
+            Some(Tok::Ident(w)) if w == "when" => {
+                self.next();
+                match self.next() {
+                    Some(Tok::Ident(p)) => Some(p),
+                    other => return err(line, format!("use interface … when: expected param name, found {:?}", other)),
+                }
+            }
+            _ => None,
+        };
+        Ok(InterfaceUse { names, when, line })
     }
 
     fn use_stmt(&mut self, line: usize) -> Result<Entry, SatzError> {
@@ -2265,6 +2361,14 @@ pub fn canonical_parts(file: &File) -> Canonical {
     for (i, x) in exports {
         body.push_str(&format!("export({}|{}|{}|{})\n", i, x.name, canon_value(&x.value), x.description.as_deref().unwrap_or("")));
     }
+    // What a team's module carries changes with the interfaces it uses.
+    let mut uses: Vec<String> = file
+        .interfaces
+        .iter()
+        .flat_map(|i| i.uses.iter().flat_map(move |u| u.names.iter().map(move |n| format!("use_interface({}|{}|{})\n", i.name, n, u.when.as_deref().unwrap_or("")))))
+        .collect();
+    uses.sort();
+    uses.into_iter().for_each(|u| body.push_str(&u));
     Canonical { params, body }
 }
 
@@ -2706,7 +2810,7 @@ action "scc-services" {
         let e = parse("estate e\ninterface \"core\" {\n}\n").unwrap_err();
         assert!(e.msg.contains("reserved"), "{}", e.msg);
         let e = parse("estate e\ninterface \"a\" {\n  x = 1\n}\n").unwrap_err();
-        assert!(e.msg.contains("`export` statements only"), "{}", e.msg);
+        assert!(e.msg.contains("`export` statements and `use interface` lines only"), "{}", e.msg);
         let e = parse("estate e\ninterface \"a\" {\n  export \"x\" = 1\n  export \"x\" = 2\n}\n").unwrap_err();
         assert!(e.msg.contains("declared twice"), "{}", e.msg);
         let e = parse("estate e\ninterface \"a\" {\n}\ninterface \"a\" {\n}\n").unwrap_err();
@@ -2715,6 +2819,35 @@ action "scc-services" {
         assert!(e.msg.contains("output name"), "{}", e.msg);
         let c = canonical(&f);
         assert!(c.contains("export(team-a|folder|\"x\"|d)"), "{}", c);
+    }
+
+    /// `use interface` takes a name or a list of names and an optional `when`; it is no
+    /// pack line — `use_paths` never sees it — and it is part of the canonical form.
+    #[test]
+    fn an_interface_uses_another_by_name_or_by_list() {
+        let f = parse("estate e\ninterface \"team-a\" {\n  use interface \"network\"\n  use interface [\"dns\", \"logs\"] when want_logs\n  export \"x\" = 1\n}\n").unwrap();
+        let u = &f.interfaces[0].uses;
+        assert_eq!(u.len(), 2);
+        assert_eq!((u[0].names.clone(), u[0].when.clone(), u[0].line), (vec!["network".to_string()], None, 3));
+        assert_eq!((u[1].names.clone(), u[1].when.as_deref()), (vec!["dns".to_string(), "logs".to_string()], Some("want_logs")));
+        assert!(use_paths(&f).is_empty(), "an interface name is no pack path");
+        let c = canonical(&f);
+        assert!(c.contains("use_interface(team-a|network|)") && c.contains("use_interface(team-a|logs|want_logs)"), "{}", c);
+        // an interface of uses alone is an interface
+        let f = parse("estate e\ninterface \"team-a\" {\n  use interface \"network\"\n}\n").unwrap();
+        assert!(f.interfaces[0].exports.is_empty() && f.interfaces[0].uses.len() == 1);
+        for (bad, says) in [
+            ("use \"x.satz\"", "a pack is used at the top level"),
+            ("use interface \"core\"", "carries the core exports already"),
+            ("use interface \"team-a\"", "uses itself"),
+            ("use interface \"Net\"", "lowercase letters"),
+            ("use interface []", "names no interface"),
+            ("use interface [\"a\", \"a\"]", "named twice"),
+            ("use interface \"a\"\n  use interface [\"a\"]", "written twice (line 3 and line 4)"),
+        ] {
+            let e = parse(&format!("estate e\ninterface \"team-a\" {{\n  {}\n}}\n", bad)).unwrap_err();
+            assert!(e.msg.contains(says), "{}: {}", bad, e.msg);
+        }
     }
 
     #[test]

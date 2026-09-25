@@ -737,6 +737,22 @@ mod tests {
         assert_eq!(b.gate_declared_in.as_deref(), Some("presets/estate-map.satz"));
     }
 
+    /// A `use interface` names an interface, not a file: the graph gains no node, no edge
+    /// and no finding from it.
+    #[test]
+    fn a_use_interface_line_is_no_pack_line_of_the_graph() {
+        let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n");
+        let a = format!(
+            "{}\ninterface \"base\" {{\n  export \"r\" = \"x\"\n}}\n\ninterface \"team\" {{\n  use interface [\"base\"] when use_a\n}}\n",
+            A
+        );
+        let (g, found) = build(&lib(&[("estate-map.satz", &m), ("a.satz", &a)])).unwrap();
+        assert!(found.is_empty(), "{:?}", found);
+        assert!(g.edges.is_empty(), "{:?}", g.edges);
+        let nodes: Vec<&str> = g.nodes.iter().map(|n| n.path.as_str()).collect();
+        assert!(nodes.iter().all(|n| *n == "presets/estate-map.satz" || *n == "presets/a.satz"), "{:?}", nodes);
+    }
+
     #[test]
     fn check_1_a_pack_the_map_does_not_offer() {
         let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n");

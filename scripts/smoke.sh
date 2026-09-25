@@ -173,7 +173,7 @@ fi
 
 step "interfaces: the showcase's exports as outputs.tf and one relocatable module per interface"
 si=tmp/showcase-hcl/interfaces
-for m in core archive-team; do
+for m in core audit archive-team; do
   for f in versions.tf main.tf outputs.tf README.md; do
     [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/$m/$f was not written"
   done
@@ -185,8 +185,11 @@ grep -q 'value *= "corp-infra-001"' $si/core/outputs.tf || fail "a written attri
 grep -q 'value *= data.google_active_folder.infra.name' $si/archive-team/outputs.tf || fail "a core export is missing from the team's module:\n$(cat $si/archive-team/outputs.tf)"
 grep -q 'output "archive_project_number"' $si/core/outputs.tf && fail "the core module carries a team's export"
 grep -q 'value *= data.google_project.archive.number' $si/archive-team/outputs.tf || fail "the team's project number is not looked up:\n$(cat $si/archive-team/outputs.tf)"
+grep -q 'output "audit_bucket_name"' $si/archive-team/outputs.tf || fail "the team's module lacks the exports of the interface it uses:\n$(cat $si/archive-team/outputs.tf)"
+grep -q '^| `audit_bucket_name` | audit |' $si/archive-team/README.md || fail "the README does not name the interface a value comes from:\n$(cat $si/archive-team/README.md)"
+[ "$(grep -c 'output "audit__audit_bucket_name"' tmp/showcase-hcl/outputs.tf)" = 1 ] || fail "a used interface's export is not one root output:\n$(cat tmp/showcase-hcl/outputs.tf)"
 grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/*.tf && fail "an interface module reaches outside itself:\n$(cat $si/*/*.tf)"
-for m in core archive-team; do
+for m in core audit archive-team; do
   [ "$(grep -c '^| `' $si/$m/README.md)" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
 done
 if command -v tofu >/dev/null 2>&1; then
