@@ -1648,6 +1648,12 @@ breaking change: the version's row under [`## Changelog`](#changelog) names the 
 entry under [`## Breaking changes`](#breaking-changes) says what a team edits, and the
 release that ships it is a minor one. A new export breaks no one.
 
+**A label is part of that contract when the pack's resources reach an `all` export.**
+`export "…" = all <type>` keys its map by resource label, and teams index by it
+(`module.satz.folders["infra"]`). A pack version that renames a label of such a type
+changes a key: its `## Changelog` row names the old and the new label, and the release is
+a minor one. Labels change for a reason, never for style.
+
 **Each central resource a pack declares is a stub or central-only, and the choice is
 security's as much as the provider's.** It decides how a team changes it:
 

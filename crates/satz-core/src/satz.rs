@@ -362,7 +362,7 @@ pub struct NoticeDecl {
 pub struct ExportDecl {
     /// The output name: lowercase letters, digits and `_`, starting with a letter.
     pub name: String,
-    pub value: Value,
+    pub value: ExportValue,
     /// Carried into the output's `description` and the interface README.
     pub description: Option<String>,
     /// `attach ["<resource type>", …]`: the attachment resource types a team may create
@@ -370,6 +370,16 @@ pub struct ExportDecl {
     /// is read, nothing more.
     pub attach: Vec<String>,
     pub line: usize,
+}
+
+/// What an export publishes: one value, or every resource of one type.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportValue {
+    /// a param, a literal, a list of them, or a string over `${{type.label.attr}}`
+    Value(Value),
+    /// `all <resource type>`: a map keyed by resource label, one entry per resource of
+    /// the type the estate emits and does not mark `private`
+    All(String),
 }
 
 /// An export name is an output name a consumer writes as `module.satz.<name>`. `__` is
@@ -1548,10 +1558,32 @@ impl P {
             );
         }
         self.expect(Tok::Eq, "'=' after the export name")?;
-        let value = self.value()?;
-        if let Value::Obj(_) = value {
-            return err(line, format!("export \"{}\": the value is a string, a number, a bool, a param or a list — an object is no output value here", name));
-        }
+        // `all <type>`: `all` followed by a word on the same line; `all` alone is a param
+        // of that name
+        let all = match (self.toks.get(self.i), self.toks.get(self.i + 1)) {
+            (Some((Tok::Ident(a), l1)), Some((Tok::Ident(t), l2))) if a == "all" && l1 == l2 && !matches!(t.as_str(), "attach" | "description") => {
+                Some(t.clone())
+            }
+            _ => None,
+        };
+        let value = match all {
+            Some(t) => {
+                self.next();
+                self.next();
+                let ident = t.len() > "google_".len() && t.starts_with("google_") && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+                if !ident {
+                    return err(line, format!("export \"{}\" = all {}: `all` takes a provider resource type, `all google_…`", name, t));
+                }
+                ExportValue::All(t)
+            }
+            None => {
+                let value = self.value()?;
+                if let Value::Obj(_) = value {
+                    return err(line, format!("export \"{}\": the value is a string, a number, a bool, a param or a list — an object is no output value here", name));
+                }
+                ExportValue::Value(value)
+            }
+        };
         // `attach [ … ]` and `description "…"` follow the value, each once, in either order.
         let mut description = None;
         let mut attach: Option<Vec<String>> = None;
@@ -2413,7 +2445,10 @@ pub fn canonical_parts(file: &File) -> Canonical {
             "export({}|{}|{}|{}|[{}])\n",
             i,
             x.name,
-            canon_value(&x.value),
+            match &x.value {
+                ExportValue::Value(v) => canon_value(v),
+                ExportValue::All(t) => format!("all {}", t),
+            },
             x.description.as_deref().unwrap_or(""),
             x.attach.join(",")
         ));
@@ -2830,11 +2865,11 @@ action "scc-services" {
         let f = parse("estate e\nexport \"org_id\" = customer_organization_id description \"The organisation\"\nexport \"folder\" = \"${{google_folder.a.name}}\"\nexport \"regions\" = [\"a\", \"b\"]\n").unwrap();
         assert_eq!(f.exports.len(), 3);
         assert_eq!(f.exports[0].name, "org_id");
-        assert_eq!(f.exports[0].value, Value::Ref("customer_organization_id".into()));
+        assert_eq!(f.exports[0].value, ExportValue::Value(Value::Ref("customer_organization_id".into())));
         assert_eq!(f.exports[0].description.as_deref(), Some("The organisation"));
-        assert_eq!(f.exports[1].value, Value::Str(vec![StrPart::Lit("${google_folder.a.name}".into())]));
+        assert_eq!(f.exports[1].value, ExportValue::Value(Value::Str(vec![StrPart::Lit("${google_folder.a.name}".into())])));
         assert_eq!(f.exports[1].description, None);
-        assert!(matches!(f.exports[2].value, Value::List(_)));
+        assert!(matches!(f.exports[2].value, ExportValue::Value(Value::List(_))));
         assert_eq!(f.exports[2].line, 4);
     }
 
@@ -2850,6 +2885,21 @@ action "scc-services" {
         assert!(e.msg.contains("an object is no output value"), "{}", e.msg);
         let e = parse("estate e\nexport \"a\" \"1\"\n").unwrap_err();
         assert!(e.msg.contains("'=' after the export name"), "{}", e.msg);
+    }
+
+    /// `all <type>` publishes every resource of the type; `all` alone is a param.
+    #[test]
+    fn an_export_of_all_resources_of_a_type() {
+        let f = parse("estate e\nexport \"folders\" = all google_folder description \"d\"\nexport \"a\" = all\nexport \"b\" = all attach [\"google_folder_iam_member\"]\n").unwrap();
+        assert_eq!(f.exports[0].value, ExportValue::All("google_folder".into()));
+        assert_eq!(f.exports[0].description.as_deref(), Some("d"));
+        assert_eq!(f.exports[1].value, ExportValue::Value(Value::Ref("all".into())));
+        assert_eq!(f.exports[2].value, ExportValue::Value(Value::Ref("all".into())));
+        assert!(canonical(&f).contains("export(core|folders|all google_folder|d|[])"), "{}", canonical(&f));
+        let f = parse("estate e\nexport \"a\" = all\ngoogle_folder {\n  x {}\n}\n").unwrap();
+        assert_eq!(f.exports[0].value, ExportValue::Value(Value::Ref("all".into())), "the type stands on the line of `all`");
+        let e = parse("estate e\nexport \"x\" = all folders\n").unwrap_err();
+        assert!(e.msg.contains("`all` takes a provider resource type"), "{}", e.msg);
     }
 
     /// `attach [ … ]` names the attachment types a team may create against the export; it

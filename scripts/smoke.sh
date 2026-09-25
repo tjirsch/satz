@@ -192,6 +192,15 @@ grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/*.tf && fail "an i
 for m in core audit archive-team; do
   [ "$(sed -n '/^## Exports/,/^## Capabilities/p' $si/$m/README.md | grep -c '^| `')" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
 done
+grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/outputs.tf || fail "all google_folder is not a map of the folders keyed by label:\n$(cat $si/core/outputs.tf)"
+grep -q 'value *= { "audit_logs" = "corp-audit-logs" }' $si/core/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket:\n$(cat $si/core/outputs.tf)"
+grep -q 'keys `infra`' $si/core/README.md || fail "the README does not list the map's keys:\n$(cat $si/core/README.md)"
+grep -q 'private' tmp/showcase-hcl/main.tf && fail "private reached main.tf"
+grep -q 'resource "google_storage_bucket" "pack_bucket"' tmp/showcase-hcl/main.tf || fail "a private bucket must still be emitted"
+cp yaml/showcase.satz tmp/private-export.satz
+printf '%s\n' 'export "pack_bucket" = "${{google_storage_bucket.pack_bucket.name}}"' >> tmp/private-export.satz
+"$satz" --config . transpile tmp/private-export.satz --check > tmp/private-export.txt 2>&1 && fail "an export of a private resource compiled"
+grep -q 'is marked `private = true`' tmp/private-export.txt || fail "the refusal does not name the private mark:\n$(cat tmp/private-export.txt)"
 grep -q '^| `archive_project_id` | yes | `google_project_iam_member` |' $si/archive-team/README.md || fail "the README's capability table does not show the attach point:\n$(cat $si/archive-team/README.md)"
 if command -v tofu >/dev/null 2>&1; then
   # moved away from the estate, a team's module still initialises and validates on its own

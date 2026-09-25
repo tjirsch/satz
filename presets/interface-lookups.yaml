@@ -1,4 +1,4 @@
-# How the interface module (hcl/interface/, docs/workflows.md) reads back what an
+# How the interface modules (hcl/interfaces/, docs/workflows.md) read back what an
 # estate emits, per resource type. The table is compiled into satz; it sits beside
 # import-config.yaml because both say how a resource is found again by its natural key.
 #
@@ -16,8 +16,12 @@
 #              standing for the data source (`data.<data_source>.<label>`)
 # derived      resource attribute -> a text over attributes satz writes, `{project}`
 #              included: known at compile time, so it is a literal output and no lookup
+# all          the attribute `export "<name>" = all <type>` gives for each resource of
+#              the type: the one that names it where a team's HCL takes it (a folder's
+#              `folders/<number>`, a project's id). A type without a row takes no `all`
 
 google_folder:
+  all: name
   data_source: google_active_folder
   permission: resourcemanager.folders.list on the parent
   keys:
@@ -29,6 +33,7 @@ google_folder:
     folder_id: 'trimprefix({data}.name, "folders/")'
 
 google_project:
+  all: project_id
   data_source: google_project
   permission: resourcemanager.projects.get
   keys:
@@ -39,6 +44,7 @@ google_project:
     id: "projects/{project_id}"
 
 google_compute_network:
+  all: id
   data_source: google_compute_network
   permission: compute.networks.get
   keys:
@@ -52,6 +58,7 @@ google_compute_network:
     id: "projects/{project}/global/networks/{name}"
 
 google_compute_subnetwork:
+  all: id
   data_source: google_compute_subnetwork
   permission: compute.subnetworks.get
   keys:
@@ -66,6 +73,7 @@ google_compute_subnetwork:
     id: "projects/{project}/regions/{region}/subnetworks/{name}"
 
 google_service_account:
+  all: email
   data_source: google_service_account
   permission: iam.serviceAccounts.get
   keys:
@@ -79,6 +87,7 @@ google_service_account:
     member: "serviceAccount:{account_id}@{project}.iam.gserviceaccount.com"
 
 google_storage_bucket:
+  all: name
   data_source: google_storage_bucket
   permission: storage.buckets.get
   keys:
@@ -91,6 +100,7 @@ google_storage_bucket:
     id: "{name}"
 
 google_pubsub_topic:
+  all: id
   data_source: google_pubsub_topic
   permission: pubsub.topics.get
   keys:
@@ -101,6 +111,7 @@ google_pubsub_topic:
     id: "projects/{project}/topics/{name}"
 
 google_bigquery_dataset:
+  all: id
   data_source: google_bigquery_dataset
   permission: bigquery.datasets.get
   keys:
@@ -112,6 +123,7 @@ google_bigquery_dataset:
     id: "projects/{project}/datasets/{dataset_id}"
 
 google_tags_tag_key:
+  all: name
   data_source: google_tags_tag_key
   permission: resourcemanager.tagKeys.get
   keys:
@@ -123,6 +135,7 @@ google_tags_tag_key:
     namespaced_name: "{data}.namespaced_name"
 
 google_tags_tag_value:
+  all: name
   data_source: google_tags_tag_value
   permission: resourcemanager.tagValues.get
   keys:

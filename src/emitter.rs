@@ -5,7 +5,7 @@
 //! structural context (folder/project chain) comes from `Entity::node_path`
 //! instead of walk position — scope as data, not as interception.
 //!
-use satz_core::algebra::{Body, Folded, Slot};
+use satz_core::algebra::{Body, Entity, Folded, Slot};
 use satz_core::pipeline::{Env, BILLING_ID_TYPE, GRANT_SCOPE_SEP};
 
 /// Config-level facts the emitter needs. Derived from the estate's resolved
@@ -531,6 +531,20 @@ pub(crate) fn reconciled_edges(
     Ok(by_identity.into_values().collect())
 }
 
+/// An entity without its `private` key, when it has one, and whether it is private.
+/// `private` is `true` or `false`; anything else is refused.
+fn without_private(entity: &Entity) -> Result<(Option<Entity>, bool), String> {
+    let Body::Attrs(serde_yaml::Value::Mapping(attrs)) = &entity.body else { return Ok((None, false)) };
+    let key = serde_yaml::Value::String("private".into());
+    let Some(v) = attrs.get(&key) else { return Ok((None, false)) };
+    let private = v.as_bool().ok_or_else(|| format!("`private = {}` — it is `true` or `false`", serde_yaml::to_string(v).unwrap_or_default().trim()))?;
+    let mut e = entity.clone();
+    if let Body::Attrs(serde_yaml::Value::Mapping(m)) = &mut e.body {
+        m.remove(&key);
+    }
+    Ok((Some(e), private))
+}
+
 pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     let mut blocks: Vec<hcl::Block> = Vec::new();
     let mut imports: Vec<hcl::Block> = Vec::new();
@@ -546,6 +560,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     let mut origins: Vec<(String, String, u32)> = Vec::new();
     // (address, `project` | `folder`): a resource outside the scope its type takes
     let mut unscoped: Vec<(String, &'static str)> = Vec::new();
+    // the addresses of the resources marked `private = true`
+    let mut private: Vec<String> = Vec::new();
     for (addr, slot) in &folded.slots {
         let entity = match slot {
             Slot::Ok(e) => e,
@@ -558,6 +574,10 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                 ))
             }
         };
+        // `private` is satz's, and never an attribute: taken off the body before any arm
+        // reads it
+        let (stripped, is_private) = without_private(entity).map_err(|e| format!("{}.{}: {}", addr.tf_type, addr.label, e))?;
+        let entity = stripped.as_ref().unwrap_or(entity);
         let path = &entity.node_path;
         let alias = alias_for(path);
         let first_block = blocks.len();
@@ -795,6 +815,11 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         // line of their own, so they point at the line they derive from — the
         // group, the project, the grant map's member line. `adopt --execute`
         // rewrites the list entry it finds there into the object form.
+        if is_private {
+            if let Some(a) = blocks.get(first_block).and_then(block_address) {
+                private.push(a);
+            }
+        }
         if let Some(span) = entity.provenance.first() {
             for b in &blocks[first_block..] {
                 if let Some(a) = block_address(b) {
@@ -830,6 +855,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     for (a, f, l) in &origins {
         manifest.set_origin(a, f, *l);
     }
+    manifest.private.extend(private);
     let missing_required: Vec<MissingRequired> = match ctx.registry {
         Some(registry) => blocks
             .iter()

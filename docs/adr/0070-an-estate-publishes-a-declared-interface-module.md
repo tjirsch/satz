@@ -270,6 +270,45 @@ has no such column.
 security as much as by the provider — is in `presets/README.md` ("A pack that publishes an
 interface").
 
+## Amendment — every resource of one kind as a map, and `private`
+
+A team that creates projects under the estate's folders needed one export per folder, and
+a folder the estate added later reached no team until someone wrote its export.
+
+**`export "<name>" = all <resource type>` publishes every resource of the type as one map
+output, keyed by satz's resource label** (Thomas: "if that changes it should be for a
+reason"). Labels are predictable and every README lists them; a display name can hold
+anything and changes for cosmetic reasons, and a numeric id is unknown at compile time.
+Each value is the attribute the lookup table's new `all` column names for the type —
+`name` for a folder, `project_id` for a project, `email` for a service account, `id` for a
+network, subnetwork, topic or dataset, `name` for a bucket or a tag — static where satz
+writes it, a lookup where the cloud knows it, exactly as a plain export of that attribute
+would be. A type the table has no row for is refused; a type the estate emits none of is
+an empty map, because a pack may export a kind an estate does not declare yet.
+
+- **`all` is a keyword only before a word on its own line.** `export "x" = all` with
+  nothing after it on the line reads the param `all`, so no estate's param changes
+  meaning.
+- **A renamed label is a breaking change for the teams**, like a renamed export: the pack
+  version's changelog row names the old and the new label, and the release is a minor
+  one (the standing rule above).
+- **The cost** is a lookup per element that only the cloud knows, in every team's plan.
+
+**`private = true` in a resource's body keeps it out of the interface**: `all` skips it,
+and an export whose value names it is refused. It is a satz body key (`satz_body_key`,
+ADR 0047 — the list is now ten), stripped by the emitter before any rule reads the body
+and recorded in the emission manifest; `true` or `false`, anything else refused.
+
+- **A body key, not a keyword before the label.** Every other thing satz says about one
+  resource — `"import-id"`, `lifecycle`, `provider` — is a key in its body, and a keyword
+  before the label would be read as a named entry (`key name { … }`) by the parser.
+- **No "exportable" marker.** Nothing leaves the estate unless an `export` names it, so
+  the opt-out is the only marker needed.
+- **The scaffold marks what no team should read**: `satz init` writes `private = true` on
+  the state bucket and on the IaC service account. `iac_service_account` stays a core
+  export of `estate-core.satz`: it is a param template, not a reference to the resource,
+  and a team needs the address to grant the estate access to what it creates.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

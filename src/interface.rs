@@ -44,6 +44,8 @@ pub(crate) struct LookupRow {
     pub attributes: BTreeMap<String, String>,
     #[serde(default)]
     pub derived: BTreeMap<String, String>,
+    /// what `all <type>` gives per resource
+    pub all: String,
 }
 
 /// The lookup table, compiled in: what the interface emits for a type is part of the
@@ -149,8 +151,11 @@ pub(crate) struct Output {
     pub how: How,
     /// the attachment types a team may create against it
     pub attach: Vec<String>,
-    /// the emitted resources its value reads, by address
+    /// the emitted resources its value reads, by address; for `all <type>`, every one
+    /// the map holds
     pub targets: Vec<String>,
+    /// `all <type>`: the type the map is of, keyed by the labels in `targets`
+    pub all: Option<String>,
 }
 
 /// The interface of one estate.
@@ -195,7 +200,17 @@ pub(crate) fn build(
     let mut outputs = Vec::new();
     let mut refusals = Vec::new();
     for x in exports {
-        match r.value(&x.value) {
+        let resolved = match &x.all {
+            Some(t) => r.all(t),
+            None => r.value(&x.value).and_then(|v| {
+                // a resource marked `private` is published by no export
+                match addresses_in(&x.value).into_iter().find(|a| manifest.private.contains(a)) {
+                    Some(a) => Err(format!("`{}` is marked `private = true`, which keeps it out of every export — remove the mark, or export something else", a)),
+                    None => Ok(v),
+                }
+            }),
+        };
+        match resolved {
             Ok((module_value, root_value, parts_all_static, used)) => {
                 let how = if parts_all_static {
                     How::Static(module_value.clone())
@@ -206,7 +221,10 @@ pub(crate) fn build(
                     }
                     How::Lookup(all.into_iter().collect())
                 };
-                let targets = addresses_in(&x.value);
+                let targets = match &x.all {
+                    Some(t) => r.members(t).iter().map(|m| m.address()).collect(),
+                    None => addresses_in(&x.value),
+                };
                 for msg in attach_refusals(&x.attach, &targets, manifest, &attach_table) {
                     refusals.push(Refusal { interface: x.interface.clone(), name: x.name.clone(), file: x.file.clone(), line: x.line, msg });
                 }
@@ -219,6 +237,7 @@ pub(crate) fn build(
                     how,
                     attach: x.attach.clone(),
                     targets,
+                    all: x.all.clone(),
                 });
             }
             Err(msg) => refusals.push(Refusal { interface: x.interface.clone(), name: x.name.clone(), file: x.file.clone(), line: x.line, msg }),
@@ -248,6 +267,44 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
+    /// Every resource of `tf_type` the estate emits and does not mark `private`, by label.
+    fn members<'s>(&'s self, tf_type: &'s str) -> Vec<&'s EmittedResource> {
+        let mut out: Vec<&EmittedResource> = self.manifest.of_type(tf_type).filter(|r| !self.manifest.private.contains(&r.address())).collect();
+        out.sort_by(|a, b| a.label.cmp(&b.label));
+        out
+    }
+
+    /// `all <type>`: a map keyed by resource label, each value the attribute the lookup
+    /// table's `all` names — static where satz knows it, a lookup where the cloud does.
+    fn all(&mut self, tf_type: &str) -> Result<(String, String, bool, Vec<String>), String> {
+        let attr = match self.table.get(tf_type) {
+            Some(row) => row.all.clone(),
+            None => {
+                return Err(format!(
+                    "`all {}`: satz has no lookup for `{}`, so it cannot say what each one is — presets/interface-lookups.yaml names the types `all` takes: {}",
+                    tf_type,
+                    tf_type,
+                    self.table.keys().cloned().collect::<Vec<_>>().join(", ")
+                ))
+            }
+        };
+        let labels: Vec<String> = self.members(tf_type).iter().map(|r| r.label.clone()).collect();
+        let (mut module, mut root, mut known, mut used) = (Vec::new(), Vec::new(), true, Vec::new());
+        for label in labels {
+            let parts = self.attribute(tf_type, &label, &attr)?;
+            for p in &parts {
+                if let Part::Expr(e) = p {
+                    used.extend(data_address_in(e));
+                }
+            }
+            known &= parts.iter().all(|p| matches!(p, Part::Lit(_)));
+            module.push(format!("{} = {}", hcl_string(&label), render_parts(&parts)));
+            root.push(format!("{} = {}.{}.{}", hcl_string(&label), tf_type, label, attr));
+        }
+        let map = |entries: Vec<String>| if entries.is_empty() { "{}".to_string() } else { format!("{{ {} }}", entries.join(", ")) };
+        Ok((map(module), map(root), known, used))
+    }
+
     /// One export value: (module HCL, root HCL, whether it is known now, the data blocks it
     /// reads directly).
     fn value(&mut self, v: &serde_yaml::Value) -> Result<(String, String, bool, Vec<String>), String> {
@@ -913,6 +970,18 @@ impl Interface {
                     format!("lookup: {}", parts.join("; "))
                 }
             };
+            let how = match &o.all {
+                Some(t) => {
+                    let keys: Vec<String> = o.targets.iter().filter_map(|a| a.split_once('.')).map(|(_, l)| format!("`{}`", l)).collect();
+                    format!(
+                        "a map of every `{}`, keyed by label — {}; {}",
+                        t,
+                        if keys.is_empty() { "none is emitted".to_string() } else { format!("keys {}", keys.join(", ")) },
+                        how
+                    )
+                }
+                None => how,
+            };
             s.push_str(&format!(
                 "| `{}` | {} | {} | {} |\n",
                 o.name,
@@ -1021,7 +1090,7 @@ resource "google_cloud_identity_group" "g" {
 "#;
 
     fn export(name: &str, value: &str) -> ResolvedExport {
-        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, attach: Vec::new(), file: "e.satz".into(), line: 3 }
+        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, attach: Vec::new(), all: None, file: "e.satz".into(), line: 3 }
     }
 
     fn build_one(value: &str) -> Result<Interface, Vec<Refusal>> {
@@ -1197,6 +1266,34 @@ resource "google_project_iam_binding" "team_viewers" {
         assert!(run(with("${google_project.team.project_id}", &["google_compute_shared_vpc_service_project"])).is_ok());
     }
 
+    /// `all <type>` is a map keyed by label, each value what the row's `all` names —
+    /// looked up where the cloud knows it — without the resources marked private; an
+    /// export naming a private resource and a type with no row are refused.
+    #[test]
+    fn an_all_export_maps_every_resource_of_a_type_but_the_private_ones() {
+        let mut m = Manifest::parse(MAIN_TF);
+        let all = |t: &str| ResolvedExport { all: Some(t.into()), value: serde_yaml::Value::Null, ..export("x", "") };
+        let i = build("e", &[all("google_folder"), all("google_project")], &[], &m, "hashicorp/google", None).unwrap();
+        let folders = &i.outputs[0];
+        assert_eq!(folders.module_value, "{ \"infra\" = data.google_active_folder.infra.name, \"team\" = data.google_active_folder.team.name }");
+        assert_eq!(folders.root_value, "{ \"infra\" = google_folder.infra.name, \"team\" = google_folder.team.name }");
+        assert!(matches!(folders.how, How::Lookup(_)));
+        assert_eq!(folders.targets, ["google_folder.infra", "google_folder.team"]);
+        assert_eq!(i.outputs[1].how, How::Static("{ \"infra\" = \"corp-infra-001\" }".into()));
+        let readme = i.readme(CORE, "0.0.0", "satz/e.satz", None);
+        assert!(readme.contains("a map of every `google_folder`, keyed by label — keys `infra`, `team`; lookup:"), "{}", readme);
+
+        m.private.insert("google_folder.team".into());
+        let i = build("e", &[all("google_folder")], &[], &m, "hashicorp/google", None).unwrap();
+        assert_eq!(i.outputs[0].targets, ["google_folder.infra"], "a private folder is left out");
+        let e = build("e", &[export("x", "${google_folder.team.name}")], &[], &m, "hashicorp/google", None).unwrap_err();
+        assert!(e[0].msg.contains("`google_folder.team` is marked `private = true`"), "{}", e[0].msg);
+        let e = build("e", &[all("google_cloud_identity_group")], &[], &m, "hashicorp/google", None).unwrap_err();
+        assert!(e[0].msg.contains("`all google_cloud_identity_group`: satz has no lookup"), "{}", e[0].msg);
+        let none = build("e", &[all("google_pubsub_topic")], &[], &m, "hashicorp/google", None).unwrap();
+        assert_eq!(none.outputs[0].how, How::Static("{}".into()), "no resource of the type is an empty map");
+    }
+
     #[test]
     fn every_attach_row_is_an_attachment_with_a_target() {
         for (t, row) in attach_points() {
@@ -1244,6 +1341,7 @@ resource "google_project_iam_binding" "team_viewers" {
         for (t, row) in &table {
             assert!(seen.insert(row.data_source.clone()), "two rows read back through `{}`", row.data_source);
             assert!(!row.keys.is_empty(), "{}: a lookup needs a key", t);
+            assert!(row.attributes.contains_key(&row.all) || row.derived.contains_key(&row.all) || row.keys.contains_key(&row.all), "{}: `all = {}` is an attribute the row neither yields nor derives", t, row.all);
             for expr in row.attributes.values() {
                 assert!(expr.contains("{data}"), "{}: `{}` reads nothing of the data source", t, expr);
             }

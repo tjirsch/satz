@@ -21,7 +21,7 @@
   "question" "oneof"
   "action"
   "notice"
-  "export" "description"
+  "export" "description" "attach" "all"
   "interface"
   "suppress" "role"
   "hcl" "trust"
@@ -44,6 +44,8 @@
 (interface name: (string) @title)
 (use_statement type: (identifier) @type)
 (use_statement condition: (identifier) @variable)
+(use_interface condition: (identifier) @variable)
+(all_resources type: (identifier) @type)
 (suppress type: (identifier) @type)
 
 ; {name} inside a string: the parameter it interpolates.

@@ -569,7 +569,7 @@ argument or block the provider does not have is a parse error naming the file,
 the line and the key. A block's own body is checked the same way
 (`spec { … }` of an org policy, `condition { … }` under its rules); what an
 attribute carries is a value, so the keys of a `labels` map are the estate's
-own. Nine keys are satz's rather than the provider's and are written in any body
+own. Ten keys are satz's rather than the provider's and are written in any body
 they belong to:
 
 | key | what it is |
@@ -577,6 +577,7 @@ they belong to:
 | `"import-id"` | the live id of the resource this block adopts — it becomes an `import` block (§6.7) |
 | `lifecycle` | Terraform's meta-argument, emitted as written |
 | `provider` | Terraform's meta-argument, emitted as a reference (`google.google`) |
+| `private` | `true` keeps the resource out of the interface: `export … = all <type>` skips it and an export naming it is refused (§6.17); never emitted |
 | `project_service` | on `google_project`: the APIs to enable, one `google_project_service` each |
 | `org` | on `google_project`: the organisation the project states as its parent |
 | `member`, `manager`, `owner` | on `google_cloud_identity_group`: the memberships to create (§6.4) |
@@ -1901,6 +1902,9 @@ export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
 
+export "folders" = all google_folder description "Every folder, by label"
+export "buckets" = all google_storage_bucket
+
 interface "audit" {
   export "audit_bucket_name" = "${{google_storage_bucket.audit_logs.name}}" description "The audit log bucket"
 }
@@ -1946,6 +1950,18 @@ interface "archive-team" {
   refused. A reference names something the estate emits, or the compile refuses it at
   the export's line, listing the labels of that type that are emitted; `${{…}}` that is
   not a `type.label.attribute` of a `google_*` resource is refused.
+- **`all <resource type>`**, on one line, in place of a value publishes every resource of that type the
+  estate emits, as one map keyed by satz's resource label (the `<label>` of
+  `<type>.<label>`): a team reads `module.satz.folders["infra"]`, and a new folder is a new
+  key without a new export. Each value is the attribute `presets/interface-lookups.yaml`
+  names for the type under `all` — a folder's `name` (`folders/<number>`, looked up), a
+  project's `project_id`, a bucket's `name`, a service account's `email`, a network's or a
+  topic's `id` — static where satz writes it, a lookup where the cloud knows it. A type the
+  table has no row for is refused, listing the rows; a type the estate emits none of is an
+  empty map. The README lists the map's keys. A resource whose body says `private = true`
+  is left out of the map, and an export whose value names it is refused: the state bucket
+  and the IaC service account of the estate `satz init` writes carry it. A label is a key
+  consumers index by, so a pack version that renames one is a breaking change for them.
 - **`description "…"`** follows the value on the same statement and becomes the
   output's `description` and the README's.
 - **`attach ["<resource type>", …]`** follows the value too, before or after the

@@ -742,6 +742,25 @@ Google refuses a second folder of one name under one parent, so a folder the cus
 already has is imported first: `satz adopt <estate> --execute --import` finds it by its
 display name under the organisation and writes its id into the estate.
 
+**Every resource of one kind is one export.** `export "folders" = all google_folder`
+publishes a map keyed by each folder's label in the estate, so a team reads
+`module.satz.folders["team_a"]` and a folder the estate adds later arrives as a new key:
+
+```hcl
+resource "google_project" "team_a" {
+  project_id = "acme-team-a-001"
+  name       = "team-a"
+  folder_id  = module.satz.folders["team_a"]
+}
+```
+
+The README lists the keys. `private = true` in a resource's body keeps it out of every
+map and refuses an export that names it; the estate `satz init` writes marks its state
+bucket and its IaC service account that way. An estate whose `google_storage_bucket.state`
+or `google_service_account.provisioner` lacks the line publishes it in such a map; add
+`private = true` to both before exporting `all google_storage_bucket` or `all
+google_service_account`.
+
 What one team reads goes into an `interface` block named for the team, in the estate or
 in a pack; the same interface in two files is one interface:
 
