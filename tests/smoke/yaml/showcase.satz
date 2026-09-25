@@ -22,6 +22,7 @@ params {
   group_model_flat         = true           # exactly one of these two — see `question oneof` below
   group_model_split        = false
   pack_bucket_adopted      = true           # acknowledges showcase-pack's `notice` — the command has run
+  team_folder_name         = ""             # an empty answer its question gives a meaning — see `empty` below
   // A project's parent, said rather than nested — see the `google_project` below.
   archive_project_folder   = "google_folder.infra.name"
   // A list param a PACK adds to: showcase-pack declares
@@ -67,6 +68,24 @@ question oneof group_model {
   required = true
   option group_model_flat { label = "Flat — network authority sits with project admins" }
   option group_model_split { label = "Split — a separate network-admins group" why = "For customers with a distinct network team." }
+}
+
+// A question may say what an empty answer means. `""` is then an answer like any other:
+// offered, accepted and counted. Without `empty`, "" is a value nobody has given yet.
+question team_folder_name {
+  prompt   = "Display name of a folder for the team"
+  reversal = edit
+  blast    = none
+  empty    = "no team folder"
+}
+
+// A choice that is not `required` is also answered by none of its options — `none` in an
+// interview, every option `false` in the file — so one option is enough to make it a choice.
+question oneof optional_extras {
+  prompt   = "Which optional extras does this estate take?"
+  reversal = edit
+  blast    = none
+  option want_optional { label = "The optional pack — one more bucket" }
 }
 
 // --- Estate configuration blocks: emitted as providers.tf / the backend. -----

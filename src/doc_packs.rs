@@ -781,6 +781,9 @@ fn render(
                 continue;
             }
             md.push_str(&format!("**{}** — {}\n\n", q.subject, q.why.as_deref().unwrap_or("")));
+            if let Some(meaning) = &q.empty {
+                md.push_str(&format!("An empty answer, `\"\"`, is an answer: {}.\n\n", meaning));
+            }
             for o in &q.options {
                 md.push_str(&format!(
                     "- `{}` — {}{}\n",

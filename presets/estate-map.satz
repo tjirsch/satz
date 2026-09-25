@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.3"
+pack estate_map version "2.4"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -66,7 +66,9 @@ params {
   // estate answers the grant alone `true`.
   use_verification_runner_grant = use_verification_runner
   use_exemption_tag             = false
-  use_interface_notice          = false
+
+  // ---- how the teams hear of a changed export: at most one form ---------------
+  interface_notice_pubsub = false
 }
 
 question use_cis_baseline {
@@ -233,11 +235,12 @@ question use_exemption_tag {
   blast    = none
 }
 
-question use_interface_notice {
-  prompt   = "Notify the teams whose HCL reads this estate's interface when an exported value changes?"
-  why      = "Customer teams read the estate's exports through hcl/interfaces/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. This adds a bucket, a Pub/Sub topic and a storage notification in the infrastructure project: every apply that changes an exported value publishes one message, and a team subscribes in its own state. Turning it off later removes the topic, and every subscription on it stops receiving."
+question oneof interface_notice {
+  prompt   = "How do the teams whose HCL reads this estate's interface hear that an exported value changed?"
+  why      = "Customer teams read the estate's exports through hcl/interfaces/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. The choice has one option per delivery form, and none is an answer: Pub/Sub is the one satz has. Turning a form off later removes what it created, and every team that listens to it stops hearing."
   reversal = edit
   blast    = low
+  option interface_notice_pubsub { label = "Pub/Sub — a message on a topic in the infrastructure project" why = "A bucket holds the exported values as one JSON object, and a storage notification publishes one message to a topic for every apply that changes one. A team subscribes in its own state: a push to its CI's webhook or a pull from a runner." }
 }
 
 // ---- what the library offers, in the order the packs can be adopted ---------
@@ -481,6 +484,6 @@ header shows both"""
 }
 
 offers "presets/interface-notice.satz" {
-  when  = use_interface_notice
+  when  = interface_notice_pubsub
   phase = "once the estate exports what other teams read — the notice publishes when an export changes"
 }

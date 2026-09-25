@@ -17,6 +17,10 @@ use satz_core::pipeline::{estate_questions, Env};
 
 use crate::settings::ToolConfig;
 
+/// The answer to a choice that is not `required` which sets none of its options: every
+/// option is bound `false`. It is what the choice offers while no option is on.
+pub(crate) const NO_BRANCH: &str = "none";
+
 /// One question, joined with the answer the estate currently carries.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionRow {
@@ -67,6 +71,14 @@ pub(crate) struct QuestionRow {
     pub recommend: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub options: Vec<OptionRow>,
+    /// A choice only: exactly one option must be set. A choice that is not required is
+    /// also answered by [`NO_BRANCH`] — every option `false`.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub required: bool,
+    /// What an empty answer means, where the question says (`empty = "…"`): `""` is then
+    /// an answer — offered, accepted and counted — rather than one still to give.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty: Option<String>,
     /// the file that declared it — a fork asks its own questions
     pub from: String,
     pub pack: String,
@@ -172,15 +184,18 @@ pub(crate) fn questions_report(
                 if q.options.iter().any(|o| own.contains(&o.param)) {
                     ("answered", None, None, false)
                 } else {
+                    // a choice that is not required offers "none" while no option is on
                     let picked = q
                         .options
                         .iter()
                         .find(|o| truthy(env.get(&o.param)))
-                        .map(|o| serde_yaml::Value::String(o.param.clone()));
+                        .map(|o| serde_yaml::Value::String(o.param.clone()))
+                        .or_else(|| (!q.required).then(|| serde_yaml::Value::String(NO_BRANCH.to_string())));
                     let blocking = picked.is_none();
                     ("unanswered", None, picked, blocking)
                 }
-            } else if own.contains(&q.subject) && !restates_unknown(&q.subject, declared, &env) {
+            } else if own.contains(&q.subject) && (q.empty.is_some() || !restates_unknown(&q.subject, declared, &env)) {
+                // a question that says what "" means takes "" as an answer like any other
                 ("answered", env.get(&q.subject).cloned(), None, false)
             } else if own.contains(&q.subject) {
                 // bound to nothing: open, and the derivation is the offer once its inputs
@@ -189,10 +204,12 @@ pub(crate) fn questions_report(
                 let blocking = default.is_none();
                 ("unanswered", None, default, blocking)
             } else {
-                let usable = match declared {
-                    Some(f) => default_usable(&q.subject, &f.params, &own, &env, 0),
-                    None => env.get(&q.subject).map(|v| !is_empty(v)).unwrap_or(false),
-                };
+                let empty_offer = q.empty.is_some() && env.get(&q.subject).is_some_and(is_empty);
+                let usable = empty_offer
+                    || match declared {
+                        Some(f) => default_usable(&q.subject, &f.params, &own, &env, 0),
+                        None => env.get(&q.subject).map(|v| !is_empty(v)).unwrap_or(false),
+                    };
                 let default = if usable { env.get(&q.subject).cloned() } else { None };
                 ("unanswered", None, default, !usable)
             };
@@ -240,6 +257,8 @@ pub(crate) fn questions_report(
                         selected: truthy(env.get(&o.param)),
                     })
                     .collect(),
+                required: q.required,
+                empty: q.empty.clone(),
                 from: pq.file.clone(),
                 pack: pq.pack.clone(),
             });
@@ -488,8 +507,8 @@ pub(crate) fn render_questions(r: &QuestionsReport) -> String {
             q.reversal,
             q.blast,
             match (&q.current, &q.default) {
-                (Some(v), _) => format!("answer: {}", crate::questions::short(v)),
-                (None, Some(d)) => format!("default offered: {}", crate::questions::short(d)),
+                (Some(v), _) => format!("answer: {}", q.shown(v)),
+                (None, Some(d)) => format!("default offered: {}", q.shown(d)),
                 (None, None) if q.state == "unanswered" => "no default — a value is needed".to_string(),
                 _ => String::new(),
             }
@@ -653,7 +672,7 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
             };
             let answer = match (q.state, &q.current, &q.default) {
                 ("not-applicable", _, _) => "not applicable".to_string(),
-                (_, Some(v), _) => format!("`{}`", short(v)),
+                (_, Some(v), _) => format!("`{}`", q.shown(v)),
                 (_, None, Some(d)) if q.kind == "oneof" => {
                     let label = q
                         .options
@@ -663,7 +682,7 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
                         .unwrap_or_else(|| short(d));
                     format!("default: {} — accept, or choose another", label)
                 }
-                (_, None, Some(d)) => format!("default `{}` — accept, or change", short(d)),
+                (_, None, Some(d)) => format!("default `{}` — accept, or change", q.shown(d)),
                 _ if q.kind == "oneof" => {
                     let opts: Vec<String> = q.options.iter().map(|o| o.label.clone()).collect();
                     format!("**choose:** {}", opts.join(" / "))
@@ -679,6 +698,17 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
         out.push('\n');
     }
     out
+}
+
+impl QuestionRow {
+    /// A value as [`short`] shows it — except an empty answer to a question that says
+    /// what "" means, which shows the meaning beside it.
+    pub(crate) fn shown(&self, v: &serde_yaml::Value) -> String {
+        match (&self.empty, v.as_str()) {
+            (Some(meaning), Some("")) => format!("\"\" ({})", meaning),
+            _ => short(v),
+        }
+    }
 }
 
 /// A value as a human reads it: a string is itself (YAML would quote `"123456789012"`

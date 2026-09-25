@@ -817,6 +817,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("recommend", "the default answer"),
             ("ask_when", "only when this param is truthy"),
             ("required", "true: no default is possible"),
+            ("empty", "what an empty answer means; \"\" is then an answer"),
             ("option", "`option PARAM { label = \"…\" why = \"…\" }` in a `question oneof`"),
         ],
     ),

@@ -222,6 +222,10 @@ pub struct QuestionDecl {
     pub ask_when: Option<String>,
     /// `oneof` only: exactly one option must be true, rather than at most one.
     pub required: bool,
+    /// What an empty answer MEANS (`empty = "the organisation"`). With it, `""` is an
+    /// answer like any other — offered, accepted and counted; without it, an empty
+    /// value is one nobody has given yet.
+    pub empty: Option<String>,
     pub options: Vec<QuestionOption>,
     pub line: usize,
 }
@@ -1151,6 +1155,7 @@ impl P {
         let mut recommend = None;
         let mut ask_when = None;
         let mut required = false;
+        let mut empty = None;
         let mut options: Vec<QuestionOption> = Vec::new();
 
         for e in body {
@@ -1182,6 +1187,14 @@ impl P {
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Bool(b), .. } if k == "required" => {
                     required = b;
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "empty" => {
+                    let meaning = lit_str(&parts, l, "question: empty")?;
+                    if meaning.trim().is_empty() {
+                        return err(l, format!(
+                            "question {}: empty = \"…\" says what an empty answer means, and says nothing", subject));
+                    }
+                    empty = Some(meaning);
                 }
                 Entry::Map { key: Key::Ident(k), name: Some(Key::Ident(param)), body, line: l }
                     if k == "option" =>
@@ -1223,7 +1236,7 @@ impl P {
                         "question {}: unexpected entry {:?} — the keys are prompt, why, reversal, \
                          blast, recommend, ask_when{}",
                         subject, other,
-                        if oneof { ", required and `option <param> { … }`" } else { "" }));
+                        if oneof { ", required and `option <param> { … }`" } else { " and empty" }));
                 }
             }
         }
@@ -1253,10 +1266,18 @@ impl P {
                 subject));
         }
         if oneof {
-            if options.len() < 2 {
+            // A choice offers at least two answers. Without `required`, no branch set is
+            // one of them — so one option is a choice, and it is the form a choice takes
+            // before a second option exists.
+            let least = if required { 2 } else { 1 };
+            if options.len() < least {
                 return err(line, format!(
-                    "question oneof {}: needs at least two `option <param> {{ … }}` branches (found {})",
-                    subject, options.len()));
+                    "question oneof {}: needs at least {} `option <param> {{ … }}` branch{} (found {}){}",
+                    subject,
+                    if required { "two" } else { "one" },
+                    if required { "es" } else { "" },
+                    options.len(),
+                    if required { " — a required choice with one option is that option, not a choice" } else { "" }));
             }
         } else {
             if !options.is_empty() {
@@ -1268,9 +1289,14 @@ impl P {
                     "question {}: `required` belongs to a `question oneof <group>`", subject));
             }
         }
+        if oneof && empty.is_some() {
+            return err(line, format!(
+                "question oneof {}: `empty` belongs to a question about one param — a choice's \"none\" is its empty answer",
+                subject));
+        }
 
         Ok(QuestionDecl {
-            subject, oneof, prompt, why, reversal, blast, recommend, ask_when, required, options, line,
+            subject, oneof, prompt, why, reversal, blast, recommend, ask_when, required, empty, options, line,
         })
     }
 
@@ -2130,6 +2156,9 @@ pub fn canonical_questions(file: &File) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ));
+        if let Some(e) = &q.empty {
+            out.push_str(&format!("question-empty({}|{})\n", q.subject, e));
+        }
     }
     out
 }
@@ -2420,10 +2449,18 @@ mod tests {
     }
 
     #[test]
-    fn a_oneof_needs_two_branches_and_they_must_be_declared_params() {
-        let one = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}";
-        let e = parse(&q(one)).unwrap_err();
+    fn a_oneof_needs_two_answers_and_its_branches_must_be_declared_params() {
+        // required: two options, because one would be that option and not a choice
+        let one_required = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  required = true\n  option a { label = \"A\" }\n}";
+        let e = parse(&q(one_required)).unwrap_err();
         assert!(e.msg.contains("at least two"), "{}", e.msg);
+        // not required: one option and "none" are the two answers
+        let one = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}";
+        let f = parse(&q(one)).expect("one option and none is a choice");
+        assert_eq!(f.questions[0].options.len(), 1);
+        let none = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}";
+        let e = parse(&q(none)).unwrap_err();
+        assert!(e.msg.contains("at least one"), "{}", e.msg);
 
         let undeclared = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n  option zz { label = \"Z\" }\n}";
         let e = parse(&q(undeclared)).unwrap_err();
@@ -2434,6 +2471,20 @@ mod tests {
         assert!(f.questions[0].oneof);
         assert!(f.questions[0].required);
         assert_eq!(f.questions[0].options.len(), 2);
+    }
+
+    /// `empty = "…"` says what an empty answer means; it is a string that says something,
+    /// on a question about one param.
+    #[test]
+    fn empty_names_what_an_empty_answer_means() {
+        let f = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \"the default region\"\n}")).expect("parse");
+        assert_eq!(f.questions[0].empty.as_deref(), Some("the default region"));
+        let f = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}")).expect("parse");
+        assert_eq!(f.questions[0].empty, None, "without it, an empty value is no answer");
+        let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \" \"\n}")).unwrap_err();
+        assert!(e.msg.contains("says nothing"), "{}", e.msg);
+        let e = parse(&q("question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \"x\"\n  option a { label = \"A\" }\n}")).unwrap_err();
+        assert!(e.msg.contains("`empty` belongs to a question about one param"), "{}", e.msg);
     }
 
     #[test]

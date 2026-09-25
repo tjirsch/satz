@@ -41,6 +41,7 @@ infra-folder-name = "Infrastructure"
 infra-project-name = "acme-infra-001"
 svc-iac-account = "svc-iac-001"
 svc-iac-users-group = "svc-iac-users"
+workload-folder-name = ""
 ---imports---
 
 ---outputs.tf---

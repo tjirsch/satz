@@ -1,7 +1,12 @@
 // Tells the teams whose HCL reads this estate's interface when an exported value
 // changes: one Pub/Sub message per apply that changes one.
 //
-//   use "presets/interface-notice.satz" when use_interface_notice
+//   use "presets/interface-notice.satz" when interface_notice_pubsub
+//
+// The map asks how the teams hear of a change as a choice, `question oneof
+// interface_notice`, with one option per delivery form; Pub/Sub is the one satz has,
+// and this pack is it. A second form — a webhook, a push of the interface to a
+// customer repository — is a second option and a pack of its own beside this one.
 //
 // The estate's exports (`export` statements, hcl/interfaces/) are what customer teams
 // read, in their own state and their own pipelines. This pack puts a notice behind
@@ -34,7 +39,7 @@
 //
 // NO CLAIM. No catalog control covers it.
 
-pack interface_notice version "1.0"
+pack interface_notice version "1.1"
 
 params {
   interface_notice_project     = infra_project_name

@@ -2,7 +2,7 @@
 //
 //   use "presets/estate-core.satz"
 //
-// `satz init` writes these seventeen params — from its flags where it has one, from
+// `satz init` writes these params — from its flags where it has one, from
 // its defaults otherwise; an INTERVIEW asks for
 // them one at a time, from the questions in this pack. Every param below has a
 // question, and every question says what changing the answer later costs, so a
@@ -25,8 +25,17 @@
 // hcl/interfaces/, the modules the teams' own HCL reads them from — so an estate has
 // them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything compiles to exactly what `satz init` would have written.
+//
+// `workload_folder_name` is the folder where the customer's and the teams' folders live,
+// named like `infra_folder_name`. It may be empty — the default — which is the
+// organisation itself, and nothing is created for it; its question says so (`empty`), so
+// "" is an answer the interview offers and the gate counts. Its export, `workload_folder`,
+// is not here: it is the organisation, a static value, or a folder the estate declares,
+// whose number is looked up, so the estate carries that section — `satz init` writes it
+// from `--workload-folder-name`, an interview when the question is answered. The folder's
+// parent is where its block stands in the estate, like any folder's.
 
-pack estate_core version "2.2"
+pack estate_core version "2.3"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -48,6 +57,9 @@ params {
   deployment_mode     = "local"
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
+
+  // ---- where the customer's and the teams' folders live: "" is the organisation
+  workload_folder_name = ""
 
   // ---- what the customer answers to, which no pack can know -----------------
   compliance_frameworks = ["cis-gcp-5.0"]
@@ -106,6 +118,14 @@ question infra_folder_name {
   reversal  = edit
   blast     = none
   recommend = "Infrastructure"
+}
+
+question workload_folder_name {
+  prompt   = "Display name of the folder that holds the customer's and the teams' folders"
+  why      = "Every team's folder takes it as its parent, through the core export `workload_folder`. Empty is the organisation itself, and nothing is created. A name declares the folder directly under the organisation; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the teams created under it."
+  reversal = state_surgery
+  blast    = high
+  empty    = "the organisation itself; no folder is created"
 }
 
 question infra_project_name {
