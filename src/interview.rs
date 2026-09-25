@@ -237,7 +237,22 @@ pub(crate) fn answer(
         }
     }
     let out = bind(src, &row.subject, value)?;
+    let out = workload_folder(&out, row, value)?;
     pack_lines(&out, &row.subject, value, graph)
+}
+
+/// The day-0 scaffold's one answer-shaped section: answering estate-core's
+/// `workload_folder_name` writes the section that publishes `workload_folder` — the
+/// organisation for "", the folder for a name — as `satz init` does from its flag, so an
+/// estate an interview started ends where an init estate does. A section of the other
+/// form is refused by [`crate::template::with_workload_folder`], never rewritten.
+fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
+    match value.as_str() {
+        Some(name) if row.subject == crate::template::WORKLOAD_FOLDER_NAME && row.pack == "estate_core" => {
+            crate::template::with_workload_folder(src, !name.trim().is_empty())
+        }
+        _ => Ok(src.to_string()),
+    }
 }
 
 /// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
@@ -652,8 +667,8 @@ fn present(q: &QuestionRow) -> String {
         return s;
     }
     match (q.state, &q.current, &q.default) {
-        ("answered", Some(v), _) => s.push_str(&format!("  [{}] > ", short(v))),
-        (_, _, Some(d)) => s.push_str(&format!("  [{}] > ", short(d))),
+        ("answered", Some(v), _) => s.push_str(&format!("  [{}] > ", q.shown(v))),
+        (_, _, Some(d)) => s.push_str(&format!("  [{}] > ", q.shown(d))),
         _ => s.push_str("  no default — a value is needed\n  > "),
     }
     s
@@ -871,6 +886,26 @@ google_folder {
         assert!(present(&choice(false)).contains("  0) none\n"), "{}", present(&choice(false)));
     }
 
+    /// Answering estate-core's `workload_folder_name` writes the section that publishes
+    /// the workload folder, as `satz init` does; the same subject from another pack writes
+    /// nothing.
+    #[test]
+    fn answering_the_workload_folder_writes_its_section() {
+        let src = crate::template::skeleton("x", None);
+        let row = |pack: &str| QuestionRow { subject: "workload_folder_name".into(), kind: "param", pack: pack.into(), ..Default::default() };
+        let s = |v: &str| serde_yaml::Value::String(v.into());
+        let org = answer(&src, &row("estate_core"), &s(""), None).unwrap();
+        assert!(org.contains("workload_folder_name = \"\""), "{}", org);
+        assert!(org.contains("export \"workload_folder\" = \"organizations/{customer_organization_id}\""), "{}", org);
+        assert!(!org.contains("google_folder.workload_folder"), "{}", org);
+        let folder = answer(&src, &row("estate_core"), &s("Workloads"), None).unwrap();
+        assert!(folder.contains("export \"workload_folder\" = \"${{google_folder.workload_folder.name}}\""), "{}", folder);
+        let err = answer(&folder, &row("estate_core"), &s(""), None).unwrap_err();
+        assert!(err.contains("publishes the workload folder as the folder"), "{}", err);
+        let other = answer(&src, &row("someone_else"), &s("Workloads"), None).unwrap();
+        assert!(!other.contains("export \"workload_folder\""), "{}", other);
+    }
+
     #[test]
     fn literal_escapes_and_types() {
         assert_eq!(literal(&yaml("say \"hi\" \\ back")), r#""say \"hi\" \\ back""#);
@@ -929,6 +964,7 @@ google_folder {
             recommend: None,
             options: vec![],
             required: false,
+            empty: None,
             from: String::new(),
             pack: String::new(),
         };
@@ -983,6 +1019,43 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         let mut cfg: ToolConfig = toml::from_str("").unwrap();
         cfg.include_dirs = vec![dir.to_string_lossy().into_owned()];
         (dir.join("e.satz"), cfg)
+    }
+
+    /// `empty = "…"` makes "" an answer: offered while unbound, accepted by
+    /// `--accept-defaults`, and counted once bound. A question without it keeps "" as a
+    /// value nobody has given.
+    #[test]
+    fn a_question_that_says_what_empty_means_takes_empty_as_an_answer() {
+        let dir = std::env::temp_dir().join(format!("satz-iv-{}-empty", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("asks.satz"),
+            "pack asks version \"1.0\"\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nquestion folder { prompt = \"Folder\" reversal = edit blast = none empty = \"the organisation\" }\nquestion label { prompt = \"Label\" reversal = edit blast = none }\n",
+        )
+        .unwrap();
+        let estate = dir.join("e.satz");
+        std::fs::write(&estate, "estate e\n\nparams {\n}\n\nuse \"asks.satz\"\n").unwrap();
+        let mut cfg: ToolConfig = toml::from_str("").unwrap();
+        cfg.include_dirs = vec![dir.to_string_lossy().into_owned()];
+        let r = questions_report(&estate, &cfg).unwrap();
+        let by = |r: &QuestionsReport, s: &str| r.questions.iter().find(|q| q.subject == s).unwrap().clone();
+        assert_eq!(by(&r, "folder").default, Some(yaml("")), "\"\" is offered");
+        assert!(!by(&r, "folder").blocking);
+        assert!(present(&by(&r, "folder")).contains("[\"\" (the organisation)]"), "{}", present(&by(&r, "folder")));
+        assert!(by(&r, "label").blocking, "without `empty`, \"\" is no default");
+        // accepting the defaults binds "" for the question that means something by it
+        assert_eq!(apply(&estate, &cfg, &BTreeMap::new(), true).unwrap(), 1);
+        let src = std::fs::read_to_string(&estate).unwrap();
+        assert!(bound(&src, "folder", "\"\""), "{}", src);
+        let r = questions_report(&estate, &cfg).unwrap();
+        assert_eq!(by(&r, "folder").state, "answered");
+        // and bound "" by hand: answered with `empty`, still open without it
+        std::fs::write(&estate, "estate e\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nuse \"asks.satz\"\n").unwrap();
+        let r = questions_report(&estate, &cfg).unwrap();
+        assert_eq!(by(&r, "folder").state, "answered");
+        assert_eq!(by(&r, "label").state, "unanswered");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

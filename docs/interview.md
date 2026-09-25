@@ -96,10 +96,12 @@ order is a path:
 
 1. **`presets/estate-core.satz`** — the params `init` writes,
    each with its question. Seven have no possible default and block until typed; the
-   rest offer one, the two derived names once the short name is in. One param has no
-   question: `workload_root_folder_name`, whose default `""` — the organisation — is
-   an answer a question could not record; `init --workload-root-folder-name` or a hand
-   edit sets it. The pack emits
+   rest offer one, the two derived names once the short name is in.
+   `workload_folder_name` offers `""`, the organisation — its question declares what
+   an empty answer means (`empty`), so Enter and `--accept-defaults` take it. Answering
+   it also writes the section that publishes `workload_folder`, as `init` does; an
+   answer whose form differs from the section the estate already carries is refused,
+   because the teams' folders sit under it. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
    its flags, `init` has answered everything.
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
@@ -178,7 +180,7 @@ params, so their lines follow the folder: a param is known from the line that de
 and a line above the folder that reads one stops the compile with `unknown param` once it is
 uncommented.
 
-That is why a fresh estate asks seventeen questions and not fifty-seven: day 0 is the scaffold
+That is why a fresh estate asks eighteen questions and not fifty-seven: day 0 is the scaffold
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written

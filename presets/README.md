@@ -325,36 +325,41 @@ compile time:
 
 `satz init` writes two exports into the estate itself: `infra_folder`, the
 infrastructure folder's `folders/<number>`, which the interface module looks up, and
-`workload_root`.
+`workload_folder`.
 
-**The workload root** is where the customer's and the teams' folders live, the parent
-every team's folder takes: the organisation, or one folder directly under it. One param
-names it, `workload_root_folder_name`, default `""` — the organisation, for which nothing
-is created. It has no question: `""` is an answer here, and a question reads an empty
-answer as one still to give. `satz init --workload-root-folder-name <name>` binds it, or
-the operator does. The export is written into the estate, not by this pack, because its
-two forms are different statements:
+**The workload folder** is where the customer's and the teams' folders live, the parent
+every team's folder takes. `workload_folder_name` names it, like `infra_folder_name`
+names the infrastructure folder, and it may be empty: `""`, the default, is the
+organisation itself, and nothing is created for it. Its question says so
+(`empty = "…"`, [language §6.14](../docs/language.md#614-question--what-to-ask-and-what-the-answer-costs)),
+so `""` is an answer the interview offers and the gate counts. The export is written
+into the estate, not by this pack, because its two forms are different statements:
 
-| `workload_root_folder_name` | what the estate carries | `workload_root` |
+| `workload_folder_name` | what the estate carries | `workload_folder` |
 |---|---|---|
-| `""` | `export "workload_root" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at compile time |
-| a name | `google_folder { workload_root { display_name = workload_root_folder_name } }` and `export "workload_root" = "${{google_folder.workload_root.name}}"` | `folders/<number>`, looked up by the interface module |
+| `""` | `export "workload_folder" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at compile time |
+| a name | `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | `folders/<number>`, looked up by the interface module |
 
-`satz init` writes the section in the form its flag names; a re-run with the flag on an
-estate that publishes the organisation is refused, because the teams' folders sit under
-the root and turning one form into the other is an edit made by hand. The compile refuses
-a name and a section that disagree, at the line to edit: a name with no
-`export "workload_root"` or with the organisation's, and an empty name with a folder's.
-An empty name with no section compiles and publishes no `workload_root`.
+`satz init` writes the section from `--workload-folder-name` (the folder) or without it
+(the organisation); `satz interview` and `satz_interview` write it when the question is
+answered. The folder block stands at the top level, so its parent is the organisation;
+to put the workload folder inside another folder — a top-level folder named after the
+organisation — move the `workload_folder { … }` block into that folder's block, and the
+interface module's lookup follows the parents. An answer or a re-run of `init` whose form
+differs from the section the estate already carries is refused, not rewritten: the
+teams' folders sit under it. The compile refuses a name and a section that disagree, at
+the line to edit: a name with no `export "workload_folder"` or with the organisation's,
+and an empty name with a folder's. An empty name with no section compiles and publishes
+no `workload_folder`.
 
 ```
-error    workload-root  satz/acme.satz:33  workload_root_folder_name
-    `workload_root_folder_name = "Workloads"`, and the estate publishes no `workload_root`: the folder is neither declared nor exported. Add `google_folder { workload_root { display_name = workload_root_folder_name } }` and `export "workload_root" = "${{google_folder.workload_root.name}}"`, or bind `workload_root_folder_name = ""` for the organisation
+error    workload-folder  satz/acme.satz:33  workload_folder_name
+    `workload_folder_name = "Workloads"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"`, or bind `workload_folder_name = ""` for the organisation
 ```
 
 Google refuses a second folder of one name under one parent, so a folder the customer
 already has is imported — `satz adopt <estate> --execute --import` resolves the folder by
-its display name under the organisation — and until it is, the apply stops on it.
+its display name under its parent — and until it is, the apply stops on it.
 
 Two kinds of param, and the interview treats them differently:
 
@@ -363,8 +368,8 @@ Two kinds of param, and the interview treats them differently:
 | **no possible default** | `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `customer_longname`, `first_admin`, `billing_account_infra` | `blocking: true` — a value has to be typed |
 | **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, `compliance_frameworks` | `default` offered — accepting it is an answer, recorded by writing it |
 
-`workload_root_folder_name` is the one param of neither kind: it has no question, so no
-interview asks it and nothing waits for it.
+`workload_folder_name` is of neither kind: its default `""` is a real answer — the
+organisation — because its question declares what an empty answer means.
 
 `compliance_frameworks` is the one param here that is neither derived nor a
 convention: it is what the customer ANSWERS TO — a contract, an auditor, a regulator —
@@ -1697,6 +1702,26 @@ interface_notice_pubsub`. An estate that turns the notice off may bind
 `interface_notice_pubsub = false` or answer the choice `none` in `satz interview`. The
 pack is the same pack; the plan does not move.
 
+**An estate that uses `presets/estate-core.satz` must answer `workload_folder_name`.**
+It is the folder where the customer's and the teams' folders live; `""` is the
+organisation itself. `bootstrap` and `transpile --apply` refuse while a question is
+unanswered. Find it: an estate with `use "presets/estate-core.satz"` and no
+`workload_folder_name =` in its `params {}`.
+
+```
+error: bootstrap refused: 1 question(s) unanswered — workload_folder_name. Every question must be answered before the estate touches an organisation. `satz questions satz/acme.satz --unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into the estate's params.
+```
+
+**The edit:** one line in `params {}` — `workload_folder_name = ""` for the organisation,
+which creates nothing and does not move the plan — or run `satz interview <estate>
+--accept-defaults`, which binds that line and writes the organisation's export. For a
+folder, bind its display name and add the section `satz init` writes
+([estate-core.satz](#estate-coresatz)): the `google_folder { workload_folder { … } }` block
+and its export; a folder the customer already has is imported with `satz adopt <estate>
+--execute --import` before the apply. To publish the organisation as `workload_folder`,
+add the one line `export "workload_folder" = "organizations/{customer_organization_id}"`,
+which adds one output and moves no resource.
+
 ### v0.83.0
 
 **A `config.toml` that does not name `yaml_dir` reads the estate from `satz/`.** The
@@ -2375,7 +2400,7 @@ the private history recorded them.
 |---|---|---|---|
 | `interface_notice` | 1.1 | 2026-09-25 | gated on `interface_notice_pubsub`, the Pub/Sub option of the map's choice `interface_notice`; the header says the choice is where a further delivery form joins. The resources are unchanged |
 | `estate_map` | 2.4 | 2026-09-25 | the change notice is `question oneof interface_notice`, not required, with the option `interface_notice_pubsub` (default `false`) in place of the boolean `use_interface_notice`, which is refused by name; `offers "presets/interface-notice.satz"` is gated on the option |
-| `estate_core` | 2.3 | 2026-09-25 | `workload_root_folder_name`, the folder directly under the organisation where the customer's and the teams' folders live, default `""` — the organisation, for which nothing is created. No question: an empty answer is an answer here. The estate publishes it as `workload_root` in the section `satz init` writes; an estate without the section is unchanged |
+| `estate_core` | 2.3 | 2026-09-25 | `workload_folder_name`, the folder where the customer's and the teams' folders live, default `""` — the organisation, for which nothing is created — with its question, whose `empty` says so, so `""` is an answer. The estate publishes it as `workload_folder` in the section `satz init` or an interview writes. An estate that uses the pack answers the question before `bootstrap` or an apply |
 | `interface_notice` | 1.0 | 2026-09-25 | first version: tells the teams whose HCL reads the estate's interface when an exported value changes. A bucket, a Pub/Sub topic, the grant that lets Cloud Storage's service agent publish to it, and a storage notification in the infrastructure project; the object `interface.json` holds the exported values, rewritten only when one changes, so each apply that changes an export publishes one message. Exports `interface_topic` and `interface_object` |
 | `estate_map` | 2.3 | 2026-09-25 | offers `interface-notice` on `use_interface_notice`, off by default, with the question that asks for it |
 | `estate_core` | 2.2 | 2026-09-25 | the core exports: `organization_id`, `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id` and `iac_service_account`, each a core export — an output of the root module and of every module under `hcl/interfaces/` — all known at compile time. An estate that uses the pack gains `outputs.tf` and `hcl/interfaces/`; its resources do not change |

@@ -450,7 +450,7 @@ them and is complete; one the interview wrote is complete when it says so.
 | `deployment_mode` | `"local"` | `local` for day 0 (user ADC); `cloud` for day 1+ (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
-| `workload_root_folder_name` | `""` (from `--workload-root-folder-name`) | The folder directly under the organisation where the customer's and the teams' folders live; `""` is the organisation, and nothing is created for it. No question asks it. |
+| `workload_folder_name` | `""` (from `--workload-folder-name`) | The folder where the customer's and the teams' folders live; `""` is the organisation, and nothing is created for it. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
 ### Tear the estate down
@@ -695,42 +695,47 @@ An export outside every `interface` block is a core export, and every module car
 it. An estate that uses `presets/estate-core.satz` publishes the core exports without
 writing any: `organization_id`, `customer_domain`, `customer_shortname`,
 `default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
-writes also exports `infra_folder` and `workload_root`.
+writes also exports `infra_folder` and `workload_folder`.
 
-**`workload_root`** is the parent every team's folder takes: `organizations/<id>`, or
-`folders/<number>` of the folder `satz init --workload-root-folder-name <name>` declares
+**`workload_folder`** is the parent every team's folder takes: `organizations/<id>`, or
+`folders/<number>` of the folder `satz init --workload-folder-name <name>` declares
 directly under the organisation. A team creates its folders under it:
 
 ```hcl
 resource "google_folder" "team_a" {
   display_name = "team-a"
-  parent       = module.satz.workload_root
+  parent       = module.satz.workload_folder
 }
 ```
 
-`init` writes the section that publishes it, in the form its flag names; an estate
-without the section does not publish `workload_root` and adds it by hand — for the
-organisation, with `workload_root_folder_name` empty or unbound, the one line
+`init` writes the section that publishes it, in the form its flag names, and `satz
+interview` writes it when `workload_folder_name` is answered. The folder block stands at
+the top level, so its parent is the organisation; to put the workload folder inside
+another folder — a top-level folder named after the organisation — move the
+`workload_folder { … }` block into that folder's block, and the interface module's
+lookup follows the parents. An estate without the section does not publish
+`workload_folder` and adds it by hand — for the organisation, with
+`workload_folder_name = ""`, the one line
 
 ```
-export "workload_root" = "organizations/{customer_organization_id}" description "Where the customer's and the teams' folders live"
+export "workload_folder" = "organizations/{customer_organization_id}" description "Where the customer's and the teams' folders live"
 ```
 
-and for a folder, with `workload_root_folder_name` bound to its display name, the folder
+and for a folder, with `workload_folder_name` bound to its display name, the folder
 itself and its lookup:
 
 ```
 google_folder {
-  workload_root {
-    display_name = workload_root_folder_name
+  workload_folder {
+    display_name = workload_folder_name
   }
 }
 
-export "workload_root" = "${{google_folder.workload_root.name}}" description "Where the customer's and the teams' folders live"
+export "workload_folder" = "${{google_folder.workload_folder.name}}" description "Where the customer's and the teams' folders live"
 ```
 
 The compile refuses a name and a section that disagree, at the line to edit: a name with
-no `export "workload_root"` or with the organisation's, and an empty name with a
+no `export "workload_folder"` or with the organisation's, and an empty name with a
 folder's.
 
 Google refuses a second folder of one name under one parent, so a folder the customer

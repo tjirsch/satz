@@ -268,7 +268,7 @@ pub(crate) enum Commands {
         /// Display name of the folder directly under the organisation that holds the
         /// customer's and the teams' folders. Without it they live at the organisation
         #[arg(long)]
-        workload_root_folder_name: Option<String>,
+        workload_folder_name: Option<String>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
@@ -1213,7 +1213,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             infra_project_name,
             infra_bucket_name,
             iac_user,
-            workload_root_folder_name,
+            workload_folder_name,
             from_live,
             force,
             interview,
@@ -1333,7 +1333,7 @@ Thumbs.db
                 infra_project_name: infra_project_name.clone(),
                 infra_bucket_name: infra_bucket_name.clone(),
                 iac_user: iac_user.clone(),
-                workload_root_folder_name: workload_root_folder_name.clone(),
+                workload_folder_name: workload_folder_name.clone(),
             };
 
             // Derivation from the credentials is the DEFAULT, not a flag: every
@@ -1496,7 +1496,7 @@ Thumbs.db
                         project_id: infra_project_name,
                         bucket_id: infra_bucket_name,
                         first_admin: first_admin.to_string(),
-                        workload_root_folder_name,
+                        workload_folder_name,
                     };
                     let presets_dir = Path::new(&runtime_config.presets_dir);
                     let graph = crate::pack_graph::read(presets_dir)?;
@@ -2841,7 +2841,7 @@ pub(crate) fn compile_tail(
         }
     };
     written_reference_findings(&folded, &out.manifest, &mut f);
-    workload_root_findings(fe, &out.manifest, estate, estate_src, &mut f);
+    workload_folder_findings(fe, &out.manifest, estate, estate_src, &mut f);
     let (provider_sources, provider_versions) = provider_maps(tool_config);
     let interface = interface_of(fe, &out.manifest, &provider_sources, &provider_versions, &mut f);
     missing_required_findings(&out.missing_required, level, &mut f);
@@ -2946,16 +2946,16 @@ fn deployment_mode_finding(
     }
 }
 
-/// `workload_root_folder_name` against the section that publishes `workload_root`
-/// (`template::workload_root_section`). An empty name is the organisation: no section,
+/// `workload_folder_name` against the section that publishes `workload_folder`
+/// (`template::workload_folder_section`). An empty name is the organisation: no section,
 /// or the organisation's export, is right, and nothing is created. Every other
 /// combination is an error at the line to edit:
 ///
-/// - a name, and no `export "workload_root"`: the folder is neither declared nor published;
+/// - a name, and no `export "workload_folder"`: the folder is neither declared nor published;
 /// - a name, and the organisation's export: the export says the organisation;
 /// - no name, and the folder's export: a folder is published that the param does not name;
 /// - the folder's export reading a `google_folder` whose `display_name` is not the name.
-fn workload_root_findings(
+fn workload_folder_findings(
     fe: &satz_core::pipeline::FrontEnd,
     manifest: &crate::manifest::Manifest,
     estate: &Path,
@@ -2963,40 +2963,40 @@ fn workload_root_findings(
     f: &mut Vec<crate::findings::Finding>,
 ) {
     use crate::findings::{Finding, Kind, Severity};
-    const NAME: &str = crate::template::WORKLOAD_ROOT_NAME;
+    const NAME: &str = crate::template::WORKLOAD_FOLDER_NAME;
     let label = estate.to_string_lossy().into_owned();
     let name = fe.env.get(NAME).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
     let name_line = crate::findings::param_line(estate_src, NAME);
-    let export = fe.exports.iter().find(|x| x.interface.is_none() && x.name == "workload_root");
+    let export = fe.exports.iter().find(|x| x.interface.is_none() && x.name == "workload_folder");
     // the folder the export reads, when it reads one: `${{google_folder.<label>.name}}`
     let reads = export.and_then(|x| x.value.as_str()).and_then(|v| {
         let rest = v.split("google_folder.").nth(1)?;
         rest.split('.').next().map(str::to_string)
     });
-    let err = |msg: String| Finding::new(Severity::Error, Kind::WorkloadRoot, msg).about(NAME);
+    let err = |msg: String| Finding::new(Severity::Error, Kind::WorkloadFolder, msg).about(NAME);
     let at_name = |line: Option<u32>| match line {
         Some(l) => format!(" (line {})", l),
         None => String::new(),
     };
-    let folder_lines = "`google_folder { workload_root { display_name = workload_root_folder_name } }` and `export \"workload_root\" = \"${{google_folder.workload_root.name}}\"`";
+    let folder_lines = "`google_folder { workload_folder { display_name = workload_folder_name } }` and `export \"workload_folder\" = \"${{google_folder.workload_folder.name}}\"`";
     match (name.is_empty(), export, reads) {
         (false, None, _) => f.push(
             err(format!(
-                "`{} = \"{}\"`, and the estate publishes no `workload_root`: the folder is neither declared nor exported. Add {}, or bind `{} = \"\"` for the organisation",
+                "`{} = \"{}\"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add {}, or bind `{} = \"\"` for the organisation",
                 NAME, name, folder_lines, NAME
             ))
             .maybe_at(label.clone(), name_line),
         ),
         (false, Some(x), None) => f.push(
             err(format!(
-                "`{} = \"{}\"`{}, but `export \"workload_root\"` ({}:{}) publishes the organisation. Replace it with {}, or bind `{} = \"\"` for the organisation",
+                "`{} = \"{}\"`{}, but `export \"workload_folder\"` ({}:{}) publishes the organisation. Replace it with {}, or bind `{} = \"\"` for the organisation",
                 NAME, name, at_name(name_line), x.file, x.line, folder_lines, NAME
             ))
             .located(x.file.clone(), x.line as u32),
         ),
         (true, Some(x), Some(read)) => f.push(
             err(format!(
-                "`export \"workload_root\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organisation. Bind `{}` to the folder's display name, or — once the teams' folders have moved to the organisation — remove the folder and export \"organizations/{{customer_organization_id}}\"",
+                "`export \"workload_folder\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organisation. Bind `{}` to the folder's display name, or — once the teams' folders have moved to the organisation — remove the folder and export \"organizations/{{customer_organization_id}}\"",
                 x.file, x.line, read, NAME, at_name(name_line), NAME
             ))
             .located(x.file.clone(), x.line as u32),
@@ -3010,7 +3010,7 @@ fn workload_root_findings(
             if let Some(shown) = shown.filter(|d| d.as_str() != name) {
                 f.push(
                     err(format!(
-                        "`export \"workload_root\"` ({}:{}) reads `google_folder.{}`, whose display_name is \"{}\", not `{}` (\"{}\"). Declare the folder with `display_name = {}`",
+                        "`export \"workload_folder\"` ({}:{}) reads `google_folder.{}`, whose display_name is \"{}\", not `{}` (\"{}\"). Declare the folder with `display_name = {}`",
                         x.file, x.line, read, shown, NAME, name, NAME
                     ))
                     .located(x.file.clone(), x.line as u32),
@@ -7320,12 +7320,12 @@ mod init_template {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `satz init` writes the workload root in the form its flag names, and the core
-    /// interface — the module every team's HCL reads — carries it as `workload_root`: the
+    /// `satz init` writes the workload folder in the form its flag names, and the core
+    /// interface — the module every team's HCL reads — carries it as `workload_folder`: the
     /// organisation as a static value, a named folder as a lookup of the folder the estate
     /// declares.
     #[test]
-    fn the_core_interface_carries_the_workload_root_init_wrote() {
+    fn the_core_interface_carries_the_workload_folder_init_wrote() {
         let reg = super::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
         let dir = std::env::temp_dir().join(format!("satz-init-root-{}", std::process::id()));
@@ -7333,7 +7333,7 @@ mod init_template {
         std::fs::create_dir_all(&dir).unwrap();
         for folder in [None, Some("Workloads")] {
             let mut args = crate::template::tests::args("first.admin", "example.com");
-            args.workload_root_folder_name = folder.map(str::to_string);
+            args.workload_folder_name = folder.map(str::to_string);
             let path = dir.join("C0example.satz");
             crate::template::generate_template(&args, Some(&crate::template::tests::shipped()), &path).unwrap();
             let src = std::fs::read_to_string(&path).unwrap();
@@ -7348,22 +7348,22 @@ mod init_template {
             let root = i
                 .outputs
                 .iter()
-                .find(|o| o.interface.is_none() && o.name == "workload_root")
-                .unwrap_or_else(|| panic!("{:?}: no core export `workload_root`", folder));
+                .find(|o| o.interface.is_none() && o.name == "workload_folder")
+                .unwrap_or_else(|| panic!("{:?}: no core export `workload_folder`", folder));
             let core = i.module_files("core").into_iter().map(|(_, c)| c).collect::<String>();
             match folder {
                 None => {
                     assert_eq!(root.how, crate::interface::How::Static("\"organizations/123456789012\"".into()));
-                    assert!(!out.manifest.addresses().contains("google_folder.workload_root"), "{}", out.main_tf);
+                    assert!(!out.manifest.addresses().contains("google_folder.workload_folder"), "{}", out.main_tf);
                 }
                 Some(name) => {
                     assert!(matches!(root.how, crate::interface::How::Lookup(_)), "{:?}", root.how);
                     assert!(out.main_tf.contains(&format!("display_name = \"{}\"", name)), "{}", out.main_tf);
-                    assert!(core.contains("data \"google_active_folder\" \"workload_root\""), "{}", core);
-                    assert!(core.contains("value       = data.google_active_folder.workload_root.name"), "{}", core);
+                    assert!(core.contains("data \"google_active_folder\" \"workload_folder\""), "{}", core);
+                    assert!(core.contains("value       = data.google_active_folder.workload_folder.name"), "{}", core);
                 }
             }
-            assert!(core.contains("output \"workload_root\""), "{}", core);
+            assert!(core.contains("output \"workload_folder\""), "{}", core);
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -8230,20 +8230,20 @@ action "step" {
         assert!(tail("warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
     }
 
-    /// `workload_root_folder_name` and the section that publishes it: each disagreement is
+    /// `workload_folder_name` and the section that publishes it: each disagreement is
     /// an error at the line to edit; an empty name with no section or with the
     /// organisation's export, and a name with its folder, are not findings.
     #[test]
-    fn the_workload_root_name_and_its_section_must_agree() {
+    fn the_workload_folder_name_and_its_section_must_agree() {
         let with = |params: &str, section: &str| {
             let src = ESTATE.replacen("  use_budget               = true\n", &format!("  use_budget               = true\n{}", params), 1);
             format!("{}\n{}", src, section)
         };
-        let found = |src: &str| tail_of(src, "warn").findings.into_iter().filter(|f| f.kind == Kind::WorkloadRoot).collect::<Vec<_>>();
-        let org = crate::template::workload_root_section(false);
-        let folder = crate::template::workload_root_section(true);
-        let named = "  workload_root_folder_name = \"Workloads\"\n";
-        let empty = "  workload_root_folder_name = \"\"\n";
+        let found = |src: &str| tail_of(src, "warn").findings.into_iter().filter(|f| f.kind == Kind::WorkloadFolder).collect::<Vec<_>>();
+        let org = crate::template::workload_folder_section(false);
+        let folder = crate::template::workload_folder_section(true);
+        let named = "  workload_folder_name = \"Workloads\"\n";
+        let empty = "  workload_folder_name = \"\"\n";
         let line = |src: &str, needle: &str| src.lines().position(|l| l.trim_start().starts_with(needle)).map(|i| i as u32 + 1);
 
         // agreeing, or nothing to agree about
@@ -8257,29 +8257,29 @@ action "step" {
         let f = found(&src);
         assert_eq!(f.len(), 1, "{:?}", f);
         assert_eq!(f[0].severity, Severity::Error);
-        assert!(f[0].message.contains("publishes no `workload_root`"), "{}", f[0].message);
-        assert_eq!(f[0].line, line(&src, "workload_root_folder_name"));
+        assert!(f[0].message.contains("publishes no `workload_folder`"), "{}", f[0].message);
+        assert_eq!(f[0].line, line(&src, "workload_folder_name"));
         assert!(crate::findings::refusal(&tail_of(&src, "warn").findings).is_err(), "the compile is refused");
 
         // a name, and the organisation published
         let src = with(named, &org);
         let f = found(&src);
         assert!(f[0].message.contains("publishes the organisation"), "{}", f[0].message);
-        assert!(f[0].message.contains(&format!("(line {})", line(&src, "workload_root_folder_name").unwrap())), "{}", f[0].message);
-        assert_eq!(f[0].line, line(&src, "export \"workload_root\""));
+        assert!(f[0].message.contains(&format!("(line {})", line(&src, "workload_folder_name").unwrap())), "{}", f[0].message);
+        assert_eq!(f[0].line, line(&src, "export \"workload_folder\""));
 
         // no name, and a folder published
-        let lit = folder.replace("display_name = workload_root_folder_name", "display_name = \"Workloads\"");
+        let lit = folder.replace("display_name = workload_folder_name", "display_name = \"Workloads\"");
         for params in [empty, ""] {
             let src = with(params, &lit);
             let f = found(&src);
             assert_eq!(f.len(), 1, "{:?}", f);
-            assert!(f[0].message.contains("publishes the folder `google_folder.workload_root`"), "{}", f[0].message);
-            assert_eq!(f[0].line, line(&src, "export \"workload_root\""));
+            assert!(f[0].message.contains("publishes the folder `google_folder.workload_folder`"), "{}", f[0].message);
+            assert_eq!(f[0].line, line(&src, "export \"workload_folder\""));
         }
 
         // a name, and the export reads a folder of another name
-        let other = folder.replace("display_name = workload_root_folder_name", "display_name = \"Elsewhere\"");
+        let other = folder.replace("display_name = workload_folder_name", "display_name = \"Elsewhere\"");
         let f = found(&with(named, &other));
         assert!(f[0].message.contains("whose display_name is \"Elsewhere\""), "{}", f[0].message);
     }
