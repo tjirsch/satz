@@ -189,6 +189,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `run-actions <INPUT>` | `--check` (each action's own dry-run form), `--execute` (the form that writes), `--only <names>`, `--phase <before-apply\|after-apply>` — prints what it would run and stops by default |
+| `check-consumer <DIR> [ESTATE]` | a team's HCL beside the estate, held to the estate's interface, offline: `DIR` is the team's directory of `.tf` files, read with its subdirectories; without `ESTATE` the one estate in `yaml_dir`. Each finding names the team's file and line — an attachment resource onto the estate's object that no attach point (`export … attach [ … ]`) allows, an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy on a node the estate manages, a resource the estate declares too, by natural key — and any finding exits 1 ([customer teams beside the estate](docs/workflows.md#customer-teams-beside-the-estate)) |
 
 **Presets**
 
@@ -234,7 +235,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
-| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. 25 tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
+| `mcp` | `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--self-gated`, `--root <DIR>` (the directory the server may work under; default the current one) — serve the estate over the Model Context Protocol on stdio, so an agent drives satz. 26 tools: each data tool returns structured content with a published output schema, and every tool is annotated so a client knows which are safe to run unattended. satz calls no model; the agent calls satz. See [docs/mcp.md](docs/mcp.md) |
 | `mcp-config <INPUT>` | `--client` (`claude-code`\|`claude-desktop`; default `claude-code`), `--allow` (`read`\|`write`\|`exec`, comma-separated; default `read`), `--write`, `--force`, `--file <FILE>`, `--name <KEY>` — the MCP client configuration this estate needs, printed on stdout and nothing else, so it can be piped into a file or a clipboard; what the block cannot say goes to stderr. See [Configuring an MCP client](#configuring-an-mcp-client-mcp-config) |
 | `whoami [INPUT]` | `--offline` — print BOTH halves of the identity: the ADC account and its file, and what the estate's live commands run as — in cloud mode its IaC service account, impersonated by the ADC account; in local mode the ADC account itself, with the `satz migrate` that switches to the declared account — checked: may this credential become that account, is the quota project reachable, and does it hold the permissions the estate's resource types need |
 

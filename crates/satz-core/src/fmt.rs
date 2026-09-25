@@ -279,11 +279,31 @@ fn push_line(lines: &mut Vec<Line>, pieces: Vec<Piece>, depth: usize) {
     });
 }
 
-/// An export's value without the `description "…"` that may follow it.
+/// An export's value without the `description "…"` and `attach [ … ]` that may follow it,
+/// in either order.
 fn export_value(rest: &[Piece]) -> &[Piece] {
-    match rest {
-        [value @ .., Piece { tok: Tok::Ident(d), .. }, Piece { tok: Tok::Str(_), .. }] if d == "description" => value,
-        _ => rest,
+    let mut value = rest;
+    loop {
+        match value {
+            [v @ .., Piece { tok: Tok::Ident(d), .. }, Piece { tok: Tok::Str(_), .. }] if d == "description" => value = v,
+            [.., Piece { tok: Tok::RBrack, .. }] => {
+                // the `[` that opens the trailing list, and the keyword before it
+                let mut depth = 0usize;
+                let open = value.iter().rposition(|x| {
+                    match x.tok {
+                        Tok::RBrack => depth += 1,
+                        Tok::LBrack => depth -= 1,
+                        _ => {}
+                    }
+                    depth == 0
+                });
+                match open {
+                    Some(o) if o > 0 && matches!(&value[o - 1].tok, Tok::Ident(a) if a == "attach") => value = &value[..o - 1],
+                    _ => return value,
+                }
+            }
+            _ => return value,
+        }
     }
 }
 
@@ -476,6 +496,15 @@ mod tests {
         assert_eq!(
             fmt(src),
             "export \"org_id\"       = customer_organization_id\nexport \"infra_folder\" = \"${{google_folder.infra.name}}\" description \"The folder\"\nexport \"regions\" = [\n  \"a\",\n]\n"
+        );
+    }
+
+    #[test]
+    fn a_run_of_exports_with_attach_points_aligns_like_any_other() {
+        let src = "export \"a\" = \"1\" attach [\"google_x\"] description \"d\"\nexport \"long_name\" = [\"x\"] description \"d\" attach [ \"google_y\" , \"google_z\" ]\nexport \"b\" = [\"y\"]\n";
+        assert_eq!(
+            fmt(src),
+            "export \"a\"         = \"1\" attach [\"google_x\"] description \"d\"\nexport \"long_name\" = [\"x\"] description \"d\" attach [\"google_y\", \"google_z\"]\nexport \"b\"         = [\"y\"]\n"
         );
     }
 

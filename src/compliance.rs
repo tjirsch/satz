@@ -1099,6 +1099,7 @@ mod tests {
             condition_expressions: Vec::new(),
             import_id: None,
             origin: None,
+            set: Default::default(),
         };
         m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(true)));
 
@@ -1145,6 +1146,7 @@ mod tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                set: Default::default(),
             },
         );
         let effects = policy_effects(&m);
@@ -4504,6 +4506,7 @@ mod iam_witness_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                set: Default::default(),
             },
         );
         manifest.resources.insert(
@@ -4525,6 +4528,7 @@ mod iam_witness_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                set: Default::default(),
             },
         );
         let attrs = manifest.witness_attrs();
@@ -4647,6 +4651,7 @@ mod evidence_facts_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
+                set: Default::default(),
             },
         );
 

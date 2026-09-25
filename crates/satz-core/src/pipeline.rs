@@ -265,6 +265,8 @@ pub struct ResolvedExport {
     /// references to what the estate emits; the emitter decides what each one is.
     pub value: serde_yaml::Value,
     pub description: Option<String>,
+    /// the attachment types a team may create against it (`attach [ … ]`)
+    pub attach: Vec<String>,
     pub file: String,
     pub line: usize,
 }
@@ -786,11 +788,12 @@ pub fn compile_estate(
             name: x.name.clone(),
             value: resolve_value(&x.value, &tfvars, &f, x.line)?,
             description: x.description.clone(),
+            attach: x.attach.clone(),
             file: f,
             line: x.line,
         };
         match exports.iter().find(|e| e.name == r.name && e.interface == r.interface) {
-            Some(first) if first.value == r.value && first.description == r.description => {}
+            Some(first) if first.value == r.value && first.description == r.description && first.attach == r.attach => {}
             Some(first) => {
                 let what = match &r.interface {
                     Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),

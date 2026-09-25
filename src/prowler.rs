@@ -272,6 +272,7 @@ mod tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                set: Default::default(),
             },
         )
     }

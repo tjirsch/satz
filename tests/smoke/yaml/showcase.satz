@@ -246,13 +246,15 @@ export "regions"              = [default_region, "europe-west4"]
 //     interface module carries. The same interface in another file adds to it.
 //     `use interface` brings another interface's exports into the team's module
 //     too: `audit` is published once, and every team that uses it receives it.
+//     `attach [ … ]` makes an export an attach point: the team may grant on its
+//     project with `google_project_iam_member` in its own state.
 interface "audit" {
   export "audit_bucket_name" = "${{google_storage_bucket.audit_logs.name}}" description "The audit log bucket"
 }
 
 interface "archive-team" {
   use interface "audit"
-  export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The team's project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
 

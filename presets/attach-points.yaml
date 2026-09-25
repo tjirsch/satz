@@ -1,0 +1,50 @@
+# The attachment resource types an `export … attach [ … ]` may name, and what each one
+# conflicts with in the estate (docs/language.md §6.17, docs/workflows.md). The table is
+# compiled into satz; it sits beside interface-lookups.yaml because both describe how a
+# team's HCL meets what the estate emits.
+#
+# An attachment resource lives in a team's own state and joins one of its objects to a
+# shared one the estate owns, without owning the shared one. The estate must then not
+# declare the whole membership itself: its next apply would remove what the team added.
+#
+# key        the attachment type; `*_iam_member` stands for every member grant type
+# target     the attachment's argument that names the shared object. For `*_iam_member`
+#            it is every argument but `role`, `member` and `condition`: the node the
+#            grant is on
+# central    what in the estate conflicts with an attachment of this type on the
+#            exported object, one entry each:
+#              type       the resource type the entry is about; `*` in it stands for
+#                         the member type's prefix (`google_project` for
+#                         `google_project_iam_member`)
+#              sets       an attribute of the exported resource, dotted into nested
+#                         blocks, that the estate must not write: it is the membership
+#                         the teams attach to
+#              ignore     the entry the exported resource's `lifecycle { ignore_changes
+#                         }` must hold, so the estate's apply leaves the attached
+#                         members alone
+#              same_node  true: the estate must declare no resource of `type` on the
+#                         exported object
+#            An empty list: the provider has no authoritative form of the membership,
+#            and nothing in the estate can conflict.
+
+google_compute_shared_vpc_service_project:
+  target: host_project
+  central: []
+
+google_access_context_manager_service_perimeter_resource:
+  target: perimeter_name
+  central:
+    - type: google_access_context_manager_service_perimeter
+      sets: status.resources
+      ignore: status[0].resources
+
+google_network_connectivity_spoke:
+  target: hub
+  central: []
+
+"*_iam_member":
+  central:
+    - type: "*_iam_policy"
+      same_node: true
+    - type: "*_iam_binding"
+      same_node: true

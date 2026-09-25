@@ -8,6 +8,7 @@ mod source_gate;
 mod emit_shared;
 mod emitter;
 mod interface;
+mod consumer;
 mod manifest;
 mod state_migration;
 mod discovery;
@@ -137,7 +138,7 @@ pub(crate) struct Cli {
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack"]),
-    ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions"]),
+    ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
         "Policies",
@@ -716,6 +717,16 @@ pub(crate) enum Commands {
         /// Verify instead of write: exit 1 when pack-graph.json is behind the library
         #[arg(long)]
         check: bool,
+    },
+    /// Check a team's HCL beside the estate against the estate's interface: attachments only at attach points, no authoritative grant or policy on a node the estate manages, no resource the estate declares too
+    ///
+    /// Read-only, offline: parses the `.tf` files under DIR and compiles the estate in
+    /// memory. Each finding names the team's file and line; any finding exits 1.
+    CheckConsumer {
+        /// The team's configuration: a directory of `.tf` files, read with its subdirectories
+        dir: PathBuf,
+        /// Estate file (.satz, inside yaml_dir if relative); default: the one estate in yaml_dir
+        estate: Option<String>,
     },
     /// Every pack the pack graph offers, as this estate has it: the choice (its gate's answer and default), the line (active, ungated, commented, absent, forked or misplaced), whether it deploys, what it needs and what needs it
     ///
@@ -2221,6 +2232,22 @@ Thumbs.db
             let mut input = stdin.lock();
             let mut out = std::io::stdout();
             crate::interview::run(&input_path, &runtime_config, all, accept_defaults, &mut input, &mut out)?;
+            Ok(())
+        }
+        Commands::CheckConsumer { dir, estate } => {
+            let input_path = match estate {
+                Some(e) => estate_path(PathBuf::from(e), &runtime_config),
+                None => sole_estate(Path::new(&runtime_config.yaml_dir))?,
+            };
+            let blocks = crate::consumer::read(&dir)?;
+            let out = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
+            let findings = crate::consumer::check(&blocks, out.interface.as_ref(), &out.manifest);
+            let n = blocks.iter().filter(|b| b.kind == "resource").count();
+            if !findings.is_empty() {
+                eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
+                return Err(format!("check-consumer: {} finding(s) in {} resource(s) under {}", findings.len(), n, dir.display()).into());
+            }
+            eprintln!("check-consumer: {} resource(s) under {} checked against {}: no finding", n, dir.display(), input_path.display());
             Ok(())
         }
         Commands::Packs { input, format, out } => {
@@ -4349,6 +4376,28 @@ fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
 /// turned into `yaml/yaml/X.satz → not found`); otherwise it is looked up
 /// inside yaml_dir. When both exist, the current-directory file wins and the
 /// shadowing is named.
+/// The one estate in `yaml_dir`, for a command whose estate argument is optional: a
+/// `.satz` file whose header is `estate`. None, or more than one, is refused naming them.
+fn sole_estate(yaml_dir: &Path) -> Result<PathBuf, String> {
+    let entries = std::fs::read_dir(yaml_dir).map_err(|e| format!("{}: {} — name the estate", yaml_dir.display(), e))?;
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("satz"))
+        .filter(|p| std::fs::read_to_string(p).ok().and_then(|t| satz_core::satz::parse(&t).ok()).is_some_and(|f| f.estate.is_some() && !f.is_pack))
+        .collect();
+    found.sort();
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(format!("{} holds no estate — name the estate", yaml_dir.display())),
+        _ => Err(format!(
+            "{} holds {} estates — name one: {}",
+            yaml_dir.display(),
+            found.len(),
+            found.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 pub(crate) fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathBuf {
     if estate.is_absolute() {
         return estate;
@@ -5261,6 +5310,7 @@ mod command_groups {
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
         ("packs", Identity::NoGoogleApi),
+        ("check-consumer", Identity::NoGoogleApi),
         ("add-pack", Identity::NoGoogleApi),
         ("remove-pack", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),

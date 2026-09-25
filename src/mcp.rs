@@ -165,6 +165,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("questions", Parity::Tools(&["satz_questions"])),
     ("interview", Parity::Tools(&["satz_interview"])),
     ("packs", Parity::Tools(&["satz_packs"])),
+    ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
     ("add-pack", Parity::Tools(&["satz_add_pack"])),
     ("remove-pack", Parity::Tools(&["satz_remove_pack"])),
     ("triage", Parity::Tools(&["satz_triage"])),
@@ -280,6 +281,26 @@ pub(crate) struct EstateArg {
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
     #[serde(default)]
     pub estate: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct CheckConsumerArgs {
+    /// The team's configuration: a directory of `.tf` files under the server's root,
+    /// relative to it or absolute
+    pub dir: String,
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+}
+
+/// What `satz_check_consumer` found: every finding names the team's file and line.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ConsumerReport {
+    pub estate: String,
+    pub dir: String,
+    /// the team's `resource` blocks read
+    pub resources: usize,
+    pub findings: Vec<crate::findings::Finding>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1477,6 +1498,49 @@ impl SatzMcp {
         match crate::packs::report(&estate, &open.runtime) {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_check_consumer",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ConsumerReport>(),
+        description = "Check a team's HCL beside the estate against the estate's interface, as `satz \
+                       check-consumer` does: an attachment resource whose target is the estate's and no attach \
+                       point allowing its type (`export … attach [ … ]`), an authoritative grant (`*_iam_policy`, \
+                       `*_iam_binding`) or an organisation policy on a node the estate manages, and a resource the \
+                       estate declares too, by natural key. Each finding names the team's file and line; an empty \
+                       list is a pass. Offline: parses the `.tf` files under `dir` and compiles the estate in \
+                       memory, writing nothing.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn check_consumer(
+        &self,
+        Parameters(args): Parameters<CheckConsumerArgs>,
+    ) -> Result<Result<Json<ConsumerReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("check-consumer");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let dir = match self.file(&args.dir) {
+            Ok(d) => d,
+            Err(r) => return Ok(Err(r)),
+        };
+        let blocks = match crate::consumer::read(&dir) {
+            Ok(b) => b,
+            Err(e) => return Ok(Err(refused(format!("check-consumer: {}", e)))),
+        };
+        match crate::pipeline_b_compile(&estate, &open.tool, &open.runtime, crate::PrerequisiteFindings::Report, crate::FindingsOutput::Silent) {
+            Ok(out) => Ok(Ok(Json(ConsumerReport {
+                estate: estate.display().to_string(),
+                dir: dir.display().to_string(),
+                resources: blocks.iter().filter(|b| b.kind == "resource").count(),
+                findings: crate::consumer::check(&blocks, out.interface.as_ref(), &out.manifest),
+            }))),
+            Err(e) => Ok(Err(refused_with_findings("check-consumer", &estate, e.as_ref()))),
         }
     }
 

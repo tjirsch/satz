@@ -855,9 +855,48 @@ resource "google_folder_iam_member" "team_a_deployer" {
 The exports `network_host_project` and `perimeter_name` stand for what the estate
 publishes when it has a shared VPC or a perimeter. satz grants with `*_iam_member`
 only, which adds a member and removes none, so a team's grant and the estate's live side
-by side. The estate must not declare the whole membership of something a team attaches
-to — a perimeter's full `resources` list — or its next apply removes the team's
-attachment.
+by side.
+
+**An attach point is an export that says which attachments it takes.** `attach [ … ]`
+after the value names the attachment resource types a team may create against it:
+
+```
+interface "team-a" {
+  export "network_host_project" = "${{google_project.net_host.project_id}}" attach ["google_compute_shared_vpc_service_project"]
+  export "perimeter_name"       = "${{google_access_context_manager_service_perimeter.main.name}}" attach ["google_access_context_manager_service_perimeter_resource"]
+  export "team_a_folder"        = "${{google_folder.team_a.name}}" attach ["google_folder_iam_member"] description "Team A's folder"
+}
+```
+
+Each team README carries a table of its exports and what each takes: every one is
+read, an attach point also takes the types it names. The types an export may name, and
+what each conflicts with in the estate, are `presets/attach-points.yaml`, compiled into
+satz. The compile refuses the estate's own authoritative form of a membership a team
+attaches to:
+
+| attachment | the estate must not |
+|---|---|
+| `google_access_context_manager_service_perimeter_resource` | set the perimeter's `status.resources`; and its `lifecycle { ignore_changes = [status[0].resources] }` must be written, or the estate's apply removes what teams attach |
+| `google_<node>_iam_member` | declare `google_<node>_iam_policy` or `google_<node>_iam_binding` on the exported node |
+| `google_compute_shared_vpc_service_project`, `google_network_connectivity_spoke` | — the provider has no authoritative form |
+
+**`satz check-consumer <dir> [<estate>]` checks a team's HCL against the interface**,
+offline: it reads the `.tf` files under the team's directory and compiles the estate in
+memory. A value reads the estate when it is `module.<name>.<output>` of a module whose
+`source` ends in `interfaces/<interface>`, or a literal equal to a value the estate
+publishes or writes; anything else is the team's own. Each finding names the team's file
+and line, and any finding exits 1:
+
+- an attachment resource whose target is the estate's and no attach point allowing its
+  type;
+- an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy on a
+  node the estate manages, the organisation included;
+- a resource the estate declares too, matched by the keys the interface looks it up by
+  (`presets/interface-lookups.yaml`): a folder by its display name and parent, a project by
+  its id.
+
+A team runs it in its CI against a checkout of the estate; an agent runs
+`satz_check_consumer`.
 
 **Contribute — the write goes into the estate.** Where no attachment resource exists,
 or the change needs coordination — a subnet whose range must not overlap another's, a

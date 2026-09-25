@@ -2225,9 +2225,109 @@ pub fn summary(rows: &[Row]) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// A consumer's HCL, read for `satz check-consumer`
+// ---------------------------------------------------------------------------
+
+/// One top-level attribute of a consumer's block, as `satz check-consumer` reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsumerValue {
+    /// a string with no interpolation
+    Literal(String),
+    /// anything else: every traversal it reads, dotted (`module.satz.vpc`,
+    /// `google_project.team.number`), in the order written
+    Reads(Vec<String>),
+}
+
+/// One `resource`, `data` or `module` block of a consumer's configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsumerBlock {
+    /// `resource`, `data`, `module`
+    pub kind: String,
+    pub labels: Vec<String>,
+    pub file: String,
+    /// 1-based, the block's first line
+    pub line: usize,
+    pub attrs: BTreeMap<String, ConsumerValue>,
+}
+
+/// Every `resource`, `data` and `module` block of the inputs, with its top-level
+/// attributes. Nested blocks are not read: what an attachment joins and what an
+/// authoritative grant covers are top-level arguments.
+pub fn consumer_blocks(inputs: &[Input]) -> Result<Vec<ConsumerBlock>, String> {
+    let mut out = Vec::new();
+    for input in inputs {
+        let body = parse_body(&input.text).map_err(|e| format!("{}: {}", input.path, e))?;
+        for s in body.iter() {
+            let Some(block) = s.as_block() else { continue };
+            let kind = block.ident.to_string();
+            if !matches!(kind.as_str(), "resource" | "data" | "module") {
+                continue;
+            }
+            let Some(span) = s.span() else {
+                return Err(format!("{}: a structure without a span (not parsed from text?)", input.path));
+            };
+            let line = input.text[..span.start].matches('\n').count() + 1;
+            let labels = block.labels.iter().map(|l| l.as_str().to_string()).collect();
+            let mut attrs = BTreeMap::new();
+            for st in block.body.iter() {
+                let Structure::Attribute(a) = st else { continue };
+                let value = match &a.value {
+                    Expression::String(s) => ConsumerValue::Literal(s.value().to_string()),
+                    other => {
+                        let mut reads = Dotted::default();
+                        reads.visit_expr(other);
+                        ConsumerValue::Reads(reads.0)
+                    }
+                };
+                attrs.insert(a.key.to_string(), value);
+            }
+            out.push(ConsumerBlock { kind, labels, file: input.path.clone(), line, attrs });
+        }
+    }
+    Ok(out)
+}
+
+/// Every traversal an expression reads, dotted up to its first operator that is not
+/// an attribute name.
+#[derive(Default)]
+struct Dotted(Vec<String>);
+
+impl Visit for Dotted {
+    fn visit_traversal(&mut self, node: &Traversal) {
+        if let Expression::Variable(v) = &node.expr {
+            let mut s = v.as_str().to_string();
+            for op in node.operators.iter() {
+                match op.value() {
+                    TraversalOperator::GetAttr(k) => {
+                        s.push('.');
+                        s.push_str(k.as_str());
+                    }
+                    _ => break,
+                }
+            }
+            self.0.push(s);
+        }
+        visit::visit_traversal(self, node);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_consumer_s_blocks_carry_their_literals_and_what_they_read() {
+        let text = "module \"satz\" {\n  source = \"../estate/hcl/interfaces/team-a\"\n}\n\nresource \"google_project_iam_member\" \"x\" {\n  project = module.satz.project_id\n  role    = \"roles/viewer\"\n  member  = \"projects/${module.satz.number}/x\"\n  condition {\n    title = \"t\"\n  }\n}\nvariable \"v\" {}\n";
+        let blocks = consumer_blocks(&[Input { path: "main.tf".into(), text: text.into() }]).unwrap();
+        assert_eq!(blocks.len(), 2, "a variable is not read");
+        assert_eq!((blocks[0].kind.as_str(), blocks[0].labels.as_slice(), blocks[0].line), ("module", &["satz".to_string()][..], 1));
+        assert_eq!(blocks[0].attrs["source"], ConsumerValue::Literal("../estate/hcl/interfaces/team-a".into()));
+        assert_eq!(blocks[1].line, 5);
+        assert_eq!(blocks[1].attrs["project"], ConsumerValue::Reads(vec!["module.satz.project_id".into()]));
+        assert_eq!(blocks[1].attrs["member"], ConsumerValue::Reads(vec!["module.satz.number".into()]));
+        assert!(!blocks[1].attrs.contains_key("condition"), "a nested block is not an argument");
+    }
 
     const TF: &str = r#"terraform {
   required_providers {
