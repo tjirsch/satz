@@ -357,7 +357,7 @@ written and lists the labels of that type that do exist:
 ```
 references to resources this estate does not emit (1)
 
-error    written-reference  yaml/main.satz:26
+error    written-reference  satz/main.satz:26
     google_service_account_iam_member.onboarding_user writes
     `${google_service_account.onbaording.name}`
       emitted `google_service_account` labels: onboarding
@@ -1344,11 +1344,11 @@ The body is captured verbatim, is **never interpolated**, and bypasses the fold,
 so the compliance plane cannot see into it. Every transpile says so:
 
 ```
-warning  hcl-passthrough  yaml/main.satz:14
+warning  hcl-passthrough  satz/main.satz:14
     raw HCL passthrough (4 lines) emitted verbatim — opaque to the compliance plane; no claim
     can cover it. Add `hcl trust "<reason>" { … }` once reviewed.
 
-info     hcl-passthrough  yaml/main.satz:21
+info     hcl-passthrough  satz/main.satz:21
     raw HCL passthrough (4 lines) — trusted: reviewed 2026-08-24, provider gap for static IPs
 
 1 warning, 1 info
@@ -1357,7 +1357,7 @@ info     hcl-passthrough  yaml/main.satz:21
 and so does the output:
 
 ```hcl
-# --- raw HCL passthrough from yaml/main.satz:21 ---
+# --- raw HCL passthrough from satz/main.satz:21 ---
 # Opaque to the compliance plane: no claim covers what is written here.
 # trusted: reviewed 2026-08-24, provider gap for static IPs
 resource "google_compute_address" "legacy_trusted" {
@@ -1870,7 +1870,7 @@ satz require cis-gcp-4.0 C0example.satz --config ~/estates/acme --format text --
 ```
 
 ```
-require cis-gcp 4.0 — goal view for …/acme/yaml/C0example.satz
+require cis-gcp 4.0 — goal view for …/acme/satz/C0example.satz
 
   ◐ 1.1   Corporate login credentials only              — open duties: legacy-superseded, review-allowlist
   ✓ 1.4   Only GCP-managed service account keys         — google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation, google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload

@@ -138,7 +138,7 @@ satz init \
   --iac-user "admin@example.com"
 ```
 
-**Without the flags**, `satz interview yaml/<name>.satz --create` writes the estate and
+**Without the flags**, `satz interview satz/<name>.satz --create` writes the estate and
 asks for the
 same seventeen values one question at a time, offering the derived ones as defaults; an
 agent does the same over MCP. Both end at the file `init` would have written, and
@@ -885,7 +885,7 @@ beside it: the steps are in [Breaking changes](../presets/README.md#breaking-cha
 Find out first, without touching anything:
 
 ```bash
-satz --config <estate-dir> check-presets yaml/<ESTATE>.satz
+satz --config <estate-dir> check-presets satz/<ESTATE>.satz
 ```
 
 The GitHub API allows 60 unauthenticated requests an hour, and each run spends one.
@@ -893,7 +893,7 @@ Without network access to GitHub, or with the quota spent, compare against a loc
 checkout:
 
 ```bash
-satz --config <estate-dir> check-presets --pristine-dir ~/projects/satz/presets yaml/<ESTATE>.satz
+satz --config <estate-dir> check-presets --pristine-dir ~/projects/satz/presets satz/<ESTATE>.satz
 ```
 
 `check-presets` reports two independent things: the **version line** says whether a
@@ -963,13 +963,13 @@ identity, and an adoption changes the output, so the two cannot share a run.
 `merge-presets` does **not** regenerate `hcl/`. Continue with the normal gates:
 
 ```bash
-satz --config <estate-dir> transpile yaml/<ESTATE>.satz
+satz --config <estate-dir> transpile satz/<ESTATE>.satz
 
 cd <estate-dir>
 git status --short          # only presets/ + hcl/ should move
 git diff hcl/main.tf        # THIS is the real review — the emission delta
-satz --config . require cis-gcp-4.0 yaml/<ESTATE>.satz   # compare with the previous verdicts
-satz --config . check-presets --pristine-dir ~/projects/satz/presets yaml/<ESTATE>.satz
+satz --config . require cis-gcp-4.0 satz/<ESTATE>.satz   # compare with the previous verdicts
+satz --config . check-presets --pristine-dir ~/projects/satz/presets satz/<ESTATE>.satz
 ```
 
 Then read the plan **before** applying:

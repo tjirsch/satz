@@ -163,7 +163,7 @@ lines and says so; `satz get-presets` then `satz merge-presets` write them.
 ## At the terminal: `satz interview`
 
 ```bash
-satz interview yaml/new-customer.satz --create
+satz interview satz/new-customer.satz --create
 ```
 
 `--create` writes the estate first when it does not exist: an empty `params {}`, the same
