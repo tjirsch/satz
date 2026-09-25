@@ -182,6 +182,48 @@ Thomas chose this shape.
   and an empty name with a folder's. An empty name with no section compiles — it
   publishes nothing false — so an estate adds the section when it wants the export.
 
+## Amendment — an interface uses another
+
+A pack can declare a coherent set — `interface "network" { export … }` — that several
+teams read. A team's module carried the core exports and its own, so a team that needed
+the network values had to repeat each export in its own block.
+
+**`use interface "<name>" [when <param>]`, and the list form `use interface ["network",
+"dns"]`, inside an `interface` block puts the named interfaces' exports into the team's
+module.** It reaches through a chain (a used interface's own `use interface` lines count),
+`when` gates it as it gates a pack line, and a param no file declares is an error. Refused:
+a name no file of the estate declares, `core`, the interface itself, a cycle (naming the
+chain), and two exports of one name reaching one module from two interfaces (naming both
+files). An interface of `use interface` lines alone is a module. The README's `From`
+column names the interface each value comes from. The root module keeps one output per
+export — `<interface>__<export>` of the interface that declares it — because the root
+module is not what a team reads, and a second output of one value would be two names for
+it in `tofu output` and in the notice object.
+
+- **The verb is `use`, not `include`** (Thomas). One verb brings something in, and
+  `include` is the YAML dialect's word (`!include`).
+- **`interface` qualifies the line; `use "<path>"` stays unqualified** (Thomas). The
+  argument here is a NAME, not a path, so the word says which kind of thing is meant. A
+  file declares no kind — what it is follows from its contents — so `use preset` /
+  `use module` would be a second source of truth needing a mismatch refusal, packs do not
+  fall into clean kinds (`estate-core.satz` holds params, questions and exports), and
+  every `use` line of every estate and pack would need a hand edit. A reader who wants to
+  know what a line brings in reads `satz packs` or the language server's hover.
+- **No tool that reads pack lines sees it.** The line stands only inside an `interface`
+  block and names no path: the `use "<path>"` scanner of `satz packs`, `add-pack` and the
+  interview (`src/packs.rs`), `merge-presets`' repoint and walk (`src/presets.rs`), the
+  pack graph, `doc-packs` and the language server each have a test that it is not read as
+  a pack line.
+- **A tag per resource (`group "network"`) was not built.** It spreads an interface's
+  definition across the estate. It would be reconsidered for a set that crosses packs and
+  resource types and cannot be named as an interface.
+
+**An interface change that breaks its consumers is a breaking change** (Thomas). A pack
+version that removes or renames an export, or changes its value's shape, gets a
+`## Breaking changes` entry in `presets/README.md` and makes the release a minor one
+(ADR 0010), like any other refusal. Handing a new or changed interface to the teams is the
+build pipeline's job, not satz's.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

@@ -247,6 +247,10 @@ pub struct FrontEnd {
     /// parameter namespace, one per interface and name. Like actions, they bypass the
     /// fold: the emitter turns them into outputs.
     pub exports: Vec<ResolvedExport>,
+    /// Every `interface` the estate and its used files declare, by name, with the
+    /// interfaces it uses — transitively, `when` applied. A team's module carries its own
+    /// exports, the core ones and those of every interface here.
+    pub interfaces: Vec<ResolvedInterface>,
     /// The name in the estate's header.
     pub estate: Option<String>,
 }
@@ -261,6 +265,17 @@ pub struct ResolvedExport {
     /// references to what the estate emits; the emitter decides what each one is.
     pub value: serde_yaml::Value,
     pub description: Option<String>,
+    pub file: String,
+    pub line: usize,
+}
+
+/// One interface, as every file that declares it adds up: where it is first declared,
+/// and the interfaces its module also carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedInterface {
+    pub name: String,
+    /// the interfaces it uses, directly or through another, first reached first
+    pub uses: Vec<String>,
     pub file: String,
     pub line: usize,
 }
@@ -683,6 +698,7 @@ pub fn compile_estate(
         notices: Vec::new(),
         actions: Vec::new(),
         exports: Vec::new(),
+        interfaces: Vec::new(),
         use_chain: vec![file_name.to_string()],
     };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
@@ -697,6 +713,7 @@ pub fn compile_estate(
     let config = w.config;
     let walked_actions = w.actions;
     let walked_exports = w.exports;
+    let walked_interfaces = w.interfaces;
     let mut hcl: Vec<HclPassthrough> = file
         .hcl_blocks
         .iter()
@@ -809,6 +826,9 @@ pub fn compile_estate(
         }
     }
 
+    let declared_interfaces = file.interfaces.iter().map(|i| (file_name.to_string(), i.clone())).chain(walked_interfaces);
+    let interfaces = resolve_interfaces(declared_interfaces.collect(), &exports, &tfvars)?;
+
     // the estate's own questions first, then those of the packs it used
     let mut questions = Vec::new();
     if !file.questions.is_empty() {
@@ -820,7 +840,116 @@ pub fn compile_estate(
     if let Some(e) = deferred {
         return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
     }
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions, exports, estate: file.estate.clone() })
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone() })
+}
+
+/// The interfaces, each with what it uses. A `use interface` names an interface some file
+/// of the estate declares, is gated by its `when` like a pack line, and may not close a
+/// cycle; two exports of one name reaching one module from two interfaces are refused
+/// naming both files.
+fn resolve_interfaces(
+    declared: Vec<(String, satz::InterfaceDecl)>,
+    exports: &[ResolvedExport],
+    env: &Env,
+) -> Result<Vec<ResolvedInterface>, PipelineError> {
+    // name -> (first file, first line, direct uses with where each is written)
+    type Declared = BTreeMap<String, (String, usize, Vec<(String, String, usize)>)>;
+    let mut by_name: Declared = BTreeMap::new();
+    for (f, i) in &declared {
+        by_name.entry(i.name.clone()).or_insert_with(|| (f.clone(), i.line, Vec::new()));
+    }
+    for (f, i) in &declared {
+        for u in &i.uses {
+            if let Some(p) = &u.when {
+                if let Some(e) = renamed_param(p, f, u.line) {
+                    return Err(e);
+                }
+                if !env.contains_key(p) {
+                    return perr(
+                        f,
+                        u.line,
+                        format!("use interface … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the interface", p, p),
+                    );
+                }
+                if !truthy(env.get(p)) {
+                    continue;
+                }
+            }
+            for n in &u.names {
+                if !by_name.contains_key(n) {
+                    let known: Vec<&str> = by_name.keys().map(String::as_str).filter(|k| *k != i.name).collect();
+                    return perr(
+                        f,
+                        u.line,
+                        format!(
+                            "use interface \"{}\": no file this estate uses declares `interface \"{}\"`{}",
+                            n,
+                            n,
+                            if known.is_empty() { String::new() } else { format!(" — the interfaces it declares: {}", known.join(", ")) }
+                        ),
+                    );
+                }
+                let direct = &mut by_name.get_mut(&i.name).expect("declared above").2;
+                if !direct.iter().any(|(d, _, _)| d == n) {
+                    direct.push((n.clone(), f.clone(), u.line));
+                }
+            }
+        }
+    }
+    // the closure of one interface, refusing a cycle with its chain
+    fn reach(
+        name: &str,
+        by_name: &Declared,
+        chain: &mut Vec<String>,
+        out: &mut Vec<String>,
+    ) -> Result<(), PipelineError> {
+        for (n, f, line) in &by_name[name].2 {
+            if chain.contains(n) {
+                let mut c = chain.clone();
+                c.push(n.clone());
+                return perr(f, *line, format!("use interface \"{}\": a cycle — {}", n, c.join(" → ")));
+            }
+            if !out.contains(n) {
+                out.push(n.clone());
+            }
+            chain.push(n.clone());
+            reach(n, by_name, chain, out)?;
+            chain.pop();
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    for (name, (file, line, _)) in &by_name {
+        let mut uses = Vec::new();
+        reach(name, &by_name, &mut vec![name.clone()], &mut uses)?;
+        // one name, one output of the module: the interface's own exports and those of
+        // every interface it uses may not meet
+        let mut seen: BTreeMap<&str, &ResolvedExport> = BTreeMap::new();
+        for from in std::iter::once(name).chain(uses.iter()) {
+            for x in exports.iter().filter(|x| x.interface.as_deref() == Some(from.as_str())) {
+                if let Some(first) = seen.get(x.name.as_str()) {
+                    return perr(
+                        &x.file,
+                        x.line,
+                        format!(
+                            "interface \"{}\": export \"{}\" reaches its module from two interfaces — `{}` ({}:{}) and `{}` ({}:{}); one name is one output, so rename one of them",
+                            name,
+                            x.name,
+                            first.interface.as_deref().unwrap_or_default(),
+                            first.file,
+                            first.line,
+                            from,
+                            x.file,
+                            x.line
+                        ),
+                    );
+                }
+                seen.insert(x.name.as_str(), x);
+            }
+        }
+        out.push(ResolvedInterface { name: name.clone(), uses, file: file.clone(), line: *line });
+    }
+    Ok(out)
 }
 
 /// Resolve one action's arguments against the finished parameter namespace. An
@@ -1353,7 +1482,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), interfaces: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -1396,6 +1525,8 @@ struct Walk<'a> {
     /// Exports collected from every file the walk visits, unresolved for the reason
     /// actions are.
     exports: Vec<(String, Option<String>, satz::ExportDecl)>,
+    /// `interface` blocks of every file the walk visits, for their `use interface` lines.
+    interfaces: Vec<(String, satz::InterfaceDecl)>,
 }
 
 /// A file's exports with the file and the interface each stands in (`None`: core).
@@ -1512,6 +1643,7 @@ impl Walk<'_> {
     /// After the guard too: a pack switched off publishes nothing.
     fn absorb_exports(&mut self, file: &satz::File, file_name: &str) {
         self.exports.extend(exports_of(file, file_name));
+        self.interfaces.extend(file.interfaces.iter().map(|i| (file_name.to_string(), i.clone())));
     }
 
     /// After the guard too: a pack switched off asks for nothing to be run.
@@ -2685,6 +2817,42 @@ mod estate_channel_tests {
         let e = compile_estate("t.satz", &format!("{}use \"shadow.satz\"\n", estate), &Table, &load).err().expect("refused");
         assert!(e.msg.contains("name of a core export (t.satz:3)"), "{}", e.msg);
         assert_eq!(e.file, "shadow.satz");
+    }
+
+    /// `use interface` brings another interface's exports into a team's module: it reaches
+    /// through a chain, a gated line brings nothing while its param is false, and an
+    /// unknown name, a cycle, an unknown `when` and two exports of one name are refused.
+    #[test]
+    fn an_interface_uses_another_through_a_chain_and_a_gate() {
+        let load = |p: &str| -> Result<String, String> {
+            match p {
+                "net.satz" => Ok("pack net version \"1.0\"\n\ninterface \"network\" {\n  use interface \"base\"\n  export \"vpc\" = \"v\"\n}\n\ninterface \"base\" {\n  export \"region\" = \"r\"\n}\n".into()),
+                other => Err(format!("no load: {}", other)),
+            }
+        };
+        let estate = |body: &str| format!("estate t\n\nparams {{\n  want_dns = false\n}}\n\nuse \"net.satz\"\n\ninterface \"dns\" {{\n  export \"zone\" = \"z\"\n}}\n\ninterface \"team-a\" {{\n{}}}\n", body);
+        let fe = compile_estate("t.satz", &estate("  use interface \"network\"\n  use interface [\"dns\"] when want_dns\n  export \"own\" = 1\n"), &Table, &load).unwrap();
+        let team = fe.interfaces.iter().find(|i| i.name == "team-a").unwrap();
+        assert_eq!(team.uses, ["network", "base"], "the chain reaches `base`, and the gate keeps `dns` out");
+        assert_eq!((team.file.as_str(), team.line), ("t.satz", 13));
+        let names: Vec<&str> = fe.interfaces.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["base", "dns", "network", "team-a"]);
+
+        let on = estate("  use interface \"network\"\n  use interface [\"dns\"] when want_dns\n").replace("want_dns = false", "want_dns = true");
+        let fe = compile_estate("t.satz", &on, &Table, &load).unwrap();
+        assert_eq!(fe.interfaces.iter().find(|i| i.name == "team-a").unwrap().uses, ["network", "base", "dns"]);
+
+        let e = compile_estate("t.satz", &estate("  use interface \"nope\"\n"), &Table, &load).err().expect("an unknown interface");
+        assert!(e.msg.contains("no file this estate uses declares `interface \"nope\"`") && e.msg.contains("base, dns, network"), "{}", e.msg);
+        assert_eq!((e.file.as_str(), e.line), ("t.satz", 14));
+        let e = compile_estate("t.satz", &estate("  use interface \"dns\" when want_nothing\n"), &Table, &load).err().expect("an unknown gate");
+        assert!(e.msg.contains("unknown param `want_nothing`"), "{}", e.msg);
+        let e = compile_estate("t.satz", &estate("  export \"vpc\" = \"mine\"\n  use interface \"network\"\n"), &Table, &load).err().expect("a clash");
+        assert!(e.msg.contains("export \"vpc\" reaches its module from two interfaces") && e.msg.contains("t.satz:") && e.msg.contains("net.satz:"), "{}", e.msg);
+        let cyclic = "estate t\n\ninterface \"a\" {\n  use interface \"b\"\n}\n\ninterface \"b\" {\n  use interface \"a\"\n}\n";
+        let e = compile_estate("t.satz", cyclic, &Table, &load).err().expect("a cycle");
+        assert!(e.msg.contains("a cycle — a → b → a"), "{}", e.msg);
+        assert_eq!(e.line, 8);
     }
 
     #[test]

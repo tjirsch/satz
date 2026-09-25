@@ -1901,7 +1901,12 @@ export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
 
+interface "audit" {
+  export "audit_bucket_name" = "${{google_storage_bucket.audit_logs.name}}" description "The audit log bucket"
+}
+
 interface "archive-team" {
+  use interface "audit"
   export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
@@ -1913,10 +1918,25 @@ interface "archive-team" {
   carries it, so each team's folder is complete on its own, and `hcl/interfaces/core/`
   carries the core exports alone.
 - **An export inside `interface "<name>" { … }`** is an output of
-  `hcl/interfaces/<name>/` alone. The block holds `export` statements and nothing else.
+  `hcl/interfaces/<name>/` alone — and of the module of every interface that uses it.
+  The block holds `export` statements and `use interface` lines, and nothing else.
   The name is the folder: lowercase letters, digits and `-`, starting with a letter;
   `core` is the core module's and is refused. An interface declared in two files is one
   interface, and their exports merge; one file declares it once.
+- **`use interface "<name>" [when <param>]`**, or `use interface ["<a>", "<b>"] [when
+  <param>]`, inside an interface block puts the exports of the named interfaces into
+  this interface's module too, and those of every interface they use in turn. A shared
+  set — the network values a pack publishes as `interface "network"` — is declared once,
+  and each team whose interface uses it receives it. `when` gates the line as it gates a
+  pack line: a false param brings nothing, and a param no file declares is an error. The
+  name is an interface some file of the estate declares, never a path, so no tool that
+  reads `use "<path>"` lines treats it as a pack. Refused: a name no file declares
+  (listing those that are), `core` (every module carries it), a cycle (naming the
+  chain), and two exports of one name reaching one module from two interfaces (naming
+  both files). An interface of `use interface` lines alone is a module of its own. The
+  README's `From` column names the interface each value comes from; in the root
+  module each export stays one output, `<interface>__<export>` of the interface that
+  declares it.
 - **The export's name** is the output's name: lowercase letters, digits and `_`,
   starting with a letter, and no `__`. A consumer reads it as `module.satz.<name>`. An
   interface's export may not take a core export's name: every module carries both, and
@@ -1968,7 +1988,7 @@ files is one export, and with a different one it is an error naming both files.
 - `hcl/interfaces/<name>/` for `core` and for every interface: `versions.tf` (the `google`
   provider and the version the estate pins), `main.tf` (the lookups, when there are any),
   `outputs.tf` and `README.md`, which names the interface and lists every output with
-  whether it is core and how it is obtained. A module takes no variable, has no backend,
+  the interface it comes from — `core`, its own, or one it uses — and how it is obtained. A module takes no variable, has no backend,
   reads no state and names no file outside its directory, so it works copied, moved or
   sourced by git URL.
 - `satz transpile` writes `outputs.tf` and `hcl/interfaces/` whole: the folder of an

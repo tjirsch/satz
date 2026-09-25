@@ -333,7 +333,7 @@ impl Server {
                                     }
                                 }
                             }
-                            if k != "params" && k != "terraform" && k != "providers" {
+                            if k != "params" && k != "terraform" && k != "providers" && k != "interface" {
                                 push_types(&mut items, registry.as_deref(), "1");
                             }
                         }
@@ -386,7 +386,10 @@ impl Server {
         };
         let ctx = context_at(&text, tok.start);
         let registry = find_config_dir(&path).and_then(|d| self.registry(&d));
-        // A keyword.
+        // A keyword. `use interface` takes a name, not a pack path.
+        if word == "use" && uses_interface(&toks, i) {
+            return Some(markdown(format!("**use interface** — {}", USE_INTERFACE), tok, &text));
+        }
         if let Some((_, d)) = TOP_LEVEL.iter().find(|(k, _)| *k == word) {
             if ctx.frames.is_empty() || word == "use" {
                 return Some(markdown(format!("**{}** — {}", word, d), tok, &text));
@@ -799,7 +802,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
     ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
     ("export", "a value published to the HCL beside the estate, as an output of every module under hcl/interfaces/: `export \"name\" = VALUE [description \"…\"]`"),
-    ("interface", "one team's exports, written to hcl/interfaces/<name>/ beside the core ones: `interface \"name\" { export … }`"),
+    ("interface", "one team's exports, written to hcl/interfaces/<name>/ beside the core ones: `interface \"name\" { export … use interface … }`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
@@ -840,6 +843,13 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "interface",
+        &[
+            ("export", "one of the team's values: `export \"name\" = VALUE [description \"…\"]`"),
+            ("use", USE_INTERFACE),
+        ],
+    ),
+    (
         "offers",
         &[
             ("when", "the param the pack's line is gated on"),
@@ -851,6 +861,15 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
 ];
+
+/// What `use` means inside an `interface` block, where it takes an interface's name.
+const USE_INTERFACE: &str =
+    "bring another interface's exports into this team's module: `use interface \"name\" [when PARAM]` or `use interface [\"a\", \"b\"] [when PARAM]` — a name, not a pack path";
+
+/// Whether the `use` at `i` brings in an interface (`use interface …`) rather than a pack.
+fn uses_interface(toks: &[Token], i: usize) -> bool {
+    matches!(toks.get(i + 1).map(|t| &t.tok), Some(Tok::Ident(k)) if k == "interface")
+}
 
 fn push_types(items: &mut Vec<CompletionItem>, registry: Option<&ResourceRegistry>, sort: &str) {
     if let Some(reg) = registry {
@@ -1080,6 +1099,22 @@ mod tests {
                 ("condition".into(), false, false),
             ]
         );
+    }
+
+    /// Inside an `interface` block, `use` takes an interface's name: the block offers
+    /// `export` and `use interface`, and a `use interface` is told apart from a pack line.
+    #[test]
+    fn a_use_inside_an_interface_block_is_no_pack_line() {
+        let text = "interface \"team-a\" {\n  use interface \"network\"\n  ";
+        let ctx = context_at(text, text.chars().count());
+        assert_eq!(ctx.frames.last().map(|f| f.key.as_str()), Some("interface"));
+        let keys = BODY_KEYS.iter().find(|(b, _)| *b == "interface").map(|(_, k)| *k).unwrap();
+        assert_eq!(keys.iter().map(|(k, _)| *k).collect::<Vec<_>>(), ["export", "use"]);
+        let toks = lex_spanned(text, true).unwrap();
+        let at = |w: &str| toks.iter().position(|t| matches!(&t.tok, Tok::Ident(k) if k == w)).unwrap();
+        assert!(uses_interface(&toks, at("use")));
+        let pack = lex_spanned("use \"presets/x.satz\"\n", true).unwrap();
+        assert!(!uses_interface(&pack, 0));
     }
 
     #[test]

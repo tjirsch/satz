@@ -1851,6 +1851,28 @@ fn text_diff(old: &str, new: &str) -> String {
 mod tests {
     use super::{ChangedDefault, CheckPresetsReport, CheckPresetsSummary, PresetRow, render_check_presets};
 
+    /// merge-presets repoints `use "<path>"` lines; a `use interface "<name>"` is no path,
+    /// so a fork of a pack whose file shares the interface's name leaves it alone, and
+    /// the walk over the `use` graph never reads it.
+    #[test]
+    fn a_use_interface_line_is_neither_repointed_nor_walked() {
+        let dir = std::env::temp_dir().join(format!("satz-use-interface-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("network"), "not a pack").unwrap();
+        std::fs::write(dir.join("p.satz"), "pack p version \"1.0\"\n").unwrap();
+        let text = "estate e\n\nuse \"p.satz\"\n\ninterface \"team-a\" {\n  use interface \"network\"\n}\n";
+        let estate = dir.join("e.satz");
+        std::fs::write(&estate, text).unwrap();
+        let out = super::rewrite_estate_uses(text, &estate, &[], &dir.join("network"), std::path::Path::new("network.local.satz"));
+        assert_eq!(out, None, "the interface name was repointed");
+        let out = super::rewrite_estate_uses(text, &estate, &[], &dir.join("p.satz"), std::path::Path::new("p.local.satz")).unwrap();
+        assert!(out.contains("use \"p.local.satz\"") && out.contains("use interface \"network\""), "{}", out);
+        let used = super::used_preset_files(&estate, dir.to_str().unwrap(), &[]).unwrap();
+        assert!(used.contains(std::path::Path::new("p.satz")) && !used.iter().any(|u| u.ends_with("network")), "{:?}", used);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn prow(file: &str, status: &'static str) -> PresetRow {
         PresetRow {
             file: file.into(),

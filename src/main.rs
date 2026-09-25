@@ -2905,7 +2905,7 @@ fn interface_of(
         return None;
     };
     let estate = fe.estate.clone().unwrap_or_default();
-    match crate::interface::build(&estate, &fe.exports, manifest, source, provider_versions.get("google").map(String::as_str)) {
+    match crate::interface::build(&estate, &fe.exports, &fe.interfaces, manifest, source, provider_versions.get("google").map(String::as_str)) {
         Ok(i) => Some(i),
         Err(refusals) => {
             for r in refusals {
@@ -5620,7 +5620,7 @@ mod corpus {
         // The interface is emission too, in its files' own order: a case that exports
         // nothing keeps its snapshot.
         if !fe.exports.is_empty() {
-            let i = crate::interface::build(fe.estate.as_deref().unwrap_or_default(), &fe.exports, &out.manifest, "hashicorp/google", Some("7.14.1"))
+            let i = crate::interface::build(fe.estate.as_deref().unwrap_or_default(), &fe.exports, &fe.interfaces, &out.manifest, "hashicorp/google", Some("7.14.1"))
                 .unwrap_or_else(|r| panic!("{}: an export refused: {:?}", name, r));
             snapshot.push_str("\n---outputs.tf---\n");
             snapshot.push_str(&i.root_outputs_tf());
@@ -7343,7 +7343,7 @@ mod init_template {
             let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
             ctx.registry = Some(&reg);
             let out = crate::emitter::emit(&folded, &ctx).expect("emit");
-            let i = crate::interface::build("c0example", &fe.exports, &out.manifest, "hashicorp/google", Some("7.14.1"))
+            let i = crate::interface::build("c0example", &fe.exports, &fe.interfaces, &out.manifest, "hashicorp/google", Some("7.14.1"))
                 .unwrap_or_else(|r| panic!("{:?}: {:?}", folder, r));
             let root = i
                 .outputs

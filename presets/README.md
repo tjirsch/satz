@@ -1633,6 +1633,21 @@ The service agent's address carries the project number, so the pack reads it wit
 provider's `google_storage_project_service_account` data source in a trusted `hcl` block,
 which the compile notes on every transpile.
 
+## A pack that publishes an interface
+
+A pack publishes what the teams beside the estate read with `export`, core or inside an
+`interface` block ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
+A set several teams read — the shared network, the DNS zones — is an interface of its own,
+`interface "network" { export … }`, and a team's interface takes it with `use interface
+"network"`: the author keeps the set stable, and every team that uses it receives it.
+
+**An export is a contract with the teams that read it.** A pack version that removes or
+renames an export, or changes the shape of its value — a string that becomes a list, a
+`folders/<number>` that becomes a bare number — fails a team's plan that reads it. It is a
+breaking change: the version's row under [`## Changelog`](#changelog) names the export, an
+entry under [`## Breaking changes`](#breaking-changes) says what a team edits, and the
+release that ships it is a minor one. A new export breaks no one.
+
 ## interface-lookups.yaml
 
 Not a pack: how the interface modules under `hcl/interfaces/` read back what an estate emits,

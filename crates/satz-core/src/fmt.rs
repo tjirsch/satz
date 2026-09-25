@@ -489,6 +489,15 @@ mod tests {
     }
 
     #[test]
+    fn a_use_interface_line_keeps_its_list_inline_and_its_gate() {
+        let src = "interface \"team-a\" {\n    use  interface \"network\"   when want\nuse interface [ \"dns\" , \"logs\" ]\n  export \"a\" = \"1\"\n}\n";
+        assert_eq!(
+            fmt(src),
+            "interface \"team-a\" {\n  use interface \"network\" when want\n  use interface [\"dns\", \"logs\"]\n  export \"a\" = \"1\"\n}\n"
+        );
+    }
+
+    #[test]
     fn a_file_the_parser_refuses_is_not_formatted() {
         assert!(format("a = \"open\n").is_err());
     }

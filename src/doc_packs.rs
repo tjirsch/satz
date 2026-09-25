@@ -916,9 +916,13 @@ fn render(
         .map(|x| (satz_core::satz::CORE_INTERFACE, x))
         .chain(file.interfaces.iter().flat_map(|i| i.exports.iter().map(move |x| (i.name.as_str(), x))))
         .collect();
-    if !exports.is_empty() {
+    let uses: Vec<(&str, &satz_core::satz::InterfaceUse)> =
+        file.interfaces.iter().flat_map(|i| i.uses.iter().map(move |u| (i.name.as_str(), u))).collect();
+    if !exports.is_empty() || !uses.is_empty() {
         md.push_str("## Exports\n\n");
         md.push_str("Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.\n\n");
+    }
+    if !exports.is_empty() {
         md.push_str("| interface | output | value | description |\n|---|---|---|---|\n");
         for (interface, x) in exports {
             md.push_str(&format!(
@@ -929,6 +933,17 @@ fn render(
                 x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;"),
             ));
         }
+        md.push('\n');
+    }
+    for (interface, u) in uses {
+        md.push_str(&format!(
+            "- The module of `{}` also carries the exports of {}{}.\n",
+            interface,
+            u.names.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", "),
+            u.when.as_deref().map(|w| format!(" when `{}` is true", w)).unwrap_or_default()
+        ));
+    }
+    if !file.interfaces.iter().all(|i| i.uses.is_empty()) {
         md.push('\n');
     }
     md.push_str("## Claims\n\n");
@@ -1291,6 +1306,20 @@ mod tests {
         assert!(md.contains("| 1.3 | 2026-09-04 | the bucket |"), "{}", md);
         assert!(md.contains("Keep me."), "the notes region must survive regeneration:\n{}", md);
         assert!(!md.contains("Converted by"));
+    }
+
+    /// A `use interface` line is no pack line: the page's `use` block does not print it,
+    /// and the exports section says which interfaces a module also carries.
+    #[test]
+    fn a_use_interface_line_is_listed_under_exports_and_not_as_a_use() {
+        let src = "// Network values for the teams.\n\npack net version \"1.0\"\n\ninterface \"network\" {\n  export \"vpc\" = \"v\"\n}\n\ninterface \"team-a\" {\n  use interface \"network\" when want_net\n}\n";
+        let file = satz::parse(src).unwrap();
+        let rel = Path::new("net.satz");
+        let h = header(src, rel).unwrap();
+        let md = render(rel, &file, &h, None, &Catalogs::new(), &[], &Library::new()).unwrap();
+        assert!(md.contains("- The module of `team-a` also carries the exports of `network` when `want_net` is true."), "{}", md);
+        assert!(md.contains("| `network` | `vpc` |"), "{}", md);
+        assert!(!md.contains("use \"network\"") && md.matches("use interface").count() == 0, "{}", md);
     }
 
     #[test]
