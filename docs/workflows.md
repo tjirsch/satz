@@ -1,10 +1,11 @@
 # satz workflows
 
 Three walkthroughs, in the order most estates meet them, each a section of this page,
-and after them two shorter ones: [continuous verification](#continuous-verification),
-the compile check and the compliance report run as CI gates, and
-[scanning with Prowler](#scanning-with-prowler), the second opinion satz joins with its
-own report. Every command has its own reference section in
+and after them three shorter ones: [customer teams beside the estate](#customer-teams-beside-the-estate),
+how a team's own HCL reads what the estate publishes and changes what it shares,
+[continuous verification](#continuous-verification), the compile check and the
+compliance report run as CI gates, and [scanning with Prowler](#scanning-with-prowler),
+the second opinion satz joins with its own report. Every command has its own reference section in
 [the README](../README.md#cli-usage); this page is the order to run them in.
 
 **[From nothing to applied](#from-nothing-to-applied).** The estate is written, the
@@ -670,6 +671,129 @@ The IaC service account reaches the adopted folders and projects, hand-made ones
 included, through the roles it holds at the organization: every folder and project
 inherits them. `satz update-prerequisites <estate>` writes each role the adopted resource types need
 that the estate does not grant it yet into the estate; `--report-only` names them and writes nothing.
+
+---
+
+## Customer teams beside the estate
+
+satz builds the organisation: the folders, the infrastructure project, the shared
+network, the organisation policies. The teams that run workloads in it write their own
+HCL, with their own state and in their own repositories, and often without satz. They
+read what the estate publishes and never change satz's HCL or its state.
+
+### What the estate publishes
+
+An `export` statement ([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it))
+names one value. `satz transpile` writes each one twice:
+
+- as an output of the root module, in `hcl/outputs.tf`, which the operator reads with
+  `tofu output`;
+- as an output of a module under `hcl/interfaces/`, which the teams read.
+
+An export outside every `interface` block is a core export, and every module carries
+it. An estate that uses `presets/estate-core.satz` publishes the core exports without
+writing any: `organization_id`, `customer_domain`, `customer_shortname`,
+`default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
+writes also exports `infra_folder`.
+
+What one team reads goes into an `interface` block named for the team, in the estate or
+in a pack; the same interface in two files is one interface:
+
+```
+interface "team-a" {
+  export "folder"  = "${{google_folder.team_a.name}}" description "Team A's folder, folders/<number>"
+  export "network" = "${{google_compute_network.shared.self_link}}"
+}
+```
+
+### Sourcing the interface
+
+**Each team sources `hcl/interfaces/<team>/`**: the team's own exports and the core ones,
+complete on its own. `hcl/interfaces/core/` holds the core exports alone, for a
+configuration that needs nothing else. A module names no file outside itself, takes no
+input variable, has no backend and reads no state. A team sources its folder from
+wherever its code lives:
+
+```hcl
+# a sibling folder in the same repository
+module "satz" {
+  source = "../estate/hcl/interfaces/team-a"
+}
+
+# a repository somewhere else, pinned to a commit of the estate repository
+module "satz" {
+  source = "git::<the estate repository URL>//hcl/interfaces/team-a?ref=<commit>"
+}
+
+resource "google_project" "team_a" {
+  project_id = "acme-team-a-001"
+  name       = "team-a"
+  folder_id  = module.satz.folder
+}
+```
+
+It needs the `google` provider in the calling configuration, at the version the estate
+pins (`versions.tf` in the folder). A copy of the folder works as well as the original:
+it is generated whole, and its `README.md` travels with it — the snippet above, every
+output with whether it is core and how it is obtained, and the estate and satz version
+it came from. The root module's `tofu output` names a team's values
+`<team>__<export>`, with `-` written `_` (`team_a__folder`).
+
+### Static values and lookups
+
+An export whose value satz knows at compile time — a param, a project id satz writes, a
+service account's email built from its account id — is a literal output. The team's
+plan makes no API call for it.
+
+An export of an attribute only the cloud knows — a folder's `folders/<number>`, a
+project's number — is a lookup: a `data` source in the folder's `main.tf` that reads
+the resource back by what satz writes on it (a folder by its display name under its
+parent, a project by its id). The lookup runs through the team's own provider and
+credentials, so the team needs read permission on what it looks up; the README names
+the permission per lookup. A team without it fails its own plan, and satz's state is
+not involved. A folder holds only the lookups its own outputs read.
+
+### Writing to shared infrastructure
+
+A team changes something the estate owns in one of two ways, and never by editing the
+estate's HCL or state.
+
+**Attach — the write lives in the team's own state.** The provider has additive
+resources for joining something another state owns, and the team declares them in its
+own configuration:
+
+```hcl
+# a project of the team's, attached to the estate's shared VPC host project
+resource "google_compute_shared_vpc_service_project" "team_a" {
+  host_project    = module.satz.network_host_project
+  service_project = google_project.team_a.project_id
+}
+
+# the team's project in the estate's service perimeter
+resource "google_access_context_manager_service_perimeter_resource" "team_a" {
+  perimeter_name = module.satz.perimeter_name
+  resource       = "projects/${google_project.team_a.number}"
+}
+
+# a role on the team's folder, one member at a time
+resource "google_folder_iam_member" "team_a_deployer" {
+  folder = module.satz.team_a_folder
+  role   = "roles/resourcemanager.projectCreator"
+  member = "serviceAccount:deployer@acme-team-a-001.iam.gserviceaccount.com"
+}
+```
+
+The exports `network_host_project` and `perimeter_name` stand for what the estate
+publishes when it has a shared VPC or a perimeter. satz grants with `*_iam_member`
+only, which adds a member and removes none, so a team's grant and the estate's live side
+by side. The estate must not declare the whole membership of something a team attaches
+to — a perimeter's full `resources` list — or its next apply removes the team's
+attachment.
+
+**Contribute — the write goes into the estate.** Where no attachment resource exists,
+or the change needs coordination — a subnet whose range must not overlap another's, a
+new folder — the change is an entry in the estate, applied by satz, and the estate then
+exports the result, the team's subnet or folder, for the team to read.
 
 ---
 

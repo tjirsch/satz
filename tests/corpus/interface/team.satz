@@ -1,0 +1,8 @@
+// A pack that adds to the estate's interface "team-a": the same interface in two files
+// is one interface.
+
+pack corpus_interface_team version "1.0"
+
+interface "team-a" {
+  export "team_project_number" = "${{google_project.infra.number}}"
+}

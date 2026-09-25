@@ -209,6 +209,27 @@ google_project {
   }
 }
 
+// --- `export`: what the estate publishes to the HCL customer teams write beside
+//     it. Each one is an output of the root module and of the generated modules
+//     under hcl/interfaces/. A param, a literal, or an attribute satz writes is
+//     known now and is a literal output; an attribute only the cloud knows is a
+//     lookup, a `data` source the consumer's plan reads. An export outside every
+//     `interface` block is a core export, in every module.
+export "customer_domain"      = customer_domain description "The customer's primary domain"
+export "infra_project_id"     = "${{google_project.infra.project_id}}" description "The infrastructure project"
+export "infra_folder"         = "${{google_folder.infra.name}}" description "The infrastructure folder, folders/<number>"
+export "infra_project_number" = "${{google_project.infra.number}}"
+export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
+export "regions"              = [default_region, "europe-west4"]
+
+// --- `interface`: what one team reads, in a module of its own —
+//     hcl/interfaces/archive-team/ — beside the core exports above, which every
+//     interface module carries. The same interface in another file adds to it.
+interface "archive-team" {
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
+  export "archive_project_number" = "${{google_project.archive.number}}"
+}
+
 // --- `hcl`: raw passthrough, verbatim, never interpolated, opaque to claims. --
 hcl trust "reviewed 2026-08-30: static address until the provider gap closes" {
   resource "google_compute_address" "legacy_ip" {

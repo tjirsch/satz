@@ -905,6 +905,29 @@ fn render(
         }
         md.push('\n');
     }
+    // What the pack publishes to the HCL beside an estate that uses it: outputs of the
+    // root module and of `hcl/interface/`.
+    let exports: Vec<(&str, &satz_core::satz::ExportDecl)> = file
+        .exports
+        .iter()
+        .map(|x| (satz_core::satz::CORE_INTERFACE, x))
+        .chain(file.interfaces.iter().flat_map(|i| i.exports.iter().map(move |x| (i.name.as_str(), x))))
+        .collect();
+    if !exports.is_empty() {
+        md.push_str("## Exports\n\n");
+        md.push_str("Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.\n\n");
+        md.push_str("| interface | output | value | description |\n|---|---|---|---|\n");
+        for (interface, x) in exports {
+            md.push_str(&format!(
+                "| `{}` | `{}` | `{}` | {} |\n",
+                interface,
+                x.name,
+                value_text(&x.value).replace('|', "\\|"),
+                x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;"),
+            ));
+        }
+        md.push('\n');
+    }
     md.push_str("## Claims\n\n");
     if file.claims.is_empty() {
         md.push_str("_None — this pack proves no control by itself._\n\n");

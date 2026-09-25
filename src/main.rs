@@ -7,6 +7,7 @@ mod settings;
 mod source_gate;
 mod emit_shared;
 mod emitter;
+mod interface;
 mod manifest;
 mod state_migration;
 mod discovery;
@@ -2421,6 +2422,9 @@ struct PipelineBOut {
     variables_tf: String,
     tfvars: String,
     imports_tf: String,
+    /// What the estate publishes to the HCL beside it: the root `outputs.tf` and the module
+    /// `hcl/interface/`. `None` when it exports nothing.
+    interface: Option<crate::interface::Interface>,
     /// Claims declared by the estate and every pack it actually used — the
     /// compliance plane's input, produced by the same compile that produced
     /// main_tf, so witnesses and claims can never come from different reads.
@@ -2690,6 +2694,7 @@ fn pipeline_b_compile(
         return Err(Box::new(crate::findings::CompileRefusal { findings }));
     }
     let out = tail.out.expect("no error finding, so the emitter ran");
+    let interface = tail.interface;
     let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
     let folded = tail.folded;
     let org_policies: Vec<(String, serde_yaml::Value)> = folded
@@ -2721,6 +2726,7 @@ fn pipeline_b_compile(
         variables_tf: crate::emitter::emit_variables(&fe.tfvars, &descriptions),
         tfvars: crate::emitter::emit_tfvars(&fe.tfvars),
         imports_tf: out.imports_tf,
+        interface,
         claims: fe.claims,
         org_policies,
         customer_id,
@@ -2761,6 +2767,9 @@ pub(crate) struct Tail {
     /// `None` when an error finding stopped the compile before or at the emitter.
     pub out: Option<crate::emitter::EmitOut>,
     pub providers_tf: Option<String>,
+    /// The estate's interface, when it exports anything and every export is one satz can
+    /// publish.
+    pub interface: Option<crate::interface::Interface>,
     pub findings: Vec<crate::findings::Finding>,
 }
 
@@ -2798,7 +2807,7 @@ pub(crate) fn compile_tail(
     };
     f.extend(exclusions);
     if !f.is_empty() {
-        return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, findings: f };
+        return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, interface: None, findings: f };
     }
     // After the dry-run check, which stops at any finding; before the suppressions, the
     // conflicts and the emitter, so a compile one of them stops still names a mode it
@@ -2810,10 +2819,10 @@ pub(crate) fn compile_tail(
     // reporting (suppressing a conflicted address resolves the conflict).
     if let Err(e) = satz_core::pipeline::apply_suppressions(&mut folded, &fe.suppressions) {
         f.push(Finding::new(Severity::Error, Kind::Suppression, e.msg).located(e.file, e.line as u32));
-        return Tail { folded, out: None, providers_tf: None, findings: f };
+        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
     if conflict_findings(&folded, &mut f) {
-        return Tail { folded, out: None, providers_tf: None, findings: f };
+        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
     let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     ctx.registry = Some(registry);
@@ -2821,10 +2830,12 @@ pub(crate) fn compile_tail(
         Ok(o) => o,
         Err(e) => {
             f.push(Finding::new(Severity::Error, Kind::Emit, format!("emit: {}", e)));
-            return Tail { folded, out: None, providers_tf: None, findings: f };
+            return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
     written_reference_findings(&folded, &out.manifest, &mut f);
+    let (provider_sources, provider_versions) = provider_maps(tool_config);
+    let interface = interface_of(fe, &out.manifest, &provider_sources, &provider_versions, &mut f);
     missing_required_findings(&out.missing_required, level, &mut f);
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
@@ -2843,7 +2854,6 @@ pub(crate) fn compile_tail(
             f.push(Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{} — no pack line is checked against its answer", why)))
         }
     }
-    let (provider_sources, provider_versions) = provider_maps(tool_config);
     // a mode with no backend is already the finding at its line; the providers are not
     // emitted without one
     let providers_tf = if !mode_ok {
@@ -2859,7 +2869,52 @@ pub(crate) fn compile_tail(
     };
     action_findings(&fe.actions, &mut f);
     hcl_findings(&fe.hcl, &mut f);
-    Tail { folded, out: Some(out), providers_tf, findings: f }
+    Tail { folded, out: Some(out), providers_tf, interface, findings: f }
+}
+
+/// The estate's interface (`crate::interface`), or `None` when it exports nothing. An
+/// export satz cannot publish is an error at its declaration, and the interface is then
+/// not written at all: a module missing one output is a consumer's plan failing later.
+fn interface_of(
+    fe: &satz_core::pipeline::FrontEnd,
+    manifest: &crate::manifest::Manifest,
+    provider_sources: &HashMap<String, String>,
+    provider_versions: &HashMap<String, String>,
+    f: &mut Vec<crate::findings::Finding>,
+) -> Option<crate::interface::Interface> {
+    use crate::findings::{Finding, Kind, Severity};
+    if fe.exports.is_empty() {
+        return None;
+    }
+    let group = "exports this estate cannot publish";
+    let Some(source) = provider_sources.get("google") else {
+        let x = &fe.exports[0];
+        f.push(
+            Finding::new(Severity::Error, Kind::Export, "the interface module needs the `google` provider, and the configuration names none in `google_providers`")
+                .in_group(group)
+                .located(x.file.clone(), x.line as u32),
+        );
+        return None;
+    };
+    let estate = fe.estate.clone().unwrap_or_default();
+    match crate::interface::build(&estate, &fe.exports, manifest, source, provider_versions.get("google").map(String::as_str)) {
+        Ok(i) => Some(i),
+        Err(refusals) => {
+            for r in refusals {
+                let what = match &r.interface {
+                    Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),
+                    None => format!("export \"{}\"", r.name),
+                };
+                f.push(
+                    Finding::new(Severity::Error, Kind::Export, format!("{}: {}", what, r.msg))
+                        .about(r.name.clone())
+                        .in_group(group)
+                        .located(r.file, r.line as u32),
+                );
+            }
+            None
+        }
+    }
 }
 
 /// A `deployment_mode` the emitter has no backend for is an error at the line the
@@ -3623,6 +3678,43 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<
         let p = dir.join(name);
         fsx::write(&p, content)?;
         written.push(p);
+    }
+    written.extend(write_interface(out.interface.as_ref(), dir, estate)?);
+    Ok(written)
+}
+
+/// The estate's interfaces: the root `outputs.tf` and one module per interface under
+/// `hcl/interfaces/` — `core/` and one folder per `interface` block — each written whole,
+/// and none left from an earlier run: satz owns `hcl/interfaces/`, so the folder of an
+/// interface the estate no longer declares goes with the rest, and the directory and
+/// `outputs.tf` go when the estate exports nothing.
+fn write_interface(interface: Option<&crate::interface::Interface>, dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let outputs = dir.join("outputs.tf");
+    let modules = dir.join(crate::interface::DIR);
+    if outputs.exists() {
+        fsx::remove_file(&outputs)?;
+    }
+    if modules.exists() {
+        fsx::remove_dir_all(&modules)?;
+    }
+    let Some(i) = interface else { return Ok(Vec::new()) };
+    let version = env!("CARGO_PKG_VERSION");
+    let stamp = crate::interface::stamp(version, estate);
+    let notice = crate::interface::notice(i);
+    let mut written = Vec::new();
+    fsx::write(&outputs, format!("{}{}", stamp, i.root_outputs_tf()))?;
+    written.push(outputs);
+    for m in i.modules() {
+        let module = modules.join(&m);
+        fsx::create_dir_all(&module)?;
+        for (name, content) in i.module_files(&m) {
+            let p = module.join(name);
+            fsx::write(&p, format!("{}{}", stamp, content))?;
+            written.push(p);
+        }
+        let readme = module.join("README.md");
+        fsx::write(&readme, i.readme(&m, version, estate, notice.as_ref()))?;
+        written.push(readme);
     }
     Ok(written)
 }
@@ -4474,11 +4566,17 @@ pub(crate) fn transpile_sorted_b(
         lines.sort_unstable();
         lines.join("\n")
     }
-    Ok([&out.main_tf, &out.imports_tf, &out.variables_tf, &out.tfvars]
-        .iter()
-        .map(|s| sorted(s))
-        .collect::<Vec<_>>()
-        .join("\n---\n"))
+    let mut sections: Vec<String> = [&out.main_tf, &out.imports_tf, &out.variables_tf, &out.tfvars].iter().map(|s| sorted(s)).collect();
+    // The interface, when there is one — an estate that exports nothing keeps its snapshot.
+    if let Some(i) = &out.interface {
+        sections.push(i.root_outputs_tf());
+        for m in i.modules() {
+            for (name, content) in i.module_files(&m) {
+                sections.push(format!("{}/{}/{}\n{}", crate::interface::DIR, m, name, content));
+            }
+        }
+    }
+    Ok(sections.join("\n---\n"))
 }
 
 
@@ -5430,12 +5528,26 @@ mod corpus {
         // notification_channels).
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
-        format!(
+        let mut snapshot = format!(
             "{}\n---tfvars---\n{}\n---imports---\n{}",
             sorted_lines(&out.main_tf).join("\n"),
             sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n"),
             sorted_lines(&out.imports_tf).join("\n")
-        )
+        );
+        // The interface is emission too, in its files' own order: a case that exports
+        // nothing keeps its snapshot.
+        if !fe.exports.is_empty() {
+            let i = crate::interface::build(fe.estate.as_deref().unwrap_or_default(), &fe.exports, &out.manifest, "hashicorp/google", Some("7.14.1"))
+                .unwrap_or_else(|r| panic!("{}: an export refused: {:?}", name, r));
+            snapshot.push_str("\n---outputs.tf---\n");
+            snapshot.push_str(&i.root_outputs_tf());
+            for m in i.modules() {
+                for (file, content) in i.module_files(&m) {
+                    snapshot.push_str(&format!("---{}/{}/{}---\n{}", crate::interface::DIR, m, file, content));
+                }
+            }
+        }
+        snapshot
     }
 
     /// THE corpus gate: every case's emission must reproduce its snapshot.
@@ -6347,6 +6459,10 @@ mod prerequisites_gate {
     /// can derive it from the estate: adopting one needs a live lookup adopt does not do
     /// yet. Each entry leaves the list with the rule that resolves it.
     const NOT_ADOPTABLE_YET: &[(&str, &str)] = &[
+        (
+            "google_storage_notification",
+            "<bucket>/notificationConfigs/<number>, the number assigned on create — and Cloud Asset Inventory refuses to list the type",
+        ),
         ("google_tags_tag_key", "tagKeys/<number>, assigned on create — needs a lookup by short_name under the parent"),
         ("google_tags_tag_value", "tagValues/<number>, assigned on create — needs a lookup by short_name under the key"),
         ("google_tags_tag_binding", "tagBindings/<url-encoded parent>/tagValues/<number> — the value's number is assigned"),

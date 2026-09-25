@@ -200,6 +200,9 @@ pub(crate) const TYPES: &[(&str, &[Entry], &[&str])] = &[
     ("google_service_account_iam_member", &[project("iam.serviceAccounts.setIamPolicy", &["roles/iam.serviceAccountAdmin"])], &["iam.googleapis.com"]),
     ("google_storage_bucket", &[project("storage.buckets.create", &["roles/storage.admin"])], &["storage.googleapis.com"]),
     ("google_storage_bucket_iam_member", &[project("storage.buckets.setIamPolicy", &["roles/storage.admin"])], &["storage.googleapis.com"]),
+    ("google_storage_bucket_object", &[project("storage.objects.create", &["roles/storage.admin"])], &["storage.googleapis.com"]),
+    // A notification is a setting of the bucket; the topic it publishes to is Pub/Sub's.
+    ("google_storage_notification", &[project("storage.buckets.update", &["roles/storage.admin"])], &["storage.googleapis.com", "pubsub.googleapis.com"]),
     // Resource Manager tags. The key and its values are organisation-scoped; a binding
     // attaches a value to one resource and is the exemption itself, which is why it is
     // listed separately: an estate may be allowed to define the vocabulary without being

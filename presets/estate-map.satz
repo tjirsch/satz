@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.2"
+pack estate_map version "2.3"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -66,6 +66,7 @@ params {
   // estate answers the grant alone `true`.
   use_verification_runner_grant = use_verification_runner
   use_exemption_tag             = false
+  use_interface_notice          = false
 }
 
 question use_cis_baseline {
@@ -230,6 +231,13 @@ question use_exemption_tag {
   why      = "An organisation policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organisation policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organisation-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead."
   reversal = edit
   blast    = none
+}
+
+question use_interface_notice {
+  prompt   = "Notify the teams whose HCL reads this estate's interface when an exported value changes?"
+  why      = "Customer teams read the estate's exports through hcl/interfaces/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. This adds a bucket, a Pub/Sub topic and a storage notification in the infrastructure project: every apply that changes an exported value publishes one message, and a team subscribes in its own state. Turning it off later removes the topic, and every subscription on it stops receiving."
+  reversal = edit
+  blast    = low
 }
 
 // ---- what the library offers, in the order the packs can be adopted ---------
@@ -470,4 +478,9 @@ offers "presets/exemptions/exemption-tag.satz" {
 and exempts nothing on its own. The BINDING that lets one resource out, and the
 condition on the constraint that honours it, are the estate's to write; the pack's
 header shows both"""
+}
+
+offers "presets/interface-notice.satz" {
+  when  = use_interface_notice
+  phase = "once the estate exports what other teams read — the notice publishes when an export changes"
 }

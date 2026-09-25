@@ -2,16 +2,16 @@
   "nodes": [
     {
       "path": "presets/estate-core.satz",
-      "version": "2.1",
+      "version": "2.2",
       "role": "core"
     },
     {
       "path": "presets/estate-map.satz",
-      "version": "2.2",
+      "version": "2.3",
       "role": "map",
       "order": 0,
       "phase": "once the estate runs as the service account — the map, which declares the questions\nevery line below is gated on. This is the one to uncomment first.",
-      "at": "presets/estate-map.satz:245"
+      "at": "presets/estate-map.satz:253"
     },
     {
       "path": "presets/security-group-models/s1-security-groups.satz",
@@ -21,7 +21,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 1,
       "phase": "once the map is in — the security-group model, whose groups later grants name.\nExactly one of the two.",
-      "at": "presets/estate-map.satz:250"
+      "at": "presets/estate-map.satz:258"
     },
     {
       "path": "presets/security-group-models/s2-security-groups.satz",
@@ -30,7 +30,7 @@
       "gate": "security_model_s2",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 2,
-      "at": "presets/estate-map.satz:256"
+      "at": "presets/estate-map.satz:264"
     },
     {
       "path": "presets/billing-account-permissions.satz",
@@ -40,7 +40,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 3,
       "phase": "once the groups exist — this grants to the model's billing-admins group by name, so\nthe grant has nothing to land on until they are applied",
-      "at": "presets/estate-map.satz:263"
+      "at": "presets/estate-map.satz:271"
     },
     {
       "path": "presets/organization-budget.satz",
@@ -50,7 +50,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 4,
       "phase": "once the estate runs as the service account — these stand alone",
-      "at": "presets/estate-map.satz:273"
+      "at": "presets/estate-map.satz:281"
     },
     {
       "path": "presets/billing-export.satz",
@@ -59,7 +59,7 @@
       "gate": "use_billing_export",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 5,
-      "at": "presets/estate-map.satz:278",
+      "at": "presets/estate-map.satz:286",
       "notices": [
         {
           "param": "billing_export_enabled",
@@ -76,7 +76,7 @@
       "gate": "use_security_audit_sa",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 6,
-      "at": "presets/estate-map.satz:282"
+      "at": "presets/estate-map.satz:290"
     },
     {
       "path": "presets/scc/scc-service-enablement.satz",
@@ -85,7 +85,7 @@
       "gate": "use_scc_enablement",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 7,
-      "at": "presets/estate-map.satz:286"
+      "at": "presets/estate-map.satz:294"
     },
     {
       "path": "presets/monitoring/project-cis-log-alerts.satz",
@@ -94,7 +94,7 @@
       "gate": "use_project_cis_log_alerts",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 8,
-      "at": "presets/estate-map.satz:290"
+      "at": "presets/estate-map.satz:298"
     },
     {
       "path": "presets/essential-contacts-organization.satz",
@@ -105,7 +105,7 @@
       "order": 9,
       "phase": "once the estate runs as the service account — one contact for Google's notices",
       "block": "google_essential_contacts_contact",
-      "at": "presets/estate-map.satz:294"
+      "at": "presets/estate-map.satz:302"
     },
     {
       "path": "presets/monitoring/organization-audit-logsink.satz",
@@ -115,7 +115,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 10,
       "phase": "once the estate runs as the service account — the audit archive, which every later\nlogging pack points at",
-      "at": "presets/estate-map.satz:300"
+      "at": "presets/estate-map.satz:308"
     },
     {
       "path": "presets/monitoring/organization-cis-log-alerts-central.satz",
@@ -125,7 +125,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 11,
       "phase": "once the archive exists — the alert project defaults to the logsink's, so this does\nnot compile without it",
-      "at": "presets/estate-map.satz:306"
+      "at": "presets/estate-map.satz:314"
     },
     {
       "path": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -135,7 +135,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 12,
       "phase": "once the estate runs as the service account — the CIS baseline, what the estate is\nfor and what everything below extends. Thirty organisation policies in one apply,\nso it goes in on its own, with its plan read before it is applied.",
-      "at": "presets/estate-map.satz:312",
+      "at": "presets/estate-map.satz:320",
       "notices": [
         {
           "param": "cis_baseline_adopted",
@@ -153,7 +153,7 @@
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 13,
       "phase": "the baseline's own extensions, gated on params it declares, so they do not compile\nwithout it. Each restricts what may be created; two are on by default (DNS query\nlogging, and the admin ports closed to the internet).",
-      "at": "presets/estate-map.satz:319",
+      "at": "presets/estate-map.satz:327",
       "notices": [
         {
           "param": "cis_block_project_ssh_keys_adopted",
@@ -170,7 +170,7 @@
       "gate": "cis_require_shielded_vm",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 14,
-      "at": "presets/estate-map.satz:326",
+      "at": "presets/estate-map.satz:334",
       "notices": [
         {
           "param": "cis_require_shielded_vm_adopted",
@@ -187,7 +187,7 @@
       "gate": "cis_dns_logging",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 15,
-      "at": "presets/estate-map.satz:330",
+      "at": "presets/estate-map.satz:338",
       "notices": [
         {
           "param": "cis_dns_logging_adopted",
@@ -204,7 +204,7 @@
       "gate": "cis_confidential_computing",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 16,
-      "at": "presets/estate-map.satz:334",
+      "at": "presets/estate-map.satz:342",
       "notices": [
         {
           "param": "cis_confidential_computing_adopted",
@@ -221,7 +221,7 @@
       "gate": "cis_cloud_sql_hardening",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 17,
-      "at": "presets/estate-map.satz:338",
+      "at": "presets/estate-map.satz:346",
       "notices": [
         {
           "param": "cis_cloud_sql_hardening_adopted",
@@ -238,7 +238,7 @@
       "gate": "cis_cmek_required",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 18,
-      "at": "presets/estate-map.satz:342",
+      "at": "presets/estate-map.satz:350",
       "notices": [
         {
           "param": "cis_cmek_required_adopted",
@@ -255,7 +255,7 @@
       "gate": "cis_api_key_services",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 19,
-      "at": "presets/estate-map.satz:346",
+      "at": "presets/estate-map.satz:354",
       "notices": [
         {
           "param": "cis_api_key_services_adopted",
@@ -272,7 +272,7 @@
       "gate": "cis_bucket_retention",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 20,
-      "at": "presets/estate-map.satz:350",
+      "at": "presets/estate-map.satz:358",
       "notices": [
         {
           "param": "cis_bucket_retention_adopted",
@@ -289,7 +289,7 @@
       "gate": "cis_access_approval",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 21,
-      "at": "presets/estate-map.satz:354"
+      "at": "presets/estate-map.satz:362"
     },
     {
       "path": "presets/cis/internet-ssh-rdp.satz",
@@ -298,7 +298,7 @@
       "gate": "cis_block_internet_ssh_rdp",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 22,
-      "at": "presets/estate-map.satz:358"
+      "at": "presets/estate-map.satz:366"
     },
     {
       "path": "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
@@ -307,7 +307,7 @@
       "gate": "cis_cloud_sql_iam_and_deletion_protection",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 23,
-      "at": "presets/estate-map.satz:362",
+      "at": "presets/estate-map.satz:370",
       "notices": [
         {
           "param": "cis_cloud_sql_iam_and_deletion_protection_adopted",
@@ -325,7 +325,7 @@
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 24,
       "phase": "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\nsame policy with `dry_run_spec`: Google logs every action it would have blocked and\nblocks none, so the violation count sizes the control against this organisation\nbefore it bites. Nothing is enforced while it runs.",
-      "at": "presets/estate-map.satz:368",
+      "at": "presets/estate-map.satz:376",
       "notices": [
         {
           "param": "cis_api_key_services_dry_run_adopted",
@@ -342,7 +342,7 @@
       "gate": "cis_block_project_ssh_keys_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 25,
-      "at": "presets/estate-map.satz:377",
+      "at": "presets/estate-map.satz:385",
       "notices": [
         {
           "param": "cis_block_project_ssh_keys_dry_run_adopted",
@@ -359,7 +359,7 @@
       "gate": "cis_bucket_retention_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 26,
-      "at": "presets/estate-map.satz:382",
+      "at": "presets/estate-map.satz:390",
       "notices": [
         {
           "param": "cis_bucket_retention_dry_run_adopted",
@@ -376,7 +376,7 @@
       "gate": "cis_cloud_sql_hardening_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 27,
-      "at": "presets/estate-map.satz:387",
+      "at": "presets/estate-map.satz:395",
       "notices": [
         {
           "param": "cis_cloud_sql_hardening_dry_run_adopted",
@@ -393,7 +393,7 @@
       "gate": "cis_cloud_sql_iam_and_deletion_protection_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 28,
-      "at": "presets/estate-map.satz:392",
+      "at": "presets/estate-map.satz:400",
       "notices": [
         {
           "param": "cis_cloud_sql_iam_and_deletion_protection_dry_run_adopted",
@@ -410,7 +410,7 @@
       "gate": "cis_confidential_computing_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 29,
-      "at": "presets/estate-map.satz:397",
+      "at": "presets/estate-map.satz:405",
       "notices": [
         {
           "param": "cis_confidential_computing_dry_run_adopted",
@@ -428,7 +428,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 30,
       "phase": "once Security Command Center is switched on — findings have to exist before anything\ncan carry them",
-      "at": "presets/estate-map.satz:402"
+      "at": "presets/estate-map.satz:410"
     },
     {
       "path": "presets/scc/scc-export.satz",
@@ -437,7 +437,7 @@
       "gate": "use_scc_export",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 31,
-      "at": "presets/estate-map.satz:408"
+      "at": "presets/estate-map.satz:416"
     },
     {
       "path": "presets/scc/scc-findings-siem.satz",
@@ -447,7 +447,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 32,
       "phase": "once the findings topic exists — this reads from it",
-      "at": "presets/estate-map.satz:412"
+      "at": "presets/estate-map.satz:420"
     },
     {
       "path": "presets/scc/scc-findings-mail.satz",
@@ -457,7 +457,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 33,
       "phase": "once the central alerts are in as well — the mailbox defaults to their address",
-      "at": "presets/estate-map.satz:417"
+      "at": "presets/estate-map.satz:425"
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud.satz",
@@ -467,7 +467,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 34,
       "phase": "once the estate runs as the service account — Defender's plan fragments are added by\nhand once this line is in; see that pack's header",
-      "at": "presets/estate-map.satz:422"
+      "at": "presets/estate-map.satz:430"
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud-cspm.satz",
@@ -477,7 +477,7 @@
       "gate_declared_in": "presets/integrations/microsoft-defender-for-cloud.satz",
       "order": 35,
       "by_hand": "a Defender plan fragment, written beside the Defender line once the plan is licensed, as that pack's header shows",
-      "at": "presets/estate-map.satz:428"
+      "at": "presets/estate-map.satz:436"
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz",
@@ -487,7 +487,7 @@
       "gate_declared_in": "presets/integrations/microsoft-defender-for-cloud.satz",
       "order": 36,
       "by_hand": "the CSPM plan's custom role in the default access mode, written with the plan fragment",
-      "at": "presets/estate-map.satz:433"
+      "at": "presets/estate-map.satz:441"
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz",
@@ -497,7 +497,7 @@
       "gate_declared_in": "presets/integrations/microsoft-defender-for-cloud.satz",
       "order": 37,
       "by_hand": "the CSPM plan's custom role in the least-privilege mode, written with the plan fragment",
-      "at": "presets/estate-map.satz:438"
+      "at": "presets/estate-map.satz:446"
     },
     {
       "path": "presets/integrations/microsoft-sentinel.satz",
@@ -507,7 +507,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 38,
       "phase": "once the audit archive exists — Sentinel's project defaults to the logsink's",
-      "at": "presets/estate-map.satz:443"
+      "at": "presets/estate-map.satz:451"
     },
     {
       "path": "presets/integrations/microsoft-sentinel-auditlogs.satz",
@@ -518,7 +518,7 @@
       "follows": "use_sentinel",
       "order": 39,
       "phase": "once Sentinel's federation is in — these read as the account it creates",
-      "at": "presets/estate-map.satz:448"
+      "at": "presets/estate-map.satz:456"
     },
     {
       "path": "presets/integrations/microsoft-sentinel-network-logs.satz",
@@ -528,7 +528,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "follows": "use_sentinel",
       "order": 40,
-      "at": "presets/estate-map.satz:453"
+      "at": "presets/estate-map.satz:461"
     },
     {
       "path": "presets/ci/verification-runner.satz",
@@ -538,7 +538,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 41,
       "phase": "once the estate runs as the service account — the runner, then the grant that trusts\nit by naming the runner's own account",
-      "at": "presets/estate-map.satz:457"
+      "at": "presets/estate-map.satz:465"
     },
     {
       "path": "presets/ci/verification-runner-grant.satz",
@@ -548,7 +548,7 @@
       "gate_declared_in": "presets/estate-map.satz",
       "follows": "use_verification_runner",
       "order": 42,
-      "at": "presets/estate-map.satz:463"
+      "at": "presets/estate-map.satz:471"
     },
     {
       "path": "presets/exemptions/exemption-tag.satz",
@@ -558,7 +558,17 @@
       "gate_declared_in": "presets/estate-map.satz",
       "order": 43,
       "phase": "any time after the organisation policies — it creates the tag an exemption is bound to\nand exempts nothing on its own. The BINDING that lets one resource out, and the\ncondition on the constraint that honours it, are the estate's to write; the pack's\nheader shows both",
-      "at": "presets/estate-map.satz:467"
+      "at": "presets/estate-map.satz:475"
+    },
+    {
+      "path": "presets/interface-notice.satz",
+      "version": "1.0",
+      "role": "pack",
+      "gate": "use_interface_notice",
+      "gate_declared_in": "presets/estate-map.satz",
+      "order": 44,
+      "phase": "once the estate exports what other teams read — the notice publishes when an export changes",
+      "at": "presets/estate-map.satz:483"
     }
   ],
   "edges": [
@@ -571,21 +581,21 @@
         "security_model_s1",
         "security_model_s2"
       ],
-      "at": "presets/estate-map.satz:78"
+      "at": "presets/estate-map.satz:79"
     },
     {
       "from": "presets/billing-account-permissions.satz",
       "to": "presets/security-group-models/s1-security-groups.satz",
       "kind": "requires",
       "source": "declared",
-      "at": "presets/estate-map.satz:263"
+      "at": "presets/estate-map.satz:271"
     },
     {
       "from": "presets/billing-account-permissions.satz",
       "to": "presets/security-group-models/s2-security-groups.satz",
       "kind": "requires",
       "source": "declared",
-      "at": "presets/estate-map.satz:263"
+      "at": "presets/estate-map.satz:271"
     },
     {
       "from": "presets/billing-export.satz",
@@ -732,7 +742,7 @@
       "to": "presets/cis/api-key-services.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:368"
+      "at": "presets/estate-map.satz:376"
     },
     {
       "from": "presets/cis/block-project-ssh-keys-dry-run.satz",
@@ -749,7 +759,7 @@
       "to": "presets/cis/block-project-ssh-keys.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:377"
+      "at": "presets/estate-map.satz:385"
     },
     {
       "from": "presets/cis/bucket-retention-dry-run.satz",
@@ -766,7 +776,7 @@
       "to": "presets/cis/bucket-retention.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:382"
+      "at": "presets/estate-map.satz:390"
     },
     {
       "from": "presets/cis/cloud-sql-dry-run.satz",
@@ -783,7 +793,7 @@
       "to": "presets/cis/cloud-sql.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:387"
+      "at": "presets/estate-map.satz:395"
     },
     {
       "from": "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz",
@@ -800,7 +810,7 @@
       "to": "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:392"
+      "at": "presets/estate-map.satz:400"
     },
     {
       "from": "presets/cis/confidential-computing-dry-run.satz",
@@ -817,7 +827,7 @@
       "to": "presets/cis/confidential-computing.satz",
       "kind": "excludes",
       "source": "declared",
-      "at": "presets/estate-map.satz:397"
+      "at": "presets/estate-map.satz:405"
     },
     {
       "from": "presets/scc/scc-notifications.satz",
@@ -827,7 +837,7 @@
       "params": [
         "use_scc_enablement"
       ],
-      "at": "presets/estate-map.satz:145"
+      "at": "presets/estate-map.satz:146"
     },
     {
       "from": "presets/scc/scc-export.satz",
@@ -837,7 +847,7 @@
       "params": [
         "use_scc_enablement"
       ],
-      "at": "presets/estate-map.satz:169"
+      "at": "presets/estate-map.satz:170"
     },
     {
       "from": "presets/scc/scc-findings-siem.satz",
@@ -857,7 +867,7 @@
       "params": [
         "use_scc_notifications"
       ],
-      "at": "presets/estate-map.satz:161"
+      "at": "presets/estate-map.satz:162"
     },
     {
       "from": "presets/scc/scc-findings-mail.satz",
@@ -887,7 +897,7 @@
       "params": [
         "use_scc_notifications"
       ],
-      "at": "presets/estate-map.satz:153"
+      "at": "presets/estate-map.satz:154"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud.satz",
@@ -999,7 +1009,7 @@
       "params": [
         "use_sentinel"
       ],
-      "at": "presets/estate-map.satz:198"
+      "at": "presets/estate-map.satz:199"
     },
     {
       "from": "presets/integrations/microsoft-sentinel-network-logs.satz",
@@ -1019,7 +1029,7 @@
       "params": [
         "use_sentinel"
       ],
-      "at": "presets/estate-map.satz:206"
+      "at": "presets/estate-map.satz:207"
     },
     {
       "from": "presets/ci/verification-runner-grant.satz",

@@ -167,6 +167,60 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
 
+step "interfaces: the showcase's exports as outputs.tf and one relocatable module per interface"
+si=tmp/showcase-hcl/interfaces
+for m in core archive-team; do
+  for f in versions.tf main.tf outputs.tf README.md; do
+    [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/$m/$f was not written"
+  done
+done
+[ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
+grep -q 'infra_folder *= google_folder.infra.name' tmp/showcase-hcl/outputs.tf || fail "the root output does not name the folder:\n$(cat tmp/showcase-hcl/outputs.tf)"
+grep -q 'output "archive_team__archive_project_id"' tmp/showcase-hcl/outputs.tf || fail "an interface's root output is not <interface>__<export>:\n$(cat tmp/showcase-hcl/outputs.tf)"
+grep -q 'value *= "corp-infra-001"' $si/core/outputs.tf || fail "a written attribute is not a literal output:\n$(cat $si/core/outputs.tf)"
+grep -q 'value *= data.google_active_folder.infra.name' $si/archive-team/outputs.tf || fail "a core export is missing from the team's module:\n$(cat $si/archive-team/outputs.tf)"
+grep -q 'output "archive_project_number"' $si/core/outputs.tf && fail "the core module carries a team's export"
+grep -q 'value *= data.google_project.archive.number' $si/archive-team/outputs.tf || fail "the team's project number is not looked up:\n$(cat $si/archive-team/outputs.tf)"
+grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/*.tf && fail "an interface module reaches outside itself:\n$(cat $si/*/*.tf)"
+for m in core archive-team; do
+  [ "$(grep -c '^| `' $si/$m/README.md)" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
+done
+if command -v tofu >/dev/null 2>&1; then
+  # moved away from the estate, a team's module still initialises and validates on its own
+  rm -rf tmp/relocated && mkdir -p tmp/relocated/elsewhere && cp -R "$si/archive-team" tmp/relocated/elsewhere/satz-interface
+  (cd tmp/relocated/elsewhere/satz-interface && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) \
+    || fail "the archive-team module does not validate away from the estate"
+fi
+# an estate that exports nothing keeps neither file from an earlier run
+cp yaml/showcase.satz tmp/no-exports.satz
+python3 - tmp/no-exports.satz <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(r'(?ms)^interface "[^"]*" \{.*?^\}\n', "", s)
+s = re.sub(r'(?m)^export .*\n', "", s)
+open(p, "w", encoding="utf-8").write(s)
+PY
+"$satz" --config . transpile tmp/no-exports.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/no-exports.err \
+  || fail "the showcase without exports does not compile:\n$(cat tmp/no-exports.err)"
+[ -e tmp/showcase-hcl/outputs.tf ] && fail "outputs.tf survived a transpile of an estate that exports nothing"
+[ -e "$si" ] && fail "hcl/interfaces/ survived a transpile of an estate that exports nothing"
+
+step "interface notice: bucket, topic, grant, notification, and the object that holds the interface"
+cp yaml/smoke.satz tmp/notice.satz
+cat >> tmp/notice.satz <<'SATZ'
+use "presets/interface-notice.satz"
+SATZ
+"$satz" --config . transpile tmp/notice.satz --output "$PWD/tmp/notice-hcl" > tmp/notice.txt 2>&1 || fail "the interface notice pack does not transpile:\n$(cat tmp/notice.txt)"
+grep -q 'resource "google_storage_notification" "interface_notice"' tmp/notice-hcl/main.tf || fail "no storage notification"
+grep -q 'topic = "${google_pubsub_topic_iam_member.interface_notice_publisher.topic}"' tmp/notice-hcl/main.tf || fail "the notification does not wait for the grant:\n$(grep -A6 'google_storage_notification' tmp/notice-hcl/main.tf)"
+grep -q 'content = "${jsonencode(local.satz_interface)}"' tmp/notice-hcl/main.tf || fail "the object does not carry the interface"
+grep -q 'value *= "projects/corp-infra-001/topics/corp-satz-interface"' tmp/notice-hcl/interfaces/core/outputs.tf || fail "the topic is not a static export:\n$(cat tmp/notice-hcl/interfaces/core/outputs.tf)"
+grep -q 'google_pubsub_subscription' tmp/notice-hcl/interfaces/core/README.md || fail "the README does not show the subscription to write"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/notice-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the interface notice does not validate"
+fi
+
 step "run-actions: declared, resolved, and never run without being asked"
 # Plan mode is the default and must spawn nothing. The fixture script would print
 # a line of its own if it ran, so its absence is the assertion.

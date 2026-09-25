@@ -255,20 +255,36 @@ fn push_line(lines: &mut Vec<Line>, pieces: Vec<Piece>, depth: usize) {
         });
         return;
     }
-    let assign = body.len() >= 3
-        && matches!(body[0].tok, Tok::Ident(_) | Tok::Str(_))
-        && matches!(body[1].tok, Tok::Eq)
-        && is_complete_value(&body[2..]);
+    // `key = value`, and `export "name" = value [description "…"]`, whose key is the
+    // keyword and the name: a run of exports aligns its `=` like a run of attributes.
+    let key_len = match body {
+        [Piece { tok: Tok::Ident(kw), .. }, Piece { tok: Tok::Str(_), .. }, Piece { tok: Tok::Eq, .. }, rest @ ..]
+            if kw == "export" && is_complete_value(export_value(rest)) =>
+        {
+            2
+        }
+        [Piece { tok: Tok::Ident(_) | Tok::Str(_), .. }, Piece { tok: Tok::Eq, .. }, rest @ ..] if is_complete_value(rest) => 1,
+        _ => 0,
+    };
+    let assign = key_len > 0;
     lines.push(Line {
         depth,
         kind: if assign { Kind::Assign } else { Kind::Other },
         text: join(body),
-        key: if assign { body[0].text.clone() } else { String::new() },
-        value: if assign { join(&body[2..]) } else { String::new() },
+        key: if assign { join(&body[..key_len]) } else { String::new() },
+        value: if assign { join(&body[key_len + 1..]) } else { String::new() },
         comment,
         starts_with_closer: matches!(body[0].tok, Tok::RBrace | Tok::RBrack),
         ends_with_opener: matches!(body.last().map(|p| &p.tok), Some(Tok::LBrace | Tok::LBrack)),
     });
+}
+
+/// An export's value without the `description "…"` that may follow it.
+fn export_value(rest: &[Piece]) -> &[Piece] {
+    match rest {
+        [value @ .., Piece { tok: Tok::Ident(d), .. }, Piece { tok: Tok::Str(_), .. }] if d == "description" => value,
+        _ => rest,
+    }
 }
 
 /// One value, whole on this line: a scalar, or a bracket group that closes here.
@@ -452,6 +468,24 @@ mod tests {
     fn hcl_bodies_and_strings_are_verbatim() {
         let src = "hcl trust \"r\" {\n    resource \"a\" \"b\" {\n\tx = 1 }\n}\ns = \"\"\"\n  keep   this\n\"\"\"\n";
         assert_eq!(fmt(src), src);
+    }
+
+    #[test]
+    fn a_run_of_exports_aligns_its_equals_and_a_description_follows_the_value() {
+        let src = "export \"org_id\" = customer_organization_id\nexport  \"infra_folder\"   =  \"${{google_folder.infra.name}}\"  description \"The folder\"\nexport \"regions\" = [\n\"a\"\n]\n";
+        assert_eq!(
+            fmt(src),
+            "export \"org_id\"       = customer_organization_id\nexport \"infra_folder\" = \"${{google_folder.infra.name}}\" description \"The folder\"\nexport \"regions\" = [\n  \"a\",\n]\n"
+        );
+    }
+
+    #[test]
+    fn an_interface_block_indents_its_exports_and_aligns_them() {
+        let src = "interface \"team-a\" {\nexport \"a\" = \"1\"\n    export \"long_name\"=2 description \"d\"\n}\n";
+        assert_eq!(
+            fmt(src),
+            "interface \"team-a\" {\n  export \"a\"         = \"1\"\n  export \"long_name\" = 2 description \"d\"\n}\n"
+        );
     }
 
     #[test]

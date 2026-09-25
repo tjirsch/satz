@@ -8232,6 +8232,359 @@
             "description_kind": "plain"
           }
         },
+        "google_storage_bucket_object": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "bucket": {
+                "type": "string",
+                "description": "The name of the containing bucket.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "cache_control": {
+                "type": "string",
+                "description": "Cache-Control directive to specify caching behavior of object data. If omitted and object is accessible to all anonymous users, the default will be public, max-age=3600",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "content": {
+                "type": "string",
+                "description": "Data as string to be uploaded. Must be defined if source is not. Note: The content field is marked as sensitive. To view the raw contents of the object, please define an output.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true,
+                "sensitive": true
+              },
+              "content_disposition": {
+                "type": "string",
+                "description": "Content-Disposition of the object data.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "content_encoding": {
+                "type": "string",
+                "description": "Content-Encoding of the object data.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "content_language": {
+                "type": "string",
+                "description": "Content-Language of the object data.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "content_type": {
+                "type": "string",
+                "description": "Content-Type of the object data. Defaults to \"application/octet-stream\" or \"text/plain; charset=utf-8\".",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "crc32c": {
+                "type": "string",
+                "description": "Base 64 CRC32 hash of the uploaded data.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "deletion_policy": {
+                "type": "string",
+                "description": "The deletion policy for the object. Setting ABANDON allows the resource to be abandoned rather than deleted when removed from your Terraform configuration.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "detect_md5hash": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "event_based_hold": {
+                "type": "bool",
+                "description": "Whether an object is under event-based hold. Event-based hold is a way to retain objects until an event occurs, which is signified by the hold's release (i.e. this value is set to false). After being released (set to false), such objects will be subject to bucket-level retention (if any).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "force_empty_content_type": {
+                "type": "bool",
+                "description": "Flag to set empty Content-Type.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "generation": {
+                "type": "number",
+                "description": "The content generation of this object. Used for object versioning and soft delete.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "kms_key_name": {
+                "type": "string",
+                "description": "Resource name of the Cloud KMS key that will be used to encrypt the object. Overrides the object metadata's kmsKeyName value, if any.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "md5hash": {
+                "type": "string",
+                "description": "Base 64 MD5 hash of the uploaded data.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "md5hexhash": {
+                "type": "string",
+                "description": "Hex value of md5hash",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "media_link": {
+                "type": "string",
+                "description": "A url reference to download this object.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "metadata": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "User-provided metadata, in key/value pairs.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the object. If you're interpolating the name of this object, see output_name instead.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "output_name": {
+                "type": "string",
+                "description": "The name of the object. Use this field in interpolations with google_storage_object_acl to recreate google_storage_object_acl resources when your google_storage_bucket_object is recreated.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "A url reference to this object.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "source": {
+                "type": "string",
+                "description": "A path to the data you want to upload. Must be defined if content is not.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "source_md5hash": {
+                "type": "string",
+                "description": "User-provided md5hash, Base 64 MD5 hash of the object data.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "storage_class": {
+                "type": "string",
+                "description": "The StorageClass of the new bucket object. Supported values include: MULTI_REGIONAL, REGIONAL, NEARLINE, COLDLINE, ARCHIVE. If not provided, this defaults to the bucket's default storage class or to a standard class.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "temporary_hold": {
+                "type": "bool",
+                "description": "Whether an object is under temporary hold. While this flag is set to true, the object is protected against deletion and overwrites.",
+                "description_kind": "plain",
+                "optional": true
+              }
+            },
+            "block_types": {
+              "contexts": {
+                "nesting_mode": "list",
+                "block": {
+                  "block_types": {
+                    "custom": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "create_time": {
+                            "type": "string",
+                            "description": "The time when context was first added to the storage#object in RFC 3339 format.",
+                            "description_kind": "plain",
+                            "computed": true
+                          },
+                          "key": {
+                            "type": "string",
+                            "description": "An individual object context. Context keys and their corresponding values must start with an alphanumeric character.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "update_time": {
+                            "type": "string",
+                            "description": "The time when context was last updated in RFC 3339 format.",
+                            "description_kind": "plain",
+                            "computed": true
+                          },
+                          "value": {
+                            "type": "string",
+                            "description": "The value associated with this context. This field holds the primary information for the given context key.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "A list of custom context key-value pairs.",
+                        "description_kind": "plain"
+                      },
+                      "min_items": 1
+                    }
+                  },
+                  "description": "Contexts attached to an object, in key-value pairs.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "customer_encryption": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "encryption_algorithm": {
+                      "type": "string",
+                      "description": "The encryption algorithm. Default: AES256",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "encryption_key": {
+                      "type": "string",
+                      "description": "Base64 encoded customer supplied encryption key.",
+                      "description_kind": "plain",
+                      "required": true,
+                      "sensitive": true
+                    }
+                  },
+                  "description": "Encryption key; encoded using base64.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "retention": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "mode": {
+                      "type": "string",
+                      "description": "The object retention mode. Supported values include: \"Unlocked\", \"Locked\".",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "retain_until_time": {
+                      "type": "string",
+                      "description": "Time in RFC 3339 (e.g. 2030-01-01T02:03:04Z) until which object retention protects this object.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "Object level retention configuration.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_storage_notification": {
+          "version": 1,
+          "block": {
+            "attributes": {
+              "bucket": {
+                "type": "string",
+                "description": "The name of the bucket.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "custom_attributes": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "A set of key/value attribute pairs to attach to each Cloud Pub/Sub message published for this notification subscription.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "event_types": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "List of event type filters for this notification config. If not specified, Cloud Storage will send notifications for all event types. The valid types are: \"OBJECT_FINALIZE\", \"OBJECT_METADATA_UPDATE\", \"OBJECT_DELETE\", \"OBJECT_ARCHIVE\"",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "notification_id": {
+                "type": "string",
+                "description": "The ID of the created notification.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "object_name_prefix": {
+                "type": "string",
+                "description": "Specifies a prefix path filter for this notification config. Cloud Storage will only send notifications for objects in this bucket whose names begin with the specified prefix.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "payload_format": {
+                "type": "string",
+                "description": "The desired content of the Payload. One of \"JSON_API_V1\" or \"NONE\".",
+                "description_kind": "plain",
+                "required": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "The URI of the created resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "topic": {
+                "type": "string",
+                "description": "The Cloud Pub/Sub topic to which this subscription publishes.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "description": "Creates a new notification configuration on a specified bucket, establishing a flow of event notifications from GCS to a Cloud Pub/Sub topic.",
+            "description_kind": "plain"
+          }
+        },
         "google_tags_tag_binding": {
           "version": 0,
           "block": {
