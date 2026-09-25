@@ -237,22 +237,7 @@ pub(crate) fn answer(
         }
     }
     let out = bind(src, &row.subject, value)?;
-    let out = workload_root(&out, row, value)?;
     pack_lines(&out, &row.subject, value, graph)
-}
-
-/// The day-0 scaffold's one answer-shaped section: answering estate-core's
-/// `workload_root_folder` writes the section that publishes the workload root, in the form
-/// the answer names, as `satz init` does from its flag — so an estate an interview started
-/// ends where an init estate does. A section of the other form is refused by
-/// [`crate::template::with_workload_root`], never rewritten.
-fn workload_root(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
-    match value.as_bool() {
-        Some(folder) if row.subject == crate::template::WORKLOAD_ROOT_GATE && row.pack == "estate_core" => {
-            crate::template::with_workload_root(src, folder)
-        }
-        _ => Ok(src.to_string()),
-    }
 }
 
 /// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
@@ -884,21 +869,6 @@ google_folder {
         assert_eq!(choose(&choice(false), "0").as_deref(), Some("none"));
         assert_eq!(choose(&choice(true), "0"), None);
         assert!(present(&choice(false)).contains("  0) none\n"), "{}", present(&choice(false)));
-    }
-
-    /// Answering estate-core's `workload_root_folder` writes the section that publishes the
-    /// root, as `satz init` does; the same subject from another pack writes nothing.
-    #[test]
-    fn answering_the_workload_root_writes_its_section() {
-        let src = crate::template::skeleton("x", None);
-        let row = |pack: &str| QuestionRow { subject: "workload_root_folder".into(), kind: "param", pack: pack.into(), ..Default::default() };
-        let out = answer(&src, &row("estate_core"), &serde_yaml::Value::Bool(true), None).unwrap();
-        assert!(out.contains("workload_root_folder = true"), "{}", out);
-        assert!(out.contains("export \"workload_root\" = \"${{google_folder.workload_root.name}}\""), "{}", out);
-        let err = answer(&out, &row("estate_core"), &serde_yaml::Value::Bool(false), None).unwrap_err();
-        assert!(err.contains("publishes the workload root as the folder"), "{}", err);
-        let other = answer(&src, &row("someone_else"), &serde_yaml::Value::Bool(true), None).unwrap();
-        assert!(!other.contains("export \"workload_root\""), "{}", other);
     }
 
     #[test]

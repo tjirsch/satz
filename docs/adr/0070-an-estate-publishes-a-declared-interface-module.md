@@ -149,26 +149,29 @@ option, because "none" is its second answer; `satz interview` offers it as `0) n
 
 **The workload root is a core export.** Where the customer's and the teams' folders live
 is the parent every team's folder takes, so every interface carries it as
-`workload_root`. `estate-core.satz` asks it as two params, `workload_root_folder` (a
-boolean, default `false`: the organisation) and `workload_root_folder_name`, asked only
-when the first is `true`.
+`workload_root`. `estate-core.satz` holds it in one param, `workload_root_folder_name`,
+default `""`: the organisation, for which nothing is created. Thomas chose this shape.
 
-- *One string param, empty for the organisation* was the first shape. It cannot be
-  answered: the question model reads an empty string as "not known yet", so an estate
-  that means the organisation could never record that answer and every apply would be
-  refused. A boolean records it; the name is asked only when it is needed.
+- *A boolean `workload_root_folder` with a question, and the name asked only when it is
+  `true`* was built first, because the question model reads an empty string as "not known
+  yet" and could not record `""` as an answer. It was dropped: a new question in
+  `estate-core.satz` blocks `bootstrap` and every apply of every estate that uses the
+  pack until it is answered, for a value whose default creates nothing, and it was a
+  second param for one fact. So the param has no question; `satz init
+  --workload-root-folder-name` or a hand edit sets it, and no interview asks it.
 - *The export in `estate-core.satz`* would need an export whose form depends on a param
   — a static value in one case, a declared folder and its lookup in the other — and Satz
   has no conditional export. *Two packs gated on the answer* would need a negated gate,
-  which `use … when` does not have, and two more entries in the map for packs no operator
-  chooses. So the estate carries the section, as it carries `infra_folder`: `satz init`
-  writes it from `--workload-root-folder-name`, and answering `workload_root_folder` in
-  an interview writes it through the same function. An answer whose form differs from
-  the section already there is refused rather than rewritten, because turning a folder
-  into the organisation, or the reverse, moves every folder the teams created under it.
-- Every estate that uses `estate-core.satz` answers the new question before `bootstrap`
-  or an apply; binding it creates nothing. An estate publishes `workload_root` once it
-  carries the section, which it adds by hand if neither `init` nor an interview wrote it.
+  which `use … when` does not have. So the estate carries the section, as it carries
+  `infra_folder`: `satz init` writes the organisation's export without the flag and the
+  folder and its export with it. A re-run with the flag on an estate that publishes the
+  organisation is refused rather than rewritten, because turning one form into the other
+  moves every folder the teams created under the root.
+- The compile refuses a name and a section that disagree (finding kind `workload-root`):
+  a name with no `export "workload_root"` or with the organisation's, and an empty name
+  with a folder's. An empty name with no section compiles — it is every estate that has
+  not added the section, and it publishes nothing false — so existing estates are
+  unchanged until they add the line.
 
 ## Consequences
 

@@ -450,8 +450,7 @@ them and is complete; one the interview wrote is complete when it says so.
 | `deployment_mode` | `"local"` | `local` for day 0 (user ADC); `cloud` for day 1+ (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
-| `workload_root_folder` | `false` | Whether the customer's and the teams' folders live in one folder directly under the organisation (`true`, from `--workload-root-folder-name`) or at the organisation (`false`). |
-| `workload_root_folder_name` | (from `--workload-root-folder-name`) | That folder's display name; written only when the flag is given. |
+| `workload_root_folder_name` | `""` (from `--workload-root-folder-name`) | The folder directly under the organisation where the customer's and the teams' folders live; `""` is the organisation, and nothing is created for it. No question asks it. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
 ### Tear the estate down
@@ -709,15 +708,16 @@ resource "google_folder" "team_a" {
 }
 ```
 
-`init` writes the section that publishes it from its flag; `satz interview` writes it when
-`workload_root_folder` is answered. An estate without the section adds it by hand — for
-the organisation the one line
+`init` writes the section that publishes it, in the form its flag names; an estate
+without the section does not publish `workload_root` and adds it by hand — for the
+organisation, with `workload_root_folder_name` empty or unbound, the one line
 
 ```
 export "workload_root" = "organizations/{customer_organization_id}" description "Where the customer's and the teams' folders live"
 ```
 
-and for a folder the folder itself and its lookup:
+and for a folder, with `workload_root_folder_name` bound to its display name, the folder
+itself and its lookup:
 
 ```
 google_folder {
@@ -728,6 +728,10 @@ google_folder {
 
 export "workload_root" = "${{google_folder.workload_root.name}}" description "Where the customer's and the teams' folders live"
 ```
+
+The compile refuses a name and a section that disagree, at the line to edit: a name with
+no `export "workload_root"` or with the organisation's, and an empty name with a
+folder's.
 
 Google refuses a second folder of one name under one parent, so a folder the customer
 already has is imported first: `satz adopt <estate> --execute --import` finds it by its

@@ -65,6 +65,8 @@ kinds! {
     DeploymentMode => "deployment-mode",
     /// an entry of `compliance_frameworks` that names no catalog in the preset library
     ComplianceFramework => "compliance-framework",
+    /// `workload_root_folder_name` and the section that publishes `workload_root` disagree
+    WorkloadRoot => "workload-root",
     /// an emitted attribute whose value the provider refuses by its shape
     AttributeShape => "attribute-shape",
     Prerequisites => "prerequisites",

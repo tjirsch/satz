@@ -4,7 +4,7 @@
 //
 // `satz init` writes these params — from its flags where it has one, from
 // its defaults otherwise; an INTERVIEW asks for
-// them one at a time, from the questions in this pack. Every param below has a
+// them one at a time, from the questions in this pack. Every param below but one has a
 // question, and every question says what changing the answer later costs, so a
 // default is offered where one exists and a value is required where none is
 // possible.
@@ -26,11 +26,13 @@
 // them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything compiles to exactly what `satz init` would have written.
 //
-// The workload root — where the customer's and the teams' folders live — is the one
-// answer whose export is not here: it is the organisation, a static value, or a folder
-// the estate declares, whose number is looked up. The estate writes that section,
-// `satz init` from `--workload-root-folder-name`, an interview when
-// `workload_root_folder` is answered, and it publishes `workload_root` beside these.
+// The one param without a question is `workload_root_folder_name`: the folder directly
+// under the organisation where the customer's and the teams' folders live. Empty — the
+// default — is the organisation itself, and nothing is created for it; an empty answer is
+// a real answer here, which a question could not record. Its export, `workload_root`, is
+// not here either: it is the organisation, a static value, or a folder the estate
+// declares, whose number is looked up, so the estate carries that section — `satz init`
+// writes it from `--workload-root-folder-name`, or the operator by hand.
 
 pack estate_core version "2.3"
 
@@ -55,8 +57,7 @@ params {
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
 
-  // ---- where the customer's and the teams' folders live ---------------------
-  workload_root_folder      = false
+  // ---- where the customer's and the teams' folders live: "" is the organisation
   workload_root_folder_name = ""
 
   // ---- what the customer answers to, which no pack can know -----------------
@@ -116,21 +117,6 @@ question infra_folder_name {
   reversal  = edit
   blast     = none
   recommend = "Infrastructure"
-}
-
-question workload_root_folder {
-  prompt   = "Do the customer's and the teams' folders live in one folder directly under the organisation, rather than at the organisation itself?"
-  why      = "The workload root is the parent every team's folder takes, and each team's interface module publishes it as `workload_root`: `organizations/<id>` when the answer is no, the folder's `folders/<number>` when it is yes. Changing it later moves every folder the teams created under it, in their states."
-  reversal = state_surgery
-  blast    = high
-}
-
-question workload_root_folder_name {
-  prompt   = "Display name of that folder, directly under the organisation"
-  why      = "The estate declares the folder by this name. Google refuses a second folder of one name under one parent, so a folder the customer already has is imported with `satz adopt`, never created again. Renaming it later is an update in place."
-  reversal = edit
-  blast    = none
-  ask_when = workload_root_folder
 }
 
 question infra_project_name {
