@@ -85,7 +85,9 @@ impl ToolConfig {
     }
 }
 
-fn default_yaml_dir() -> String { "yaml".to_string() }
+/// The directory the estate's own `.satz` files live in. The key keeps its name; the
+/// directory `init` creates, and an omitted key reads, is `satz/`.
+fn default_yaml_dir() -> String { "satz".to_string() }
 
 fn default_hcl_dir() -> String { "hcl".to_string() }
 
@@ -93,7 +95,7 @@ fn default_hcl_dir() -> String { "hcl".to_string() }
 /// (resolved from config.toml's own directory). `"."` must be present so an `!include`
 /// of a file sitting next to config.toml resolves; `init` has always written it, and a
 /// hand-written config.toml that omits the key used to silently lose it.
-fn default_include_dirs() -> Vec<String> { vec![".".to_string(), "yaml".to_string()] }
+fn default_include_dirs() -> Vec<String> { vec![".".to_string(), default_yaml_dir()] }
 
 fn default_schema_dir() -> String { "schemas".to_string() }
 

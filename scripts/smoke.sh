@@ -70,28 +70,31 @@ rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init && ln -s "$root/pr
   --customer-organization-id 123456789012 --customer-domain example.com \
   --infra-project-name acme-infra-001 --infra-bucket-name acme-infra-state > ../init.txt 2>&1) \
   || fail "satz init failed:\n$(cat tmp/init.txt)"
-"$satz" fmt --check tmp/init/yaml/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
+"$satz" fmt --check tmp/init/satz/C0example.satz || fail "satz init wrote an estate that is not in the canonical layout"
+# the estate directory init creates, and names in config.toml, is satz/
+grep -qx 'yaml_dir = "satz"' tmp/init/config.toml && [ ! -e tmp/init/yaml ] \
+  || fail "satz init must create satz/ and name it in config.toml:\n$(cat tmp/init/config.toml)"
 # init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
 rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
   || fail "satz init without credentials must still write an estate:\n$(cat tmp/init-bare.txt)"
-grep -qE '^  customer_organization_id += ""$' tmp/init-bare/yaml/C0bare.satz \
-  || fail "an organisation id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/yaml/C0bare.satz)"
-grep -qE '^  first_admin += ""$' tmp/init-bare/yaml/C0bare.satz \
-  || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/yaml/C0bare.satz)"
+grep -qE '^  customer_organization_id += ""$' tmp/init-bare/satz/C0bare.satz \
+  || fail "an organisation id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/satz/C0bare.satz)"
+grep -qE '^  first_admin += ""$' tmp/init-bare/satz/C0bare.satz \
+  || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/satz/C0bare.satz)"
 grep -q 'nothing could be derived' tmp/init-bare.txt \
   || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
 # the pack menu is written commented out: an init estate compiles with no presets fetched
-grep -q '// use "presets/estate-map.satz"' tmp/init/yaml/C0example.satz \
+grep -q '// use "presets/estate-map.satz"' tmp/init/satz/C0example.satz \
   || fail "satz init wrote no pack menu — an estate nothing can add a pack to"
 # with no presets there is no graph: no menu, and init says which two commands write it
-if grep -q '// use "presets/estate-map.satz"' tmp/init-bare/yaml/C0bare.satz; then
+if grep -q '// use "presets/estate-map.satz"' tmp/init-bare/satz/C0bare.satz; then
   fail "an init estate with no pack graph must carry no pack menu"
 fi
 grep -q 'satz get-presets`, then `satz merge-presets`, write the pack lines' tmp/init-bare.txt \
   || fail "init without a pack graph must say what writes the menu:\n$(cat tmp/init-bare.txt)"
-if grep -qE '^use "presets/' tmp/init/yaml/C0example.satz; then
+if grep -qE '^use "presets/' tmp/init/satz/C0example.satz; then
   fail "an init estate must compile with no presets fetched — bootstrap is the next command"
 fi
 

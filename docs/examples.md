@@ -35,7 +35,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 | audit bucket | `acme-organization-audit-bucket` | `bolt-organization-audit-bucket` | `cedar-organization-audit-bucket` | `delta-organization-audit-bucket` |
 | folder id (for `import-id` examples) | `123456789` | `222222222` | `333333333` | `444444444` |
 | project number | `100000000001` | `200000000002` | `300000000003` | `400000000004` |
-| estate file | `yaml/C0example.satz` | `yaml/C0bolt002.satz` | `yaml/C0cedar03.satz` | `yaml/C0delta04.satz` |
+| estate file | `satz/C0example.satz` | `satz/C0bolt002.satz` | `satz/C0cedar03.satz` | `satz/C0delta04.satz` |
 | repo path in prose | `~/estates/acme` | `~/estates/bolt` | `~/estates/cedar` | `~/estates/delta` |
 | Microsoft Entra tenant id | `11111111-1111-1111-1111-111111111111` | `22222222-2222-2222-2222-222222222222` | `33333333-3333-3333-3333-333333333333` | `44444444-4444-4444-4444-444444444444` |
 | workload identity pool id (the tenant id without dashes) | `11111111111111111111111111111111` | `22222222222222222222222222222222` | `33333333333333333333333333333333` | `44444444444444444444444444444444` |

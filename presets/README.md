@@ -1584,6 +1584,23 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.83.0
+
+**A `config.toml` that does not name `yaml_dir` reads the estate from `satz/`.** The
+estate directory `satz init` creates, and the one an omitted `yaml_dir` means, is
+`satz/`; `include_dirs` defaults to `[".", "satz"]` the same way. A `config.toml` that
+names `yaml_dir` reads the directory it names, so an estate `init` wrote keeps working
+unchanged. Find what is affected: a `config.toml` with no `yaml_dir =` line whose
+estate sits in `yaml/` (`grep -L '^yaml_dir' config.toml`).
+
+```
+error: failed to read file 'satz/acme.satz': No such file or directory (os error 2)
+```
+
+**The edit:** either write `yaml_dir = "yaml"` (and `include_dirs = [".", "yaml"]`
+if the file does not name it) into `config.toml`, or rename the directory with
+`git mv yaml satz`. Nothing an estate compiles to changes; the plan does not move.
+
 ### v0.82.0
 
 **`satz import <scope> --as <estate>` refuses an estate that impersonates no service

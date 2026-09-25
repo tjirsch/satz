@@ -17,7 +17,7 @@ customer-repo/ (e.g. project-root/)
 ├── config.toml          # Tool configuration for this customer
 ├── schemas/             # JSON schemas for used cloud providers
 ├── presets/             # Preset library (get-presets) — everything available for copying
-├── yaml/                # Infrastructure definitions — only files actually used/adapted
+├── satz/                # Infrastructure definitions — only files actually used/adapted
 └── hcl/                 # Generated .tf files
 ```
 
@@ -46,7 +46,7 @@ satz transpile C0example.satz --config ../config.toml
 
 **`--config` takes a path; the positional takes a bare filename inside
 `yaml_dir` — or any existing path, which is taken as given** (so
-`satz transpile yaml/C01.satz` works; if a file of the same relative path also
+`satz transpile satz/C01.satz` works; if a file of the same relative path also
 exists inside `yaml_dir`, the current-directory one wins and the shadowing is
 named).
 
@@ -54,8 +54,8 @@ Two forms that do not work:
 
 | Command | What happens |
 |---|---|
-| `satz bootstrap C01` | no extension is appended → looks for `yaml/C01` |
-| `satz bootstrap C01.satz --config yaml/C01.satz` | the estate is parsed as TOML → `key with no value, expected =` |
+| `satz bootstrap C01` | no extension is appended → looks for `satz/C01` |
+| `satz bootstrap C01.satz --config satz/C01.satz` | the estate is parsed as TOML → `key with no value, expected =` |
 
 ### Global Options
 
@@ -266,12 +266,12 @@ satz init \
 - Running `init` again on an estate that exists MERGES: the params this command line names are written in, every other line is left exactly as it is, and each one is reported as set, changed or kept. `--force` rewrites the file instead.
 
 **Under the Hood:**
-- Creates the standardized directory structure: `yaml/`, `hcl/`, `schemas/`.
+- Creates the standardized directory structure: `satz/`, `hcl/`, `schemas/`.
 - Generates a default `config.toml` and `.gitignore`.
-- If customer details are provided, generates the Day-0 estate `yaml/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
+- If customer details are provided, generates the Day-0 estate `satz/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
 
-**Without the flags:** `satz interview yaml/<name>.satz --create` writes an estate that
+**Without the flags:** `satz interview satz/<name>.satz --create` writes an estate that
 asks for the same seventeen values one at a time and offers the derived ones as defaults;
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
@@ -284,7 +284,7 @@ satz bootstrap <ESTATE> [options]
 ```
 
 **Parameters:**
-- `<ESTATE>`: The estate file (e.g. `C0example.satz`). Relative paths are looked up inside `yaml_dir`, so pass the bare filename — **not** `yaml/C0example.satz`, which would resolve to `yaml/yaml/C0example.satz`. This is not the tool config; that is `--config`.
+- `<ESTATE>`: The estate file (e.g. `C0example.satz`). Relative paths are looked up inside `yaml_dir`, so pass the bare filename — **not** `satz/C0example.satz`, which would resolve to `satz/satz/C0example.satz`. This is not the tool config; that is `--config`.
 - `--dry-run`: Simulation mode; does not create resources.
 - `--no-default-grants`: satz never widens the caller's own IAM. Where the pre-flight would self-grant the missing roles at the scope root, it prints the `add-iam-policy-binding` commands for an administrator and stops before creating anything — the same path a caller who cannot self-grant already takes. In a change process that audits organisation-level IAM, acquiring `folderAdmin` and `orgPolicyAdmin` at the root is the reportable event, and printing the undo afterwards does not unmake it. Without the flag the self-grant stays the default, announced with its `remove-iam-policy-binding` undo.
 - `--greenfield`: materialize an organisation that does not exist yet, for a tenant whose admin has not signed in to the Google Cloud console — a sign-in that accepts the terms creates the organisation, and then `init` derives its id and plain `bootstrap` is the path. The infrastructure project is created without a parent, the organisation Google creates for the estate's directory customer is found by polling, the project is moved under it and the organisation id is written back into the estate.
@@ -494,7 +494,7 @@ satz --config ../config.toml transpile my-infra.satz
 # Global option after subcommand (Recommended)
 satz transpile my-infra.satz --config ../config.toml
 ```
-This reads `../yaml/my-infra.satz` and writes the HCL into `hcl_dir`, here the current directory.
+This reads `../satz/my-infra.satz` and writes the HCL into `hcl_dir`, here the current directory.
 
 **Satz estates — the fragment pipeline:**
 A `.satz` input compiles through the fragment pipeline: every source
@@ -626,7 +626,7 @@ shape the shipped CIS packs use, `parent` written as
 
 ```bash
 satz export-organizational-policies C0example.satz --customer-organization-id 123456789012
-# -> yaml/<customer-id>-orgpolicies.satz
+# -> satz/<customer-id>-orgpolicies.satz
 ```
 
 `use` it from the estate inside a `google_org_policy_policy { … }` block, diff it, or
@@ -1602,8 +1602,8 @@ against a brace. A file the parser refuses is reported with the parser's error a
 alone.
 
 ```bash
-satz fmt yaml/                     # every .satz under the directory (*.diff.satz skipped)
-satz fmt yaml/acme.satz --check    # name the files that are not formatted, exit 1, write nothing
+satz fmt satz/                     # every .satz under the directory (*.diff.satz skipped)
+satz fmt satz/acme.satz --check    # name the files that are not formatted, exit 1, write nothing
 satz fmt --stdin < in.satz         # one file from stdin to stdout, for an editor
 ```
 
@@ -1723,7 +1723,7 @@ Three things are decided for you, and each is why the command exists:
   want the client to run: a binary in `target/release` names itself, and so writes a
   configuration that starts that build.
 - **The root** is the estate's own directory — the one holding its `config.toml`,
-  `yaml/`, `presets/` and `schemas/` — canonicalised, because the client starts the
+  `satz/`, `presets/` and `schemas/` — canonicalised, because the client starts the
   server from a working directory of its own. One server serves everything under that
   root, and a call opens an estate inside it.
 - **The ceiling** is always written out, whatever `--allow` says and even when it says
@@ -1871,7 +1871,7 @@ run's last line counts them by tier. An **error is never silenced** by any tier,
 satz silence list                     # every rule in force, with its reason
 satz silence list estate.satz         # …and what each one still silences, or STALE
 satz silence add notice --reason "adopt has run; the params are bound"
-satz silence add "hcl-passthrough:yaml/estate.satz:192" --reason "reviewed 2026-09-20"
+satz silence add "hcl-passthrough:satz/estate.satz:192" --reason "reviewed 2026-09-20"
 satz silence add action --machine --reason "reviewed once per estate, not per compile"
 satz silence remove notice
 satz transpile estate.satz --check --silence pack-requirement   # this run only
@@ -1909,11 +1909,11 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `yaml_dir` | `"yaml"` | Source directory for estate files |
+| `yaml_dir` | `"satz"` | Source directory for estate files |
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
 | `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; the import-config default resolves here |
-| `include_dirs` | `[".", "yaml"]` | Search paths for `use`d packs |
+| `include_dirs` | `[".", "satz"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The OpenTofu/Terraform binary satz runs (schemas, `plan`, `apply`) |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
 | `provider_version` | `"7.14.1"` | Provider version to use |
