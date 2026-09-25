@@ -558,11 +558,18 @@ pub fn apply_suppressions(
 /// different bucket, an orphaned archive. Every entry stays for one release line and
 /// is removed when the fleet is past it; the rule that everyone is on the current
 /// version is what makes removal safe.
-pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[(
-    "logsink_project_name",
-    "logsink_project_id",
-    "it is the project id, and the project's display name is now `logsink_project_display_name`",
-)];
+pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
+    (
+        "logsink_project_name",
+        "logsink_project_id",
+        "it is the project id, and the project's display name is now `logsink_project_display_name`",
+    ),
+    (
+        "use_interface_notice",
+        "interface_notice_pubsub",
+        "the change notice is a choice of delivery forms, `question oneof interface_notice`, and Pub/Sub is its option; the `use \"presets/interface-notice.satz\" when …` line names the new param too",
+    ),
+];
 
 /// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
 /// `.local` fork, a pack — it stops the compile and names the replacement.
@@ -1156,6 +1163,9 @@ fn collect_questions(
             Entry::Attr { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
+                    if let Some(e) = renamed_param(p, file_name, *line) {
+                        return Err(e);
+                    }
                     if !env.contains_key(p) {
                         return perr(file_name, *line, format!("use … when {}: unknown param `{}`", p, p));
                     }
@@ -1204,6 +1214,9 @@ fn collect_params(
             Entry::Attr { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
+                    if let Some(e) = renamed_param(p, file_name, *line) {
+                        return Err(e);
+                    }
                     if !env.contains_key(p) {
                         return perr(file_name, *line, format!("use … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the pack", p, p));
                     }
@@ -1531,6 +1544,9 @@ impl Walk<'_> {
     /// `use … when <param>`: a param nobody declares is an error, not `false`
     /// — a typo would otherwise drop the pack without a word.
     fn when_holds(&self, param: &str, file_name: &str, line: usize) -> Result<bool, PipelineError> {
+        if let Some(e) = renamed_param(param, file_name, line) {
+            return Err(e);
+        }
         if !self.genv.contains_key(param) {
             return perr(
                 file_name,
@@ -2286,6 +2302,26 @@ mod tests {
         assert_eq!((err.file.as_str(), err.line), ("e.satz", 3), "with the line to edit");
         assert!(renamed_param("logsink_project_id", "e.satz", 3).is_none(), "the new name is fine");
         assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
+    }
+
+    #[test]
+    fn the_notice_boolean_is_refused_as_a_binding_and_as_a_gate() {
+        // The change notice became a choice: `use_interface_notice` is refused wherever it
+        // stands, bound in `params {}` or named by the `use … when` line, and both name the
+        // option that replaced it.
+        let bound = "estate e\n\nparams {\n  use_interface_notice = true\n}\n";
+        let load = |p: &str| Err(format!("no load: {}", p));
+        let Err(err) = compile_estate("e.satz", bound, &Table, &load) else {
+            panic!("the old binding must be refused")
+        };
+        assert!(err.msg.contains("interface_notice_pubsub"), "{}", err.msg);
+        assert_eq!(err.line, 4, "the binding's line: {}", err.msg);
+        let gated = "estate e\n\nuse \"x.satz\" when use_interface_notice\n";
+        let Err(err) = compile_estate("e.satz", gated, &Table, &load) else {
+            panic!("the old gate must be refused")
+        };
+        assert!(err.msg.contains("interface_notice_pubsub"), "{}", err.msg);
+        assert!(err.msg.contains("oneof interface_notice"), "{}", err.msg);
     }
 
     /// `contributes_<target>` — one pack adding entries to another pack's list param.

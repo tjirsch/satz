@@ -321,7 +321,8 @@ pub(crate) struct InterviewArgs {
     pub create: bool,
     /// Answers to write before reporting, keyed by the question's subject: a param's
     /// value, or for a `oneof` the chosen option's param name (its siblings are set
-    /// false). Each is checked against a question the estate asks; one refused
+    /// false) — or `none` for a choice that is not required, which sets every option
+    /// false. Each is checked against a question the estate asks; one refused
     /// answer means nothing is written. Needs 'write'.
     #[serde(default)]
     pub answers: BTreeMap<String, serde_json::Value>,

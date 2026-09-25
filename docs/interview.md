@@ -12,9 +12,9 @@ There are three ways to start an estate, and they end at the same file:
 | `satz interview <estate> [--create]` | a person at a terminal | one question at a time, the default in brackets, Enter accepts it |
 | `satz_interview` over MCP | a customer, through an agent | the agent asks in its own words, the human decides, the agent writes the param or passes it as an `answer` |
 
-`init` takes ten of the seventeen day-0 values as flags and writes the rest from its
-defaults. The other two ask for all seventeen, and also ask every question a pack adds,
-which `init` has no flag for.
+`init` takes eleven of the day-0 values as flags and writes the rest from its
+defaults. The other two ask for every day-0 value, and also ask every question a pack
+adds, which `init` has no flag for.
 
 ## What a question is, and what an answer is
 
@@ -94,9 +94,14 @@ and `bootstrap` refuse while a `severity = error` notice is open.
 An interview follows the estate file's order, and the skeleton is written so that
 order is a path:
 
-1. **`presets/estate-core.satz`** — the seventeen params `init` writes,
+1. **`presets/estate-core.satz`** — the params `init` writes,
    each with its question. Seven have no possible default and block until typed; the
-   rest offer one, the two derived names once the short name is in. The pack emits
+   rest offer one, the two derived names once the short name is in. Answering
+   `workload_root_folder` — whether the customer's and the teams' folders live in one
+   folder under the organisation or at the organisation — also writes the section that
+   publishes it as `workload_root`, as `init` does; the folder's name is asked only when
+   the answer is yes. An answer whose form differs from the section the estate already
+   carries is refused, because the teams' folders sit under the root. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
    its flags, `init` has answered everything.
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
@@ -175,7 +180,7 @@ params, so their lines follow the folder: a param is known from the line that de
 and a line above the folder that reads one stops the compile with `unknown param` once it is
 uncommented.
 
-That is why a fresh estate asks seventeen questions and not fifty-seven: day 0 is the scaffold
+That is why a fresh estate asks eighteen questions and not fifty-seven: day 0 is the scaffold
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
@@ -222,7 +227,8 @@ infra_project_name — The infrastructure project id
 - The pack's own description opens its section; a question shows its prompt, its
   `why`, and the cost of changing the answer later. A one-way door is marked.
 - **Enter** accepts the default in brackets. A `oneof` lists its options numbered,
-  the default marked; answer with the number.
+  the default marked; answer with the number. A choice that is not required also lists
+  `0) none`, which binds every option `false`.
 - Where a pack recommends a different answer from the one on offer, it says so —
   `the pack recommends: true`. Enter still takes the offer, and `--accept-defaults`
   binds the offer, so a pack can recommend a service that costs money without a bulk
@@ -252,13 +258,13 @@ Its arguments:
 | `estate` | the file; omit for the open estate |
 | `filter` | `unanswered` (default) — the worklist; `all` — every question with its state |
 | `create` | write the estate first if it does not exist, as `--create` does. Needs `write` |
-| `answers` | `{subject: value}` to write before reporting — a param's value, or for a `oneof` the chosen option's param name. Each must name a question the estate asks; one refused answer means nothing is written. Needs `write` |
+| `answers` | `{subject: value}` to write before reporting — a param's value, or for a `oneof` the chosen option's param name — or `none` for a choice that is not required. Each must name a question the estate asks; one refused answer means nothing is written. Needs `write` |
 | `accept_defaults` | also write every default the report offers. Needs `write` |
 
 The loop an agent runs:
 
 1. `satz_interview {create: true}` on a new name → every open question of the path —
-   the seventeen day-0 ones, the map's choices, the baseline's ten, the packs the
+   the day-0 ones, the map's choices, the baseline's ten, the packs the
    defaults switch on — sixteen of them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the

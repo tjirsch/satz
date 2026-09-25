@@ -141,7 +141,7 @@ satz init \
 
 **Without the flags**, `satz interview satz/<name>.satz --create` writes the estate and
 asks for the
-same seventeen values one question at a time, offering the derived ones as defaults; an
+same day-0 values one question at a time, offering the derived ones as defaults; an
 agent does the same over MCP. Both end at the file `init` would have written, and
 [satz interview](interview.md) describes the rules they share: an answer is a param the
 estate binds, and nothing below runs while one is missing.
@@ -428,7 +428,7 @@ human who typed the command: `runs as: svc-iac-…@… — impersonated by you@�
 
 ### The params `init` writes
 
-The same seventeen, each with its question, are `presets/estate-core.satz` — what
+The same params, each with its question, are `presets/estate-core.satz` — what
 `satz interview` asks when there are no flags. An estate `init` wrote binds all of
 them and is complete; one the interview wrote is complete when it says so.
 
@@ -450,6 +450,8 @@ them and is complete; one the interview wrote is complete when it says so.
 | `deployment_mode` | `"local"` | `local` for day 0 (user ADC); `cloud` for day 1+ (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
+| `workload_root_folder` | `false` | Whether the customer's and the teams' folders live in one folder directly under the organisation (`true`, from `--workload-root-folder-name`) or at the organisation (`false`). |
+| `workload_root_folder_name` | (from `--workload-root-folder-name`) | That folder's display name; written only when the flag is given. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
 ### Tear the estate down
@@ -694,7 +696,42 @@ An export outside every `interface` block is a core export, and every module car
 it. An estate that uses `presets/estate-core.satz` publishes the core exports without
 writing any: `organization_id`, `customer_domain`, `customer_shortname`,
 `default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
-writes also exports `infra_folder`.
+writes also exports `infra_folder` and `workload_root`.
+
+**`workload_root`** is the parent every team's folder takes: `organizations/<id>`, or
+`folders/<number>` of the folder `satz init --workload-root-folder-name <name>` declares
+directly under the organisation. A team creates its folders under it:
+
+```hcl
+resource "google_folder" "team_a" {
+  display_name = "team-a"
+  parent       = module.satz.workload_root
+}
+```
+
+`init` writes the section that publishes it from its flag; `satz interview` writes it when
+`workload_root_folder` is answered. An estate without the section adds it by hand — for
+the organisation the one line
+
+```
+export "workload_root" = "organizations/{customer_organization_id}" description "Where the customer's and the teams' folders live"
+```
+
+and for a folder the folder itself and its lookup:
+
+```
+google_folder {
+  workload_root {
+    display_name = workload_root_folder_name
+  }
+}
+
+export "workload_root" = "${{google_folder.workload_root.name}}" description "Where the customer's and the teams' folders live"
+```
+
+Google refuses a second folder of one name under one parent, so a folder the customer
+already has is imported first: `satz adopt <estate> --execute --import` finds it by its
+display name under the organisation and writes its id into the estate.
 
 What one team reads goes into an `interface` block named for the team, in the estate or
 in a pack; the same interface in two files is one interface:
@@ -794,6 +831,28 @@ attachment.
 or the change needs coordination — a subnet whose range must not overlap another's, a
 new folder — the change is an entry in the estate, applied by satz, and the estate then
 exports the result, the team's subnet or folder, for the team to read.
+
+### The change notice
+
+A team learns that an exported value changed through the delivery form the estate
+chooses. The map asks it as `question oneof interface_notice`, which is not required:
+none of its options is an answer, and every option is off by default. Each option is
+one form; Pub/Sub is the one satz has.
+
+| option | pack | what a team subscribes to |
+|---|---|---|
+| `interface_notice_pubsub` | `presets/interface-notice.satz` | the topic `interface_topic` names: one message per apply that changes an exported value; the object `interface_object` names holds the new values |
+
+```
+params {
+  interface_notice_pubsub = true
+}
+
+use "presets/interface-notice.satz" when interface_notice_pubsub
+```
+
+The team writes the subscription in its own state — a push to its CI's webhook or a pull
+from a runner ([the pack](../presets/README.md#interface-noticesatz)).
 
 ---
 

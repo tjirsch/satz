@@ -1253,10 +1253,18 @@ impl P {
                 subject));
         }
         if oneof {
-            if options.len() < 2 {
+            // A choice offers at least two answers. Without `required`, no branch set is
+            // one of them — so one option is a choice, and it is the form a choice takes
+            // before a second option exists.
+            let least = if required { 2 } else { 1 };
+            if options.len() < least {
                 return err(line, format!(
-                    "question oneof {}: needs at least two `option <param> {{ … }}` branches (found {})",
-                    subject, options.len()));
+                    "question oneof {}: needs at least {} `option <param> {{ … }}` branch{} (found {}){}",
+                    subject,
+                    if required { "two" } else { "one" },
+                    if required { "es" } else { "" },
+                    options.len(),
+                    if required { " — a required choice with one option is that option, not a choice" } else { "" }));
             }
         } else {
             if !options.is_empty() {
@@ -2420,10 +2428,18 @@ mod tests {
     }
 
     #[test]
-    fn a_oneof_needs_two_branches_and_they_must_be_declared_params() {
-        let one = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}";
-        let e = parse(&q(one)).unwrap_err();
+    fn a_oneof_needs_two_answers_and_its_branches_must_be_declared_params() {
+        // required: two options, because one would be that option and not a choice
+        let one_required = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  required = true\n  option a { label = \"A\" }\n}";
+        let e = parse(&q(one_required)).unwrap_err();
         assert!(e.msg.contains("at least two"), "{}", e.msg);
+        // not required: one option and "none" are the two answers
+        let one = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n}";
+        let f = parse(&q(one)).expect("one option and none is a choice");
+        assert_eq!(f.questions[0].options.len(), 1);
+        let none = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}";
+        let e = parse(&q(none)).unwrap_err();
+        assert!(e.msg.contains("at least one"), "{}", e.msg);
 
         let undeclared = "question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  option a { label = \"A\" }\n  option zz { label = \"Z\" }\n}";
         let e = parse(&q(undeclared)).unwrap_err();

@@ -28,6 +28,9 @@ pub struct TemplateArgs {
     /// both compose members as `user:{first_admin}@{customer_domain}`, so this must not
     /// carry the domain.
     pub first_admin: String,
+    /// The display name of the folder directly under the organisation that holds the
+    /// customer's and the teams' folders; `None` when they live at the organisation.
+    pub workload_root_folder_name: Option<String>,
 }
 
 /// The estate name: the customer id as a Satz identifier.
@@ -185,6 +188,85 @@ google_folder {
 // number exists once the folder does, so the interface modules look it up.
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;
+
+/// The param that says whether the workload root is a folder (`true`) or the organisation.
+pub(crate) const WORKLOAD_ROOT_GATE: &str = "workload_root_folder";
+
+/// The workload root: where the customer's and the teams' folders live, published as the
+/// core export `workload_root` — the organisation (`organizations/<id>`, a static value) or
+/// one folder directly under it (`folders/<number>`, looked up). `init` writes it from its
+/// flag; answering `workload_root_folder` in an interview writes it through
+/// [`with_workload_root`]. The folder's name is the param, so renaming it moves nothing here.
+pub(crate) fn workload_root_section(folder: bool) -> String {
+    const HEAD: &str = "// ---- the workload root: where the customer's and the teams' folders live ----------\n";
+    const DESCRIPTION: &str = "Where the customer's and the teams' folders live: organizations/<id>, or folders/<number> for a folder directly under it";
+    if folder {
+        format!(
+            r#"{HEAD}// One folder directly under the organisation, `workload_root_folder_name`. Google refuses a
+// second folder of one name under one parent: a folder the customer already has is imported
+// (`satz adopt <estate> --execute --import`), and until it is, the apply stops on it.
+google_folder {{
+  workload_root {{
+    display_name = workload_root_folder_name
+  }}
+}}
+
+// Published to the teams' HCL, whose folders take it as their parent. The folder's number
+// exists once the folder does, so the interface modules look it up.
+export "workload_root" = "${{{{google_folder.workload_root.name}}}}" description "{DESCRIPTION}"
+"#
+        )
+    } else {
+        format!(
+            r#"{HEAD}// The organisation itself. Published to the teams' HCL, whose folders take it as their parent.
+export "workload_root" = "organizations/{{customer_organization_id}}" description "{DESCRIPTION}"
+"#
+        )
+    }
+}
+
+/// `src` with its workload root in the form `folder` names: the section appended when the
+/// estate publishes none, `src` unchanged when it already publishes that form. The other
+/// form is refused, never rewritten: the teams' folders sit under the root, and turning a
+/// folder into the organisation, or the reverse, moves every one of them.
+pub(crate) fn with_workload_root(src: &str, folder: bool) -> Result<String, String> {
+    let export = src
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.trim_start().starts_with("export \"workload_root\""));
+    let Some((n, line)) = export else {
+        let mut out = src.to_string();
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+        out.push_str(&workload_root_section(folder));
+        return Ok(out);
+    };
+    let is_folder = line.contains("google_folder.workload_root.");
+    if is_folder == folder {
+        return Ok(src.to_string());
+    }
+    let (now, edit) = if is_folder {
+        (
+            "the folder `google_folder.workload_root`",
+            "once the teams' folders have moved to the organisation, remove the folder and export \"organizations/{customer_organization_id}\"",
+        )
+    } else {
+        (
+            "the organisation",
+            "declare `google_folder { workload_root { display_name = workload_root_folder_name } }` and export \"${{google_folder.workload_root.name}}\"",
+        )
+    };
+    Err(format!(
+        "{} = {}: line {} publishes the workload root as {}. Changing it moves every folder the teams created under it, so satz does not rewrite it — edit that section by hand ({}), then answer again",
+        WORKLOAD_ROOT_GATE,
+        folder,
+        n + 1,
+        now,
+        edit
+    ))
+}
 
 /// Where an offered pack's line goes in the estate satz writes: the menu, or inside the
 /// resource type map the graph's `block` names. A pack is used at the top level of the
@@ -400,7 +482,7 @@ pub(crate) fn use_estate_core(estate: &Path) -> Result<bool, Box<dyn std::error:
 /// The estate an INTERVIEW starts from: the day-0 scaffold, and every pack commented out.
 ///
 /// The day-0 params and their questions come from `presets/estate-core.satz`, and that is
-/// the only `use` the file starts with — sixteen questions, all of them about the estate
+/// the only `use` the file starts with — the day-0 questions, all of them about the estate
 /// itself. Every pack line is written COMMENTED, under the phase that has to be finished
 /// before it can go in, because the real order of work is: bootstrap, apply, move the
 /// state and the identity to the service account with `satz migrate`, and only then add
@@ -429,7 +511,7 @@ estate {estate}
 params {{
 }}
 
-// The day-0 params and their questions. The only pack the file starts with: sixteen
+// The day-0 params and their questions. The only pack the file starts with: its
 // questions, every one of them about the estate itself.
 use "presets/estate-core.satz"
 
@@ -458,6 +540,10 @@ pub(crate) fn bare_skeleton() -> String {
 /// The estate `satz init` writes, with the pack lines of `graph` — none without one, as
 /// [`skeleton`] does.
 pub fn generate_template(args: &TemplateArgs, graph: Option<&PackGraph>, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let workload_root = match &args.workload_root_folder_name {
+        Some(name) => format!("  workload_root_folder      = true\n  workload_root_folder_name = {:?}\n", name),
+        None => "  workload_root_folder = false\n".to_string(),
+    };
     let content = format!(
         r#"// Generated by `satz init` — the Day-0 estate `satz bootstrap` builds on.
 // Every value below is a param: change it here, never in a pack.
@@ -488,7 +574,9 @@ params {{
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
   // the folder: unbound, that pack creates its project under the organisation.
   logsink_project_folder = "google_folder.infra_folder.name"
-}}
+  // Where the customer's and the teams' folders live: the organisation, or one folder
+  // directly under it. The section at the end of this file publishes it as `workload_root`.
+{workload_root}}}
 
 // The day-0 params and their questions: init binds what it derived above, and this pack
 // declares the rest, each with its question. It stays commented until the library is
@@ -499,8 +587,11 @@ params {{
 {menu}google_essential_contacts_contact {{
 }}
 
-{scaffold}"#,
+{scaffold}
+{workload_root_section}"#,
         scaffold = SCAFFOLD,
+        workload_root = workload_root,
+        workload_root_section = workload_root_section(args.workload_root_folder_name.is_some()),
         menu = graph.map(|g| format!("{}\n", pack_menu(g))).unwrap_or_default(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
@@ -553,6 +644,7 @@ pub(crate) mod tests {
             project_id: "acme-iac-infra".into(),
             bucket_id: "acme-iac-infra".into(),
             first_admin: first_admin.into(),
+            workload_root_folder_name: None,
         }
     }
 
@@ -782,6 +874,27 @@ pub(crate) mod tests {
         assert!(out.contains(r#"customer_domain          = "example.com""#), "{out}");
         assert!(out.contains("estate c0example"), "{out}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Answering `workload_root_folder` writes the section once, in the form the answer
+    /// names; the other form is refused, because the teams' folders sit under the root.
+    #[test]
+    fn the_workload_root_section_follows_the_answer_and_is_never_flipped() {
+        let sk = skeleton("x", None);
+        assert!(!sk.contains("export \"workload_root\""), "the skeleton publishes no root before it is answered");
+        for folder in [false, true] {
+            let one = with_workload_root(&sk, folder).unwrap();
+            assert!(one.ends_with(&workload_root_section(folder)), "{}", one);
+            assert_eq!(satz_core::fmt::format(&one).unwrap(), one, "the section is in the canonical layout");
+            assert_eq!(with_workload_root(&one, folder).unwrap(), one, "a second answer of the same form writes nothing");
+            let err = with_workload_root(&one, !folder).unwrap_err();
+            assert!(err.contains("satz does not rewrite it"), "{}", err);
+            assert!(err.contains(&format!("line {}", one.lines().position(|l| l.starts_with("export \"workload_root\"")).unwrap() + 1)), "{}", err);
+        }
+        assert!(
+            workload_root_section(true).contains("display_name = workload_root_folder_name"),
+            "the folder reads its name from the param, so a rename moves nothing here"
+        );
     }
 
     #[test]

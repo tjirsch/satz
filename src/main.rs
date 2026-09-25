@@ -265,6 +265,10 @@ pub(crate) enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
+        /// Display name of the folder directly under the organisation that holds the
+        /// customer's and the teams' folders. Without it they live at the organisation
+        #[arg(long)]
+        workload_root_folder_name: Option<String>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
@@ -1209,6 +1213,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             infra_project_name,
             infra_bucket_name,
             iac_user,
+            workload_root_folder_name,
             from_live,
             force,
             interview,
@@ -1328,6 +1333,7 @@ Thumbs.db
                 infra_project_name: infra_project_name.clone(),
                 infra_bucket_name: infra_bucket_name.clone(),
                 iac_user: iac_user.clone(),
+                workload_root_folder_name: workload_root_folder_name.clone(),
             };
 
             // Derivation from the credentials is the DEFAULT, not a flag: every
@@ -1490,6 +1496,7 @@ Thumbs.db
                         project_id: infra_project_name,
                         bucket_id: infra_bucket_name,
                         first_admin: first_admin.to_string(),
+                        workload_root_folder_name,
                     };
                     let presets_dir = Path::new(&runtime_config.presets_dir);
                     let graph = crate::pack_graph::read(presets_dir)?;
@@ -7202,6 +7209,86 @@ mod init_template {
             "TokenCreator is granted at the organization:\n{}",
             out.main_tf
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The change notice is the map's choice `interface_notice`: its Pub/Sub option switches
+    /// the pack on, and "none" — the option false — leaves it out, exports and all.
+    #[test]
+    fn the_notice_choice_gates_the_pubsub_pack() {
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let load = |p: &str| std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).map_err(|e| format!("{}: {}", p, e));
+        let dir = std::env::temp_dir().join(format!("satz-notice-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("C0example.satz");
+        crate::template::generate_template(&crate::template::tests::args("first.admin", "example.com"), None, &path).unwrap();
+        let base = std::fs::read_to_string(&path).unwrap();
+        for on in [true, false] {
+            let src = base
+                .replace(
+                    "// use \"presets/estate-core.satz\"",
+                    "use \"presets/estate-core.satz\"\nuse \"presets/estate-map.satz\"\nuse \"presets/interface-notice.satz\" when interface_notice_pubsub",
+                )
+                .replacen("params {\n", &format!("params {{\n  interface_notice_pubsub = {}\n", on), 1);
+            let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &load)
+                .unwrap_or_else(|e| panic!("{}: {:?}", on, e));
+            let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            ctx.registry = Some(&reg);
+            let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+            assert_eq!(out.manifest.addresses().contains("google_pubsub_topic.interface_notice"), on, "interface_notice_pubsub = {}", on);
+            assert_eq!(fe.exports.iter().any(|x| x.name == "interface_topic"), on, "the pack's exports follow it");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `satz init` writes the workload root in the form its flag names, and the core
+    /// interface — the module every team's HCL reads — carries it as `workload_root`: the
+    /// organisation as a static value, a named folder as a lookup of the folder the estate
+    /// declares.
+    #[test]
+    fn the_core_interface_carries_the_workload_root_init_wrote() {
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let dir = std::env::temp_dir().join(format!("satz-init-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for folder in [None, Some("Workloads")] {
+            let mut args = crate::template::tests::args("first.admin", "example.com");
+            args.workload_root_folder_name = folder.map(str::to_string);
+            let path = dir.join("C0example.satz");
+            crate::template::generate_template(&args, Some(&crate::template::tests::shipped()), &path).unwrap();
+            let src = std::fs::read_to_string(&path).unwrap();
+            let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
+                .unwrap_or_else(|e| panic!("{:?}: {:?}\n{}", folder, e, src));
+            let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            ctx.registry = Some(&reg);
+            let out = crate::emitter::emit(&folded, &ctx).expect("emit");
+            let i = crate::interface::build("c0example", &fe.exports, &out.manifest, "hashicorp/google", Some("7.14.1"))
+                .unwrap_or_else(|r| panic!("{:?}: {:?}", folder, r));
+            let root = i
+                .outputs
+                .iter()
+                .find(|o| o.interface.is_none() && o.name == "workload_root")
+                .unwrap_or_else(|| panic!("{:?}: no core export `workload_root`", folder));
+            let core = i.module_files("core").into_iter().map(|(_, c)| c).collect::<String>();
+            match folder {
+                None => {
+                    assert_eq!(root.how, crate::interface::How::Static("\"organizations/123456789012\"".into()));
+                    assert!(!out.manifest.addresses().contains("google_folder.workload_root"), "{}", out.main_tf);
+                }
+                Some(name) => {
+                    assert!(matches!(root.how, crate::interface::How::Lookup(_)), "{:?}", root.how);
+                    assert!(out.main_tf.contains(&format!("display_name = \"{}\"", name)), "{}", out.main_tf);
+                    assert!(core.contains("data \"google_active_folder\" \"workload_root\""), "{}", core);
+                    assert!(core.contains("value       = data.google_active_folder.workload_root.name"), "{}", core);
+                }
+            }
+            assert!(core.contains("output \"workload_root\""), "{}", core);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

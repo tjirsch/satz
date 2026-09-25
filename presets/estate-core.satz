@@ -2,7 +2,7 @@
 //
 //   use "presets/estate-core.satz"
 //
-// `satz init` writes these seventeen params — from its flags where it has one, from
+// `satz init` writes these params — from its flags where it has one, from
 // its defaults otherwise; an INTERVIEW asks for
 // them one at a time, from the questions in this pack. Every param below has a
 // question, and every question says what changing the answer later costs, so a
@@ -25,8 +25,14 @@
 // hcl/interfaces/, the modules the teams' own HCL reads them from — so an estate has
 // them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything compiles to exactly what `satz init` would have written.
+//
+// The workload root — where the customer's and the teams' folders live — is the one
+// answer whose export is not here: it is the organisation, a static value, or a folder
+// the estate declares, whose number is looked up. The estate writes that section,
+// `satz init` from `--workload-root-folder-name`, an interview when
+// `workload_root_folder` is answered, and it publishes `workload_root` beside these.
 
-pack estate_core version "2.2"
+pack estate_core version "2.3"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -48,6 +54,10 @@ params {
   deployment_mode     = "local"
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
+
+  // ---- where the customer's and the teams' folders live ---------------------
+  workload_root_folder      = false
+  workload_root_folder_name = ""
 
   // ---- what the customer answers to, which no pack can know -----------------
   compliance_frameworks = ["cis-gcp-5.0"]
@@ -106,6 +116,21 @@ question infra_folder_name {
   reversal  = edit
   blast     = none
   recommend = "Infrastructure"
+}
+
+question workload_root_folder {
+  prompt   = "Do the customer's and the teams' folders live in one folder directly under the organisation, rather than at the organisation itself?"
+  why      = "The workload root is the parent every team's folder takes, and each team's interface module publishes it as `workload_root`: `organizations/<id>` when the answer is no, the folder's `folders/<number>` when it is yes. Changing it later moves every folder the teams created under it, in their states."
+  reversal = state_surgery
+  blast    = high
+}
+
+question workload_root_folder_name {
+  prompt   = "Display name of that folder, directly under the organisation"
+  why      = "The estate declares the folder by this name. Google refuses a second folder of one name under one parent, so a folder the customer already has is imported with `satz adopt`, never created again. Renaming it later is an update in place."
+  reversal = edit
+  blast    = none
+  ask_when = workload_root_folder
 }
 
 question infra_project_name {

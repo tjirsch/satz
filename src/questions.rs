@@ -17,6 +17,10 @@ use satz_core::pipeline::{estate_questions, Env};
 
 use crate::settings::ToolConfig;
 
+/// The answer to a choice that is not `required` which sets none of its options: every
+/// option is bound `false`. It is what the choice offers while no option is on.
+pub(crate) const NO_BRANCH: &str = "none";
+
 /// One question, joined with the answer the estate currently carries.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionRow {
@@ -67,6 +71,10 @@ pub(crate) struct QuestionRow {
     pub recommend: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub options: Vec<OptionRow>,
+    /// A choice only: exactly one option must be set. A choice that is not required is
+    /// also answered by [`NO_BRANCH`] — every option `false`.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub required: bool,
     /// the file that declared it — a fork asks its own questions
     pub from: String,
     pub pack: String,
@@ -172,11 +180,13 @@ pub(crate) fn questions_report(
                 if q.options.iter().any(|o| own.contains(&o.param)) {
                     ("answered", None, None, false)
                 } else {
+                    // a choice that is not required offers "none" while no option is on
                     let picked = q
                         .options
                         .iter()
                         .find(|o| truthy(env.get(&o.param)))
-                        .map(|o| serde_yaml::Value::String(o.param.clone()));
+                        .map(|o| serde_yaml::Value::String(o.param.clone()))
+                        .or_else(|| (!q.required).then(|| serde_yaml::Value::String(NO_BRANCH.to_string())));
                     let blocking = picked.is_none();
                     ("unanswered", None, picked, blocking)
                 }
@@ -240,6 +250,7 @@ pub(crate) fn questions_report(
                         selected: truthy(env.get(&o.param)),
                     })
                     .collect(),
+                required: q.required,
                 from: pq.file.clone(),
                 pack: pq.pack.clone(),
             });

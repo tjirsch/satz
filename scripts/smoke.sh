@@ -292,7 +292,10 @@ assert d["summary"]["one_way_doors"] >= 1, d["summary"]
 m = subs["group_model"]
 assert m["kind"] == "oneof" and len(m["options"]) == 2, m
 assert sum(1 for o in m["options"] if o["selected"]) == 1, m
-# ANSWERED means the estate's own params bind it — the showcase binds all three
+assert m.get("required") is True, m
+x = subs["optional_extras"]
+assert x["kind"] == "oneof" and len(x["options"]) == 1 and not x.get("required"), x
+# ANSWERED means the estate's own params bind it — the showcase binds all four
 assert all(q["state"] == "answered" for q in d["questions"]), [(q["subject"], q["state"]) for q in d["questions"]]
 assert d["summary"]["complete"] is True and d["summary"]["unanswered"] == 0, d["summary"]
 PYEOF
@@ -300,18 +303,21 @@ grep -q 'satz v' tmp/questions.json && fail "the version banner is on stdout"
 "$satz" --config . questions showcase.satz --unanswered --format text --out tmp/questions-open.txt 2>/dev/null || fail "questions --unanswered failed"
 if grep -q 'customer_shortname' tmp/questions-open.txt; then fail "an answered question must not be listed under --unanswered"; fi
 "$satz" --config . questions showcase.satz --format markdown --out tmp/decisions.md 2>/dev/null || fail "questions --format markdown failed"
-grep -q 'All 3 questions are answered' tmp/decisions.md || fail "the decisions sheet must say the showcase is complete"
+grep -q 'All 4 questions are answered' tmp/decisions.md || fail "the decisions sheet must say the showcase is complete"
 
 step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
 # The third way to start an estate. `init` takes every answer as a flag; this asks.
 # A DAY-0 file: the scaffold and nothing else, so the questions are the estate's own
-# seventeen. Piped input: accept the opening offer, type the values nobody can default,
+# eighteen. Piped input: accept the opening offer, type the values nobody can default,
 # then Enter for each name that became an offer once its inputs landed.
 rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 8 default(s)' tmp/iv/run.txt || fail "a day-0 file offers eight defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
+grep -q 'accepted 9 default(s)' tmp/iv/run.txt || fail "a day-0 file offers nine defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
+# accepting `workload_root_folder = false` writes the section that publishes the organisation
+grep -q '^export "workload_root" = "organizations/{customer_organization_id}"' tmp/iv/new.satz \
+  || fail "answering the workload root must write its export:\n$(tail -5 tmp/iv/new.satz)"
 # every pack is commented out, and estate-core is the only `use` that is not
 [ "$(grep -c '^use \"presets' tmp/iv/new.satz)" = 1 ] \
   || fail "a day-0 estate uses exactly one pack (estate-core):\n$(grep '^use \"presets' tmp/iv/new.satz)"
@@ -334,7 +340,7 @@ grep -qE 'security_model_s1 += true' tmp/iv/new.satz && fail "a day-0 file does 
 if "$satz" --config . transpile "$PWD/tmp/iv/open.satz" --apply --output "$PWD/tmp/iv/open-hcl" > tmp/iv/apply.txt 2>&1; then
   fail "apply on an unanswered estate was not refused"
 fi
-grep -q 'apply refused: 17 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
+grep -q 'apply refused: 18 question(s) unanswered' tmp/iv/apply.txt || fail "the refusal must count the open questions:\n$(cat tmp/iv/apply.txt)"
 grep -q 'customer_id (needs a value)' tmp/iv/apply.txt || fail "the refusal must say which need a typed value"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/tmp/iv/open.satz" > tmp/iv/boot.txt 2>&1; then
   fail "bootstrap on an unanswered estate was not refused"
@@ -345,7 +351,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap "$PWD/t
   || fail "bootstrap --dry-run must warn, not refuse:\n$(cat tmp/iv/dry.txt)"
 grep -q 'warning: bootstrap refused: 1 question(s) unanswered — default_zone' tmp/iv/dry.txt || fail "the dry run must warn naming the open question:\n$(cat tmp/iv/dry.txt)"
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format markdown --out tmp/iv/decisions.md 2>/dev/null || fail "decisions sheet failed"
-grep -q '1 of 17 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
+grep -q '1 of 18 questions are still open' tmp/iv/decisions.md || fail "the sheet must count what is open:\n$(cat tmp/iv/decisions.md)"
 # the workbook a customer fills in and sends back
 "$satz" --config . questions "$PWD/tmp/iv/almost.satz" --format xlsx --out "$PWD/tmp/iv/decisions.xlsx" > /dev/null 2>tmp/iv/xlsx.txt \
   || fail "the catalog workbook was not written:\n$(cat tmp/iv/xlsx.txt)"
@@ -1625,7 +1631,7 @@ assert q["summary"]["one_way_doors"] >= 1, q["summary"]
 # the interview at read level: it reports, and it will not create
 iv = msgs[13]["result"]["structuredContent"]
 assert iv["created"] is False and iv["written"] == 0 and iv["summary"]["complete"] is True, iv
-assert len(iv["questions"]) == 3, "filter: all returns every question"
+assert len(iv["questions"]) == 4, "filter: all returns every question"
 create = msgs[14]["result"]
 assert create["isError"] is True and "needs 'write'" in create["content"][0]["text"], create
 rows = msgs[7]["result"]["structuredContent"]["rows"]
@@ -1846,12 +1852,12 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# `create` over MCP writes the same DAY-0 file the CLI does: the estate's own seventeen,
-# and every pack commented out under its phase. Nine of the seventeen need a typed value
+# `create` over MCP writes the same DAY-0 file the CLI does: the estate's own eighteen,
+# and every pack commented out under its phase. Nine of the eighteen need a typed value
 # until their inputs land; the map's choices are not asked at all, because the map is not
-# in yet.
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (17, 9), a["summary"]
-assert len(a["questions"]) == 17 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
+# in yet. The workload root folder's name is not asked while the root is the organisation.
+assert (a["summary"]["unanswered"], a["summary"]["blocking"], a["summary"]["not_applicable"]) == (18, 9, 1), a["summary"]
+assert len(a["questions"]) == 18 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "no pack choice is asked on a day-0 file"
 assert "security_model" not in {q["subject"] for q in a["questions"]}, "the map is commented out, so its choices are not asked"
 by = {q["subject"]: q for q in a["questions"]}
@@ -1859,8 +1865,8 @@ assert by["infra_project_name"]["blocking"] is True, "a name derived from an una
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 8 answers, then every remaining default: the estate's own seventeen params
-assert b["written"] == 17 and b["summary"]["complete"] is True, b["summary"]
+# 7 answers, then every remaining default: the estate's own eighteen questions
+assert b["written"] == 18 and b["summary"]["complete"] is True, b["summary"]
 assert "security_model" not in str(b), "a day-0 file has no map, so no choice is answered here"
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
@@ -1868,6 +1874,8 @@ r = msgs[5]["result"]
 assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
 PYEOF
 grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a day-0 file has no map, so no choice is bound in it"
+grep -q '^export "workload_root" = "organizations/{customer_organization_id}"' tmp/iv/agent.satz \
+  || fail "satz_interview must write the workload root's section as the CLI interview does"
 # A SECOND ROUND, once the map is in: an agent answers the exclusive choice, and the tool
 # writes it as two booleans AND uncomments that model's pack line. Same code as the CLI —
 # `satz_interview` calls `interview::apply` — so this is the parity the table promises.

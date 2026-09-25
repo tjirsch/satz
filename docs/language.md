@@ -282,8 +282,8 @@ sections below cite instead of carrying loose snippets:
   forms, a group with a member and an `"import-id"`, grants incl. a
   conditional one, folder → project → bucket nesting with a list-of-objects
   block, a bucket-scoped grant in both forms (labelled and member map with its
-  own scope), `hcl trust`, and claims of all three
-  kinds with duties and an `interpretation`. `scripts/smoke.sh` transpiles it,
+  own scope), `hcl trust`, questions including a required choice and one that is
+  not, and claims of all three kinds with duties and an `interpretation`. `scripts/smoke.sh` transpiles it,
   validates the HCL and checks each feature's effect.
 
 Every snippet in this section is either one of those files or compiles the
@@ -1666,7 +1666,27 @@ question oneof group_model {
 
 The options name **existing boolean params**, so an answer set stays a plain param
 map and a question never becomes a second way to set a value. satz refuses two
-true branches, naming the choice and both params. `required` is checked at compile and only when the choice applies —
+true branches, naming the choice and both params.
+
+A choice that is not `required` has one more answer: none of its options. `satz
+interview` offers it as `0) none`, the MCP tool `satz_interview` takes `"none"`, and
+either binds every option `false`; while no option is on, `none` is what the choice
+offers. So a required choice needs two options and one that is not required needs one
+— the option and none are its two answers:
+
+```
+params {
+  notice_pubsub = false
+}
+
+question oneof notice {
+  prompt   = "How do the teams hear that a value changed?"
+  reversal = edit
+  blast    = low
+  option notice_pubsub { label = "Pub/Sub — a message on a topic" }
+}
+```
+ `required` is checked at compile and only when the choice applies —
 a required choice whose `ask_when` param is false has no missing answer. `satz
 questions` never refuses a required choice with no branch set: it reports it as
 unanswered and blocking, which is what an interview needs in order to ask it.
@@ -1911,7 +1931,8 @@ pack switched off by its `use … when` exports nothing. The same name in the sa
 interface — or among the core exports — with the same value and description from two
 files is one export, and with a different one it is an error naming both files.
 `estate-core.satz` carries the core exports every estate that uses it publishes;
-`satz init` writes one core export of the infrastructure folder into the estate
+`satz init` writes two core exports into the estate, the infrastructure folder and
+`workload_root`, where the customer's and the teams' folders live
 ([the library](../presets/README.md#estate-coresatz)).
 
 **What the compile writes.**

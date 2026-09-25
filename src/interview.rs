@@ -211,8 +211,12 @@ pub(crate) fn answer(
         let chosen = value
             .as_str()
             .ok_or_else(|| format!("{}: a choice is answered with an option's name", row.subject))?;
-        if !row.options.iter().any(|o| o.param == chosen) {
-            let names: Vec<&str> = row.options.iter().map(|o| o.param.as_str()).collect();
+        let none = chosen == crate::questions::NO_BRANCH && !row.required;
+        if !none && !row.options.iter().any(|o| o.param == chosen) {
+            let mut names: Vec<&str> = row.options.iter().map(|o| o.param.as_str()).collect();
+            if !row.required {
+                names.push(crate::questions::NO_BRANCH);
+            }
             return Err(format!("{}: `{}` is not one of its options — {}", row.subject, chosen, names.join(", ")));
         }
         let mut out = src.to_string();
@@ -233,7 +237,22 @@ pub(crate) fn answer(
         }
     }
     let out = bind(src, &row.subject, value)?;
+    let out = workload_root(&out, row, value)?;
     pack_lines(&out, &row.subject, value, graph)
+}
+
+/// The day-0 scaffold's one answer-shaped section: answering estate-core's
+/// `workload_root_folder` writes the section that publishes the workload root, in the form
+/// the answer names, as `satz init` does from its flag — so an estate an interview started
+/// ends where an init estate does. A section of the other form is refused by
+/// [`crate::template::with_workload_root`], never rewritten.
+fn workload_root(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
+    match value.as_bool() {
+        Some(folder) if row.subject == crate::template::WORKLOAD_ROOT_GATE && row.pack == "estate_core" => {
+            crate::template::with_workload_root(src, folder)
+        }
+        _ => Ok(src.to_string()),
+    }
 }
 
 /// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
@@ -311,10 +330,14 @@ pub(crate) fn check_shape(row: &QuestionRow, value: &serde_yaml::Value) -> Resul
 }
 
 /// The gates an answer says yes to: the chosen option of a choice, or the param itself
-/// when it is answered `true`.
+/// when it is answered `true`. A choice answered "none" says yes to nothing.
 fn gates_said_yes(row: &QuestionRow, value: &serde_yaml::Value) -> Vec<String> {
     if row.kind == "oneof" {
-        return value.as_str().map(|s| vec![s.to_string()]).unwrap_or_default();
+        return value
+            .as_str()
+            .filter(|s| *s != crate::questions::NO_BRANCH)
+            .map(|s| vec![s.to_string()])
+            .unwrap_or_default();
     }
     match value.as_bool() {
         Some(true) => vec![row.subject.clone()],
@@ -630,6 +653,13 @@ fn present(q: &QuestionRow) -> String {
                 s.push_str(&format!("       {}\n", why));
             }
         }
+        if !q.required {
+            let is_default = picked.as_deref() == Some(crate::questions::NO_BRANCH);
+            if is_default {
+                default_no = Some(0);
+            }
+            s.push_str(&format!("  0) none{}\n", if is_default { "  (default)" } else { "" }));
+        }
         match default_no {
             Some(n) => s.push_str(&format!("  [{}] > ", n)),
             None => s.push_str("  > "),
@@ -644,8 +674,12 @@ fn present(q: &QuestionRow) -> String {
     s
 }
 
-/// A `oneof` answer: the option's number in the list, or its param name.
+/// A `oneof` answer: the option's number in the list, or its param name — or, for a choice
+/// that is not required, `0` or `none`.
 fn choose(q: &QuestionRow, text: &str) -> Option<String> {
+    if !q.required && (text == "0" || text == crate::questions::NO_BRANCH) {
+        return Some(crate::questions::NO_BRANCH.to_string());
+    }
     if let Ok(n) = text.parse::<usize>() {
         return q.options.get(n.checked_sub(1)?).map(|o| o.param.clone());
     }
@@ -823,6 +857,50 @@ google_folder {
         assert_eq!(pack_lines(src, "use_budget", &yes, None).unwrap(), src);
     }
 
+    fn choice(required: bool) -> QuestionRow {
+        QuestionRow {
+            subject: "notice".into(),
+            kind: "oneof",
+            required,
+            options: vec![crate::questions::OptionRow { param: "notice_pubsub".into(), label: "Pub/Sub".into(), why: None, selected: false }],
+            ..Default::default()
+        }
+    }
+
+    /// A choice that is not required is answered "none" — every option `false` — and says
+    /// yes to no pack; a required choice has no such answer.
+    #[test]
+    fn a_choice_that_is_not_required_is_answered_none() {
+        let src = "estate e\n\nparams {\n}\n";
+        let none = serde_yaml::Value::String(crate::questions::NO_BRANCH.into());
+        let out = answer(src, &choice(false), &none, None).unwrap();
+        assert!(out.contains("notice_pubsub = false"), "{}", out);
+        assert!(gates_said_yes(&choice(false), &none).is_empty());
+        let err = answer(src, &choice(true), &none, None).unwrap_err();
+        assert!(err.contains("not one of its options — notice_pubsub"), "{}", err);
+        assert!(!err.contains(", none"), "a required choice offers no none: {}", err);
+        let err = answer(src, &choice(false), &serde_yaml::Value::String("webhook".into()), None).unwrap_err();
+        assert!(err.contains("notice_pubsub, none"), "{}", err);
+        assert_eq!(choose(&choice(false), "0").as_deref(), Some("none"));
+        assert_eq!(choose(&choice(true), "0"), None);
+        assert!(present(&choice(false)).contains("  0) none\n"), "{}", present(&choice(false)));
+    }
+
+    /// Answering estate-core's `workload_root_folder` writes the section that publishes the
+    /// root, as `satz init` does; the same subject from another pack writes nothing.
+    #[test]
+    fn answering_the_workload_root_writes_its_section() {
+        let src = crate::template::skeleton("x", None);
+        let row = |pack: &str| QuestionRow { subject: "workload_root_folder".into(), kind: "param", pack: pack.into(), ..Default::default() };
+        let out = answer(&src, &row("estate_core"), &serde_yaml::Value::Bool(true), None).unwrap();
+        assert!(out.contains("workload_root_folder = true"), "{}", out);
+        assert!(out.contains("export \"workload_root\" = \"${{google_folder.workload_root.name}}\""), "{}", out);
+        let err = answer(&out, &row("estate_core"), &serde_yaml::Value::Bool(false), None).unwrap_err();
+        assert!(err.contains("publishes the workload root as the folder"), "{}", err);
+        let other = answer(&src, &row("someone_else"), &serde_yaml::Value::Bool(true), None).unwrap();
+        assert!(!other.contains("export \"workload_root\""), "{}", other);
+    }
+
     #[test]
     fn literal_escapes_and_types() {
         assert_eq!(literal(&yaml("say \"hi\" \\ back")), r#""say \"hi\" \\ back""#);
@@ -880,6 +958,7 @@ google_folder {
             pack_description: String::new(),
             recommend: None,
             options: vec![],
+            required: false,
             from: String::new(),
             pack: String::new(),
         };

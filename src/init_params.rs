@@ -26,6 +26,9 @@ pub(crate) struct Stated {
     pub infra_bucket_name: Option<String>,
     /// `--iac-user` is `<local>@<domain>`; the estate binds the local part.
     pub iac_user: Option<String>,
+    /// `--workload-root-folder-name`: the workload root is that folder, which also binds
+    /// `workload_root_folder = true` and writes the section that publishes it.
+    pub workload_root_folder_name: Option<String>,
 }
 
 impl Stated {
@@ -50,6 +53,9 @@ impl Stated {
         if let Some(user) = &self.iac_user {
             let local = user.split('@').next().unwrap_or(user);
             out.push(("first_admin", local.to_string()));
+        }
+        if let Some(name) = &self.workload_root_folder_name {
+            out.push(("workload_root_folder_name", name.clone()));
         }
         out
     }
@@ -140,6 +146,19 @@ pub(crate) fn merge(src: &str, stated: &Stated) -> Result<(String, Vec<Merged>),
         out = crate::interview::bind(&out, param, &serde_yaml::Value::String(value.clone()))?;
         log.push(Merged::Changed { param, from: before, to: value });
     }
+    // A named workload root folder is the folder form: its boolean and the section that
+    // publishes it follow the name, and an estate that publishes the organisation is refused.
+    if stated.workload_root_folder_name.is_some() {
+        let gate = crate::template::WORKLOAD_ROOT_GATE;
+        out = crate::template::with_workload_root(&out, true)?;
+        let before = current_value(&out, gate)?.unwrap_or_default();
+        if before == "true" {
+            log.push(Merged::Same { param: gate, value: before });
+        } else {
+            out = crate::interview::bind(&out, gate, &serde_yaml::Value::Bool(true))?;
+            log.push(Merged::Changed { param: gate, from: before, to: "true".into() });
+        }
+    }
     Ok((out, log))
 }
 
@@ -220,6 +239,25 @@ params {
         assert_eq!(stated.params(), vec![("first_admin", "alice".to_string())]);
         let bare = Stated { iac_user: Some("alice".into()), ..Default::default() };
         assert_eq!(bare.params(), vec![("first_admin", "alice".to_string())]);
+    }
+
+    #[test]
+    fn a_named_workload_root_folder_binds_its_gate_and_writes_its_section_once() {
+        let stated = Stated { workload_root_folder_name: Some("Workloads".into()), ..Default::default() };
+        let (out, log) = merge(ESTATE, &stated).unwrap();
+        assert!(out.contains("workload_root_folder_name = \"Workloads\""), "{out}");
+        assert!(out.contains("workload_root_folder") && out.contains("= true"), "{out}");
+        assert!(out.contains("display_name = workload_root_folder_name"), "{out}");
+        assert!(out.contains("export \"workload_root\" = \"${{google_folder.workload_root.name}}\""), "{out}");
+        assert_eq!(log.len(), 2, "{log:?}");
+        // a second run changes nothing
+        let (again, log) = merge(&out, &stated).unwrap();
+        assert_eq!(again, out);
+        assert!(log.iter().all(|m| matches!(m, Merged::Same { .. })), "{log:?}");
+        // an estate that publishes the organisation is refused, not rewritten
+        let org = format!("{}\n{}", ESTATE, crate::template::workload_root_section(false));
+        let err = merge(&org, &stated).unwrap_err();
+        assert!(err.contains("publishes the workload root as the organisation"), "{err}");
     }
 
     #[test]

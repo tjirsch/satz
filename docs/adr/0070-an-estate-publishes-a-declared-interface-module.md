@@ -135,6 +135,41 @@ A block names the interface once, reads as the team's contract, and merges acros
 like a resource map. A value two teams read is a core export, or it is written in both
 blocks.
 
+## Amendment — the notice is a choice, and the workload root is a core export
+
+**The change notice is a selector.** The map asks how the teams hear of a changed export
+as `question oneof interface_notice`, not required, with one option per delivery form;
+`interface_notice_pubsub` gates `interface-notice.satz`, and the boolean
+`use_interface_notice` it replaces is refused by name (`RENAMED_PARAMS`). A further form —
+a webhook, a push of the interface to a customer repository — joins as an option and a
+pack beside it, and the estate answers which one it takes without a boolean per form
+that nothing stops from being on twice. A choice that is not required may have one
+option, because "none" is its second answer; `satz interview` offers it as `0) none` and
+`satz_interview` takes `"none"`.
+
+**The workload root is a core export.** Where the customer's and the teams' folders live
+is the parent every team's folder takes, so every interface carries it as
+`workload_root`. `estate-core.satz` asks it as two params, `workload_root_folder` (a
+boolean, default `false`: the organisation) and `workload_root_folder_name`, asked only
+when the first is `true`.
+
+- *One string param, empty for the organisation* was the first shape. It cannot be
+  answered: the question model reads an empty string as "not known yet", so an estate
+  that means the organisation could never record that answer and every apply would be
+  refused. A boolean records it; the name is asked only when it is needed.
+- *The export in `estate-core.satz`* would need an export whose form depends on a param
+  — a static value in one case, a declared folder and its lookup in the other — and Satz
+  has no conditional export. *Two packs gated on the answer* would need a negated gate,
+  which `use … when` does not have, and two more entries in the map for packs no operator
+  chooses. So the estate carries the section, as it carries `infra_folder`: `satz init`
+  writes it from `--workload-root-folder-name`, and answering `workload_root_folder` in
+  an interview writes it through the same function. An answer whose form differs from
+  the section already there is refused rather than rewritten, because turning a folder
+  into the organisation, or the reverse, moves every folder the teams created under it.
+- Every estate that uses `estate-core.satz` answers the new question before `bootstrap`
+  or an apply; binding it creates nothing. An estate publishes `workload_root` once it
+  carries the section, which it adds by hand if neither `init` nor an interview wrote it.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every
