@@ -259,7 +259,7 @@ fn push_line(lines: &mut Vec<Line>, pieces: Vec<Piece>, depth: usize) {
     // keyword and the name: a run of exports aligns its `=` like a run of attributes.
     let key_len = match body {
         [Piece { tok: Tok::Ident(kw), .. }, Piece { tok: Tok::Str(_), .. }, Piece { tok: Tok::Eq, .. }, rest @ ..]
-            if kw == "export" && is_complete_value(export_value(rest)) =>
+            if kw == "export" && (is_complete_value(export_value(rest)) || is_all(export_value(rest))) =>
         {
             2
         }
@@ -305,6 +305,11 @@ fn export_value(rest: &[Piece]) -> &[Piece] {
             _ => return value,
         }
     }
+}
+
+/// `all <type>`, an export's value that is every resource of a type.
+fn is_all(p: &[Piece]) -> bool {
+    matches!(p, [Piece { tok: Tok::Ident(a), .. }, Piece { tok: Tok::Ident(_), .. }] if a == "all")
 }
 
 /// One value, whole on this line: a scalar, or a bracket group that closes here.
@@ -505,6 +510,14 @@ mod tests {
         assert_eq!(
             fmt(src),
             "export \"a\"         = \"1\" attach [\"google_x\"] description \"d\"\nexport \"long_name\" = [\"x\"] description \"d\" attach [\"google_y\", \"google_z\"]\nexport \"b\"         = [\"y\"]\n"
+        );
+    }
+
+    #[test]
+    fn an_all_export_aligns_in_a_run() {
+        assert_eq!(
+            fmt("export \"folders\" = all  google_folder description \"d\"\nexport \"a\" = \"1\"\n"),
+            "export \"folders\" = all google_folder description \"d\"\nexport \"a\"       = \"1\"\n"
         );
     }
 

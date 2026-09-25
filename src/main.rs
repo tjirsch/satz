@@ -7014,6 +7014,28 @@ google_cloud_identity_group {
         crate::emitter::emit(&folded, &ctx).expect("emit")
     }
 
+    /// `private` is satz's: it reaches no resource body, the manifest records the
+    /// address, and anything but `true` or `false` is refused.
+    #[test]
+    fn private_marks_the_manifest_and_never_reaches_main_tf() {
+        let reg = super::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let emit = |private: &str| {
+            let src = ESTATE.replace("    \"import-id\" = \"acme-infra-001\"\n", &format!("    \"import-id\" = \"acme-infra-001\"\n    private = {}\n", private));
+            let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| Err(format!("no use: {}", p))).expect("front-end");
+            let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            ctx.registry = Some(&reg);
+            crate::emitter::emit(&folded, &ctx)
+        };
+        let b = emit("true").expect("emit");
+        assert!(!b.main_tf.contains("private"), "{}", b.main_tf);
+        assert_eq!(b.manifest.private.iter().collect::<Vec<_>>(), ["google_project.infra"]);
+        assert!(emit("false").expect("emit").manifest.private.is_empty());
+        let e = emit("\"yes\"").err().expect("refused");
+        assert!(e.contains("google_project.infra") && e.contains("it is `true` or `false`"), "{}", e);
+    }
+
     #[test]
     fn every_channel_emits_its_import_block() {
         let reg = super::corpus::registry();

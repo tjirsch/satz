@@ -299,6 +299,7 @@ resource "google_project" "team" {
             value: serde_yaml::Value::String(value.into()),
             description: None,
             attach: attach.iter().map(|a| a.to_string()).collect(),
+            all: None,
             file: "e.satz".into(),
             line: 1,
         };

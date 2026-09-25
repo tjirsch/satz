@@ -55,6 +55,8 @@ impl BodyKeys {
 ///
 /// - `"import-id"` — the live id `satz adopt --execute` writes back; it becomes an
 ///   `import` block, never an attribute.
+/// - `private = true` — keeps the resource out of the interface: `export … = all <type>`
+///   skips it, and an export that names it is refused. Never emitted.
 /// - `lifecycle` and `provider` — the two Terraform meta-arguments satz emits from a
 ///   body; they belong to no resource schema. `depends_on` is not among them: satz
 ///   derives the ordering a plan needs itself.
@@ -67,7 +69,7 @@ impl BodyKeys {
 ///   group's `group_key` is built from.
 fn satz_body_key(tf_type: &str, key: &str) -> bool {
     match key {
-        "import-id" | "lifecycle" | "provider" => true,
+        "import-id" | "lifecycle" | "provider" | "private" => true,
         "project_service" | "org" => tf_type == "google_project",
         "member" | "manager" | "owner" | "email" => tf_type == "google_cloud_identity_group",
         _ => false,
@@ -263,7 +265,10 @@ pub struct ResolvedExport {
     pub name: String,
     /// The value with every `{param}` resolved. A string may still carry `${…}`
     /// references to what the estate emits; the emitter decides what each one is.
+    /// `Null` for `all <type>`, which `all` carries.
     pub value: serde_yaml::Value,
+    /// `all <resource type>`: every resource of the type, as a map keyed by label
+    pub all: Option<String>,
     pub description: Option<String>,
     /// the attachment types a team may create against it (`attach [ … ]`)
     pub attach: Vec<String>,
@@ -786,14 +791,21 @@ pub fn compile_estate(
         let r = ResolvedExport {
             interface,
             name: x.name.clone(),
-            value: resolve_value(&x.value, &tfvars, &f, x.line)?,
+            value: match &x.value {
+                satz::ExportValue::Value(v) => resolve_value(v, &tfvars, &f, x.line)?,
+                satz::ExportValue::All(_) => serde_yaml::Value::Null,
+            },
+            all: match &x.value {
+                satz::ExportValue::All(t) => Some(t.clone()),
+                satz::ExportValue::Value(_) => None,
+            },
             description: x.description.clone(),
             attach: x.attach.clone(),
             file: f,
             line: x.line,
         };
         match exports.iter().find(|e| e.name == r.name && e.interface == r.interface) {
-            Some(first) if first.value == r.value && first.description == r.description && first.attach == r.attach => {}
+            Some(first) if first.value == r.value && first.all == r.all && first.description == r.description && first.attach == r.attach => {}
             Some(first) => {
                 let what = match &r.interface {
                     Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),

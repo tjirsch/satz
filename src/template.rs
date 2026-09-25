@@ -155,6 +155,7 @@ google_folder {
         google_storage_bucket {
           state {
             "import-id"                 = infra_bucket_name
+            private                     = true
             name                        = infra_bucket_name
             location                    = default_region
             force_destroy               = true
@@ -175,6 +176,7 @@ google_folder {
         }
         google_service_account {
           provisioner {
+            private      = true
             account_id   = svc_iac_account
             display_name = "Primary IaC Provisioner"
           }

@@ -241,6 +241,12 @@ export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
 
+// --- `all <type>`: every resource of one type the estate emits, as one map keyed by
+//     the resource's label — a folder's `folders/<number>`, a bucket's name. A
+//     resource marked `private = true` (the pack's bucket) is left out.
+export "folders" = all google_folder description "Every folder, by label"
+export "buckets" = all google_storage_bucket
+
 // --- `interface`: what one team reads, in a module of its own —
 //     hcl/interfaces/archive-team/ — beside the core exports above, which every
 //     interface module carries. The same interface in another file adds to it.

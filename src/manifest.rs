@@ -82,6 +82,9 @@ impl EmittedResource {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Manifest {
     pub resources: BTreeMap<String, EmittedResource>,
+    /// The addresses the estate marks `private = true`: the interface publishes none of
+    /// them — `export … = all <type>` skips them and an export naming one is refused.
+    pub private: BTreeSet<String>,
 }
 
 impl Manifest {
@@ -126,7 +129,7 @@ impl Manifest {
                 resources.insert(r.address(), r);
             }
         }
-        Manifest { resources }
+        Manifest { resources, private: BTreeSet::new() }
     }
 
     /// Record the `import` blocks the emitter built beside the resources.

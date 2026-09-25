@@ -929,7 +929,11 @@ fn render(
                 "| `{}` | `{}` | `{}` | {} |\n",
                 interface,
                 x.name,
-                value_text(&x.value).replace('|', "\\|"),
+                match &x.value {
+                    satz_core::satz::ExportValue::Value(v) => value_text(v),
+                    satz_core::satz::ExportValue::All(t) => format!("all {}", t),
+                }
+                .replace('|', "\\|"),
                 {
                     let d = x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;");
                     let attach = x.attach.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(", ");

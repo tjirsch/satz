@@ -32,8 +32,11 @@ notice pack_bucket_adopted {
 
 // Declared outside a project, so it names the one it belongs in: without `project`
 // it would go to the provider block's, and the compile warns about exactly that.
+// `private = true` keeps it out of the estate's interface: `all google_storage_bucket`
+// skips it, and an export naming it is refused.
 google_storage_bucket {
   pack_bucket {
+    private                     = true
     project                     = infra_project_name
     name                        = "{customer_shortname}-pack-bucket-001"
     location                    = pack_bucket_location
