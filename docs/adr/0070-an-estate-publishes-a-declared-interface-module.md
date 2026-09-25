@@ -1,4 +1,4 @@
-# 0070 — an estate publishes a declared interface module of static values and lookups; consumers attach in their own state or contribute through the estate
+# 0070 — an estate publishes declared interface modules of static values and lookups, one per team; consumers attach in their own state or contribute through the estate
 
 - **Status:** accepted
 - **Date:** 2026-09-25
@@ -31,8 +31,22 @@ Three terms, for a reader who has not used them:
 ## Decision
 
 **An estate declares what it publishes with `export "<name>" = <value> [description
-"…"]`, and satz generates a relocatable module, `hcl/interface/`, with one output per
-export, plus the same outputs in the root module's `outputs.tf`.**
+"…"]`, groups what one team reads in `interface "<team>" { export … }`, and satz
+generates one relocatable module per interface under `hcl/interfaces/`, plus the same
+outputs in the root module's `outputs.tf`.**
+
+- **Named interfaces, so each team finds its own code.** An export outside every
+  `interface` block is a core export; each `interface` block is one team's.
+  `hcl/interfaces/<team>/` carries the team's exports and every core export, so a team's
+  folder is complete on its own; `hcl/interfaces/core/` carries the core exports alone.
+  The same interface in two files is one interface and its exports merge — a pack can
+  add to a team's interface the way it adds resources to a map. `core` is reserved, an
+  interface name is a folder name (`[a-z][a-z0-9-]*`), and a team's export may not take a
+  core export's name, because both are outputs of the same module.
+- **Root outputs never collide.** A core export keeps its name in `outputs.tf`; a team's
+  is `<interface>__<export>` with `-` written `_`. No export name holds `__` and no
+  interface name holds `_`, so two names cannot meet. `local.satz_interface` nests the
+  values the same way: `{ interface = 1, estate, core = {…}, interfaces = { "<team>" = {…} } }`.
 
 - **Static or looked up, decided per reference.** A value satz knows at compile time — a
   param, a literal, an attribute satz writes, one derived from attributes satz writes (a
@@ -73,8 +87,13 @@ Decisions the design left open, made here:
   modules.
 - **An object value is refused.** A list of scalars is published; a map would need a
   lookup per field and a type for the output, and no export needs one yet.
-- **`hcl/interface/` is satz's.** `transpile` removes and rewrites the directory whole,
-  and removes it and `outputs.tf` when the estate exports nothing.
+- **`hcl/interfaces/` is satz's.** `transpile` removes and rewrites the directory whole,
+  so the folder of an interface the estate no longer declares goes, and it removes the
+  directory and `outputs.tf` when the estate exports nothing. A module holds only the
+  lookups its own outputs read.
+- **The notice object stays `interface = 1`.** Nesting the values per interface changed
+  its shape before any release carried the flat one, so there is no earlier shape to tell
+  apart.
 - **One name is one output.** The same name with the same value and description from two
   files is one export; a different one is an error naming both files, the rule the fold
   applies to an address.
@@ -105,10 +124,21 @@ problem this solves.
 **A module with the lookups and no static values.** *Rejected.* A lookup costs an API call
 and a read permission per plan for a value satz already knows.
 
+**One module for every team.** *Rejected.* Every team reads every other team's values
+and every lookup, needs read permission on all of them for its plan to run, and finds
+nothing that says which values are its own.
+
+**A per-export audience list** (`export "x" = … for ["team-a", "team-b"]`). *Rejected;
+the block was chosen.* A list on each export spreads one team's interface over every file
+that exports something for it, so what a team reads is known only by collecting the lists.
+A block names the interface once, reads as the team's contract, and merges across files
+like a resource map. A value two teams read is a core export, or it is written in both
+blocks.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every
-  estate `satz init` writes — gains `hcl/outputs.tf` and `hcl/interface/`. Its resources
+  estate `satz init` writes — gains `hcl/outputs.tf` and `hcl/interfaces/core/`. Its resources
   do not change; its plan shows the new outputs. That is an emission change: a minor
   release.
 - `presets/interface-lookups.yaml` is derived from the provider's data source schemas and

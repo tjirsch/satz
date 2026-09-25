@@ -394,6 +394,7 @@ item    := "params" "{" { param } "}"
          | "action" STRING "{" { action-entry } "}"
          | "offers" STRING "{" { offers-entry } "}"      # the map only
          | "export" STRING "=" value [ "description" STRING ]
+         | "interface" STRING "{" { "export" STRING "=" value [ "description" STRING ] } "}"
          | block
 
 block   := KEY [ KEY ] "{" { entry } "}"
@@ -1841,12 +1842,13 @@ the compile notes it once and skips those checks.
 `check-presets` reports a map whose entries changed like one whose questions changed:
 the map emits the same, so the estate is not forked, and the change is listed.
 
-### 6.17 `export` — what the estate publishes to the HCL beside it
+### 6.17 `export` and `interface` — what the estate publishes to the HCL beside it
 
 Customer teams write their own HCL beside a satz estate, with their own state and in
-their own repositories. `export` names a value they read. Each export is an output of
-the root module (`hcl/outputs.tf`, read with `tofu output`) and of the generated module
-`hcl/interface/`, which a team sources from wherever its code lives
+their own repositories. `export` names a value they read; `interface` groups the ones
+one team reads. Each export is an output of the root module (`hcl/outputs.tf`, read
+with `tofu output`) and of the generated modules under `hcl/interfaces/`, which a team
+sources from wherever its code lives
 ([workflows: customer teams beside the estate](workflows.md#customer-teams-beside-the-estate)).
 
 ```
@@ -1856,12 +1858,27 @@ export "infra_folder"         = "${{google_folder.infra.name}}" description "The
 export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
+
+interface "archive-team" {
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" description "The team's project"
+  export "archive_project_number" = "${{google_project.archive.number}}"
+}
 ```
 
 (`tests/smoke/yaml/showcase.satz`.)
 
-- **The name** is the output's name: lowercase letters, digits and `_`, starting with a
-  letter. A consumer reads it as `module.satz.<name>`.
+- **An export outside every `interface` block is a core export.** Every interface module
+  carries it, so each team's folder is complete on its own, and `hcl/interfaces/core/`
+  carries the core exports alone.
+- **An export inside `interface "<name>" { … }`** is an output of
+  `hcl/interfaces/<name>/` alone. The block holds `export` statements and nothing else.
+  The name is the folder: lowercase letters, digits and `-`, starting with a letter;
+  `core` is the core module's and is refused. An interface declared in two files is one
+  interface, and their exports merge; one file declares it once.
+- **The export's name** is the output's name: lowercase letters, digits and `_`,
+  starting with a letter, and no `__`. A consumer reads it as `module.satz.<name>`. An
+  interface's export may not take a core export's name: every module carries both, and
+  the compile refuses it naming both files.
 - **The value** is a param, a literal, a list of them, or a string that carries
   `${{type.label.attribute}}` references to resources the estate emits. An object is
   refused. A reference names something the estate emits, or the compile refuses it at
@@ -1872,7 +1889,7 @@ export "regions"              = [default_region, "europe-west4"]
 
 **Known now, or looked up.** Per reference, the compile decides what the value is:
 
-| the attribute | the output in `hcl/interface/` |
+| the attribute | the output in `hcl/interfaces/<name>/` |
 |---|---|
 | a param or a literal | the literal |
 | an attribute satz writes on the resource — a `project_id`, a `name`, a `display_name` | the literal satz writes |
@@ -1887,24 +1904,33 @@ under its parent's lookup. An export that needs a lookup of a type the table has
 for is refused, naming the type and the types the table reads back; so is an attribute
 the row does not yield, naming the ones it does. A string that embeds a reference is a
 template: `"projects/${{google_project.infra.number}}/x"` is `"projects/${data.google_project.infra.number}/x"`
-in the module.
+in the module. A module holds the lookups its own outputs read and no other.
 
 **One name is one output.** Exports come from the estate and from every pack it uses; a
-pack switched off by its `use … when` exports nothing. The same name with the same value
-and description from two files is one export, and with a different one it is an error
-naming both files. `estate-core.satz` carries the core exports every estate that uses it
-publishes; `satz init` writes one export of the infrastructure folder into the estate
+pack switched off by its `use … when` exports nothing. The same name in the same
+interface — or among the core exports — with the same value and description from two
+files is one export, and with a different one it is an error naming both files.
+`estate-core.satz` carries the core exports every estate that uses it publishes;
+`satz init` writes one core export of the infrastructure folder into the estate
 ([the library](../presets/README.md#estate-coresatz)).
 
-**What the compile writes.** `outputs.tf` in the root module holds every exported value
-in `local.satz_interface` — `{ interface = 1, estate = "<name>", values = { … } }` — and one
-output per export that reads it; `presets/interface-notice.satz` publishes that local as
-an object. `hcl/interface/` holds `versions.tf` (the `google` provider and the version
-the estate pins), `main.tf` (the lookups, when there are any), `outputs.tf` and
-`README.md`, which lists every export with how it is obtained. The module takes no
-variable, has no backend, reads no state and names no file outside its directory, so it
-works copied, moved or sourced by git URL. `satz transpile` writes both whole and removes
-both when the estate exports nothing. The `.tf` files carry the stamp `main.tf` carries.
+**What the compile writes.**
+
+- `outputs.tf` in the root module holds every exported value in `local.satz_interface` —
+  `{ interface = 1, estate = "<name>", core = { … }, interfaces = { "<name>" = { … } } }` —
+  and one output per export that reads it. A core export's output keeps its name; an
+  interface's is `<interface>__<export>`, with `-` written `_`
+  (`archive_team__archive_project_id`), so two never meet. `presets/interface-notice.satz`
+  publishes that local as an object.
+- `hcl/interfaces/<name>/` for `core` and for every interface: `versions.tf` (the `google`
+  provider and the version the estate pins), `main.tf` (the lookups, when there are any),
+  `outputs.tf` and `README.md`, which names the interface and lists every output with
+  whether it is core and how it is obtained. A module takes no variable, has no backend,
+  reads no state and names no file outside its directory, so it works copied, moved or
+  sourced by git URL.
+- `satz transpile` writes `outputs.tf` and `hcl/interfaces/` whole: the folder of an
+  interface the estate no longer declares is removed, and so are both when the estate
+  exports nothing. The `.tf` files carry the stamp `main.tf` carries.
 
 An export emits no resource and is no witness: it never enters the fold, the emission
 manifest or a claim.
@@ -2194,6 +2220,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | name the command a pack needs once it is on | `notice x_adopted { text = "…" run = "satz adopt <estate> --execute --import" severity = error }` |
 | add a pack's entries to another file's list param | `params { contributes_allowed_policy_member_subjects = ["serviceAccount:…"] }` |
 | publish a value to the HCL beside the estate | `export "infra_folder" = "${{google_folder.infra.name}}" description "…"` |
+| publish values to one team's module alone | `interface "team-a" { export "folder" = "${{google_folder.team_a.name}}" }` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language

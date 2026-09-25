@@ -3,7 +3,7 @@
 //
 //   use "presets/interface-notice.satz" when use_interface_notice
 //
-// The estate's exports (`export` statements, hcl/interface/) are what customer teams
+// The estate's exports (`export` statements, hcl/interfaces/) are what customer teams
 // read, in their own state and their own pipelines. This pack puts a notice behind
 // them, in four pieces in the infrastructure project:
 //
@@ -13,7 +13,8 @@
 //   4. a storage notification: every new generation of an object in the bucket
 //      publishes one message to the topic.
 //
-// The object is the estate's exported values as JSON (`interface`, `estate`, `values`),
+// The object is the estate's exported values as JSON (`interface`, `estate`, `core`, and
+// `interfaces` with one map per interface),
 // written from the root module's `local.satz_interface`, which satz emits beside the
 // outputs. Terraform rewrites the object only when its content changes, so an apply that
 // changes an exported value publishes one message and an apply that changes nothing
@@ -21,8 +22,8 @@
 //
 // A team subscribes in its own state — its own `google_pubsub_subscription` on the topic,
 // a push to its CI's webhook or a pull from a runner. The topic and the object are
-// exports of this pack (`interface_topic`, `interface_object`), so the interface module
-// and its README carry them, with the subscription to write.
+// core exports of this pack (`interface_topic`, `interface_object`), so every interface
+// module and its README carry them, with the subscription to write.
 //
 // The service agent's address carries the project's number, which only exists once the
 // project does, so the pack reads it with the provider's

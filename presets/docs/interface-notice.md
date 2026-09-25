@@ -8,7 +8,7 @@ Source: `presets/interface-notice.satz`
 Tells the teams whose HCL reads this estate's interface when an exported value
 changes: one Pub/Sub message per apply that changes one.
 
-The estate's exports (`export` statements, hcl/interface/) are what customer teams
+The estate's exports (`export` statements, hcl/interfaces/) are what customer teams
 read, in their own state and their own pipelines. This pack puts a notice behind
 them, in four pieces in the infrastructure project:
 
@@ -18,7 +18,8 @@ them, in four pieces in the infrastructure project:
 4. a storage notification: every new generation of an object in the bucket
 publishes one message to the topic.
 
-The object is the estate's exported values as JSON (`interface`, `estate`, `values`),
+The object is the estate's exported values as JSON (`interface`, `estate`, `core`, and
+`interfaces` with one map per interface),
 written from the root module's `local.satz_interface`, which satz emits beside the
 outputs. Terraform rewrites the object only when its content changes, so an apply that
 changes an exported value publishes one message and an apply that changes nothing
@@ -26,8 +27,8 @@ publishes none. The message names the object; the object holds the new values.
 
 A team subscribes in its own state — its own `google_pubsub_subscription` on the topic,
 a push to its CI's webhook or a pull from a runner. The topic and the object are
-exports of this pack (`interface_topic`, `interface_object`), so the interface module
-and its README carry them, with the subscription to write.
+core exports of this pack (`interface_topic`, `interface_object`), so every interface
+module and its README carry them, with the subscription to write.
 
 The service agent's address carries the project's number, which only exists once the
 project does, so the pack reads it with the provider's
@@ -96,12 +97,12 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and of `hcl/interface/` in every estate that uses this pack.
+Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.
 
-| output | value | description |
-|---|---|---|
-| `interface_topic` | `"${google_pubsub_topic.interface_notice.id}"` | The topic that carries one message per apply that changes an exported value |
-| `interface_object` | `"gs://{interface_notice_bucket_name}/interface.json"` | The object that holds the exported values as JSON |
+| interface | output | value | description |
+|---|---|---|---|
+| `core` | `interface_topic` | `"${google_pubsub_topic.interface_notice.id}"` | The topic that carries one message per apply that changes an exported value |
+| `core` | `interface_object` | `"gs://{interface_notice_bucket_name}/interface.json"` | The object that holds the exported values as JSON |
 
 ## Claims
 

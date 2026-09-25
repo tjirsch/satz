@@ -683,50 +683,61 @@ read what the estate publishes and never change satz's HCL or its state.
 
 ### What the estate publishes
 
-An `export` statement ([language §6.17](language.md#617-export--what-the-estate-publishes-to-the-hcl-beside-it))
+An `export` statement ([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it))
 names one value. `satz transpile` writes each one twice:
 
 - as an output of the root module, in `hcl/outputs.tf`, which the operator reads with
   `tofu output`;
-- as an output of the module `hcl/interface/`, which the teams read.
+- as an output of a module under `hcl/interfaces/`, which the teams read.
 
-An estate that uses `presets/estate-core.satz` publishes the core exports without
+An export outside every `interface` block is a core export, and every module carries
+it. An estate that uses `presets/estate-core.satz` publishes the core exports without
 writing any: `organization_id`, `customer_domain`, `customer_shortname`,
 `default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
-writes also exports `infra_folder`. The estate adds its own:
+writes also exports `infra_folder`.
+
+What one team reads goes into an `interface` block named for the team, in the estate or
+in a pack; the same interface in two files is one interface:
 
 ```
-export "team_a_folder" = "${{google_folder.team_a.name}}" description "Team A's folder, folders/<number>"
+interface "team-a" {
+  export "folder"  = "${{google_folder.team_a.name}}" description "Team A's folder, folders/<number>"
+  export "network" = "${{google_compute_network.shared.self_link}}"
+}
 ```
 
 ### Sourcing the interface
 
-`hcl/interface/` names no file outside itself, takes no input variable, has no backend
-and reads no state. A team sources it from wherever its code lives:
+**Each team sources `hcl/interfaces/<team>/`**: the team's own exports and the core ones,
+complete on its own. `hcl/interfaces/core/` holds the core exports alone, for a
+configuration that needs nothing else. A module names no file outside itself, takes no
+input variable, has no backend and reads no state. A team sources its folder from
+wherever its code lives:
 
 ```hcl
 # a sibling folder in the same repository
 module "satz" {
-  source = "../estate/hcl/interface"
+  source = "../estate/hcl/interfaces/team-a"
 }
 
 # a repository somewhere else, pinned to a commit of the estate repository
 module "satz" {
-  source = "git::<the estate repository URL>//hcl/interface?ref=<commit>"
+  source = "git::<the estate repository URL>//hcl/interfaces/team-a?ref=<commit>"
 }
 
 resource "google_project" "team_a" {
   project_id = "acme-team-a-001"
   name       = "team-a"
-  folder_id  = module.satz.team_a_folder
+  folder_id  = module.satz.folder
 }
 ```
 
 It needs the `google` provider in the calling configuration, at the version the estate
-pins (`hcl/interface/versions.tf`). A copy of the directory works as well as the
-original: it is generated whole, and `hcl/interface/README.md` travels with it — the
-snippet above, every export, how each is obtained, and the estate and satz version it
-came from.
+pins (`versions.tf` in the folder). A copy of the folder works as well as the original:
+it is generated whole, and its `README.md` travels with it — the snippet above, every
+output with whether it is core and how it is obtained, and the estate and satz version
+it came from. The root module's `tofu output` names a team's values
+`<team>__<export>`, with `-` written `_` (`team_a__folder`).
 
 ### Static values and lookups
 
@@ -735,12 +746,12 @@ service account's email built from its account id — is a literal output. The t
 plan makes no API call for it.
 
 An export of an attribute only the cloud knows — a folder's `folders/<number>`, a
-project's number — is a lookup: a `data` source in `hcl/interface/main.tf` that reads
+project's number — is a lookup: a `data` source in the folder's `main.tf` that reads
 the resource back by what satz writes on it (a folder by its display name under its
 parent, a project by its id). The lookup runs through the team's own provider and
 credentials, so the team needs read permission on what it looks up; the README names
 the permission per lookup. A team without it fails its own plan, and satz's state is
-not involved.
+not involved. A folder holds only the lookups its own outputs read.
 
 ### Writing to shared infrastructure
 

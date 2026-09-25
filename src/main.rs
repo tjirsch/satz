@@ -2901,8 +2901,12 @@ fn interface_of(
         Ok(i) => Some(i),
         Err(refusals) => {
             for r in refusals {
+                let what = match &r.interface {
+                    Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),
+                    None => format!("export \"{}\"", r.name),
+                };
                 f.push(
-                    Finding::new(Severity::Error, Kind::Export, format!("export \"{}\": {}", r.name, r.msg))
+                    Finding::new(Severity::Error, Kind::Export, format!("{}: {}", what, r.msg))
                         .about(r.name.clone())
                         .in_group(group)
                         .located(r.file, r.line as u32),
@@ -3679,34 +3683,39 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<
     Ok(written)
 }
 
-/// The estate's interface: the root `outputs.tf` and the module `hcl/interface/`, each
-/// written whole, and neither left from an earlier run when the estate exports nothing.
-/// satz owns the module directory: every file in it is generated, and a transpile replaces
-/// it entirely.
+/// The estate's interfaces: the root `outputs.tf` and one module per interface under
+/// `hcl/interfaces/` — `core/` and one folder per `interface` block — each written whole,
+/// and none left from an earlier run: satz owns `hcl/interfaces/`, so the folder of an
+/// interface the estate no longer declares goes with the rest, and the directory and
+/// `outputs.tf` go when the estate exports nothing.
 fn write_interface(interface: Option<&crate::interface::Interface>, dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let outputs = dir.join("outputs.tf");
-    let module = dir.join(crate::interface::DIR);
+    let modules = dir.join(crate::interface::DIR);
     if outputs.exists() {
         fsx::remove_file(&outputs)?;
     }
-    if module.exists() {
-        fsx::remove_dir_all(&module)?;
+    if modules.exists() {
+        fsx::remove_dir_all(&modules)?;
     }
     let Some(i) = interface else { return Ok(Vec::new()) };
     let version = env!("CARGO_PKG_VERSION");
     let stamp = crate::interface::stamp(version, estate);
+    let notice = crate::interface::notice(i);
     let mut written = Vec::new();
     fsx::write(&outputs, format!("{}{}", stamp, i.root_outputs_tf()))?;
     written.push(outputs);
-    fsx::create_dir_all(&module)?;
-    for (name, content) in i.module_files() {
-        let p = module.join(name);
-        fsx::write(&p, format!("{}{}", stamp, content))?;
-        written.push(p);
+    for m in i.modules() {
+        let module = modules.join(&m);
+        fsx::create_dir_all(&module)?;
+        for (name, content) in i.module_files(&m) {
+            let p = module.join(name);
+            fsx::write(&p, format!("{}{}", stamp, content))?;
+            written.push(p);
+        }
+        let readme = module.join("README.md");
+        fsx::write(&readme, i.readme(&m, version, estate, notice.as_ref()))?;
+        written.push(readme);
     }
-    let readme = module.join("README.md");
-    fsx::write(&readme, i.readme(version, estate, crate::interface::notice(i).as_ref()))?;
-    written.push(readme);
     Ok(written)
 }
 
@@ -4561,8 +4570,10 @@ pub(crate) fn transpile_sorted_b(
     // The interface, when there is one — an estate that exports nothing keeps its snapshot.
     if let Some(i) = &out.interface {
         sections.push(i.root_outputs_tf());
-        for (name, content) in i.module_files() {
-            sections.push(format!("{}/{}\n{}", crate::interface::DIR, name, content));
+        for m in i.modules() {
+            for (name, content) in i.module_files(&m) {
+                sections.push(format!("{}/{}/{}\n{}", crate::interface::DIR, m, name, content));
+            }
         }
     }
     Ok(sections.join("\n---\n"))
@@ -5530,8 +5541,10 @@ mod corpus {
                 .unwrap_or_else(|r| panic!("{}: an export refused: {:?}", name, r));
             snapshot.push_str("\n---outputs.tf---\n");
             snapshot.push_str(&i.root_outputs_tf());
-            for (file, content) in i.module_files() {
-                snapshot.push_str(&format!("---{}/{}---\n{}", crate::interface::DIR, file, content));
+            for m in i.modules() {
+                for (file, content) in i.module_files(&m) {
+                    snapshot.push_str(&format!("---{}/{}/{}---\n{}", crate::interface::DIR, m, file, content));
+                }
             }
         }
         snapshot

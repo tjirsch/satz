@@ -1,9 +1,13 @@
 //! The interface an estate publishes to the HCL customer teams write beside it (ADR 0070).
 //!
-//! Every `export` becomes one output, twice: in the root module's `outputs.tf`, where the
-//! operator reads it with `tofu output`, and in the generated module `hcl/interface/`, which
-//! a consumer sources from wherever it keeps its own code. The module is relocatable: it
-//! names no file outside itself, takes no variable, has no backend and reads no state.
+//! Every `export` becomes an output of the root module's `outputs.tf`, where the operator
+//! reads it with `tofu output`, and of the generated modules under `hcl/interfaces/`, which
+//! the teams source from wherever they keep their own code. An export outside every
+//! `interface` block is a core export: an output of every module. One inside
+//! `interface "<name>" { … }` is an output of `hcl/interfaces/<name>/` alone, and
+//! `hcl/interfaces/core/` carries the core exports by themselves. Each module is
+//! relocatable: it names no file outside itself, takes no variable, has no backend and
+//! reads no state.
 //!
 //! Per `${type.label.attr}` reference, the compile decides what the value is:
 //!
@@ -19,8 +23,11 @@
 use crate::manifest::{EmittedResource, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The directory under `hcl_dir` the module is written to.
-pub(crate) const DIR: &str = "interface";
+/// The directory under `hcl_dir` the modules are written to, one folder per interface.
+pub(crate) const DIR: &str = "interfaces";
+
+/// The module that carries the core exports alone.
+pub(crate) const CORE: &str = satz_core::satz::CORE_INTERFACE;
 
 /// The local in the root `outputs.tf` that holds every exported value: the outputs read it,
 /// and a pack reads it whole (`interface-notice` publishes `jsonencode` of it).
@@ -83,6 +90,8 @@ pub(crate) enum How {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Output {
+    /// the interface it belongs to; `None` for a core export, which every module carries
+    pub interface: Option<String>,
     pub name: String,
     pub description: Option<String>,
     /// the value in the module
@@ -107,6 +116,8 @@ pub(crate) struct Interface {
 /// An export the compile refuses, where it is declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refusal {
+    /// the interface the export stands in; `None` for a core export
+    pub interface: Option<String>,
     pub name: String,
     pub file: String,
     pub line: usize,
@@ -139,6 +150,7 @@ pub(crate) fn build(
                     How::Lookup(all.into_iter().collect())
                 };
                 outputs.push(Output {
+                    interface: x.interface.clone(),
                     name: x.name.clone(),
                     description: x.description.clone(),
                     module_value,
@@ -146,12 +158,14 @@ pub(crate) fn build(
                     how,
                 });
             }
-            Err(msg) => refusals.push(Refusal { name: x.name.clone(), file: x.file.clone(), line: x.line, msg }),
+            Err(msg) => refusals.push(Refusal { interface: x.interface.clone(), name: x.name.clone(), file: x.file.clone(), line: x.line, msg }),
         }
     }
     if !refusals.is_empty() {
         return Err(refusals);
     }
+    // the core outputs first, then each interface's, each in declaration order
+    outputs.sort_by(|a, b| a.interface.cmp(&b.interface));
     Ok(Interface {
         estate: estate.to_string(),
         outputs,
@@ -519,31 +533,77 @@ fn output_body(d: &Option<String>, value: &str) -> String {
     }
 }
 
+impl Output {
+    /// Its name among the root module's outputs: a core export keeps its name, an
+    /// interface's is `<interface>__<export>` with `-` as `_`. No export name holds `__`
+    /// and no interface name holds `_`, so two never meet.
+    pub fn root_name(&self) -> String {
+        match &self.interface {
+            Some(i) => format!("{}__{}", i.replace('-', "_"), self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// Where the root module's local holds it.
+    fn local_path(&self) -> String {
+        match &self.interface {
+            Some(i) => format!("local.{}.interfaces[{}].{}", LOCAL, hcl_string(i), self.name),
+            None => format!("local.{}.core.{}", LOCAL, self.name),
+        }
+    }
+}
+
 impl Interface {
-    /// The root module's `outputs.tf`: the values in one local, one output per export.
+    /// The modules written under `hcl/interfaces/`: `core`, then every named interface.
+    pub fn modules(&self) -> Vec<String> {
+        let named: BTreeSet<&str> = self.outputs.iter().filter_map(|o| o.interface.as_deref()).collect();
+        std::iter::once(CORE.to_string()).chain(named.into_iter().map(str::to_string)).collect()
+    }
+
+    /// The outputs of one module: the core exports, then the interface's own.
+    fn outputs_of(&self, module: &str) -> Vec<&Output> {
+        let core = self.outputs.iter().filter(|o| o.interface.is_none());
+        let own = self.outputs.iter().filter(|o| module != CORE && o.interface.as_deref() == Some(module));
+        core.chain(own).collect()
+    }
+
+    /// The root module's `outputs.tf`: the values in one local — the core ones, and one map
+    /// per interface — and one output per export that reads it.
     pub fn root_outputs_tf(&self) -> String {
+        fn values(out: &mut String, outputs: &[&Output], pad: &str) {
+            let w = outputs.iter().map(|o| o.name.len()).max().unwrap_or(0);
+            for o in outputs {
+                out.push_str(&format!("{}{:<w$} = {}\n", pad, o.name, o.root_value, w = w));
+            }
+        }
         let mut out = String::new();
         out.push_str("locals {\n");
         out.push_str(&format!("  {} = {{\n", LOCAL));
         out.push_str("    interface = 1\n");
         out.push_str(&format!("    estate    = {}\n", hcl_string(&self.estate)));
-        out.push_str("    values = {\n");
-        let w = self.outputs.iter().map(|o| o.name.len()).max().unwrap_or(0);
-        for o in &self.outputs {
-            out.push_str(&format!("      {:<w$} = {}\n", o.name, o.root_value, w = w));
+        out.push_str("    core = {\n");
+        let core: Vec<&Output> = self.outputs.iter().filter(|o| o.interface.is_none()).collect();
+        values(&mut out, &core, "      ");
+        out.push_str("    }\n");
+        out.push_str("    interfaces = {\n");
+        for m in self.modules().iter().filter(|m| *m != CORE) {
+            out.push_str(&format!("      {} = {{\n", hcl_string(m)));
+            let own: Vec<&Output> = self.outputs.iter().filter(|o| o.interface.as_deref() == Some(m.as_str())).collect();
+            values(&mut out, &own, "        ");
+            out.push_str("      }\n");
         }
         out.push_str("    }\n  }\n}\n");
         for o in &self.outputs {
-            out.push_str(&format!("\noutput \"{}\" {{\n", o.name));
-            out.push_str(&output_body(&o.description, &format!("local.{}.values.{}", LOCAL, o.name)));
+            out.push_str(&format!("\noutput \"{}\" {{\n", o.root_name()));
+            out.push_str(&output_body(&o.description, &o.local_path()));
             out.push_str("}\n");
         }
         out
     }
 
-    /// The module's `versions.tf`: the provider it needs, and nothing that configures it —
+    /// A module's `versions.tf`: the provider it needs, and nothing that configures it —
     /// the consumer's own provider is the one the lookups run through.
-    pub fn module_versions_tf(&self) -> String {
+    fn module_versions_tf(&self) -> String {
         let mut out = String::from("terraform {\n  required_providers {\n    google = {\n");
         out.push_str(&format!("      source  = {}\n", hcl_string(&self.google_source)));
         if let Some(v) = &self.google_version {
@@ -553,10 +613,21 @@ impl Interface {
         out
     }
 
-    /// The module's `main.tf`: the lookups, or nothing when every export is static.
-    pub fn module_main_tf(&self) -> String {
+    /// The data blocks one module's outputs read, by address.
+    fn data_of(&self, module: &str) -> Vec<&DataBlock> {
+        let mut used: BTreeSet<&String> = BTreeSet::new();
+        for o in self.outputs_of(module) {
+            if let How::Lookup(addrs) = &o.how {
+                used.extend(addrs);
+            }
+        }
+        used.into_iter().filter_map(|a| self.data.get(a)).collect()
+    }
+
+    /// A module's `main.tf`: its lookups, or nothing when every output is static.
+    fn module_main_tf(&self, module: &str) -> String {
         let mut out = String::new();
-        for d in self.data.values() {
+        for d in self.data_of(module) {
             if !out.is_empty() {
                 out.push('\n');
             }
@@ -571,10 +642,10 @@ impl Interface {
         out
     }
 
-    /// The module's `outputs.tf`.
-    pub fn module_outputs_tf(&self) -> String {
+    /// A module's `outputs.tf`.
+    fn module_outputs_tf(&self, module: &str) -> String {
         let mut out = String::new();
-        for o in &self.outputs {
+        for o in self.outputs_of(module) {
             if !out.is_empty() {
                 out.push('\n');
             }
@@ -585,31 +656,42 @@ impl Interface {
         out
     }
 
-    /// The files of `hcl/interface/`, by name, without their stamps.
-    pub fn module_files(&self) -> Vec<(&'static str, String)> {
+    /// The `.tf` files of `hcl/interfaces/<module>/`, by name, without their stamps. A file
+    /// with nothing in it is not written.
+    pub fn module_files(&self, module: &str) -> Vec<(&'static str, String)> {
         let mut files = vec![("versions.tf", self.module_versions_tf())];
-        let main = self.module_main_tf();
-        if !main.is_empty() {
-            files.push(("main.tf", main));
+        for (name, content) in [("main.tf", self.module_main_tf(module)), ("outputs.tf", self.module_outputs_tf(module))] {
+            if !content.is_empty() {
+                files.push((name, content));
+            }
         }
-        files.push(("outputs.tf", self.module_outputs_tf()));
         files
     }
 
-    /// `hcl/interface/README.md`, which travels with the module.
-    pub fn readme(&self, version: &str, estate_path: &str, notice: Option<&Notice>) -> String {
+    /// `hcl/interfaces/<module>/README.md`, which travels with the module.
+    pub fn readme(&self, module: &str, version: &str, estate_path: &str, notice: Option<&Notice>) -> String {
+        let outputs = self.outputs_of(module);
         let mut s = String::new();
-        s.push_str(&format!("# The interface of estate `{}`\n\n", self.estate));
+        s.push_str(&format!("# The `{}` interface of estate `{}`\n\n", module, self.estate));
         s.push_str(&format!(
-            "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` writes this directory whole.\n\n",
-            version, estate_path
+            "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` writes `hcl/{}/` whole.\n\n",
+            version, estate_path, DIR
         ));
-        s.push_str("This module publishes the values the estate exports to HCL that is not part of it — a team's own\n");
+        s.push_str("This module publishes values the estate exports to HCL that is not part of it — a team's own\n");
         s.push_str("code, with its own state, in its own repository. It references no file outside this directory, takes\n");
         s.push_str("no input variable and reads no state: copy it, move it, or source it by git URL.\n\n");
+        if module == CORE {
+            s.push_str("It holds the core values alone: the ones every interface of this estate carries.\n\n");
+        } else {
+            s.push_str(&format!(
+                "It holds the values of the interface `{}` and the core values, which every interface of this\n\
+                 estate carries; the table says which is which.\n\n",
+                module
+            ));
+        }
         s.push_str("## How to use it\n\n");
-        s.push_str("```hcl\nmodule \"satz\" {\n  source = \"<path or git URL>/interface\"\n}\n\n");
-        match self.outputs.first() {
+        s.push_str(&format!("```hcl\nmodule \"satz\" {{\n  source = \"<path or git URL>/{}/{}\"\n}}\n\n", DIR, module));
+        match outputs.first() {
             Some(o) => s.push_str(&format!("# module.satz.{}\n```\n\n", o.name)),
             None => s.push_str("```\n\n"),
         }
@@ -620,8 +702,12 @@ impl Interface {
             self.google_version.as_deref().map(|v| format!(" {}", v)).unwrap_or_default()
         ));
         s.push_str("## Exports\n\n");
-        s.push_str("| Output | Description | How it is obtained |\n|---|---|---|\n");
-        for o in &self.outputs {
+        if outputs.is_empty() {
+            s.push_str("None: the estate exports no core value.\n");
+        } else {
+            s.push_str("| Output | Of | Description | How it is obtained |\n|---|---|---|---|\n");
+        }
+        for o in &outputs {
             let how = match &o.how {
                 How::Static(v) => format!("static: `{}`", table_cell(v)),
                 How::Lookup(addrs) => {
@@ -641,8 +727,9 @@ impl Interface {
                 }
             };
             s.push_str(&format!(
-                "| `{}` | {} | {} |\n",
+                "| `{}` | {} | {} | {} |\n",
                 o.name,
+                o.interface.as_deref().unwrap_or(CORE),
                 o.description.as_deref().map(table_cell).unwrap_or_default(),
                 how
             ));
@@ -655,7 +742,8 @@ impl Interface {
                 s.push_str(&format!(
                     "Every apply that changes an exported value rewrites `{}`, and Cloud Storage publishes one\n\
                      message to the topic `{}`. An apply that changes nothing publishes nothing. The object holds\n\
-                     the values as JSON (`interface`, `estate`, `values`); the message names the object.\n\n\
+                     the values as JSON (`interface`, `estate`, `core`, and `interfaces` with one map per\n\
+                     interface); the message names the object.\n\n\
                      Subscribe in your own state:\n\n\
                      ```hcl\n\
                      resource \"google_pubsub_subscription\" \"satz_interface\" {{\n  \
@@ -683,11 +771,11 @@ pub(crate) struct Notice {
     pub topic_output: String,
 }
 
-/// The change notice, read off the interface's own outputs: `interface_topic` and
-/// `interface_object` are what the pack exports.
+/// The change notice, read off the core outputs: `interface_topic` and `interface_object`
+/// are what the pack exports, and every module carries them.
 pub(crate) fn notice(interface: &Interface) -> Option<Notice> {
     let value = |name: &str| {
-        interface.outputs.iter().find(|o| o.name == name).and_then(|o| match &o.how {
+        interface.outputs.iter().find(|o| o.interface.is_none() && o.name == name).and_then(|o| match &o.how {
             How::Static(v) => Some(v.trim_matches('"').to_string()),
             How::Lookup(_) => None,
         })
@@ -728,7 +816,7 @@ resource "google_cloud_identity_group" "g" {
 "#;
 
     fn export(name: &str, value: &str) -> ResolvedExport {
-        ResolvedExport { name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, file: "e.satz".into(), line: 3 }
+        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, file: "e.satz".into(), line: 3 }
     }
 
     fn build_one(value: &str) -> Result<Interface, Vec<Refusal>> {
@@ -760,7 +848,7 @@ resource "google_cloud_identity_group" "g" {
         let infra = &i.data["data.google_active_folder.infra"];
         assert_eq!(infra.args[1], ("parent".into(), "\"organizations/123456789012\"".into()));
         assert_eq!(i.outputs[0].how, How::Lookup(vec!["data.google_active_folder.infra".into(), "data.google_active_folder.team".into()]));
-        let main = i.module_main_tf();
+        let main = i.module_main_tf(CORE);
         assert!(main.contains("data \"google_active_folder\" \"team\" {"), "{}", main);
     }
 
@@ -784,21 +872,76 @@ resource "google_cloud_identity_group" "g" {
         assert_eq!((e[0].file.as_str(), e[0].line), ("e.satz", 3));
     }
 
+    fn in_interface(i: &str, name: &str, value: &str) -> ResolvedExport {
+        ResolvedExport { interface: Some(i.into()), ..export(name, value) }
+    }
+
+    /// Per module: the README has one row per output and `outputs.tf` one output per export
+    /// — the core ones in every module, an interface's own in its module alone.
     #[test]
-    fn the_readme_has_one_row_per_output_and_the_module_one_output_per_export() {
-        let exports = [export("org", "123"), export("folder", "${google_folder.team.name}")];
+    fn every_module_carries_the_core_exports_and_its_own_and_the_readme_lists_them() {
+        let exports = [
+            export("org", "123"),
+            in_interface("team-a", "folder", "${google_folder.team.name}"),
+            in_interface("team-b", "project", "${google_project.infra.number}"),
+        ];
         let i = build("e", &exports, &Manifest::parse(MAIN_TF), "hashicorp/google", Some("7.14.1")).unwrap();
-        let readme = i.readme("0.0.0", "satz/e.satz", None);
-        let rows: Vec<&str> = readme.lines().filter(|l| l.starts_with("| `")).collect();
-        let module = i.module_outputs_tf();
-        let outputs: Vec<&str> = module.lines().filter(|l| l.starts_with("output ")).collect();
-        assert_eq!(rows.len(), exports.len());
-        assert_eq!(outputs.len(), exports.len());
-        for x in &exports {
-            assert!(rows.iter().any(|r| r.starts_with(&format!("| `{}` |", x.name))));
-            assert!(outputs.contains(&format!("output \"{}\" {{", x.name).as_str()));
+        assert_eq!(i.modules(), ["core", "team-a", "team-b"]);
+        for (module, want) in [("core", vec!["org"]), ("team-a", vec!["org", "folder"]), ("team-b", vec!["org", "project"])] {
+            let readme = i.readme(module, "0.0.0", "satz/e.satz", None);
+            let rows: Vec<&str> = readme.lines().filter(|l| l.starts_with("| `")).collect();
+            let files = i.module_files(module);
+            let outputs_tf = &files.iter().find(|(n, _)| *n == "outputs.tf").unwrap().1;
+            let outputs: Vec<&str> = outputs_tf.lines().filter(|l| l.starts_with("output ")).collect();
+            assert_eq!(rows.len(), want.len(), "{}: {}", module, readme);
+            assert_eq!(outputs.len(), want.len(), "{}: {}", module, outputs_tf);
+            for name in &want {
+                assert!(rows.iter().any(|r| r.starts_with(&format!("| `{}` |", name))), "{}: {}", module, readme);
+                assert!(outputs.contains(&format!("output \"{}\" {{", name).as_str()));
+            }
+            assert!(readme.contains(&format!("# The `{}` interface of estate `e`", module)));
+            assert!(readme.contains("| `org` | core |"), "{}", readme);
+            assert!(readme.contains("No change notice is set up"));
         }
-        assert!(readme.contains("No change notice is set up"));
+        // a module reads only the lookups its own outputs need
+        let main_a = &i.module_files("team-a").iter().find(|(n, _)| *n == "main.tf").unwrap().1.clone();
+        assert!(main_a.contains("google_active_folder") && !main_a.contains("data \"google_project\""), "{}", main_a);
+        assert!(!i.module_files("core").iter().any(|(n, _)| *n == "main.tf"), "core reads nothing");
+
+        let root = i.root_outputs_tf();
+        assert!(root.contains("output \"org\""), "{}", root);
+        assert!(root.contains("output \"team_a__folder\"") && root.contains("local.satz_interface.interfaces[\"team-a\"].folder"), "{}", root);
+        assert!(root.contains("\"team-b\" = {"), "{}", root);
+    }
+
+    /// `hcl/interfaces/` is satz's: a transpile writes one folder per interface, removes
+    /// the folder of an interface the estate no longer declares, and removes the directory
+    /// and `outputs.tf` when the estate exports nothing.
+    #[test]
+    fn the_interfaces_directory_holds_exactly_the_declared_interfaces() {
+        let dir = std::env::temp_dir().join(format!("satz-interfaces-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest = Manifest::parse(MAIN_TF);
+        let two = [export("org", "123"), in_interface("team-a", "a", "1"), in_interface("team-b", "b", "2")];
+        let i = build("e", &two, &manifest, "hashicorp/google", None).unwrap();
+        crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
+        for m in ["core", "team-a", "team-b"] {
+            for f in ["versions.tf", "outputs.tf", "README.md"] {
+                assert!(dir.join(DIR).join(m).join(f).exists(), "{}/{} missing", m, f);
+            }
+        }
+        assert!(dir.join("outputs.tf").exists());
+
+        let one = [export("org", "123"), in_interface("team-a", "a", "1")];
+        let i = build("e", &one, &manifest, "hashicorp/google", None).unwrap();
+        crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
+        assert!(dir.join(DIR).join("team-a").exists());
+        assert!(!dir.join(DIR).join("team-b").exists(), "the folder of a removed interface survived");
+
+        crate::write_interface(None, &dir, "e.satz").unwrap();
+        assert!(!dir.join(DIR).exists() && !dir.join("outputs.tf").exists(), "an estate that exports nothing keeps no interface");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

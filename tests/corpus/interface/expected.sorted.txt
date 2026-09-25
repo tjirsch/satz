@@ -48,7 +48,7 @@ locals {
   satz_interface = {
     interface = 1
     estate    = "corpus_interface"
-    values = {
+    core = {
       infra_folder         = google_folder.infra_folder.name
       team_folder          = google_folder.team.name
       infra_project_number = google_project.infra.number
@@ -62,64 +62,79 @@ locals {
       infra_project_id     = "acme-infra-001"
       iac_service_account  = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
     }
+    interfaces = {
+      "team-a" = {
+        team_folder_id      = google_folder.team.folder_id
+        team_project_number = google_project.infra.number
+      }
+    }
   }
 }
 
 output "infra_folder" {
   description = "The folder that holds the infrastructure project, folders/<number>"
-  value       = local.satz_interface.values.infra_folder
+  value       = local.satz_interface.core.infra_folder
 }
 
 output "team_folder" {
-  value = local.satz_interface.values.team_folder
+  value = local.satz_interface.core.team_folder
 }
 
 output "infra_project_number" {
-  value = local.satz_interface.values.infra_project_number
+  value = local.satz_interface.core.infra_project_number
 }
 
 output "provisioner_email" {
-  value = local.satz_interface.values.provisioner_email
+  value = local.satz_interface.core.provisioner_email
 }
 
 output "workload_pool_prefix" {
-  value = local.satz_interface.values.workload_pool_prefix
+  value = local.satz_interface.core.workload_pool_prefix
 }
 
 output "regions" {
-  value = local.satz_interface.values.regions
+  value = local.satz_interface.core.regions
 }
 
 output "organization_id" {
   description = "The organisation id"
-  value       = local.satz_interface.values.organization_id
+  value       = local.satz_interface.core.organization_id
 }
 
 output "customer_domain" {
   description = "The customer's primary domain"
-  value       = local.satz_interface.values.customer_domain
+  value       = local.satz_interface.core.customer_domain
 }
 
 output "customer_shortname" {
   description = "The short name project ids, bucket names and group prefixes derive from"
-  value       = local.satz_interface.values.customer_shortname
+  value       = local.satz_interface.core.customer_shortname
 }
 
 output "default_region" {
   description = "The default region for regional resources"
-  value       = local.satz_interface.values.default_region
+  value       = local.satz_interface.core.default_region
 }
 
 output "infra_project_id" {
   description = "The infrastructure project, which holds the state bucket"
-  value       = local.satz_interface.values.infra_project_id
+  value       = local.satz_interface.core.infra_project_id
 }
 
 output "iac_service_account" {
   description = "The service account the estate is applied as"
-  value       = local.satz_interface.values.iac_service_account
+  value       = local.satz_interface.core.iac_service_account
 }
----interface/versions.tf---
+
+output "team_a__team_folder_id" {
+  description = "Team A's folder number"
+  value       = local.satz_interface.interfaces["team-a"].team_folder_id
+}
+
+output "team_a__team_project_number" {
+  value = local.satz_interface.interfaces["team-a"].team_project_number
+}
+---interfaces/core/versions.tf---
 terraform {
   required_providers {
     google = {
@@ -128,7 +143,7 @@ terraform {
     }
   }
 }
----interface/main.tf---
+---interfaces/core/main.tf---
 # reads back google_folder.infra_folder; needs resourcemanager.folders.list on the parent
 data "google_active_folder" "infra_folder" {
   display_name = "Infrastructure"
@@ -145,7 +160,7 @@ data "google_active_folder" "team" {
 data "google_project" "infra" {
   project_id = "acme-infra-001"
 }
----interface/outputs.tf---
+---interfaces/core/outputs.tf---
 output "infra_folder" {
   description = "The folder that holds the infrastructure project, folders/<number>"
   value       = data.google_active_folder.infra_folder.name
@@ -199,4 +214,94 @@ output "infra_project_id" {
 output "iac_service_account" {
   description = "The service account the estate is applied as"
   value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+}
+---interfaces/team-a/versions.tf---
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "7.14.1"
+    }
+  }
+}
+---interfaces/team-a/main.tf---
+# reads back google_folder.infra_folder; needs resourcemanager.folders.list on the parent
+data "google_active_folder" "infra_folder" {
+  display_name = "Infrastructure"
+  parent       = "organizations/123456789012"
+}
+
+# reads back google_folder.team; needs resourcemanager.folders.list on the parent
+data "google_active_folder" "team" {
+  display_name = "Team"
+  parent       = data.google_active_folder.infra_folder.name
+}
+
+# reads back google_project.infra; needs resourcemanager.projects.get
+data "google_project" "infra" {
+  project_id = "acme-infra-001"
+}
+---interfaces/team-a/outputs.tf---
+output "infra_folder" {
+  description = "The folder that holds the infrastructure project, folders/<number>"
+  value       = data.google_active_folder.infra_folder.name
+}
+
+output "team_folder" {
+  value = data.google_active_folder.team.name
+}
+
+output "infra_project_number" {
+  value = data.google_project.infra.number
+}
+
+output "provisioner_email" {
+  value = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+}
+
+output "workload_pool_prefix" {
+  value = "principalSet://iam.googleapis.com/projects/${data.google_project.infra.number}/locations/global"
+}
+
+output "regions" {
+  value = ["europe-west3", "europe-west4"]
+}
+
+output "organization_id" {
+  description = "The organisation id"
+  value       = "123456789012"
+}
+
+output "customer_domain" {
+  description = "The customer's primary domain"
+  value       = "example.com"
+}
+
+output "customer_shortname" {
+  description = "The short name project ids, bucket names and group prefixes derive from"
+  value       = "acme"
+}
+
+output "default_region" {
+  description = "The default region for regional resources"
+  value       = "europe-west3"
+}
+
+output "infra_project_id" {
+  description = "The infrastructure project, which holds the state bucket"
+  value       = "acme-infra-001"
+}
+
+output "iac_service_account" {
+  description = "The service account the estate is applied as"
+  value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+}
+
+output "team_folder_id" {
+  description = "Team A's folder number"
+  value       = trimprefix(data.google_active_folder.team.name, "folders/")
+}
+
+output "team_project_number" {
+  value = data.google_project.infra.number
 }

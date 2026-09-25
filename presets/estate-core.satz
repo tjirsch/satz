@@ -21,9 +21,9 @@
 // next pack, estate-map.satz: this one is the day-0 params and nothing else.
 //
 // This pack declares no resource. It publishes the day-0 answers every team beside
-// the estate needs as the estate's core exports — outputs of hcl/interface/, the
-// module a team's own HCL reads them from — so an estate has them without writing
-// an `export` of its own. Apart from those outputs, an estate that uses it and answers
+// the estate needs as the estate's core exports — outputs of every module under
+// hcl/interfaces/, the modules the teams' own HCL reads them from — so an estate has
+// them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything compiles to exactly what `satz init` would have written.
 
 pack estate_core version "2.2"

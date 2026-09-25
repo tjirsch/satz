@@ -235,7 +235,7 @@ question use_exemption_tag {
 
 question use_interface_notice {
   prompt   = "Notify the teams whose HCL reads this estate's interface when an exported value changes?"
-  why      = "Customer teams read the estate's exports through hcl/interface/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. This adds a bucket, a Pub/Sub topic and a storage notification in the infrastructure project: every apply that changes an exported value publishes one message, and a team subscribes in its own state. Turning it off later removes the topic, and every subscription on it stops receiving."
+  why      = "Customer teams read the estate's exports through hcl/interfaces/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. This adds a bucket, a Pub/Sub topic and a storage notification in the infrastructure project: every apply that changes an exported value publishes one message, and a team subscribes in its own state. Turning it off later removes the topic, and every subscription on it stops receiving."
   reversal = edit
   blast    = low
 }

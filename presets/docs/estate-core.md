@@ -26,9 +26,9 @@ Which packs make up the estate — the security-group model included — is the
 next pack, estate-map.satz: this one is the day-0 params and nothing else.
 
 This pack declares no resource. It publishes the day-0 answers every team beside
-the estate needs as the estate's core exports — outputs of hcl/interface/, the
-module a team's own HCL reads them from — so an estate has them without writing
-an `export` of its own. Apart from those outputs, an estate that uses it and answers
+the estate needs as the estate's core exports — outputs of every module under
+hcl/interfaces/, the modules the teams' own HCL reads them from — so an estate has
+them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 everything compiles to exactly what `satz init` would have written.
 
 ## Use it
@@ -149,16 +149,16 @@ _No resources — params and claims only._
 
 ## Exports
 
-Outputs of the root module and of `hcl/interface/` in every estate that uses this pack.
+Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.
 
-| output | value | description |
-|---|---|---|
-| `organization_id` | `customer_organization_id` | The organisation id |
-| `customer_domain` | `customer_domain` | The customer's primary domain |
-| `customer_shortname` | `customer_shortname` | The short name project ids, bucket names and group prefixes derive from |
-| `default_region` | `default_region` | The default region for regional resources |
-| `infra_project_id` | `infra_project_name` | The infrastructure project, which holds the state bucket |
-| `iac_service_account` | `"{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"` | The service account the estate is applied as |
+| interface | output | value | description |
+|---|---|---|---|
+| `core` | `organization_id` | `customer_organization_id` | The organisation id |
+| `core` | `customer_domain` | `customer_domain` | The customer's primary domain |
+| `core` | `customer_shortname` | `customer_shortname` | The short name project ids, bucket names and group prefixes derive from |
+| `core` | `default_region` | `default_region` | The default region for regional resources |
+| `core` | `infra_project_id` | `infra_project_name` | The infrastructure project, which holds the state bucket |
+| `core` | `iac_service_account` | `"{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"` | The service account the estate is applied as |
 
 ## Claims
 
@@ -168,7 +168,7 @@ _None — this pack proves no control by itself._
 
 | version | date | change |
 |---|---|---|
-| 2.2 | 2026-09-25 | the core exports: `organization_id`, `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id` and `iac_service_account`, each an output of the root module and of `hcl/interface/`, all known at compile time. An estate that uses the pack gains `outputs.tf` and `hcl/interface/`; its resources do not change |
+| 2.2 | 2026-09-25 | the core exports: `organization_id`, `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id` and `iac_service_account`, each a core export — an output of the root module and of every module under `hcl/interfaces/` — all known at compile time. An estate that uses the pack gains `outputs.tf` and `hcl/interfaces/`; its resources do not change |
 | 2.1 | 2026-09-21 | `compliance_frameworks`, the catalogs this customer is HELD TO — a contract, an auditor, a regulator — as a list of catalog ids, with the question that asks for them. What an estate CLAIMS comes from its packs and is a different fact: an estate can claim CIS controls while its customer is audited against ISO 27001. The default is `["cis-gcp-5.0"]`; the values are the ids of the catalogs in `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) and a value that names no catalog is refused by the compile, with the list. `satz report-compliance <estate>` reports one section per framework named here, `satz prowler` scans for them beside the frameworks the packs claim, and a pack reads the param like any other. An estate that binds nothing keeps working: `report-compliance <framework> <estate>` is unchanged |
 | 2.0 | 2026-09-10 | the security-model choice moves to `estate_map`; this pack is the seventeen day-0 params and their questions, nothing else. A major bump because two params left — no estate in the fleet uses the pack, it exists for interview skeletons |
 | 1.0 | 2026-09-09 | first version: the seventeen day-0 params `satz init` writes, each with its `question` — what to ask, why, and what changing it later costs — plus the security-group model as two booleans and a `question oneof`. Emits nothing; exists so an interview (`satz interview --create`, the MCP tool `satz_interview`) has something to ask before an estate exists. Seven params have no possible default and block until typed; the rest offer one, and a derived default (`"{customer_shortname}-infra-001"`) is offered only once its inputs are answered |

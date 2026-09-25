@@ -480,6 +480,15 @@ mod tests {
     }
 
     #[test]
+    fn an_interface_block_indents_its_exports_and_aligns_them() {
+        let src = "interface \"team-a\" {\nexport \"a\" = \"1\"\n    export \"long_name\"=2 description \"d\"\n}\n";
+        assert_eq!(
+            fmt(src),
+            "interface \"team-a\" {\n  export \"a\"         = \"1\"\n  export \"long_name\" = 2 description \"d\"\n}\n"
+        );
+    }
+
+    #[test]
     fn a_file_the_parser_refuses_is_not_formatted() {
         assert!(format("a = \"open\n").is_err());
     }

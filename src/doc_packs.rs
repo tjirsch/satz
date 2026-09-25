@@ -907,13 +907,20 @@ fn render(
     }
     // What the pack publishes to the HCL beside an estate that uses it: outputs of the
     // root module and of `hcl/interface/`.
-    if !file.exports.is_empty() {
+    let exports: Vec<(&str, &satz_core::satz::ExportDecl)> = file
+        .exports
+        .iter()
+        .map(|x| (satz_core::satz::CORE_INTERFACE, x))
+        .chain(file.interfaces.iter().flat_map(|i| i.exports.iter().map(move |x| (i.name.as_str(), x))))
+        .collect();
+    if !exports.is_empty() {
         md.push_str("## Exports\n\n");
-        md.push_str("Outputs of the root module and of `hcl/interface/` in every estate that uses this pack.\n\n");
-        md.push_str("| output | value | description |\n|---|---|---|\n");
-        for x in &file.exports {
+        md.push_str("Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.\n\n");
+        md.push_str("| interface | output | value | description |\n|---|---|---|---|\n");
+        for (interface, x) in exports {
             md.push_str(&format!(
-                "| `{}` | `{}` | {} |\n",
+                "| `{}` | `{}` | `{}` | {} |\n",
+                interface,
                 x.name,
                 value_text(&x.value).replace('|', "\\|"),
                 x.description.as_deref().unwrap_or("").replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;"),

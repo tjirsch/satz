@@ -31,6 +31,10 @@
   "notice" @context
   name: (identifier) @name) @item
 
+(interface
+  "interface" @context
+  name: (string) @name) @item
+
 (export
   "export" @context
   name: (string) @name) @item

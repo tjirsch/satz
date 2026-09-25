@@ -310,7 +310,7 @@ need it for its params: `init` binds every param from its flags, and a bound par
 answered question.
 
 **The core exports.** An estate that uses the pack publishes these to the HCL teams
-write beside it — outputs of `hcl/outputs.tf` and of the module `hcl/interface/`
+write beside it — outputs of `hcl/outputs.tf` and of every module under `hcl/interfaces/`
 ([workflows](../docs/workflows.md#customer-teams-beside-the-estate)), all known at
 compile time:
 
@@ -1576,12 +1576,13 @@ not the state bucket (`{customer_shortname}-infra-001-interface`), a Pub/Sub top
 (`{customer_shortname}-satz-interface`), `roles/pubsub.publisher` on the topic for Cloud
 Storage's service agent, a storage notification for `OBJECT_FINALIZE` on the bucket, and
 the object `interface.json`, whose content is the root module's `local.satz_interface` —
-every exported value — as JSON. Terraform rewrites the object only when its content
+every exported value, the core ones under `core` and each interface's under
+`interfaces."<name>"` — as JSON. Terraform rewrites the object only when its content
 changes: an apply that changes an exported value publishes one message, an apply that
 changes nothing publishes none.
 
 It exports `interface_topic`, the topic's id, and `interface_object`, the object's
-`gs://` URL, so the interface module and its README carry them. A team subscribes in its
+`gs://` URL, as core exports, so every interface module and its README carry them. A team subscribes in its
 own state with a `google_pubsub_subscription` on the topic — a push to its CI's webhook,
 or a pull from a runner — and reads the new values from the object the message names.
 
@@ -1591,12 +1592,12 @@ which the compile notes on every transpile.
 
 ## interface-lookups.yaml
 
-Not a pack: how the interface module `hcl/interface/` reads back what an estate emits,
+Not a pack: how the interface modules under `hcl/interfaces/` read back what an estate emits,
 per resource type — the data source, the keys it is looked up by, the read permission the
 lookup needs, the attributes it yields, and the attributes that derive from what satz
 writes (a service account's `email`, a bucket's `url`). The table is compiled into satz;
 an export that needs a lookup of a type it has no row for is refused at compile, naming
-the type ([language §6.17](../docs/language.md#617-export--what-the-estate-publishes-to-the-hcl-beside-it)).
+the type ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
 
 ## import-config.yaml
 
@@ -2317,7 +2318,7 @@ the private history recorded them.
 |---|---|---|---|
 | `interface_notice` | 1.0 | 2026-09-25 | first version: tells the teams whose HCL reads the estate's interface when an exported value changes. A bucket, a Pub/Sub topic, the grant that lets Cloud Storage's service agent publish to it, and a storage notification in the infrastructure project; the object `interface.json` holds the exported values, rewritten only when one changes, so each apply that changes an export publishes one message. Exports `interface_topic` and `interface_object` |
 | `estate_map` | 2.3 | 2026-09-25 | offers `interface-notice` on `use_interface_notice`, off by default, with the question that asks for it |
-| `estate_core` | 2.2 | 2026-09-25 | the core exports: `organization_id`, `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id` and `iac_service_account`, each an output of the root module and of `hcl/interface/`, all known at compile time. An estate that uses the pack gains `outputs.tf` and `hcl/interface/`; its resources do not change |
+| `estate_core` | 2.2 | 2026-09-25 | the core exports: `organization_id`, `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id` and `iac_service_account`, each a core export — an output of the root module and of every module under `hcl/interfaces/` — all known at compile time. An estate that uses the pack gains `outputs.tf` and `hcl/interfaces/`; its resources do not change |
 | `estate_map` | 2.2 | 2026-09-22 | the S1 model is offered as one entry, `security-group-models/s1-security-groups.satz`, at the top level: the two `by_hand` entries for `s1-group-definitions.satz` and `s1-group-permissions.satz` are gone with the packs, and the billing grants require one of the two models rather than one of three files |
 | `billing_export` | 1.0 | 2026-09-22 | Cloud Billing usage and cost data exported to BigQuery: a project of its own, the BigQuery API on it, the dataset, and Google's export account's dataEditor on it — with that account contributed to `allowed_policy_member_subjects`, and a notice for the console step Cloud Billing has no API for |
 | `estate_map` | 2.1 | 2026-09-22 | offers `billing-export` on `use_billing_export`, off by default |

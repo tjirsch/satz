@@ -345,8 +345,10 @@ pub struct NoticeDecl {
 /// `export "<name>" = <value> [description "…"]` — one value the estate publishes to
 /// the HCL that customer teams write beside it.
 ///
-/// Every export becomes an output of the generated module `hcl/interface/` and of the
-/// root module's `outputs.tf`. The value is a param, a literal, or a string that carries
+/// An export at the top level of a file is a CORE export: an output of every interface
+/// module under `hcl/interfaces/`. One inside `interface "<name>" { … }` belongs to that
+/// interface's module alone. Every export is also an output of the root module's
+/// `outputs.tf`. The value is a param, a literal, or a string that carries
 /// `${{type.label.attr}}` references to what the estate emits; the compile decides per
 /// reference whether the value is known now (a literal output) or only in the cloud (a
 /// `data` source the consumer's plan reads). An export is a statement and no resource:
@@ -362,11 +364,33 @@ pub struct ExportDecl {
     pub line: usize,
 }
 
-/// An export name is an output name a consumer writes as `module.satz.<name>`.
+/// An export name is an output name a consumer writes as `module.satz.<name>`. `__` is
+/// the separator of the root module's `<interface>__<export>`, so no export name holds it.
 pub fn valid_export_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && !name.contains("__")
+}
+
+/// The interface that holds the top-level exports, and the folder its module is written to.
+pub const CORE_INTERFACE: &str = "core";
+
+/// An interface name is the folder `hcl/interfaces/<name>/` a team sources.
+pub fn valid_interface_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// `interface "<name>" { export … }` — the exports one team reads, written to their own
+/// module `hcl/interfaces/<name>/` beside the core exports every module carries. The same
+/// name in two files is one interface: their exports merge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceDecl {
+    pub name: String,
+    pub exports: Vec<ExportDecl>,
+    pub line: usize,
 }
 
 #[derive(Debug, Default)]
@@ -389,8 +413,10 @@ pub struct File {
     pub offers: Vec<OffersDecl>,
     /// `notice` statements — only a pack has any
     pub notices: Vec<NoticeDecl>,
-    /// `export` statements, in file order
+    /// top-level `export` statements — the core exports — in file order
     pub exports: Vec<ExportDecl>,
+    /// `interface` blocks, in file order
+    pub interfaces: Vec<InterfaceDecl>,
 }
 
 /// A control claim as language syntax:
@@ -1495,6 +1521,53 @@ impl P {
         Ok(ExportDecl { name, value, description, line })
     }
 
+    fn interface_stmt(&mut self, line: usize) -> Result<InterfaceDecl, SatzError> {
+        let name = match self.next() {
+            Some(Tok::Str(parts)) => lit_str(&parts, line, "interface: the name")?,
+            other => return err(line, format!("interface: expected a quoted name, found {:?}", other)),
+        };
+        if !valid_interface_name(&name) {
+            return err(
+                line,
+                format!(
+                    "interface \"{}\": the name is the folder hcl/interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter",
+                    name
+                ),
+            );
+        }
+        if name == CORE_INTERFACE {
+            return err(
+                line,
+                format!("interface \"{}\": the name is reserved — the exports outside every `interface` block are the core ones", name),
+            );
+        }
+        self.expect(Tok::LBrace, "'{' after the interface name")?;
+        let mut exports: Vec<ExportDecl> = Vec::new();
+        loop {
+            let at = self.line();
+            match self.next() {
+                Some(Tok::RBrace) => break,
+                Some(Tok::Ident(id)) if id == "export" => {
+                    let x = self.export_stmt(at)?;
+                    if let Some(first) = exports.iter().find(|e| e.name == x.name) {
+                        return err(
+                            x.line,
+                            format!(
+                                "interface \"{}\": export \"{}\" is declared twice (line {} and line {})",
+                                name, x.name, first.line, x.line
+                            ),
+                        );
+                    }
+                    exports.push(x);
+                }
+                other => {
+                    return err(at, format!("interface \"{}\": holds `export` statements only, found {:?}", name, other))
+                }
+            }
+        }
+        Ok(InterfaceDecl { name, exports, line })
+    }
+
     fn use_stmt(&mut self, line: usize) -> Result<Entry, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => match parts.as_slice() {
@@ -1598,7 +1671,7 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "export", "hcl", "notice", "offers", "pack", "params", "question", "suppress", "use"];
+    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "question", "suppress", "use"];
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
@@ -1752,6 +1825,22 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                     );
                 }
                 file.exports.push(x);
+            }
+            // Before the generic arm, which would read `interface "x" { … }` as a resource
+            // map named `interface` and its exports as entries.
+            Some(Tok::Ident(id)) if id == "interface" => {
+                p.next();
+                let i = p.interface_stmt(line)?;
+                if let Some(first) = file.interfaces.iter().find(|x| x.name == i.name) {
+                    return err(
+                        i.line,
+                        format!(
+                            "interface \"{}\": declared twice in this file (line {} and line {}) — write its exports in one block",
+                            i.name, first.line, i.line
+                        ),
+                    );
+                }
+                file.interfaces.push(i);
             }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
@@ -2139,10 +2228,13 @@ pub fn canonical_parts(file: &File) -> Canonical {
     }
     // An export changes what the estate emits (an output), so it belongs to the body.
     // The order of the statements means nothing: by name.
-    let mut exports: Vec<&ExportDecl> = file.exports.iter().collect();
-    exports.sort_by(|a, b| a.name.cmp(&b.name));
-    for x in exports {
-        body.push_str(&format!("export({}|{}|{})\n", x.name, canon_value(&x.value), x.description.as_deref().unwrap_or("")));
+    let mut exports: Vec<(&str, &ExportDecl)> = file.exports.iter().map(|x| (CORE_INTERFACE, x)).collect();
+    for i in &file.interfaces {
+        exports.extend(i.exports.iter().map(|x| (i.name.as_str(), x)));
+    }
+    exports.sort_by(|a, b| (a.0, &a.1.name).cmp(&(b.0, &b.1.name)));
+    for (i, x) in exports {
+        body.push_str(&format!("export({}|{}|{}|{})\n", i, x.name, canon_value(&x.value), x.description.as_deref().unwrap_or("")));
     }
     Canonical { params, body }
 }
@@ -2549,11 +2641,37 @@ action "scc-services" {
     }
 
     #[test]
+    fn an_interface_holds_exports_and_is_named_like_a_folder() {
+        let f = parse("estate e\ninterface \"team-a\" {\n  export \"folder\" = \"x\" description \"d\"\n  export \"n\" = 1\n}\n").unwrap();
+        assert_eq!(f.interfaces.len(), 1);
+        assert_eq!(f.interfaces[0].name, "team-a");
+        assert_eq!(f.interfaces[0].exports.len(), 2);
+        assert_eq!(f.interfaces[0].exports[0].description.as_deref(), Some("d"));
+        assert!(f.exports.is_empty(), "an export inside an interface is no core export");
+        for bad in ["Team", "1a", "team_a", ""] {
+            let e = parse(&format!("estate e\ninterface \"{}\" {{\n}}\n", bad)).unwrap_err();
+            assert!(e.msg.contains("folder"), "{}: {}", bad, e.msg);
+        }
+        let e = parse("estate e\ninterface \"core\" {\n}\n").unwrap_err();
+        assert!(e.msg.contains("reserved"), "{}", e.msg);
+        let e = parse("estate e\ninterface \"a\" {\n  x = 1\n}\n").unwrap_err();
+        assert!(e.msg.contains("`export` statements only"), "{}", e.msg);
+        let e = parse("estate e\ninterface \"a\" {\n  export \"x\" = 1\n  export \"x\" = 2\n}\n").unwrap_err();
+        assert!(e.msg.contains("declared twice"), "{}", e.msg);
+        let e = parse("estate e\ninterface \"a\" {\n}\ninterface \"a\" {\n}\n").unwrap_err();
+        assert!(e.msg.contains("declared twice in this file"), "{}", e.msg);
+        let e = parse("estate e\nexport \"a__b\" = 1\n").unwrap_err();
+        assert!(e.msg.contains("output name"), "{}", e.msg);
+        let c = canonical(&f);
+        assert!(c.contains("export(team-a|folder|\"x\"|d)"), "{}", c);
+    }
+
+    #[test]
     fn the_canonical_form_carries_the_exports_by_name() {
         let a = canonical(&parse("estate e\nexport \"b\" = \"2\"\nexport \"a\" = \"1\" description \"d\"\n").unwrap());
         let b = canonical(&parse("estate e\n\nexport \"a\" = \"1\" description \"d\"\nexport \"b\" = \"2\"\n").unwrap());
         assert_eq!(a, b, "the order of the statements means nothing");
-        assert!(a.contains("export(a|\"1\"|d)"), "{}", a);
+        assert!(a.contains("export(core|a|\"1\"|d)"), "{}", a);
         let c = canonical(&parse("estate e\nexport \"a\" = \"1\"\nexport \"b\" = \"2\"\n").unwrap());
         assert_ne!(a, c, "a description is meaning: it reaches the output");
     }
@@ -2726,6 +2844,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
         "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
+        "interface" => "estate e\ninterface \"team-a\" {\n  export \"a\" = \"1\"\n}\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
     }
 }

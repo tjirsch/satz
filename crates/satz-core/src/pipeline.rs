@@ -242,9 +242,10 @@ pub struct FrontEnd {
     /// contributed each entry. Already merged into `env` and `tfvars`; this is the
     /// record a reader is shown.
     pub contributions: Vec<Contribution>,
-    /// Declared `export`s from the estate and every file it actually `use`s, values
-    /// resolved against the finished parameter namespace, one per name. Like actions,
-    /// they bypass the fold: the emitter turns them into outputs.
+    /// Declared `export`s from the estate and every file it actually `use`s — the core
+    /// ones and those inside `interface` blocks — values resolved against the finished
+    /// parameter namespace, one per interface and name. Like actions, they bypass the
+    /// fold: the emitter turns them into outputs.
     pub exports: Vec<ResolvedExport>,
     /// The name in the estate's header.
     pub estate: Option<String>,
@@ -253,6 +254,8 @@ pub struct FrontEnd {
 /// One `export "…" = …` with its value resolved, carried with the file that declared it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedExport {
+    /// the `interface` block it stands in; `None` for a core export
+    pub interface: Option<String>,
     pub name: String,
     /// The value with every `{param}` resolved. A string may still carry `${…}`
     /// references to what the estate emits; the emitter decides what each one is.
@@ -747,32 +750,55 @@ pub fn compile_estate(
         }
     }
 
-    // The estate's own exports first, then the `use`-visit order. One name is one
-    // output: the same name with the same value and description is one export (the
-    // fold's idempotence), a different one is a hard error naming both files.
+    // The estate's own exports first, then the `use`-visit order. One name in one
+    // interface is one output: the same name with the same value and description is one
+    // export (the fold's idempotence), a different one is a hard error naming both files.
+    // The same interface in two files is one interface.
     let mut exports: Vec<ResolvedExport> = Vec::new();
-    let declared = file.exports.iter().map(|x| (file_name.to_string(), x)).chain(walked_exports.iter().map(|(f, x)| (f.clone(), x)));
-    for (f, x) in declared {
+    let declared = exports_of(&file, file_name).into_iter().chain(walked_exports);
+    for (f, interface, x) in declared {
         let r = ResolvedExport {
+            interface,
             name: x.name.clone(),
             value: resolve_value(&x.value, &tfvars, &f, x.line)?,
             description: x.description.clone(),
             file: f,
             line: x.line,
         };
-        match exports.iter().find(|e| e.name == r.name) {
+        match exports.iter().find(|e| e.name == r.name && e.interface == r.interface) {
             Some(first) if first.value == r.value && first.description == r.description => {}
             Some(first) => {
+                let what = match &r.interface {
+                    Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),
+                    None => format!("export \"{}\"", r.name),
+                };
                 return perr(
                     &r.file,
                     r.line,
                     format!(
-                        "export \"{}\": two different values — {}:{} and {}:{}; one name is one output, so keep one of them or rename the other",
-                        r.name, first.file, first.line, r.file, r.line
+                        "{}: two different values — {}:{} and {}:{}; one name is one output, so keep one of them or rename the other",
+                        what, first.file, first.line, r.file, r.line
                     ),
-                )
+                );
             }
             None => exports.push(r),
+        }
+    }
+    // Every interface module carries the core exports, so a team's export of the same
+    // name would be two outputs of one name in one module.
+    for r in exports.iter().filter(|e| e.interface.is_some()) {
+        if let Some(core) = exports.iter().find(|e| e.interface.is_none() && e.name == r.name) {
+            return perr(
+                &r.file,
+                r.line,
+                format!(
+                    "interface \"{}\": export \"{}\" has the name of a core export ({}:{}), which every interface carries — rename it",
+                    r.interface.as_deref().unwrap_or_default(),
+                    r.name,
+                    core.file,
+                    core.line
+                ),
+            );
         }
     }
 
@@ -1356,7 +1382,17 @@ struct Walk<'a> {
     actions: Vec<(String, satz::ActionDecl)>,
     /// Exports collected from every file the walk visits, unresolved for the reason
     /// actions are.
-    exports: Vec<(String, satz::ExportDecl)>,
+    exports: Vec<(String, Option<String>, satz::ExportDecl)>,
+}
+
+/// A file's exports with the file and the interface each stands in (`None`: core).
+fn exports_of(file: &satz::File, file_name: &str) -> Vec<(String, Option<String>, satz::ExportDecl)> {
+    let mut out: Vec<(String, Option<String>, satz::ExportDecl)> =
+        file.exports.iter().map(|x| (file_name.to_string(), None, x.clone())).collect();
+    for i in &file.interfaces {
+        out.extend(i.exports.iter().map(|x| (file_name.to_string(), Some(i.name.clone()), x.clone())));
+    }
+    out
 }
 
 impl Walk<'_> {
@@ -1462,9 +1498,7 @@ impl Walk<'_> {
 
     /// After the guard too: a pack switched off publishes nothing.
     fn absorb_exports(&mut self, file: &satz::File, file_name: &str) {
-        for x in &file.exports {
-            self.exports.push((file_name.to_string(), x.clone()));
-        }
+        self.exports.extend(exports_of(file, file_name));
     }
 
     /// After the guard too: a pack switched off asks for nothing to be run.
@@ -2588,6 +2622,39 @@ mod estate_channel_tests {
 
         let e = compile_estate("t.satz", "estate t\n\nexport \"x\" = nobody\n", &Table, &load).err().expect("refused");
         assert!(e.msg.contains("unknown param 'nobody'"), "{}", e.msg);
+    }
+
+    /// One interface name in two files is one interface: the exports merge, a different
+    /// value for one name is refused naming both files, and a team export may not take a
+    /// core export's name.
+    #[test]
+    fn an_interface_merges_across_files_and_may_not_shadow_a_core_export() {
+        let load = |p: &str| -> Result<String, String> {
+            match p {
+                "a.satz" => Ok("pack a version \"1.0\"\n\ninterface \"team-a\" {\n  export \"bucket\" = \"b\"\n}\n".into()),
+                "clash.satz" => Ok("pack clash version \"1.0\"\n\ninterface \"team-a\" {\n  export \"folder\" = \"other\"\n}\n".into()),
+                "shadow.satz" => Ok("pack shadow version \"1.0\"\n\ninterface \"team-b\" {\n  export \"domain\" = \"x\"\n}\n".into()),
+                other => Err(format!("no load: {}", other)),
+            }
+        };
+        let estate = "estate t\n\nexport \"domain\" = \"example.com\"\n\ninterface \"team-a\" {\n  export \"folder\" = \"f\"\n}\n\nuse \"a.satz\"\n";
+        let fe = compile_estate("t.satz", estate, &Table, &load).unwrap();
+        let team: Vec<&str> = fe.exports.iter().filter(|e| e.interface.as_deref() == Some("team-a")).map(|e| e.name.as_str()).collect();
+        assert_eq!(team, ["folder", "bucket"]);
+        assert_eq!(fe.exports.iter().filter(|e| e.interface.is_none()).count(), 1);
+
+        let e = compile_estate("t.satz", &format!("{}use \"clash.satz\"\n", estate), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("interface \"team-a\": export \"folder\": two different values") && e.msg.contains("clash.satz:"), "{}", e.msg);
+
+        let e = compile_estate("t.satz", &format!("{}use \"shadow.satz\"\n", estate), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("name of a core export (t.satz:3)"), "{}", e.msg);
+        assert_eq!(e.file, "shadow.satz");
+    }
+
+    #[test]
+    fn a_core_export_and_an_interface_export_of_different_names_live_side_by_side() {
+        let fe = compile_estate("t.satz", "estate t\n\nexport \"a\" = \"1\"\ninterface \"x\" {\n  export \"b\" = \"2\"\n}\ninterface \"y\" {\n  export \"b\" = \"3\"\n}\n", &Table, &|_| Err("none".into())).unwrap();
+        assert_eq!(fe.exports.len(), 3, "the same name in two interfaces is two outputs");
     }
 
     struct Table;
