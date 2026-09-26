@@ -1,0 +1,138 @@
+// A shared VPC in a host project of its own: one network, the subnets the projects ask for,
+// and a network firewall policy whose rules they ask for.
+//
+//   use "presets/shared-network.satz" when use_shared_network
+//
+// The host project, the network and the policy are the estate's. The subnets and the
+// firewall rules are lists a project adds to through a request — a small pack of
+// `contributes_shared_vpc_subnets` / `contributes_shared_firewall_rules` entries, checked
+// with `satz check-request` and vendored into the estate by pull request — and `each`
+// writes one resource per entry. A project's Google project joins the network as a
+// service project in the project's own state, at the attach point
+// `network_host_project` (the attaching identity needs Shared VPC Admin); it uses a subnet
+// once a grant of `roles/compute.networkUser` on it exists, at the attach point
+// `shared_subnets`.
+
+pack shared_network version "1.0"
+
+params {
+  network_host_project_id     = "{customer_shortname}-net-host-001"
+  // The folder the host project is created in. Empty is the organisation. A folder the
+  // estate declares is named by reference, `google_folder.<label>.name`; one that
+  // already exists by its id.
+  network_host_project_folder = ""
+  shared_network_name         = "shared"
+  // What the projects ask for: one subnet per entry, `{ name cidr region }`.
+  shared_vpc_subnets          = []
+  // One rule of the network firewall policy per entry,
+  // `{ name priority direction action description match }` — `match` is the policy
+  // rule's `match` block as an object, `{ src_ip_ranges = [ … ] layer4_configs = [ { ip_protocol ports } ] }`.
+  shared_firewall_rules       = []
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question network_host_project_id {
+  prompt   = "The Google project that hosts the shared VPC"
+  why      = "A project id is immutable. Changing it later creates a second host project and a second network, and every project attached to the first stays there."
+  reversal = recreate
+  blast    = high
+}
+
+question network_host_project_folder {
+  prompt   = "The folder the host project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It decides the policies and the grants the host project inherits. Changing it afterwards moves a live project between parents."
+  reversal = edit
+  blast    = low
+}
+
+// ---- what a project may ask for ---------------------------------------------------
+
+request shared_vpc_subnets {
+  key         = "name"
+  fields      = ["name", "cidr", "region"]
+  description = "A subnet of the shared VPC in the host project: its name, its primary range and its region"
+}
+
+request shared_firewall_rules {
+  key         = "name"
+  fields      = ["name", "priority", "direction", "action", "description", "match"]
+  description = "A rule of the shared VPC's network firewall policy: priority, INGRESS or EGRESS, allow or deny, and its match block"
+}
+
+// ---- the host project, the network and its policy -----------------------------------
+
+google_project {
+  network_host {
+    project_id      = network_host_project_id
+    name            = network_host_project_id
+    folder_id       = network_host_project_folder
+    billing_account = billing_account_infra
+    project_service = [
+      "compute.googleapis.com",
+    ]
+  }
+}
+
+google_compute_shared_vpc_host_project {
+  host {
+    project = "${{google_project.network_host.project_id}}"
+  }
+}
+
+google_compute_network {
+  shared {
+    name                    = shared_network_name
+    project                 = "${{google_project.network_host.project_id}}"
+    auto_create_subnetworks = false
+    routing_mode            = "GLOBAL"
+  }
+}
+
+google_compute_subnetwork {
+  each shared_vpc_subnets by name {
+    name                     = "{each.name}"
+    ip_cidr_range            = each.cidr
+    region                   = each.region
+    network                  = "${{google_compute_network.shared.id}}"
+    project                  = "${{google_project.network_host.project_id}}"
+    private_ip_google_access = true
+  }
+}
+
+google_compute_network_firewall_policy {
+  shared {
+    name    = "{shared_network_name}-policy"
+    project = "${{google_project.network_host.project_id}}"
+  }
+}
+
+google_compute_network_firewall_policy_association {
+  shared {
+    name              = "{shared_network_name}-policy"
+    attachment_target = "${{google_compute_network.shared.id}}"
+    firewall_policy   = "${{google_compute_network_firewall_policy.shared.name}}"
+    project           = "${{google_project.network_host.project_id}}"
+  }
+}
+
+google_compute_network_firewall_policy_rule {
+  each shared_firewall_rules by name {
+    firewall_policy = "${{google_compute_network_firewall_policy.shared.name}}"
+    project         = "${{google_project.network_host.project_id}}"
+    rule_name       = "{each.name}"
+    priority        = each.priority
+    direction       = each.direction
+    action          = each.action
+    description     = each.description
+    match           = each.match
+  }
+}
+
+// ---- what the projects read ---------------------------------------------------------
+
+interface "network" {
+  export "network_host_project" = "${{google_project.network_host.project_id}}" attach ["google_compute_shared_vpc_service_project"] description "The Google project that hosts the shared VPC — a project attaches its own as a service project"
+  export "shared_network"       = "${{google_compute_network.shared.id}}" description "The shared VPC network, projects/<host>/global/networks/<name>"
+  export "shared_subnets"       = all google_compute_subnetwork under google_project.network_host attach ["google_compute_subnetwork_iam_member"] description "Every subnet of the shared VPC, by name — a project grants roles/compute.networkUser on its own"
+}

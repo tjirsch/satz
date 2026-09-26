@@ -103,6 +103,7 @@ use "presets/scc/scc-findings-mail.satz"
 use "presets/scc/scc-findings-siem.satz"
 use "presets/scc/scc-export.satz"
 use "presets/billing-export.satz"
+use "presets/shared-network.satz"
 
 use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-sentinel.satz"
