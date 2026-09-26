@@ -504,6 +504,32 @@ from the credentials.
   `export "workload_folder"` line: the folder form writes `folder_id`, the organisation
   form `org_id`, and an estate that publishes neither is refused, naming what writes it.
 
+## Amendment — `all … under`, and `private` as a statement
+
+A project's natural set is what stands under its folder, and `all <type>` published the
+whole estate's; and `private = true` is a body key, so keeping a pack's resource out of an
+`all` map meant forking the pack for one key — a fork whose whole diff is a param.
+
+**`export "<name>" = all <type> under <folder or project>` keeps the resources placed under
+that block, at any depth** (`Manifest::placed_under`): the chain a resource's
+`folder_id`, `parent` or `project` writes, by reference or by the Google project whose
+`project_id` a literal `project` names. An address that is no folder or project of the
+estate is refused, naming the ones it declares. A folder a literal `parent` names satz
+does not declare, so the chain ends there.
+
+**`private <type>.<label>` is a statement of the estate's own file** that marks a
+resource private exactly as the body key does — `all` skips it, an export naming it is
+refused, `interface.satz` carries none of it. One the estate does not emit is an error (a
+stale address keeps nothing out, like a suppression that matches nothing); a used file
+that carries one is refused (`Used::EstateOnly`, as `suppress`); inside a block it is
+refused as a statement in a block. The body key stays: `satz init` writes it on the state
+bucket and the IaC service account, where the resource is the estate's own.
+
+- *A position-based filter keyword per type* (`all google_project in …`) was not chosen:
+  `under` reads as the placement it is, and one keyword serves folders and projects.
+- *A per-resource "exportable" marker* stays rejected: nothing leaves the estate unless an
+  export names it, so the opt-out is the only marker needed.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

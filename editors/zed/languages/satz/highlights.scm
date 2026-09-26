@@ -21,9 +21,9 @@
   "question" "oneof"
   "action"
   "notice"
-  "export" "description" "attach" "all"
+  "export" "description" "attach" "all" "under"
   "interface" "common"
-  "suppress" "role"
+  "suppress" "role" "private"
   "hcl" "trust"
 ] @keyword
 (coverage) @keyword

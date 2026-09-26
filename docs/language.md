@@ -1970,11 +1970,17 @@ interface "archive" {
   Google project's `project_id`, a bucket's `name`, a service account's `email`, a network's or a
   topic's `id` — static where satz writes it, a lookup where the cloud knows it. A type the
   table has no row for is refused, listing the rows; a type the estate emits none of is an
-  empty map. The README lists the map's keys. A resource whose body says `private = true`
-  is left out of the map and out of everything written for a project, and an export whose
-  value names it is refused: the state bucket and the IaC service account of the estate
-  `satz init` writes carry it. A label is a key projects index by, so a pack version that
-  renames one is a breaking change for them.
+  empty map. The README lists the map's keys. `all <type> under <folder or project>`
+  (`all google_project under google_folder.team_a`) keeps the resources placed under that
+  folder or project, at any depth — through `folder_id`, `parent` or `project`, by
+  reference or by the project id — and refuses an address that is no folder or project
+  of the estate. A resource whose body says `private = true` is left out of the map and
+  out of everything written for a project, and an export whose value names it is refused:
+  the state bucket and the IaC service account of the estate `satz init` writes carry it.
+  `private <type>.<label>`, a statement of the estate's own file, does the same for any
+  resource — a pack's too, without forking the pack; one the estate does not emit is an
+  error, and a used file that carries one is refused. A label is a key projects index by,
+  so a pack version that renames one is a breaking change for them.
 - **`description "…"`** follows the value on the same statement and becomes the
   output's `description` and the README's.
 - **`attach ["<resource type>", …]`** follows the value too, before or after the
@@ -2469,6 +2475,8 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | add a pack's entries to another file's list param | `params { contributes_allowed_policy_member_subjects = ["serviceAccount:…"] }` |
 | publish a value to the projects beside the estate | `export "infra_folder" = "${{google_folder.infra.name}}" description "…"` |
 | publish values to one project's interface alone | `interface "payments" { export "folder" = "${{google_folder.payments.name}}" }` |
+| publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
+| keep a pack's resource out of every export | `private google_storage_bucket.logs` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
 | comment | `#`, `//`, `/* … */` |

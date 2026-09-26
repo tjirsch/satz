@@ -927,6 +927,12 @@ interface "payments" {
 }
 ```
 
+A project's natural set is often what stands under its folder:
+`export "team_projects" = all google_project under google_folder.team_a` publishes that
+map, and a Google project added under the folder later arrives as a new key. `private
+google_storage_bucket.logs` in the estate keeps one resource — a pack's included — out of
+every export.
+
 `satz interfaces acme.satz --format text --out -` lists every export and interface there
 is to pick from. `--use-interface network` adds a `use interface` line to the project's
 interface, `--export archive.archive_project_id` writes that export into it again as its

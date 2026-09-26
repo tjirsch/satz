@@ -369,6 +369,17 @@ pub struct ExportDecl {
     /// in its own state against the exported object — an attach point. Empty: the export
     /// is read, nothing more.
     pub attach: Vec<String>,
+    /// `all <type> under <folder or project>`: the address of the folder or project the
+    /// map's resources are placed under
+    pub under: Option<String>,
+    pub line: usize,
+}
+
+/// `private <type>.<label>`: the estate keeps that resource — a pack's too — out of every
+/// export, as `private = true` in its body would. Read from the estate's own file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrivateDecl {
+    pub address: String,
     pub line: usize,
 }
 
@@ -564,6 +575,8 @@ pub struct File {
     pub items: Vec<Entry>,
     pub claims: Vec<ClaimDecl>,
     pub suppressions: Vec<Suppression>,
+    /// `private <type>.<label>` statements, in source order
+    pub privates: Vec<PrivateDecl>,
     pub hcl_blocks: Vec<HclBlock>,
     pub actions: Vec<ActionDecl>,
     pub questions: Vec<QuestionDecl>,
@@ -1691,17 +1704,36 @@ impl P {
         // of that name
         let all = match (self.toks.get(self.i), self.toks.get(self.i + 1)) {
             (Some((Tok::Ident(a), l1)), Some((Tok::Ident(t), l2))) if a == "all" && l1 == l2 && !matches!(t.as_str(), "attach" | "description") => {
-                Some(t.clone())
+                Some((t.clone(), *l2))
             }
             _ => None,
         };
+        let mut under = None;
         let value = match all {
-            Some(t) => {
+            Some((t, at)) => {
                 self.next();
                 self.next();
                 let ident = t.len() > "google_".len() && t.starts_with("google_") && t.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
                 if !ident {
                     return err(line, format!("export \"{}\" = all {}: `all` takes a provider resource type, `all google_…`", name, t));
+                }
+                // `under <folder or project>`, on the line of the type
+                if let Some((Tok::Ident(u), lu)) = self.toks.get(self.i) {
+                    if u == "under" && *lu == at {
+                        self.next();
+                        let target = match self.next() {
+                            Some(Tok::Ident(a)) => a,
+                            other => return err(line, format!("export \"{}\" = all {} under: expected the folder or project it stands under, `google_folder.<label>`, found {:?}", name, t, other)),
+                        };
+                        let shape = match target.split_once('.') {
+                            Some((ty, label)) => matches!(ty, "google_folder" | "google_project") && !label.is_empty() && !label.contains('.'),
+                            None => false,
+                        };
+                        if !shape {
+                            return err(line, format!("export \"{}\" = all {} under {}: `under` names a folder or a project of the estate, `google_folder.<label>` or `google_project.<label>`", name, t, target));
+                        }
+                        under = Some(target);
+                    }
                 }
                 ExportValue::All(t)
             }
@@ -1738,7 +1770,7 @@ impl P {
                 _ => break,
             }
         }
-        Ok(ExportDecl { name, value, description, attach: attach.unwrap_or_default(), line })
+        Ok(ExportDecl { name, value, description, attach: attach.unwrap_or_default(), under, line })
     }
 
     /// `["<resource type>", …]` after `attach`: at least one, each a provider resource type
@@ -2014,7 +2046,7 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "question", "suppress", "use"];
+    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "private", "question", "suppress", "use"];
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
@@ -2207,6 +2239,26 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
                 file.interfaces.push(i);
             }
+            // `private <type>.<label>`: a word with a dot follows, on the same line — a
+            // top-level map named `private` is followed by `{`
+            Some(Tok::Ident(id)) if id == "private" && matches!(p.toks.get(p.i + 1), Some((Tok::Ident(a), l)) if a.contains('.') && *l == line) => {
+                p.next();
+                let address = match p.next() {
+                    Some(Tok::Ident(a)) => a,
+                    other => return err(line, format!("private: expected `<resource type>.<label>`, found {:?}", other)),
+                };
+                let shape = match address.split_once('.') {
+                    Some((ty, label)) => ty.starts_with("google_") && !label.is_empty() && !label.contains('.'),
+                    None => false,
+                };
+                if !shape {
+                    return err(line, format!("private {}: the statement names one resource of the estate, `google_<type>.<label>`", address));
+                }
+                if let Some(first) = file.privates.iter().find(|x| x.address == address) {
+                    return err(line, format!("private {}: written twice (line {} and line {})", address, first.line, line));
+                }
+                file.privates.push(PrivateDecl { address, line });
+            }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
                 let tf_type = match p.next() {
@@ -2384,6 +2436,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
         (!file.params.is_empty(), "`params`"),
         (!file.claims.is_empty(), "a `claim`"),
         (!file.suppressions.is_empty(), "a `suppress`"),
+        (!file.privates.is_empty(), "a `private`"),
         (!file.hcl_blocks.is_empty(), "an `hcl` block"),
         (!file.actions.is_empty(), "an `action`"),
         (!file.questions.is_empty(), "a `question`"),
@@ -2775,6 +2828,9 @@ pub fn canonical_parts(file: &File) -> Canonical {
             s.role.as_ref().map(|r| canon_str(r)).unwrap_or_default()
         ));
     }
+    for x in &file.privates {
+        body.push_str(&format!("private({})\n", x.address));
+    }
     for h in &file.hcl_blocks {
         body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
     }
@@ -2803,7 +2859,7 @@ pub fn canonical_parts(file: &File) -> Canonical {
             x.name,
             match &x.value {
                 ExportValue::Value(v) => canon_value(v),
-                ExportValue::All(t) => format!("all {}", t),
+                ExportValue::All(t) => format!("all {}{}", t, x.under.as_ref().map(|u| format!(" under {}", u)).unwrap_or_default()),
             },
             x.description.as_deref().unwrap_or(""),
             x.attach.join(",")
@@ -3579,6 +3635,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "notice" => "pack p version \"1.0\"\nparams { a = false }\nnotice a {\n  text = \"t\"\n  run = \"satz adopt\"\n  severity = error\n}\n".into(),
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
+        "private" => "estate e\nprivate google_x.y\n".into(),
         "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
         "interface" => "estate e\ninterface \"team-a\" {\n  export \"a\" = \"1\"\n}\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
@@ -3751,5 +3808,26 @@ mod review_2026_08_29_tests {
         let unsaid = parse(&pack.replace("  severity = error\n", "")).unwrap();
         assert_eq!(unsaid.notices[0].severity, Severity::Warning, "a message nobody rated is said and waited for by nothing");
         assert_ne!(canonical_notices(&f), canonical_notices(&unsaid), "the severity is part of what a pack declares");
+    }
+
+    #[test]
+    fn all_takes_under_a_folder_or_project_and_private_names_one_resource() {
+        let f = parse("estate e\nexport \"team\" = all google_project under google_folder.team_a description \"d\"\nprivate google_storage_bucket.logs\n").unwrap();
+        assert_eq!(f.exports[0].value, ExportValue::All("google_project".into()));
+        assert_eq!(f.exports[0].under.as_deref(), Some("google_folder.team_a"));
+        assert_eq!(f.exports[0].description.as_deref(), Some("d"));
+        assert_eq!(f.privates, [PrivateDecl { address: "google_storage_bucket.logs".into(), line: 3 }]);
+        let e = parse("estate e\nexport \"x\" = all google_project under google_storage_bucket.b\n").unwrap_err();
+        assert!(e.msg.contains("names a folder or a project"), "{}", e.msg);
+        let e = parse("estate e\nprivate google_storage_bucket.logs\nprivate google_storage_bucket.logs\n").unwrap_err();
+        assert!(e.msg.contains("written twice"), "{}", e.msg);
+        let e = parse("estate e\nprivate bucket.logs\n").unwrap_err();
+        assert!(e.msg.contains("google_<type>.<label>"), "{}", e.msg);
+        // a pack's drift sees both
+        let a = canonical_parts(&parse("estate e\nexport \"x\" = all google_project\n").unwrap());
+        let b = canonical_parts(&parse("estate e\nexport \"x\" = all google_project under google_folder.f\n").unwrap());
+        assert_ne!(a, b);
+        let c = canonical_parts(&parse("estate e\nprivate google_storage_bucket.logs\n").unwrap());
+        assert_ne!(canonical_parts(&parse("estate e\n").unwrap()), c);
     }
 }

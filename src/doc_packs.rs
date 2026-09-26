@@ -940,7 +940,7 @@ fn render(
                 x.name,
                 match &x.value {
                     satz_core::satz::ExportValue::Value(v) => value_text(v),
-                    satz_core::satz::ExportValue::All(t) => format!("all {}", t),
+                    satz_core::satz::ExportValue::All(t) => format!("all {}{}", t, x.under.as_ref().map(|u| format!(" under {}", u)).unwrap_or_default()),
                 }
                 .replace('|', "\\|"),
                 {
