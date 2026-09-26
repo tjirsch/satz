@@ -8,6 +8,7 @@ mod source_gate;
 mod emit_shared;
 mod emitter;
 mod interface;
+mod interface_changes;
 mod consumer;
 mod manifest;
 mod state_migration;
@@ -3851,6 +3852,9 @@ pub(crate) fn write_interface(
         )
         .into());
     }
+    // the interface files the last transpile left, by name: what each `CHANGES.md` is
+    // diffed against — read before the directory goes
+    let previous = crate::interface_changes::previous(interfaces_dir)?;
     let outputs = dir.join("outputs.tf");
     if outputs.exists() {
         fsx::remove_file(&outputs)?;
@@ -3906,6 +3910,23 @@ pub(crate) fn write_interface(
                 fsx::write(&p, bytes)?;
             }
             written.push(p);
+        }
+        // what this transpile changed in each interface, for a project that reads it —
+        // beside the README and outside the hash, which is the interface's content and
+        // not the state it replaced
+        for m in &members {
+            let Some(old) = previous.get(m) else { continue };
+            let text = std::str::from_utf8(&files[&format!("{}/{}/{}", m, SATZ_DIR, SATZ_FILE)])?;
+            let new = satz_core::satz::parse(text)
+                .map_err(|e| format!("the interface file of `{}` does not parse ({}:{}) — a generator defect", m, e.line, e.msg))?
+                .interface_file
+                .ok_or_else(|| format!("the interface file of `{}` is no interface file — a generator defect", m))?;
+            let changes = crate::interface_changes::changes(old, &new);
+            if !changes.is_empty() {
+                let p = root.join(m).join(crate::interface_changes::FILE);
+                fsx::write(&p, crate::interface_changes::render(m, version, estate, &changes))?;
+                written.push(p);
+            }
         }
         let index = root.join("README.md");
         fsx::write(&index, i.index_readme(&folder, version, estate, &hash))?;

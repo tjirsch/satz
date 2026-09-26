@@ -426,6 +426,41 @@ modules, and the reference root names what it reads.
 of its projects do not move. satz-studio's catch-up — the `interfaces_dir` default, the
 file kind and `common` in its tree — follows its satz pin.
 
+## Amendment — `CHANGES.md`: what the transpile changed, from the previous file on disk
+
+A project pins an interface by a commit of the central estate's repository, and between
+two commits the module may change because the satz binary moved, `get-presets` pulled a
+newer pack, or the estate was edited; nothing in the folder said what changed for that
+project. The question the project has is "what changed in my interface, and what do I do
+about it" — not which stream caused it.
+
+**Before `satz transpile` rewrites `interfaces/`, it reads the previous `interface.satz`
+of every interface; after writing, it diffs old against new and writes
+`<interface>/CHANGES.md` where something changed** (`src/interface_changes.rs`): a todo in
+both spellings for what a project must do — a rename (an output gone and one added that
+name the same resources in the same shape; nothing else is a rename), an output gone, a
+map key lost, an attach point dropped, a value now looked up with the permission its plan
+needs, a shape that changed — then what else changed as information. A description edit
+is no change. The file is outside the content hash, which is the interface's content and
+not the state it replaced.
+
+- **No contract version, no provenance per output.** A shape hash and the pack and
+  version that declared each output were designed first and struck: the net effect is
+  enough, and `targets` already tells a rename from a removal. The operator sees pack
+  versions in `satz packs`.
+- **No accumulation, no date.** One transpile is one step, and the estate's history of
+  the file is the guide across several. An accumulated file would diverge between two
+  operators transpiling from different prior states, and a date would move the corpus.
+- **No `check-consumer` finding for a read of an output that is gone.** `tofu plan`
+  names the missing attribute, and `CHANGES.md` names the replacement; a Satz project is
+  refused at compile already.
+- **No `interface-diff` command over two git refs.** Two `interface.satz` files are
+  Satz, and `git diff` reads them; the transpile's own diff is where the previous state
+  is at hand for free.
+- **A previous file that does not parse refuses the transpile**, naming the file: satz
+  wrote it and rewrites the directory whole, so a hand edit or an older satz's file is
+  removed, not read around.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

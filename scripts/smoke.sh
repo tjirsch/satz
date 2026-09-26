@@ -251,6 +251,21 @@ rm -f project/satz/tmp-forbidden.satz
 grep -q 'interface-use' tmp/project-forbidden.txt && grep -q 'no attach point for `google_folder_iam_member`' tmp/project-forbidden.txt \
   || fail "the refusal does not say why:\n$(cat tmp/project-forbidden.txt)"
 
+# CHANGES.md: the previous interface file on disk against the new one, where it changed
+sed 's/export "archive_project_number"/export "archive_number"/' yaml/showcase.satz > tmp/renamed.satz
+grep -q 'export "archive_number"' tmp/renamed.satz || fail "the showcase has no archive_project_number export to rename"
+"$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/renamed.err || fail "the renamed showcase does not compile:\n$(cat tmp/renamed.err)"
+[ -f $si/archive/CHANGES.md ] || fail "a renamed export wrote no CHANGES.md for the project's interface:\n$(ls $si/archive)"
+grep -qF -- '- [ ] Replace `module.satz.archive_project_number` / `${{interface.archive_project_number}}` with `…archive_number`: renamed, the same `google_project.archive`.' $si/archive/CHANGES.md \
+  || fail "the rename is not the todo:\n$(cat $si/archive/CHANGES.md)"
+[ -e $si/core/CHANGES.md ] && fail "an unchanged interface carries a CHANGES.md"
+[ -e interfaces/common/core/CHANGES.md ] && fail "an unchanged library interface carries a CHANGES.md"
+grep -q 'CHANGES.md' $si/archive/README.md && grep -q 'CHANGES.md' $si/README.md || fail "the READMEs do not point at CHANGES.md"
+hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
+"$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>&1 || fail "the second transpile of the renamed showcase failed"
+[ -e $si/archive/CHANGES.md ] && fail "a transpile that changed nothing wrote a CHANGES.md"
+[ "$(grep -o 'sha256:[0-9a-f]*' $si/README.md)" = "$hash_before" ] || fail "the content hash depends on the previous state"
+
 # an estate that exports nothing keeps neither file from an earlier run
 cp yaml/showcase.satz tmp/no-exports.satz
 python3 - tmp/no-exports.satz <<'PY'

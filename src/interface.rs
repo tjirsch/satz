@@ -975,7 +975,8 @@ impl Interface {
         s.push_str("folder, config, state and pipeline, written in HCL or in Satz. It has two forms with the same\n");
         s.push_str("values: `hcl/` is a module that references no file outside itself, takes no input variable and\n");
         s.push_str("reads no state — copy it, move it, or source it by git URL — and `satz/interface.satz` is a file\n");
-        s.push_str("a project estate `use`s.\n\n");
+        s.push_str("a project estate `use`s. When the last transpile changed a value here, `CHANGES.md` beside this\n");
+        s.push_str("file says what a project that reads it does about it.\n\n");
         if module == CORE {
             s.push_str("It holds the core values alone: the ones every interface of this estate carries.\n\n");
         } else {
@@ -1205,7 +1206,8 @@ impl Interface {
         }
         s.push_str("Every interface has the same two forms: `<name>/hcl/` is a module a configuration written in HCL\n");
         s.push_str("sources, and `<name>/satz/interface.satz` is a file a project estate written in Satz `use`s, reading a\n");
-        s.push_str("value as `\"${{interface.<export>}}\"`. `<name>/README.md` lists the values and what may be done with them.\n\n");
+        s.push_str("value as `\"${{interface.<export>}}\"`. `<name>/README.md` lists the values and what may be done with them,\n");
+        s.push_str("and `<name>/CHANGES.md` is there when the last transpile changed a value: the todo for a project that reads it.\n\n");
         s.push_str("| Interface | What it holds |\n|---|---|\n");
         if folder != COMMON {
             let used = &self.carried(folder)[1..];
@@ -1577,10 +1579,24 @@ resource "google_project_iam_binding" "team_viewers" {
         assert!(hcl.join("outputs.tf").exists());
         assert!(!hcl.join("interfaces").exists(), "hcl/interfaces/ survived");
 
+        // the first write has nothing to diff against
+        assert!(!out.join("pay/pay/CHANGES.md").exists() && !out.join("common/core/CHANGES.md").exists());
+        let hash_of = |folder: &str| std::fs::read_to_string(out.join(folder).join("README.md")).unwrap().lines().find(|l| l.starts_with("Content hash:")).unwrap().to_string();
+
         let one = [export("org", "123"), in_interface("pay", "a", "1")];
         let i = build("e", &one, &[ri("pay", false, &[])], &manifest, "hashicorp/google", None).unwrap();
         crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
         assert_eq!(listing(&out), ["common", "pay"], "the folder of a removed project survived");
+        // `pay` no longer uses `net`, so its module lost `vpc`: a CHANGES.md beside its README,
+        // and none for `core`, which did not change
+        let changes = std::fs::read_to_string(out.join("pay/pay/CHANGES.md")).expect("pay changed");
+        assert!(changes.contains("# What changed in `pay`") && changes.contains("- [ ] `vpc` is gone"), "{}", changes);
+        assert!(!out.join("pay/core/CHANGES.md").exists() && !out.join("common/core/CHANGES.md").exists());
+        let hashed = hash_of("pay");
+        // the same estate again: nothing changed, no file, and the hash never saw the file
+        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        assert!(!out.join("pay/pay/CHANGES.md").exists(), "a transpile that changed nothing wrote a CHANGES.md");
+        assert_eq!(hash_of("pay"), hashed, "the content hash depends on the previous state");
 
         crate::write_interface(None, &manifest, &hcl, &out, "e.satz").unwrap();
         assert!(!out.exists() && !hcl.join("outputs.tf").exists(), "an estate that exports nothing keeps no interface");
