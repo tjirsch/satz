@@ -86,10 +86,14 @@ kinds! {
     /// an `export` satz cannot publish: a reference to nothing the estate emits, a value
     /// only the cloud knows of a type satz has no lookup for
     Export => "export",
-    /// `check-consumer`: a team's HCL that writes where the estate's interface does not
+    /// `check-consumer`: a project's HCL that writes where the estate's interface does not
     /// let it — an attachment off an attach point, an authoritative grant or a policy on a
     /// node the estate manages, a resource the estate declares too
     Consumer => "consumer",
+    /// a project estate's compile: a resource that uses a central estate's interface where
+    /// the interface file does not let it — the rules of `consumer`, on the project's own
+    /// resources — or a `${{interface.<export>}}` no used interface file carries
+    InterfaceUse => "interface-use",
     /// `review-pack`: a rule the preset library holds, judged on one pack
     Pack => "pack",
     /// `review-pack`: a token in the pack shaped like private data — an id, a domain, an

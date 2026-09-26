@@ -1,8 +1,8 @@
-# A team's configuration beside the showcase estate, for `satz check-consumer`:
+# A project's HCL beside the showcase estate, for `satz check-consumer`:
 # one attachment at an attach point, and one onto an export that is none.
 
 module "satz" {
-  source = "../estate/hcl/interfaces/archive-team"
+  source = "../estate/interfaces/archive/archive/hcl"
 }
 
 # allowed: `archive_project_id` is an attach point for google_project_iam_member

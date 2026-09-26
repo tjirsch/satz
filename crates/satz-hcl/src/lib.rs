@@ -2318,11 +2318,11 @@ mod tests {
 
     #[test]
     fn a_consumer_s_blocks_carry_their_literals_and_what_they_read() {
-        let text = "module \"satz\" {\n  source = \"../estate/hcl/interfaces/team-a\"\n}\n\nresource \"google_project_iam_member\" \"x\" {\n  project = module.satz.project_id\n  role    = \"roles/viewer\"\n  member  = \"projects/${module.satz.number}/x\"\n  condition {\n    title = \"t\"\n  }\n}\nvariable \"v\" {}\n";
+        let text = "module \"satz\" {\n  source = \"../estate/interfaces/team-a/team-a/hcl\"\n}\n\nresource \"google_project_iam_member\" \"x\" {\n  project = module.satz.project_id\n  role    = \"roles/viewer\"\n  member  = \"projects/${module.satz.number}/x\"\n  condition {\n    title = \"t\"\n  }\n}\nvariable \"v\" {}\n";
         let blocks = consumer_blocks(&[Input { path: "main.tf".into(), text: text.into() }]).unwrap();
         assert_eq!(blocks.len(), 2, "a variable is not read");
         assert_eq!((blocks[0].kind.as_str(), blocks[0].labels.as_slice(), blocks[0].line), ("module", &["satz".to_string()][..], 1));
-        assert_eq!(blocks[0].attrs["source"], ConsumerValue::Literal("../estate/hcl/interfaces/team-a".into()));
+        assert_eq!(blocks[0].attrs["source"], ConsumerValue::Literal("../estate/interfaces/team-a/team-a/hcl".into()));
         assert_eq!(blocks[1].line, 5);
         assert_eq!(blocks[1].attrs["project"], ConsumerValue::Reads(vec!["module.satz.project_id".into()]));
         assert_eq!(blocks[1].attrs["member"], ConsumerValue::Reads(vec!["module.satz.number".into()]));

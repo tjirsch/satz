@@ -1,8 +1,9 @@
 # satz workflows
 
 Three walkthroughs, in the order most estates meet them, each a section of this page,
-and after them three shorter ones: [customer teams beside the estate](#customer-teams-beside-the-estate),
-how a team's own HCL reads what the estate publishes and changes what it shares,
+and after them three shorter ones: [projects beside the estate](#projects-beside-the-estate),
+how a project — an estate of its own, in HCL or in Satz — reads what the estate publishes and
+changes what it shares,
 [continuous verification](#continuous-verification), the compile check and the
 compliance report run as CI gates, and [scanning with Prowler](#scanning-with-prowler),
 the second opinion satz joins with its own report. Every command has its own reference section in
@@ -450,7 +451,7 @@ them and is complete; one the interview wrote is complete when it says so.
 | `deployment_mode` | `"local"` | `local` for day 0 (user ADC); `cloud` for day 1+ (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
-| `workload_folder_name` | `""` (from `--workload-folder-name`) | The folder where the customer's and the teams' folders live; `""` is the organisation, and nothing is created for it. |
+| `workload_folder_name` | `""` (from `--workload-folder-name`) | The folder where the customer's and the projects' folders live; `""` is the organisation, and nothing is created for it. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the compile. |
 
 ### Tear the estate down
@@ -675,35 +676,39 @@ that the estate does not grant it yet into the estate; `--report-only` names the
 
 ---
 
-## Customer teams beside the estate
+## Projects beside the estate
 
 satz builds the organisation: the folders, the infrastructure project, the shared
-network, the organisation policies. The teams that run workloads in it write their own
-HCL, with their own state and in their own repositories, and often without satz. They
-read what the estate publishes and never change satz's HCL or its state.
+network, the organisation policies. The workloads in it live in **projects**: estates
+that depend on parts of this estate's interface, each with its own repository or folder,
+config, state and pipeline, often maintained by a different team, and written in HCL or
+in Satz ([the term](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+The estate whose interface they read is the **central estate**. A project reads what the
+central estate publishes and never changes its HCL or its state.
 
 ### What the estate publishes
 
-An `export` statement ([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it))
+An `export` statement ([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it))
 names one value. `satz transpile` writes each one twice:
 
 - as an output of the root module, in `hcl/outputs.tf`, which the operator reads with
   `tofu output`;
-- as an output of a module under `hcl/interfaces/`, which the teams read.
+- as a value of the interfaces under `interfaces/`, beside `hcl/`, which the projects
+  read — each interface as an HCL module and as a Satz file.
 
-An export outside every `interface` block is a core export, and every module carries
+An export outside every `interface` block is a core export, and every interface carries
 it. An estate that uses `presets/estate-core.satz` publishes the core exports without
 writing any: `organization_id`, `customer_domain`, `customer_shortname`,
 `default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
 writes also exports `infra_folder` and `workload_folder`.
 
-**`workload_folder`** is the parent every team's folder takes: `organizations/<id>`, or
+**`workload_folder`** is the parent every project's folder takes: `organizations/<id>`, or
 `folders/<number>` of the folder `satz init --workload-folder-name <name>` declares
-directly under the organisation. A team creates its folders under it:
+directly under the organisation. A project creates its folders under it:
 
 ```hcl
-resource "google_folder" "team_a" {
-  display_name = "team-a"
+resource "google_folder" "payments" {
+  display_name = "payments"
   parent       = module.satz.workload_folder
 }
 ```
@@ -712,13 +717,13 @@ resource "google_folder" "team_a" {
 interview` writes it when `workload_folder_name` is answered. The folder block stands at
 the top level, so its parent is the organisation; to put the workload folder inside
 another folder — a top-level folder named after the organisation — move the
-`workload_folder { … }` block into that folder's block, and the interface module's
-lookup follows the parents. An estate without the section does not publish
-`workload_folder` and adds it by hand — for the organisation, with
-`workload_folder_name = ""`, the one line
+`workload_folder { … }` block into that folder's block, and the interface's lookup
+follows the parents. An estate without the section does not publish `workload_folder`
+and adds it by hand — for the organisation, with `workload_folder_name = ""`, the one
+line
 
 ```
-export "workload_folder" = "organizations/{customer_organization_id}" description "Where the customer's and the teams' folders live"
+export "workload_folder" = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live"
 ```
 
 and for a folder, with `workload_folder_name` bound to its display name, the folder
@@ -731,7 +736,7 @@ google_folder {
   }
 }
 
-export "workload_folder" = "${{google_folder.workload_folder.name}}" description "Where the customer's and the teams' folders live"
+export "workload_folder" = "${{google_folder.workload_folder.name}}" description "Where the customer's and the projects' folders live"
 ```
 
 The compile refuses a name and a section that disagree, at the line to edit: a name with
@@ -743,193 +748,248 @@ already has is imported first: `satz adopt <estate> --execute --import` finds it
 display name under the organisation and writes its id into the estate.
 
 **Every resource of one kind is one export.** `export "folders" = all google_folder`
-publishes a map keyed by each folder's label in the estate, so a team reads
-`module.satz.folders["team_a"]` and a folder the estate adds later arrives as a new key:
+publishes a map keyed by each folder's label in the estate, so a project reads
+`module.satz.folders["payments"]` and a folder the estate adds later arrives as a new key:
 
 ```hcl
-resource "google_project" "team_a" {
-  project_id = "acme-team-a-001"
-  name       = "team-a"
-  folder_id  = module.satz.folders["team_a"]
+resource "google_project" "payments" {
+  project_id = "acme-payments-001"
+  name       = "payments"
+  folder_id  = module.satz.folders["payments"]
 }
 ```
 
 The README lists the keys. `private = true` in a resource's body keeps it out of every
-map and refuses an export that names it; the estate `satz init` writes marks its state
-bucket and its IaC service account that way. An estate whose `google_storage_bucket.state`
-or `google_service_account.provisioner` lacks the line publishes it in such a map; add
-`private = true` to both before exporting `all google_storage_bucket` or `all
-google_service_account`.
+map, out of everything written for a project, and refuses an export that names it; the
+estate `satz init` writes marks its state bucket and its IaC service account that way. An
+estate whose `google_storage_bucket.state` or `google_service_account.provisioner` lacks
+the line publishes it in such a map; add `private = true` to both before exporting `all
+google_storage_bucket` or `all google_service_account`.
 
-What one team reads goes into an `interface` block named for the team, in the estate or
-in a pack; the same interface in two files is one interface:
+What one project reads goes into an `interface` block named for the project, in the
+estate or in a pack; the same interface in two files is one interface:
 
 ```
-interface "team-a" {
-  export "folder"  = "${{google_folder.team_a.name}}" description "Team A's folder, folders/<number>"
+interface "payments" {
+  export "folder"  = "${{google_folder.payments.name}}" description "The payments folder, folders/<number>"
   export "network" = "${{google_compute_network.shared.self_link}}"
 }
 ```
 
-A set several teams read — the shared network, the DNS zones — is an interface of its
-own, declared once, often by the pack that builds it. A team's interface takes it with
-`use interface`, and the team's module carries those exports beside its own:
+A set several projects read — the shared network, the DNS zones — is a **common**
+interface: declared once, marked `interface "<name>" common { … }`, or declared by the
+pack that builds it, which makes it common without the word. The common interfaces are
+the library every project's folder carries. A project's interface also takes one with
+`use interface`, and then its own interface carries those exports beside its own:
 
 ```
-interface "network" {
+interface "network" common {
   export "host_project" = "${{google_project.net_host.project_id}}"
   export "vpc"          = "${{google_compute_network.shared.self_link}}"
 }
 
-interface "team-a" {
+interface "payments" {
   use interface ["network", "dns"]
-  use interface "logging" when want_team_logging
-  export "folder" = "${{google_folder.team_a.name}}"
+  use interface "logging" when want_payments_logging
+  export "folder" = "${{google_folder.payments.name}}"
 }
 ```
 
-The team reads `module.satz.vpc` from its own folder, `hcl/interfaces/team-a/`, and the
-README says which interface each value comes from. A pack that removes or renames an
-export, or changes the shape of its value, breaks every team that reads it: that is a
-breaking change, with an entry under `## Breaking changes` in `presets/README.md`, and
-the release that ships it is a minor one.
+A pack that removes or renames an export, or changes the shape of its value, breaks
+every project that reads it: that is a breaking change, with an entry under
+`## Breaking changes` in `presets/README.md`, and the release that ships it is a minor
+one.
 
-### Sourcing the interface
+### The folder a project takes
 
-**Each team sources `hcl/interfaces/<team>/`**: the team's own exports, those of every
-interface it uses, and the core ones, complete on its own. `hcl/interfaces/core/` holds the core exports alone, for a
-configuration that needs nothing else. A module names no file outside itself, takes no
-input variable, has no backend and reads no state. A team sources its folder from
-wherever its code lives:
+`satz transpile` writes `interfaces_dir` (`interfaces`, a key of `config.toml`) whole:
 
-```hcl
-# a sibling folder in the same repository
-module "satz" {
-  source = "../estate/hcl/interfaces/team-a"
-}
-
-# a repository somewhere else, pinned to a commit of the estate repository
-module "satz" {
-  source = "git::<the estate repository URL>//hcl/interfaces/team-a?ref=<commit>"
-}
-
-resource "google_project" "team_a" {
-  project_id = "acme-team-a-001"
-  name       = "team-a"
-  folder_id  = module.satz.folder
-}
+```text
+interfaces/
+  common/                       the library alone, for a project without an interface of its own
+    README.md
+    core/      README.md  hcl/  satz/
+    network/   README.md  hcl/  satz/
+  payments/                     the project "payments" takes this folder whole
+    README.md                   its interfaces; the estate, the satz version, the content hash
+    payments/  README.md  hcl/  satz/   its own interface: its exports, the core ones, those it uses
+    core/      README.md  hcl/  satz/   every common interface, always
+    network/   README.md  hcl/  satz/
 ```
 
-It needs the `google` provider in the calling configuration, at the version the estate
-pins (`versions.tf` in the folder). A copy of the folder works as well as the original:
-it is generated whole, and its `README.md` travels with it — the snippet above, every
-output with the interface it comes from and how it is obtained, and the estate and satz version
-it came from. The root module's `tofu output` names a team's values
-`<team>__<export>`, with `-` written `_` (`team_a__folder`).
+**A project takes its folder whole**, `interfaces/<project>/`, into its own repository or
+beside its code, and takes it again after every change of the central estate. The folder
+holds the project's own interface and the whole library, never another project's, so it
+is one snapshot and nothing in it is picked by hand. An interface the project does not
+read costs nothing: HCL evaluates a module's lookups only where the configuration sources
+it, and a Satz estate reads only the files it `use`s. The folder's `README.md` names the
+estate, the satz version that wrote it and a content hash of every other file in it, so
+two copies are the same when their hashes are.
+
+Every interface has the same two forms, with the same values:
+
+- **`<name>/hcl/`** is a module. It names no file outside itself, takes no input variable,
+  has no backend and reads no state, so it works copied, moved, or sourced by git URL:
+
+  ```hcl
+  # the folder, copied into the project's repository
+  module "satz" {
+    source = "./vendor/payments/payments/hcl"
+  }
+
+  # or sourced from the central estate's repository, pinned to a commit
+  module "satz" {
+    source = "git::<the estate repository URL>//interfaces/payments/payments/hcl?ref=<commit>"
+  }
+
+  resource "google_project" "payments" {
+    project_id = "acme-payments-001"
+    name       = "payments"
+    folder_id  = module.satz.folder
+  }
+  ```
+
+  It needs the `google` provider in the calling configuration, at the version the estate
+  pins (`versions.tf`).
+- **`<name>/satz/interface.satz`** is a file a project estate written in Satz `use`s at
+  the top level; the estate names a value `"${{interface.<export>}}"`:
+
+  ```
+  use "vendor/payments/payments/satz/interface.satz"
+
+  google_project {
+    payments_work {
+      name            = "payments-work"
+      project_id      = "acme-payments-work-001"
+      folder_id       = "${{interface.folder}}"
+      billing_account = billing_account_infra
+    }
+  }
+  ```
+
+  A static value becomes its literal; a looked-up one becomes the same `data` source the
+  module reads, written once into the project's `main.tf` ([language
+  §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+  An export no used file carries is refused at the line that reads it.
+
+`<name>/README.md` travels with both: the snippets above, every value with the interface
+it comes from, how it is obtained and what it takes. The root module's `tofu output`
+names a project's values `<project>__<export>`, with `-` written `_`
+(`payments__folder`).
 
 ### Static values and lookups
 
-An export whose value satz knows at compile time — a param, a project id satz writes, a
-service account's email built from its account id — is a literal output. The team's
-plan makes no API call for it.
+An export whose value satz knows at compile time — a param, a Google project id satz
+writes, a service account's email built from its account id — is a literal. The
+project's plan makes no API call for it.
 
-An export of an attribute only the cloud knows — a folder's `folders/<number>`, a
-project's number — is a lookup: a `data` source in the folder's `main.tf` that reads
-the resource back by what satz writes on it (a folder by its display name under its
-parent, a project by its id). The lookup runs through the team's own provider and
-credentials, so the team needs read permission on what it looks up; the README names
-the permission per lookup. A team without it fails its own plan, and satz's state is
-not involved. A folder holds only the lookups its own outputs read.
+An export of an attribute only the cloud knows — a folder's `folders/<number>`, a Google
+project's number — is a lookup: a `data` source that reads the resource back by what
+satz writes on it (a folder by its display name under its parent, a Google project by its
+id). The lookup runs through the project's own provider and credentials, so the project
+needs read permission on what it looks up; the README names the permission per lookup. A
+project without it fails its own plan, and the central estate's state is not involved. An
+interface holds only the lookups its own values read.
 
 ### Writing to shared infrastructure
 
-A team changes something the estate owns in one of two ways, and never by editing the
-estate's HCL or state.
+A project changes something the central estate owns in one of two ways, and never by
+editing the estate's HCL or state.
 
-**Attach — the write lives in the team's own state.** The provider has additive
-resources for joining something another state owns, and the team declares them in its
+**Attach — the write lives in the project's own state.** The provider has additive
+resources for joining something another state owns, and the project declares them in its
 own configuration:
 
 ```hcl
-# a project of the team's, attached to the estate's shared VPC host project
-resource "google_compute_shared_vpc_service_project" "team_a" {
+# a Google project of the project's, attached to the estate's shared VPC host project
+resource "google_compute_shared_vpc_service_project" "payments" {
   host_project    = module.satz.network_host_project
-  service_project = google_project.team_a.project_id
+  service_project = google_project.payments.project_id
 }
 
-# the team's project in the estate's service perimeter
-resource "google_access_context_manager_service_perimeter_resource" "team_a" {
+# the Google project in the estate's service perimeter
+resource "google_access_context_manager_service_perimeter_resource" "payments" {
   perimeter_name = module.satz.perimeter_name
-  resource       = "projects/${google_project.team_a.number}"
+  resource       = "projects/${google_project.payments.number}"
 }
 
-# a role on the team's folder, one member at a time
-resource "google_folder_iam_member" "team_a_deployer" {
-  folder = module.satz.team_a_folder
+# a role on the project's folder, one member at a time
+resource "google_folder_iam_member" "payments_deployer" {
+  folder = module.satz.payments_folder
   role   = "roles/resourcemanager.projectCreator"
-  member = "serviceAccount:deployer@acme-team-a-001.iam.gserviceaccount.com"
+  member = "serviceAccount:deployer@acme-payments-001.iam.gserviceaccount.com"
 }
 ```
 
 The exports `network_host_project` and `perimeter_name` stand for what the estate
 publishes when it has a shared VPC or a perimeter. satz grants with `*_iam_member`
-only, which adds a member and removes none, so a team's grant and the estate's live side
-by side.
+only, which adds a member and removes none, so a project's grant and the estate's live
+side by side.
 
 **An attach point is an export that says which attachments it takes.** `attach [ … ]`
-after the value names the attachment resource types a team may create against it:
+after the value names the attachment resource types a project may create against it:
 
 ```
-interface "team-a" {
+interface "payments" {
   export "network_host_project" = "${{google_project.net_host.project_id}}" attach ["google_compute_shared_vpc_service_project"]
   export "perimeter_name"       = "${{google_access_context_manager_service_perimeter.main.name}}" attach ["google_access_context_manager_service_perimeter_resource"]
-  export "team_a_folder"        = "${{google_folder.team_a.name}}" attach ["google_folder_iam_member"] description "Team A's folder"
+  export "payments_folder"      = "${{google_folder.payments.name}}" attach ["google_folder_iam_member"] description "The payments folder"
 }
 ```
 
-Each team README carries a table of its exports and what each takes: every one is
+Each interface's README carries a table of its exports and what each takes: every one is
 read, an attach point also takes the types it names. The types an export may name, and
 what each conflicts with in the estate, are `presets/attach-points.yaml`, compiled into
-satz. The compile refuses the estate's own authoritative form of a membership a team
+satz. The compile refuses the estate's own authoritative form of a membership a project
 attaches to:
 
 | attachment | the estate must not |
 |---|---|
-| `google_access_context_manager_service_perimeter_resource` | set the perimeter's `status.resources`; and its `lifecycle { ignore_changes = [status[0].resources] }` must be written, or the estate's apply removes what teams attach |
+| `google_access_context_manager_service_perimeter_resource` | set the perimeter's `status.resources`; and its `lifecycle { ignore_changes = [status[0].resources] }` must be written, or the estate's apply removes what projects attach |
 | `google_<node>_iam_member` | declare `google_<node>_iam_policy` or `google_<node>_iam_binding` on the exported node |
 | `google_compute_shared_vpc_service_project`, `google_network_connectivity_spoke` | — the provider has no authoritative form |
 
-**`satz check-consumer <dir> [<estate>]` checks a team's HCL against the interface**,
-offline: it reads the `.tf` files under the team's directory and compiles the estate in
-memory. A value reads the estate when it is `module.<name>.<output>` of a module whose
-`source` ends in `interfaces/<interface>`, or a literal equal to a value the estate
-publishes or writes; anything else is the team's own. Each finding names the team's file
-and line, and any finding exits 1:
+**The same rules hold whichever form a project is written in:**
 
-- an attachment resource whose target is the estate's and no attach point allowing its
-  type;
+- an attachment resource whose target is the central estate's and no attach point
+  allowing its type;
 - an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy on a
-  node the estate manages, the organisation included;
-- a resource the estate declares too, matched by the keys the interface looks it up by
-  (`presets/interface-lookups.yaml`): a folder by its display name and parent, a project by
-  its id.
+  node the central estate manages, the organisation included;
+- a resource the central estate declares too, matched by the keys the interface looks it
+  up by (`presets/interface-lookups.yaml`): a folder by its display name and parent, a
+  Google project by its id.
 
-A team runs it in its CI against a checkout of the estate; an agent runs
-`satz_check_consumer`.
+**A project written in HCL: `satz check-consumer <dir> [<estate>]`**, offline: it reads
+the `.tf` files under the project's directory and compiles the central estate in memory.
+A value reads the estate when it is `module.<name>.<output>` of a module whose `source`
+ends in `<interface>/hcl`, or a literal equal to a value the estate publishes or an
+identity it writes; anything else is the project's own. Each finding names the project's
+file and line, and any finding exits 1. A project runs it in its CI against a checkout of
+the estate; an agent runs `satz_check_consumer`.
 
-**Contribute — the write goes into the estate.** Where no attachment resource exists,
-or the change needs coordination — a subnet whose range must not overlap another's, a
-new folder — the change is an entry in the estate, applied by satz, and the estate then
-exports the result, the team's subnet or folder, for the team to read.
+**A project written in Satz: its own compile**, against the interface files it uses —
+they carry the attach points and the central resources the rules need, so the central
+estate is not read. A value reads the central estate when it is `"${{interface.<export>}}"`
+or a literal equal to a value it publishes or an identity it writes. Each finding is an
+error of the kind `interface-use` at the resource's line, and `satz transpile` refuses
+the estate as it refuses any other error.
+
+**Contribute — the write goes into the central estate.** Where no attachment resource
+exists, or the change needs coordination — a subnet whose range must not overlap
+another's, a new folder — the change is an entry in the central estate, applied by satz,
+and the estate then exports the result, the project's subnet or folder, for the project
+to read. A project hands its entries over as a pack the central estate `use`s, which fills
+a list param through a `contributes_<param>` param; fetching that pack from the project's
+repository is the central estate's pipeline's job.
 
 ### The change notice
 
-A team learns that an exported value changed through the delivery form the estate
+A project learns that an exported value changed through the delivery form the estate
 chooses. The map asks it as `question oneof interface_notice`, which is not required:
 none of its options is an answer, and every option is off by default. Each option is
 one form; Pub/Sub is the one satz has.
 
-| option | pack | what a team subscribes to |
+| option | pack | what a project subscribes to |
 |---|---|---|
 | `interface_notice_pubsub` | `presets/interface-notice.satz` | the topic `interface_topic` names: one message per apply that changes an exported value; the object `interface_object` names holds the new values |
 
@@ -941,8 +1001,8 @@ params {
 use "presets/interface-notice.satz" when interface_notice_pubsub
 ```
 
-The team writes the subscription in its own state — a push to its CI's webhook or a pull
-from a runner ([the pack](../presets/README.md#interface-noticesatz)).
+The project writes the subscription in its own state — a push to its CI's webhook or a
+pull from a runner ([the pack](../presets/README.md#interface-noticesatz)).
 
 ---
 

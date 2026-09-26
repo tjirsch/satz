@@ -309,10 +309,10 @@ estate that uses it, with every question open. An estate written by `init` does 
 need it for its params: `init` binds every param from its flags, and a bound param is an
 answered question.
 
-**The core exports.** An estate that uses the pack publishes these to the HCL teams
-write beside it — outputs of `hcl/outputs.tf` and of every module under `hcl/interfaces/`
-([workflows](../docs/workflows.md#customer-teams-beside-the-estate)), all known at
-compile time:
+**The core exports.** An estate that uses the pack publishes these to the projects beside
+it — outputs of `hcl/outputs.tf` and values of every interface under `interfaces/`
+([workflows](../docs/workflows.md#projects-beside-the-estate)), all known at compile
+time:
 
 | export | value |
 |---|---|
@@ -324,11 +324,11 @@ compile time:
 | `iac_service_account` | `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` |
 
 `satz init` writes two exports into the estate itself: `infra_folder`, the
-infrastructure folder's `folders/<number>`, which the interface module looks up, and
+infrastructure folder's `folders/<number>`, which the interface looks up, and
 `workload_folder`.
 
-**The workload folder** is where the customer's and the teams' folders live, the parent
-every team's folder takes. `workload_folder_name` names it, like `infra_folder_name`
+**The workload folder** is where the customer's and the projects' folders live, the parent
+every project's folder takes. `workload_folder_name` names it, like `infra_folder_name`
 names the infrastructure folder, and it may be empty: `""`, the default, is the
 organisation itself, and nothing is created for it. Its question says so
 (`empty = "…"`, [language §6.14](../docs/language.md#614-question--what-to-ask-and-what-the-answer-costs)),
@@ -338,16 +338,16 @@ into the estate, not by this pack, because its two forms are different statement
 | `workload_folder_name` | what the estate carries | `workload_folder` |
 |---|---|---|
 | `""` | `export "workload_folder" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at compile time |
-| a name | `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | `folders/<number>`, looked up by the interface module |
+| a name | `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | `folders/<number>`, looked up by the interface |
 
 `satz init` writes the section from `--workload-folder-name` (the folder) or without it
 (the organisation); `satz interview` and `satz_interview` write it when the question is
 answered. The folder block stands at the top level, so its parent is the organisation;
 to put the workload folder inside another folder — a top-level folder named after the
 organisation — move the `workload_folder { … }` block into that folder's block, and the
-interface module's lookup follows the parents. An answer or a re-run of `init` whose form
+interface's lookup follows the parents. An answer or a re-run of `init` whose form
 differs from the section the estate already carries is refused, not rewritten: the
-teams' folders sit under it. The compile refuses a name and a section that disagree, at
+projects' folders sit under it. The compile refuses a name and a section that disagree, at
 the line to edit: a name with no `export "workload_folder"` or with the organisation's,
 and an empty name with a folder's. An empty name with no section compiles and publishes
 no `workload_folder`.
@@ -433,7 +433,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_verification_runner` | off | `ci/verification-runner`, the customer-hosted shape |
 | `use_verification_runner_grant` | follows `use_verification_runner` | `ci/verification-runner-grant` — the binding that lets a runner act as the estate; answered alone when the runner lives in another estate |
 | `use_exemption_tag` | off | `exemptions/exemption-tag` — the tag an exemption is bound to; it exempts nothing on its own |
-| `interface_notice` (oneof, not required) | none | how the teams hear that an exported value changed, one option per delivery form: `interface_notice_pubsub` is `interface-notice`, one Pub/Sub message per apply that changes a value the estate exports |
+| `interface_notice` (oneof, not required) | none | how the projects hear that an exported value changed, one option per delivery form: `interface_notice_pubsub` is `interface-notice`, one Pub/Sub message per apply that changes a value the estate exports |
 
 The CIS baseline is the map's first choice: the skeleton writes its line commented under
 its phase, like every pack's, and answering `use_cis_baseline` yes puts it in. It is
@@ -1602,7 +1602,7 @@ shows few ISO controls satisfied.
 
 ## interface-notice.satz
 
-Tells the teams whose HCL reads the estate's interface when an exported value changes.
+Tells the projects that read the estate's interface when an exported value changes.
 Gated on `interface_notice_pubsub`, the Pub/Sub option of the map's choice `question
 oneof interface_notice`, off by default.
 
@@ -1625,7 +1625,7 @@ changes: an apply that changes an exported value publishes one message, an apply
 changes nothing publishes none.
 
 It exports `interface_topic`, the topic's id, and `interface_object`, the object's
-`gs://` URL, as core exports, so every interface module and its README carry them. A team subscribes in its
+`gs://` URL, as core exports, so every interface and its README carry them. A project subscribes in its
 own state with a `google_pubsub_subscription` on the topic — a push to its CI's webhook,
 or a pull from a runner — and reads the new values from the object the message names.
 
@@ -1635,42 +1635,52 @@ which the compile notes on every transpile.
 
 ## A pack that publishes an interface
 
-A pack publishes what the teams beside the estate read with `export`, core or inside an
-`interface` block ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
-A set several teams read — the shared network, the DNS zones — is an interface of its own,
-`interface "network" { export … }`, and a team's interface takes it with `use interface
-"network"`: the author keeps the set stable, and every team that uses it receives it.
+A pack publishes what the projects beside the estate read with `export`, core or inside an
+`interface` block ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)). A
+project is an estate that depends on parts of the estate's interface, with its own
+repository or folder, config, state and pipeline.
 
-**An export is a contract with the teams that read it.** A pack version that removes or
+**A pack's interface is common.** An interface a pack declares — `interface "network" {
+export … }` — is in the library every project's folder carries (`interfaces/common/` and
+`interfaces/<project>/`), without the word `common`. A project's interface takes it with
+`use interface "network"`: the author keeps the set stable, and every project receives
+it. A pack's interface uses only common interfaces. What satz generates from it —
+`interfaces/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
+estate: it holds one estate's values and lookup keys, and nothing generated goes into the
+preset library (`satz doc-packs` and `satz pack-graph` refuse an interface file there).
+
+**An export is a contract with the projects that read it.** A pack version that removes or
 renames an export, or changes the shape of its value — a string that becomes a list, a
-`folders/<number>` that becomes a bare number — fails a team's plan that reads it. It is a
-breaking change: the version's row under [`## Changelog`](#changelog) names the export, an
-entry under [`## Breaking changes`](#breaking-changes) says what a team edits, and the
+`folders/<number>` that becomes a bare number — fails a project that reads it, in its plan
+or in its compile. It is a breaking change: the version's row under [`## Changelog`](#changelog) names the export, an
+entry under [`## Breaking changes`](#breaking-changes) says what a project edits, and the
 release that ships it is a minor one. A new export breaks no one.
 
 **A label is part of that contract when the pack's resources reach an `all` export.**
-`export "…" = all <type>` keys its map by resource label, and teams index by it
+`export "…" = all <type>` keys its map by resource label, and projects index by it
 (`module.satz.folders["infra"]`). A pack version that renames a label of such a type
 changes a key: its `## Changelog` row names the old and the new label, and the release is
 a minor one. Labels change for a reason, never for style.
 
 **Each central resource a pack declares is a stub or central-only, and the choice is
-security's as much as the provider's.** It decides how a team changes it:
+security's as much as the provider's.** It decides how a project changes it:
 
 - **Stub:** the pack declares the shared resource and exports it as an attach point
-  (`export … attach [ … ]`); it never writes the membership list itself, and teams add
-  their own members in their own state. The shared-VPC host (teams attach service
-  projects), a Network Connectivity Center hub (teams attach spokes), a perimeter with
-  per-member resources (teams attach projects; the pack writes `lifecycle {
+  (`export … attach [ … ]`); it never writes the membership list itself, and projects add
+  their own members in their own state. The shared-VPC host (projects attach service
+  Google projects), a Network Connectivity Center hub (projects attach spokes), a perimeter
+  with per-member resources (projects attach Google projects; the pack writes `lifecycle {
   ignore_changes = [status[0].resources] }` on it).
-- **Central-only:** the pack keeps the resource whole and takes the teams' entries as a
-  list param, which a team's contribution fills (`contributes_<param>`, ADR 0051); the
+- **Central-only:** the pack keeps the resource whole and takes the projects' entries as a
+  list param, which a project's contribution fills (`contributes_<param>`, ADR 0051); the
   change is a pull request on the estate, reviewed like a rule change in a global firewall
   or a route in a network hub. Global firewall policy rules (the provider could attach
   them one by one as `google_compute_firewall_policy_rule`, and security keeps them
   central), hub routes, DNS forwarding.
 
-A team README shows every export as read, and an attach point with the types it takes.
+An interface's README shows every export as read, and an attach point with the types it
+takes; a project estate's compile and `satz check-consumer` hold a project to the same
+table.
 
 ## attach-points.yaml
 
@@ -1680,17 +1690,17 @@ object, and the estate's authoritative form of the membership: an attribute the 
 must not set (a perimeter's `status.resources`), the entry its `lifecycle { ignore_changes
 }` must hold, or a resource type the estate must not declare on the same node
 (`google_<node>_iam_policy` and `_iam_binding` beside `*_iam_member`). The table is
-compiled into satz; `satz check-consumer` reads the same rows to find a team's
-attachments ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
+compiled into satz; `satz check-consumer` and a project estate's compile read the same
+rows to find a project's attachments ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
 
 ## interface-lookups.yaml
 
-Not a pack: how the interface modules under `hcl/interfaces/` read back what an estate emits,
+Not a pack: how the interfaces under `interfaces/` read back what an estate emits,
 per resource type — the data source, the keys it is looked up by, the read permission the
 lookup needs, the attributes it yields, and the attributes that derive from what satz
 writes (a service account's `email`, a bucket's `url`). The table is compiled into satz;
 an export that needs a lookup of a type it has no row for is refused at compile, naming
-the type ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-hcl-beside-it)).
+the type ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
 
 ## import-config.yaml
 
@@ -1733,6 +1743,42 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.85.0
+
+**The interfaces move from `hcl/interfaces/<name>/` to `interfaces/`, beside `hcl/`.**
+`satz transpile` writes `interfaces_dir` (default `interfaces`, a new `config.toml` key)
+whole: `interfaces/common/<name>/` holds `core` and every common interface, and
+`interfaces/<project>/<name>/` holds one project's own interface and the whole library.
+Each interface is `README.md`, `hcl/` — the module that stood in `hcl/interfaces/<name>/`,
+the same files — and `satz/interface.satz`. An interface a pack declares is common, so it
+is under `common/` and in every project's folder. `hcl/interfaces/` is removed on the
+next transpile. The estate's own plan does not move, and neither does a project's.
+
+A project written in HCL that sources the old path finds no module. Find it: `grep -rn
+'hcl/interfaces/' <project>/*.tf`. **The edit:** point `source` at the interface's
+`hcl/` in the new place — `../estate/hcl/interfaces/payments` becomes
+`../estate/interfaces/payments/payments/hcl`, a common interface or `core`
+`../estate/interfaces/common/<name>/hcl`; a `git::…//hcl/interfaces/payments?ref=…` URL
+becomes `git::…//interfaces/payments/payments/hcl?ref=…`. Or take the folder
+`interfaces/<project>/` whole into the project's repository and source
+`./<folder>/<name>/hcl`. `satz check-consumer` reads a module as an interface when its
+`source` ends in `<interface>/hcl`.
+
+**`interface "common" { … }` is refused**: `interfaces/common/` holds the library, so no
+interface takes its name. Find it: `grep -n 'interface "common"' <estate>.satz` and the
+packs it uses. **The edit:** rename the interface, and every `use interface "common"`
+that names it; the root outputs `common__<export>` take the new name.
+
+**A common interface that uses one project's interface is refused**, naming both: every
+project's folder carries a common interface, and with it the used one's values. An
+interface declared in a pack is common. Find it: an `interface` block in a pack, or one
+marked `common`, whose `use interface` names an interface only the estate declares.
+**The edit:** mark the used interface `common`, or move the `use interface` line into the
+project's own interface.
+
+An interface change that breaks the projects reading it is a breaking change of the pack
+or the estate that makes it, with its own entry here.
+
 ### v0.84.0
 
 **`use_interface_notice` is refused; the change notice is the choice `interface_notice`.**
@@ -1753,7 +1799,7 @@ interface_notice_pubsub`. An estate that turns the notice off may bind
 pack is the same pack; the plan does not move.
 
 **An estate that uses `presets/estate-core.satz` must answer `workload_folder_name`.**
-It is the folder where the customer's and the teams' folders live; `""` is the
+It is the folder where the customer's and the projects' folders live; `""` is the
 organisation itself. `bootstrap` and `transpile --apply` refuse while a question is
 unanswered. Find it: an estate with `use "presets/estate-core.satz"` and no
 `workload_folder_name =` in its `params {}`.
@@ -2448,6 +2494,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `interface_notice` | 1.2 | 2026-09-26 | the header and the question's text say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; the resources are unchanged |
+| `estate_map` | 2.5 | 2026-09-26 | the `interface_notice` question and the notice's `offers` phase say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; nothing it offers changes |
+| `estate_core` | 2.4 | 2026-09-26 | the header, the `workload_folder_name` question and the section comments say project where they said team, and name the interfaces under `interfaces/`; params and exports are unchanged |
 | `interface_notice` | 1.1 | 2026-09-25 | gated on `interface_notice_pubsub`, the Pub/Sub option of the map's choice `interface_notice`; the header says the choice is where a further delivery form joins. The resources are unchanged |
 | `estate_map` | 2.4 | 2026-09-25 | the change notice is `question oneof interface_notice`, not required, with the option `interface_notice_pubsub` (default `false`) in place of the boolean `use_interface_notice`, which is refused by name; `offers "presets/interface-notice.satz"` is gated on the option |
 | `estate_core` | 2.3 | 2026-09-25 | `workload_folder_name`, the folder where the customer's and the teams' folders live, default `""` — the organisation, for which nothing is created — with its question, whose `empty` says so, so `""` is an answer. The estate publishes it as `workload_folder` in the section `satz init` or an interview writes. An estate that uses the pack answers the question before `bootstrap` or an apply |

@@ -209,6 +209,11 @@ impl Server {
         let Some(dir) = find_config_dir(path) else { return vec![] };
         let Some(registry) = self.registry(&dir) else { return vec![] };
         let config = self.estates[&dir].config.clone();
+        // an interface file is data satz generates: its parse is its whole check, and the
+        // estate that uses it is compiled when that estate is open
+        if file.interface_file.is_some() {
+            return vec![];
+        }
         let roots: Vec<(PathBuf, String)> = if file.is_pack {
             self.estates_using(&dir, &config, path)
         } else {
@@ -801,8 +806,8 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
     ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
-    ("export", "a value published to the HCL beside the estate, as an output of every module under hcl/interfaces/: `export \"name\" = VALUE [description \"…\"]`"),
-    ("interface", "one team's exports, written to hcl/interfaces/<name>/ beside the core ones: `interface \"name\" { export … use interface … }`"),
+    ("export", "a value published to the projects beside the estate, carried by every interface under interfaces/: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
+    ("interface", "one project's exports, written to interfaces/<name>/ beside the core ones: `interface \"name\" [common] { export … use interface … }` — `common` puts it into the library every project's folder carries; `interface \"name\"` alone on its line heads an interface file satz generates, which a project estate `use`s and reads as `\"${{interface.<export>}}\"`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
@@ -845,7 +850,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
     (
         "interface",
         &[
-            ("export", "one of the team's values: `export \"name\" = VALUE [description \"…\"]`"),
+            ("export", "one of the project's values: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
             ("use", USE_INTERFACE),
         ],
     ),
@@ -864,7 +869,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
 
 /// What `use` means inside an `interface` block, where it takes an interface's name.
 const USE_INTERFACE: &str =
-    "bring another interface's exports into this team's module: `use interface \"name\" [when PARAM]` or `use interface [\"a\", \"b\"] [when PARAM]` — a name, not a pack path";
+    "bring another interface's exports into this project's interface: `use interface \"name\" [when PARAM]` or `use interface [\"a\", \"b\"] [when PARAM]` — a name, not a pack path";
 
 /// Whether the `use` at `i` brings in an interface (`use interface …`) rather than a pack.
 fn uses_interface(toks: &[Token], i: usize) -> bool {

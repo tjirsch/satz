@@ -309,6 +309,106 @@ and recorded in the emission manifest; `true` or `false`, anything else refused.
   export of `estate-core.satz`: it is a param template, not a reference to the resource,
   and a team needs the address to grant the estate access to what it creates.
 
+## Amendment — projects, `interfaces/`, and the Satz form
+
+The interfaces served consumers that write HCL. A consumer that writes its own Satz estate
+had nothing to read: nothing in `hcl/interfaces/<name>/` describes the interface as data —
+the attach points, static-versus-lookup and the managed nodes were README prose — a
+written reference reached only `google_*` roots, and `check-consumer` needed the central
+estate compiled beside it.
+
+**Terms.** A **project** is an estate that depends on parts of another estate's
+interface; it may be maintained by a different team and has its own repository or folder,
+config, state and pipeline. The estate it reads is the **central estate**. In docs and
+messages "project" alone always means such an estate; a GCP project is "Google project"
+or `google_project`. The documentation states the rule once, in the language reference
+where the term is introduced, and "team" gave way to "project" wherever it named a
+consumer.
+
+**Decisions** (the plan approved on 2026-09-26, and the details it left open):
+
+1. **Layout: `hcl/` stays the root module; `interfaces_dir` (default `interfaces`, a
+   `config.toml` key `satz init` writes) is generated beside it.** `interfaces/common/`
+   holds the library alone; `interfaces/<project>/` holds the project's own interface and
+   every common one, so a project takes one folder whole and never picks common files
+   again after an update. Each interface is `README.md`, `hcl/` (the module, unchanged)
+   and `satz/interface.satz`. A common interface is `core`, every interface a pack
+   declares, and one marked `interface "<name>" common { … }`; no other project's
+   interface is ever copied into a project's folder. `hcl/interfaces/` is removed on the
+   next transpile, and `common` joins `core` as a reserved interface name.
+2. **A project's own interface keeps the merge**: it carries the core exports and those of
+   every interface it uses, so a project can work from that one module or file alone.
+3. **Nothing generated goes into `presets/`.** The generated files hold one estate's
+   values and lookup keys; `doc-packs` and `pack-graph` refuse an interface file in the
+   library by name.
+4. **The Satz form is a file kind of its own**, `interface "<name>"` alone on its line as
+   the header, stamped in a comment with the satz version and the estate it came from.
+   *Chosen here:* the body is data in the parser's generic block form — `central { estate
+   organizations }`, `output "<name>" { value attach targets description }`, `lookup
+   "data.<type>.<label>" { reads permission arguments { … } }`, `managed "<address>" { ids
+   keys { … } refs { … } }` — and the parser reads it into `satz::InterfaceFile`, refusing
+   anything else at its line. Only the header is new syntax, so the formatter, the
+   tree-sitter grammar and the language server read the body as they read any block; a
+   dedicated statement per kind (`lookup`, `managed` as keywords) was rejected as four new
+   keywords for data no one writes by hand, and reusing `export` statements was rejected
+   because a project estate's own `export`s and the central estate's values would share
+   one statement with two meanings. A value is written in the form a project reads it — a
+   literal, or text over `${data.<type>.<label>.<attr>}` — so `${{interface.x}}` is one
+   substitution, not an evaluation.
+5. **A project reads `${{interface.<export>}}`** after `use "<path>/interface.satz"` at the
+   top level. A whole-value reference becomes the value (a list stays a list); an embedded
+   one its text. A lookup's `data` block, with those its arguments read, is emitted once
+   into the project's `main.tf` through the provider its top-level resources carry. *Chosen
+   here:* one export name from two used files is one value when both carry the same, and
+   an error naming both files when they differ — the rule one name in two files follows
+   everywhere in Satz. The plan's "an error" for any clash would have refused every
+   project that uses its own interface beside a common one, since both carry the core
+   exports.
+6. **The rules `check-consumer` runs hold at the project's compile.** `src/consumer.rs`
+   judges through one `Facts` value — the exports with their attach points, targets and
+   static text; the resources a project can name, with their identities and natural keys;
+   the organisations — built from the compiled central estate for `check-consumer`, and
+   read from the interface files for a project compile. A violation is the finding kind
+   `interface-use`. *Chosen here:* the managed resources are those of a type the lookup
+   table reads back and those an export names, never one marked `private`; `check-consumer`
+   reads the same set, so the two paths judge the same facts. The cost: `check-consumer`
+   no longer recognises a literal that names a resource of a type outside the lookup
+   table (a secret, a key ring) as the central estate's, and a private resource is outside
+   both checks.
+7. **Request is unchanged**: a contribution is a pack the central estate `use`s (ADR 0051);
+   fetching it from the project's repository is the pipeline's job.
+
+*Chosen here too:*
+
+- **The content hash** is SHA-256 over every file of the folder but its index README, in
+  path order: the path relative to the folder, a NUL byte, the length as 8 little-endian
+  bytes, the bytes. The length keeps bytes from moving across a file boundary unnoticed.
+  The files carry the satz version in their stamps, so a new satz changes the hash.
+- **`--output` places the root module only**; the interfaces go to `interfaces_dir`
+  either way, and `interfaces_dir` may not hold `hcl_dir`, because satz removes it whole.
+- **A common interface uses only common interfaces.** It travels into every project's
+  folder, and a project's interface it used would travel with it.
+- **The managed facts are in every interface file of the estate**, so a project learns
+  the natural keys of every resource the central estate declares that a project can name
+  — other projects' Google project ids among them. They are what the duplicate rule needs;
+  a project that must not see them is a reason for a second central estate, not for a
+  thinner file.
+- `satz packs` lists an interface file under `interfaces`, not as an unmanaged pack; the
+  language server compiles no interface file on its own.
+
+**Options not taken.** *Keeping `hcl/interfaces/` and adding the Satz file beside each
+module* was rejected: the root module's directory would keep holding directories that are
+not part of it, and a project would still pick the common modules one by one. *A Satz
+project reading the central estate's source* (compiling it, as `check-consumer` does) was
+rejected: a project has its own repository and pipeline, and the central estate's source
+is not in it. *Referencing values as `module.satz.x` in Satz* was rejected: Satz has no
+modules, and the reference root names what it reads.
+
+**Consequences.** A project written in HCL edits its module `source` once (a
+`## Breaking changes` entry under v0.85.0, a minor release); the plans of the estate and
+of its projects do not move. satz-studio's catch-up — the `interfaces_dir` default, the
+file kind and `common` in its tree — follows its satz pin.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

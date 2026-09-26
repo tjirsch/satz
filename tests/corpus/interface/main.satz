@@ -1,8 +1,8 @@
-// Corpus case: the interfaces an estate publishes (hcl/interfaces/, outputs.tf). The
+// Corpus case: the interfaces an estate publishes (interfaces/, outputs.tf). The
 // core exports come from estate-core; the estate adds its own — a written attribute
 // (static), a derived one (static), a folder two levels down (a lookup that chains to
 // its parent's), an embedded reference (a template) and a list — and an interface for
-// one team, which team.satz adds to. Snapshot-gated.
+// one project, which team.satz adds to. Snapshot-gated.
 
 estate corpus_interface
 

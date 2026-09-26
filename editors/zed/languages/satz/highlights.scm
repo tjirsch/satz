@@ -22,7 +22,7 @@
   "action"
   "notice"
   "export" "description" "attach" "all"
-  "interface"
+  "interface" "common"
   "suppress" "role"
   "hcl" "trust"
 ] @keyword
@@ -37,6 +37,7 @@
   (#match? @type "^google_"))
 
 (header name: (identifier) @title)
+(header name: (string) @title)
 (param name: (identifier) @variable)
 (question name: (identifier) @variable)
 (notice name: (identifier) @variable)

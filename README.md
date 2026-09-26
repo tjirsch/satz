@@ -18,13 +18,18 @@ customer-repo/ (e.g. project-root/)
 ├── schemas/             # JSON schemas for used cloud providers
 ├── presets/             # Preset library (get-presets) — everything available for copying
 ├── satz/                # Infrastructure definitions — only files actually used/adapted
-└── hcl/                 # Generated .tf files
-    ├── main.tf, providers.tf, variables.tf, terraform.tfvars, imports.tf
-    ├── outputs.tf       # what the estate exports, as outputs of the root module
-    └── interfaces/      # one module per interface the teams beside the estate source
-        ├── core/        #   the core exports alone
-        └── <team>/      #   one team's exports and the core ones
+├── hcl/                 # Generated .tf files: the estate's root module
+│   ├── main.tf, providers.tf, variables.tf, terraform.tfvars, imports.tf
+│   └── outputs.tf       # what the estate exports, as outputs of the root module
+└── interfaces/          # Generated: what the estate exports, for the projects beside it
+    ├── common/          #   the library alone: core and every common interface
+    └── <project>/       #   one project's folder, taken whole: its own interface and the library
+        └── <interface>/ #     README.md, hcl/ (a module), satz/interface.satz (a file a Satz estate uses)
 ```
+
+A **project** is an estate that depends on parts of this estate's interface — its own
+repository or folder, config, state and pipeline, written in HCL or in Satz
+([language §6.17](docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
 
 ### Which config? (`--config` vs the positional argument)
 
@@ -34,11 +39,11 @@ Two different files are involved:
 |---|---|---|
 | **Is** | the **project** config — TOML | the **estate** — Satz |
 | **Example** | `config.toml`, `../config.toml` | `C0example.satz` |
-| **Holds** | `yaml_dir`, `hcl_dir`, `schema_dir`, `include_dirs`, providers | params, `terraform` block, folders, projects, resources |
+| **Holds** | `yaml_dir`, `hcl_dir`, `interfaces_dir`, `schema_dir`, `include_dirs`, providers | params, `terraform` block, folders, projects, resources |
 | **Default** | `./config.toml` (error if missing) | none — required |
 | **Path resolves against** | your current directory | **`yaml_dir`** |
 
-`config.toml` is the anchor for everything else: `yaml_dir`, `hcl_dir`, `schema_dir` and `include_dirs` resolve relative to **the config file's own directory**, not your current one. So you can work from anywhere as long as you point `--config` at it:
+`config.toml` is the anchor for everything else: `yaml_dir`, `hcl_dir`, `interfaces_dir`, `schema_dir` and `include_dirs` resolve relative to **the config file's own directory**, not your current one. So you can work from anywhere as long as you point `--config` at it:
 
 ```bash
 # from the project root (config.toml is in the current directory)
@@ -170,7 +175,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and one module per interface under `interfaces/`, written whole — a removed interface's folder with it — and removed when it exports nothing ([customer teams beside the estate](docs/workflows.md#customer-teams-beside-the-estate)) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
@@ -189,7 +194,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `run-actions <INPUT>` | `--check` (each action's own dry-run form), `--execute` (the form that writes), `--only <names>`, `--phase <before-apply\|after-apply>` — prints what it would run and stops by default |
-| `check-consumer <DIR> [ESTATE]` | a team's HCL beside the estate, held to the estate's interface, offline: `DIR` is the team's directory of `.tf` files, read with its subdirectories; without `ESTATE` the one estate in `yaml_dir`. Each finding names the team's file and line — an attachment resource onto the estate's object that no attach point (`export … attach [ … ]`) allows, an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy on a node the estate manages, a resource the estate declares too, by natural key — and any finding exits 1 ([customer teams beside the estate](docs/workflows.md#customer-teams-beside-the-estate)) |
+| `check-consumer <DIR> [ESTATE]` | a project's HCL beside the estate, held to the estate's interface, offline: `DIR` is the project's directory of `.tf` files, read with its subdirectories; without `ESTATE` the one estate in `yaml_dir`. A module is an interface when its `source` ends in `<interface>/hcl`. Each finding names the project's file and line — an attachment resource onto the estate's object that no attach point (`export … attach [ … ]`) allows, an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy on a node the estate manages, a resource the estate declares too, by natural key — and any finding exits 1 ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 
 **Presets**
 
@@ -266,7 +271,7 @@ satz init \
 - `--default-region <REGION>`: Default GCP region (default: `europe-west3`).
 - `--infra-project-name <ID>`: Override for the infrastructure project ID.
 - `--infra-bucket-name <NAME>`: Override for the state bucket name.
-- `--workload-folder-name <NAME>`: the folder directly under the organisation that holds the customer's and the teams' folders. The estate declares it (`google_folder.workload_folder`) and publishes its `folders/<number>` as the core export `workload_folder`; without the flag the workload folder is the organisation and `workload_folder` is `organizations/<id>`. A folder of that name the customer already has is imported with `satz adopt <estate> --execute --import` before the first apply.
+- `--workload-folder-name <NAME>`: the folder directly under the organisation that holds the customer's and the projects' folders. The estate declares it (`google_folder.workload_folder`) and publishes its `folders/<number>` as the core export `workload_folder`; without the flag the workload folder is the organisation and `workload_folder` is `organizations/<id>`. A folder of that name the customer already has is imported with `satz adopt <estate> --execute --import` before the first apply.
 - Values come from three places and no fourth: what you state on the command line, what the Application Default Credentials can answer, or empty. Derivation is automatic and needs no flag — the identity gives `first_admin` and `customer_domain`, `organizations:search` gives `customer_organization_id` and the `C0…` directory customer, `billingAccounts.list` gives the account when exactly one is open, and `infra_project_name` / `infra_bucket_name` follow from `customer_shortname`. Each derived value is printed with the source it came from. What nothing can answer is written `""` and named, and `satz bootstrap` refuses by param until it is set — a placeholder would look like an answer. `--from-live` is accepted and ignored; it is what init does now.
 - `--interview`: a day-0 param is stated, derived or ASKED — there is no fourth state where the estate is simply born incomplete. With this flag init hands the estate it just wrote to `satz interview`, which asks for whatever is still unbound. It is a flag rather than the default because the interview is interactive and a scripted run must not block on it.
 - The pack menu — one commented `use … when` line per pack, under the phase it can be adopted in — is written from `pack-graph.json` in `presets_dir`, the pack graph that ships with the presets. With no graph there the estate is written without pack lines, and init says so: `satz get-presets`, then `satz merge-presets`, write them where the menu goes. A graph that places a pack in a block this binary's scaffold does not have is refused before anything is written; `satz self-update` is the way through.
@@ -484,7 +489,7 @@ satz transpile <INPUT> [options]
 
 **Parameters:**
 - `<INPUT>`: Name of the estate file. This is resolved relative to the `yaml_dir` defined in your config.
-- `--output, -o <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`.
+- `--output, -o <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`. The interfaces go to `interfaces_dir` either way.
 - `--schema-dir, -s <DIR>`: Override the schema directory.
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
@@ -1918,6 +1923,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 |-----|---------|-------------|
 | `yaml_dir` | `"satz"` | Source directory for estate files |
 | `hcl_dir` | `"hcl"` | Target directory for generated HCL |
+| `interfaces_dir` | `"interfaces"` | Where the estate's interfaces are written for the projects beside it, whole on every transpile; it holds nothing else, so it does not hold `hcl_dir`. `satz init` writes it |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
 | `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; the import-config default resolves here |
 | `include_dirs` | `[".", "satz"]` | Search paths for `use`d packs |
@@ -2230,10 +2236,12 @@ The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that 
 `satz.rs` parses each `.satz` file, `pipeline.rs` resolves params
 and `use`s into per-file fragments, `algebra.rs` folds them by Terraform address (⊕), and
 the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
-`terraform.tfvars` and `imports.tf`. The estate's `export`s become `outputs.tf` and one
-relocatable module per interface under `interfaces/` (`src/interface.rs`): a value known at compile time is a
-literal output, one only the cloud knows is a `data` source keyed by what satz writes
-(`presets/interface-lookups.yaml`).
+`terraform.tfvars` and `imports.tf`. The estate's `export`s become `outputs.tf` and, per
+interface under `interfaces/`, a relocatable module and an interface file a project estate
+`use`s (`src/interface.rs`): a value known at compile time is a literal, one only the
+cloud knows is a `data` source keyed by what satz writes (`presets/interface-lookups.yaml`).
+A project estate's `${{interface.<export>}}` is replaced before emission, and its
+resources are held to the interface file's attach points (`src/consumer.rs`).
 - **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block. A project that writes one says its own parent — a reference to a folder the estate declares, or an id — and an empty value says nothing, so the enclosing block decides.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
 

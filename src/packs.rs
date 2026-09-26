@@ -830,6 +830,9 @@ pub(crate) struct PacksReport {
     /// every node of the graph, in the graph's order
     pub packs: Vec<PackRow>,
     pub unmanaged: Vec<Unmanaged>,
+    /// the interface files of central estates the estate reads — no pack, and no pack
+    /// graph's business
+    pub interfaces: Vec<Unmanaged>,
     /// the compile's pack findings, as `transpile --check` prints them
     pub findings: Vec<Finding>,
 }
@@ -858,13 +861,8 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
     let Some(graph) = crate::pack_graph::read(&dir)? else {
         // every `use` is one the graph does not know, because there is none
         let s = scan(&src);
-        return Ok(PacksReport {
-            estate: label,
-            note: Some(no_graph(&dir)),
-            packs: Vec::new(),
-            unmanaged: s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect(),
-            findings: Vec::new(),
-        });
+        let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect());
+        return Ok(PacksReport { estate: label, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, findings: Vec::new() });
     };
     let lib = Library::load(&graph, &dir)?;
     let view = View::new(&graph, &lib, &src).map_err(|e| format!("{}: {}", label, e))?;
@@ -872,14 +870,26 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
     found.extend(view.line_findings(&label, &crate::estate_as_typed(estate, runtime), &runtime.validation_level));
     let mut nodes: Vec<&Node> = graph.nodes.iter().collect();
     nodes.sort_by_key(|n| (n.order.map(|o| o + 1).unwrap_or(0), n.path.clone()));
+    let (interfaces, unmanaged) = interface_files(estate, runtime, view.unmanaged());
     Ok(PacksReport {
         estate: label,
         note: None,
         packs: nodes.iter().map(|n| view.row(n, &found)).collect(),
-        unmanaged: view.unmanaged(),
+        unmanaged,
+        interfaces,
         // as the compile reports them: the pack is the subject, the file is relative to
         // the estate's directory
         findings: found.into_iter().map(|(path, f)| crate::estate_relative_file(f.about(path), runtime.dir.as_deref())).collect(),
+    })
+}
+
+/// The lines the graph does not know, split: those that use a generated interface file
+/// (`interface "<name>"` as its header), and the rest. A file that does not read stays
+/// with the rest — the compile says why.
+fn interface_files(estate: &Path, runtime: &ToolConfig, lines: Vec<Unmanaged>) -> (Vec<Unmanaged>, Vec<Unmanaged>) {
+    let load = crate::satz_loader(estate, &runtime.include_dirs);
+    lines.into_iter().partition(|u| {
+        load(&u.path).ok().and_then(|t| satz_core::satz::parse(&t).ok()).is_some_and(|f| f.interface_file.is_some())
     })
 }
 
@@ -945,6 +955,12 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
             s.push_str(&format!("  {} (line {})\n", u.path, u.at_line));
         }
     }
+    if !r.interfaces.is_empty() {
+        s.push_str("\ninterfaces — the interface files of central estates it reads:\n");
+        for u in &r.interfaces {
+            s.push_str(&format!("  {} (line {})\n", u.path, u.at_line));
+        }
+    }
     if !r.findings.is_empty() {
         s.push_str("\nfindings:\n\n");
         s.push_str(&crate::findings::lay_out(&r.findings, crate::findings::Shown::All, width));
@@ -995,6 +1011,12 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
     if !r.unmanaged.is_empty() {
         s.push_str("\n## Unmanaged\n\n");
         for u in &r.unmanaged {
+            s.push_str(&format!("- `{}` (line {})\n", u.path, u.at_line));
+        }
+    }
+    if !r.interfaces.is_empty() {
+        s.push_str("\n## Interfaces\n\n");
+        for u in &r.interfaces {
             s.push_str(&format!("- `{}` (line {})\n", u.path, u.at_line));
         }
     }

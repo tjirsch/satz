@@ -347,15 +347,15 @@ pub struct NoticeDecl {
 }
 
 /// `export "<name>" = <value> [description "…"]` — one value the estate publishes to
-/// the HCL that customer teams write beside it.
+/// the projects beside it — estates with their own repository, config, state and pipeline.
 ///
-/// An export at the top level of a file is a CORE export: an output of every interface
-/// module under `hcl/interfaces/`. One inside `interface "<name>" { … }` belongs to that
-/// interface's module alone. Every export is also an output of the root module's
+/// An export at the top level of a file is a CORE export: a value of every interface
+/// under `interfaces/`. One inside `interface "<name>" { … }` belongs to that
+/// interface alone. Every export is also an output of the root module's
 /// `outputs.tf`. The value is a param, a literal, or a string that carries
 /// `${{type.label.attr}}` references to what the estate emits; the compile decides per
 /// reference whether the value is known now (a literal output) or only in the cloud (a
-/// `data` source the consumer's plan reads). An export is a statement and no resource:
+/// `data` source the project's plan reads). An export is a statement and no resource:
 /// it never enters the fold, and two files that export one name with different values
 /// are a hard error naming both.
 #[derive(Debug, Clone, PartialEq)]
@@ -365,7 +365,7 @@ pub struct ExportDecl {
     pub value: ExportValue,
     /// Carried into the output's `description` and the interface README.
     pub description: Option<String>,
-    /// `attach ["<resource type>", …]`: the attachment resource types a team may create
+    /// `attach ["<resource type>", …]`: the attachment resource types a project may create
     /// in its own state against the exported object — an attach point. Empty: the export
     /// is read, nothing more.
     pub attach: Vec<String>,
@@ -394,19 +394,27 @@ pub fn valid_export_name(name: &str) -> bool {
 /// The interface that holds the top-level exports, and the folder its module is written to.
 pub const CORE_INTERFACE: &str = "core";
 
-/// An interface name is the folder `hcl/interfaces/<name>/` a team sources.
+/// The folder under `interfaces/` that holds the common interfaces alone — the library
+/// every project's folder also carries — so no interface takes its name.
+pub const COMMON_LIBRARY: &str = "common";
+
+/// An interface name is a folder name: `interfaces/<project>/<name>/`.
 pub fn valid_interface_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// `interface "<name>" { export … }` — the exports one team reads, written to their own
-/// module `hcl/interfaces/<name>/` beside the core exports every module carries. The same
-/// name in two files is one interface: their exports merge.
+/// `interface "<name>" [common] { export … }` — the exports one project reads, written to
+/// its own folder `interfaces/<name>/` beside the core exports every interface carries. The
+/// same name in two files is one interface: their exports merge. `common` puts it into the
+/// library every project's folder carries; an interface a pack declares is common without
+/// the word.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDecl {
     pub name: String,
+    /// written `interface "<name>" common { … }`
+    pub common: bool,
     pub exports: Vec<ExportDecl>,
     /// `use interface "<name>"` / `use interface ["<a>", "<b>"]` lines, in file order
     pub uses: Vec<InterfaceUse>,
@@ -414,7 +422,7 @@ pub struct InterfaceDecl {
 }
 
 /// `use interface "<name>" [when <param>]`, or the list form `use interface ["<a>",
-/// "<b>"] [when <param>]`, inside an `interface` block: the team's module carries the
+/// "<b>"] [when <param>]`, inside an `interface` block: the project's interface carries the
 /// exports of the named interfaces too. The argument is an interface NAME, not a path,
 /// so it is no pack line and no tool that reads `use "<path>"` lines sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -423,6 +431,123 @@ pub struct InterfaceUse {
     /// the param that gates the line, as on a pack line
     pub when: Option<String>,
     pub line: usize,
+}
+
+/// A generated interface file, `interfaces/<project>/<name>/satz/interface.satz`: the
+/// header `interface "<name>"` alone on its line, then data only — what the central estate
+/// publishes to a project written in Satz. satz writes it on every transpile of the central
+/// estate; a project `use`s it and names a value `${{interface.<export>}}`.
+///
+/// ```text
+/// interface "archive"
+///
+/// central {
+///   estate        = "showcase"
+///   organizations = ["organizations/123456789012"]
+/// }
+///
+/// output "archive_project_id" {
+///   value       = "corp-archive-001"
+///   attach      = ["google_project_iam_member"]
+///   targets     = ["google_project.archive"]
+///   description = "The project's Google project"
+/// }
+///
+/// lookup "data.google_project.archive" {
+///   reads      = "google_project.archive"
+///   permission = "resourcemanager.projects.get"
+///   arguments {
+///     project_id = "corp-archive-001"
+///   }
+/// }
+///
+/// managed "google_project.archive" {
+///   ids = ["corp-archive-001"]
+///   keys {
+///     project_id = "corp-archive-001"
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InterfaceFile {
+    pub name: String,
+    /// the central estate's name
+    pub estate: String,
+    /// the organisations the central estate manages, `organizations/<id>`
+    pub organizations: Vec<String>,
+    pub outputs: Vec<OfferedOutput>,
+    pub lookups: Vec<OfferedLookup>,
+    pub managed: Vec<ManagedFact>,
+    pub line: usize,
+}
+
+/// One value of an interface file. `value` is what `${{interface.<name>}}` stands for in a
+/// project: a literal, or text over `${data.<type>.<label>.<attr>}` of the file's lookups.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OfferedOutput {
+    pub name: String,
+    pub value: serde_yaml::Value,
+    pub description: Option<String>,
+    /// the attachment resource types a project may create against it
+    pub attach: Vec<String>,
+    /// the central estate's resources the value names, by address
+    pub targets: Vec<String>,
+    pub line: usize,
+}
+
+/// A `data` block a value reads: emitted once into the project's root module when a value
+/// the project reads needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OfferedLookup {
+    /// `data.<data source>.<label>`
+    pub address: String,
+    /// the central estate's resource it reads back
+    pub reads: String,
+    pub permission: String,
+    /// argument → text, `${…}` where it reads another lookup
+    pub arguments: Vec<(String, String)>,
+    pub line: usize,
+}
+
+impl OfferedLookup {
+    /// (data source, label)
+    pub fn source_and_label(&self) -> (&str, &str) {
+        let rest = self.address.strip_prefix("data.").unwrap_or(&self.address);
+        rest.split_once('.').unwrap_or((rest, ""))
+    }
+}
+
+/// A resource the central estate declares, as far as a project's compile needs to tell it
+/// apart: the identities it carries and the natural keys the interface reads it by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ManagedFact {
+    /// `<type>.<label>`
+    pub address: String,
+    /// the values satz writes as its identity (`project_id`, `name`, `account_id`, …)
+    pub ids: Vec<String>,
+    /// natural key → the value satz writes
+    pub keys: std::collections::BTreeMap<String, String>,
+    /// natural key → the address of the central resource it names
+    pub refs: std::collections::BTreeMap<String, String>,
+    pub line: usize,
+}
+
+/// A Satz string literal holding `text` exactly: quotes, backslashes, line ends and braces
+/// escaped, so no `{…}` reads a param.
+pub fn quote(text: &str) -> String {
+    let mut s = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '{' => s.push_str("{{"),
+            '}' => s.push_str("}}"),
+            '"' => s.push_str("\\\""),
+            '\\' => s.push_str("\\\\"),
+            '\n' => s.push_str("\\n"),
+            c => s.push(c),
+        }
+    }
+    s.push('"');
+    s
 }
 
 #[derive(Debug, Default)]
@@ -449,6 +574,9 @@ pub struct File {
     pub exports: Vec<ExportDecl>,
     /// `interface` blocks, in file order
     pub interfaces: Vec<InterfaceDecl>,
+    /// the file is a generated interface file (`interface "<name>"` as its header); it
+    /// carries this and nothing else
+    pub interface_file: Option<InterfaceFile>,
 }
 
 /// A control claim as language syntax:
@@ -1638,7 +1766,7 @@ impl P {
             }
         }
         if types.is_empty() {
-            return err(line, format!("export \"{}\" attach []: names no resource type — leave `attach` out for an export a team only reads", export));
+            return err(line, format!("export \"{}\" attach []: names no resource type — leave `attach` out for an export a project only reads", export));
         }
         Ok(types)
     }
@@ -1652,7 +1780,7 @@ impl P {
             return err(
                 line,
                 format!(
-                    "interface \"{}\": the name is the folder hcl/interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter",
+                    "interface \"{}\": the name is the folder interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter",
                     name
                 ),
             );
@@ -1662,6 +1790,16 @@ impl P {
                 line,
                 format!("interface \"{}\": the name is reserved — the exports outside every `interface` block are the core ones", name),
             );
+        }
+        if name == COMMON_LIBRARY {
+            return err(
+                line,
+                format!("interface \"{}\": the name is reserved — interfaces/{}/ holds the common interfaces alone", name, COMMON_LIBRARY),
+            );
+        }
+        let common = matches!(self.peek(), Some(Tok::Ident(c)) if c == "common");
+        if common {
+            self.next();
         }
         self.expect(Tok::LBrace, "'{' after the interface name")?;
         let mut exports: Vec<ExportDecl> = Vec::new();
@@ -1706,7 +1844,7 @@ impl P {
                 }
             }
         }
-        Ok(InterfaceDecl { name, exports, uses, line })
+        Ok(InterfaceDecl { name, common, exports, uses, line })
     }
 
     /// `use interface "<name>" [when <param>]` or `use interface ["<a>", …] [when <param>]`,
@@ -2034,6 +2172,28 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
             // map named `interface` and its exports as entries.
             Some(Tok::Ident(id)) if id == "interface" => {
                 p.next();
+                // `interface "<name>"` with nothing after the name is the header of a
+                // generated interface file; `{` or `common {` after it opens a block
+                let header = matches!(p.toks.get(p.i), Some((Tok::Str(_), _)))
+                    && !matches!(p.toks.get(p.i + 1), Some((Tok::LBrace, _)))
+                    && !matches!(p.toks.get(p.i + 1), Some((Tok::Ident(c), _)) if c == "common");
+                if header {
+                    let name = match p.next() {
+                        Some(Tok::Str(parts)) => lit_str(&parts, line, "interface: the name")?,
+                        _ => unreachable!(),
+                    };
+                    if !valid_interface_name(&name) {
+                        return err(line, format!("interface \"{}\": an interface name is lowercase letters, digits and `-`, starting with a letter", name));
+                    }
+                    if let Some(first) = &file.interface_file {
+                        return err(line, format!("a second `interface` header (\"{}\") — the file is already interface \"{}\"", name, first.name));
+                    }
+                    if p.line() == line && p.peek().is_some() {
+                        return err(line, format!("interface header: the header is `interface \"<name>\"` alone on its line, found {:?} after it", p.peek().unwrap()));
+                    }
+                    file.interface_file = Some(InterfaceFile { name, line, ..InterfaceFile::default() });
+                    continue;
+                }
                 let i = p.interface_stmt(line)?;
                 if let Some(first) = file.interfaces.iter().find(|x| x.name == i.name) {
                     return err(
@@ -2104,6 +2264,10 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
             Some(other) => return err(line, format!("unexpected {:?} at top level", other)),
         }
         // ---- end of the statement dispatch ------------------------------------------
+    }
+
+    if file.interface_file.is_some() {
+        return interface_file_of(file);
     }
 
     // A question must live in the file that declares its param. Questions are
@@ -2206,6 +2370,194 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
         }
     }
     Ok(file)
+}
+
+/// The body of a generated interface file, read into its `InterfaceFile`: `central`,
+/// `output`, `lookup` and `managed` blocks and nothing else, so nothing of it is a resource,
+/// a param or a statement of an estate.
+fn interface_file_of(mut file: File) -> Result<File, SatzError> {
+    let mut iface = file.interface_file.take().expect("the caller saw the header");
+    let header = iface.line;
+    let other = [
+        (file.estate.is_some(), if file.is_pack { "a `pack` header" } else { "an `estate` header" }),
+        (!file.params.is_empty(), "`params`"),
+        (!file.claims.is_empty(), "a `claim`"),
+        (!file.suppressions.is_empty(), "a `suppress`"),
+        (!file.hcl_blocks.is_empty(), "an `hcl` block"),
+        (!file.actions.is_empty(), "an `action`"),
+        (!file.questions.is_empty(), "a `question`"),
+        (!file.offers.is_empty(), "an `offers` entry"),
+        (!file.notices.is_empty(), "a `notice`"),
+        (!file.exports.is_empty(), "an `export`"),
+        (!file.interfaces.is_empty(), "an `interface` block"),
+    ];
+    if let Some((_, what)) = other.iter().find(|(has, _)| *has) {
+        return err(
+            header,
+            format!(
+                "interface \"{}\": an interface file satz generates holds `central`, `output`, `lookup` and `managed` blocks, and this one holds {} — regenerate it with `satz transpile` of the central estate",
+                iface.name, what
+            ),
+        );
+    }
+    let mut central = false;
+    for item in std::mem::take(&mut file.items) {
+        let (kind, name, body, line) = match item {
+            Entry::Map { key: Key::Ident(k), name, body, line } => (k, name, body, line),
+            Entry::Map { line, .. } | Entry::Attr { line, .. } | Entry::Use { line, .. } => {
+                return err(line, format!("interface \"{}\": holds `central`, `output`, `lookup` and `managed` blocks only", iface.name));
+            }
+        };
+        let named = |what: &str| -> Result<String, SatzError> {
+            match &name {
+                Some(Key::Str(parts)) => lit_str(parts, line, what),
+                _ => err(line, format!("{} \"…\" {{ … }}: the block takes a quoted name", what)),
+            }
+        };
+        let mut fields: std::collections::BTreeMap<String, (Option<Value>, Option<Vec<Entry>>)> = std::collections::BTreeMap::new();
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value, .. } => {
+                    fields.insert(k, (Some(value), None));
+                }
+                Entry::Map { key: Key::Ident(k), name: None, body, .. } => {
+                    fields.insert(k, (None, Some(body)));
+                }
+                Entry::Attr { line, .. } | Entry::Map { line, .. } | Entry::Use { line, .. } => {
+                    return err(line, format!("{}: an unexpected entry", kind));
+                }
+            }
+        }
+        let text = |fields: &mut std::collections::BTreeMap<String, (Option<Value>, Option<Vec<Entry>>)>, k: &str, required: bool| -> Result<Option<String>, SatzError> {
+            match fields.remove(k) {
+                Some((Some(Value::Str(parts)), None)) => lit_str(&parts, line, k).map(Some),
+                Some(_) => err(line, format!("{}: `{}` is a quoted text", kind, k)),
+                None if required => err(line, format!("{}: `{}` is missing", kind, k)),
+                None => Ok(None),
+            }
+        };
+        let texts = |fields: &mut std::collections::BTreeMap<String, (Option<Value>, Option<Vec<Entry>>)>, k: &str| -> Result<Vec<String>, SatzError> {
+            match fields.remove(k) {
+                Some((Some(Value::List(items)), None)) => items
+                    .iter()
+                    .map(|i| match i {
+                        Value::Str(parts) => lit_str(parts, line, k),
+                        _ => err(line, format!("{}: `{}` is a list of quoted texts", kind, k)),
+                    })
+                    .collect(),
+                Some(_) => err(line, format!("{}: `{}` is a list of quoted texts", kind, k)),
+                None => Ok(Vec::new()),
+            }
+        };
+        let map = |fields: &mut std::collections::BTreeMap<String, (Option<Value>, Option<Vec<Entry>>)>, k: &str| -> Result<Vec<(String, String)>, SatzError> {
+            match fields.remove(k) {
+                Some((None, Some(body))) => body
+                    .into_iter()
+                    .map(|e| match e {
+                        Entry::Attr { key: Key::Ident(a), value: Value::Str(parts), line } => Ok((a, lit_str(&parts, line, k)?)),
+                        _ => err(line, format!("{}: `{}` holds `<argument> = \"…\"` lines", kind, k)),
+                    })
+                    .collect(),
+                Some(_) => err(line, format!("{}: `{} {{ … }}` is a block", kind, k)),
+                None => Ok(Vec::new()),
+            }
+        };
+        match kind.as_str() {
+            "central" => {
+                if central {
+                    return err(line, "central: written twice — an interface file has one");
+                }
+                central = true;
+                iface.estate = text(&mut fields, "estate", true)?.unwrap_or_default();
+                iface.organizations = texts(&mut fields, "organizations")?;
+            }
+            "output" => {
+                let name = named("output")?;
+                if let Some(first) = iface.outputs.iter().find(|o| o.name == name) {
+                    return err(line, format!("output \"{}\": written twice (line {} and line {})", name, first.line, line));
+                }
+                let value = match fields.remove("value") {
+                    Some((Some(v), None)) => plain_value(&v, line)?,
+                    _ => return err(line, format!("output \"{}\": `value = …` is missing", name)),
+                };
+                iface.outputs.push(OfferedOutput {
+                    description: text(&mut fields, "description", false)?,
+                    attach: texts(&mut fields, "attach")?,
+                    targets: texts(&mut fields, "targets")?,
+                    name,
+                    value,
+                    line,
+                });
+            }
+            "lookup" => {
+                let address = named("lookup")?;
+                if address.split('.').count() != 3 || !address.starts_with("data.") {
+                    return err(line, format!("lookup \"{}\": the name is the data block's address, `data.<data source>.<label>`", address));
+                }
+                if let Some(first) = iface.lookups.iter().find(|l| l.address == address) {
+                    return err(line, format!("lookup \"{}\": written twice (line {} and line {})", address, first.line, line));
+                }
+                iface.lookups.push(OfferedLookup {
+                    reads: text(&mut fields, "reads", true)?.unwrap_or_default(),
+                    permission: text(&mut fields, "permission", true)?.unwrap_or_default(),
+                    arguments: map(&mut fields, "arguments")?,
+                    address,
+                    line,
+                });
+            }
+            "managed" => {
+                let address = named("managed")?;
+                if let Some(first) = iface.managed.iter().find(|m| m.address == address) {
+                    return err(line, format!("managed \"{}\": written twice (line {} and line {})", address, first.line, line));
+                }
+                iface.managed.push(ManagedFact {
+                    ids: texts(&mut fields, "ids")?,
+                    keys: map(&mut fields, "keys")?.into_iter().collect(),
+                    refs: map(&mut fields, "refs")?.into_iter().collect(),
+                    address,
+                    line,
+                });
+            }
+            other => {
+                return err(line, format!("interface \"{}\": `{}` — an interface file holds `central`, `output`, `lookup` and `managed` blocks only", iface.name, other));
+            }
+        }
+        if let Some(k) = fields.keys().next() {
+            return err(line, format!("{}: `{}` is no field of it", kind, k));
+        }
+    }
+    if !central {
+        return err(header, format!("interface \"{}\": the `central {{ estate = \"…\" }}` block is missing", iface.name));
+    }
+    file.interface_file = Some(iface);
+    Ok(file)
+}
+
+/// A value with no param in it, as data: an interface file's values are literals.
+fn plain_value(v: &Value, line: usize) -> Result<serde_yaml::Value, SatzError> {
+    Ok(match v {
+        Value::Str(parts) => serde_yaml::Value::String(lit_str(parts, line, "a value")?),
+        Value::Num(n) => serde_yaml::from_str::<serde_yaml::Value>(n).map_err(|e| SatzError { line, msg: format!("`{}`: {}", n, e) })?,
+        Value::Bool(b) => serde_yaml::Value::Bool(*b),
+        Value::Ref(r) => return err(line, format!("`{}`: a value in an interface file is a literal, never a param", r)),
+        Value::List(items) => serde_yaml::Value::Sequence(items.iter().map(|i| plain_value(i, line)).collect::<Result<_, _>>()?),
+        Value::Obj(entries) => {
+            let mut m = serde_yaml::Mapping::new();
+            for e in entries {
+                match e {
+                    Entry::Attr { key, value, line } => {
+                        let k = match key {
+                            Key::Ident(k) => k.clone(),
+                            Key::Str(parts) => lit_str(parts, *line, "a key")?,
+                        };
+                        m.insert(serde_yaml::Value::String(k), plain_value(value, *line)?);
+                    }
+                    Entry::Map { line, .. } | Entry::Use { line, .. } => return err(*line, "an object value holds `key = value` entries only"),
+                }
+            }
+            serde_yaml::Value::Mapping(m)
+        }
+    })
 }
 
 /// Params in dependency order (stable Kahn topological sort): a param may reference
@@ -2394,6 +2746,9 @@ pub fn canonical_parts(file: &File) -> Canonical {
         }
         (None, _) => {}
     }
+    if let Some(i) = &file.interface_file {
+        body.push_str(&canonical_interface_file(i));
+    }
     for e in &file.items {
         canon_entry(e, &mut body);
         body.push('\n');
@@ -2453,7 +2808,7 @@ pub fn canonical_parts(file: &File) -> Canonical {
             x.attach.join(",")
         ));
     }
-    // What a team's module carries changes with the interfaces it uses.
+    // What a project's interface carries changes with the interfaces it uses.
     let mut uses: Vec<String> = file
         .interfaces
         .iter()
@@ -2461,7 +2816,38 @@ pub fn canonical_parts(file: &File) -> Canonical {
         .collect();
     uses.sort();
     uses.into_iter().for_each(|u| body.push_str(&u));
+    // Where an interface is written — the library or one project's folder — is part of
+    // what the estate emits.
+    let mut common: Vec<&str> = file.interfaces.iter().filter(|i| i.common).map(|i| i.name.as_str()).collect();
+    common.sort();
+    common.dedup();
+    common.into_iter().for_each(|c| body.push_str(&format!("common_interface({})\n", c)));
     Canonical { params, body }
+}
+
+/// An interface file's data, in a fixed order and without line numbers.
+fn canonical_interface_file(i: &InterfaceFile) -> String {
+    let y = |v: &serde_yaml::Value| serde_yaml::to_string(v).unwrap_or_default().trim().replace('\n', "\\n");
+    let mut s = format!("interface_file({}|{}|[{}])\n", i.name, i.estate, i.organizations.join(","));
+    for o in &i.outputs {
+        s.push_str(&format!(
+            "output({}|{}|{}|[{}]|[{}])\n",
+            o.name,
+            y(&o.value),
+            o.description.as_deref().unwrap_or(""),
+            o.attach.join(","),
+            o.targets.join(",")
+        ));
+    }
+    for l in &i.lookups {
+        let args: Vec<String> = l.arguments.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        s.push_str(&format!("lookup({}|{}|{}|[{}])\n", l.address, l.reads, l.permission, args.join(",")));
+    }
+    for m in &i.managed {
+        let kv = |b: &std::collections::BTreeMap<String, String>| b.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join(",");
+        s.push_str(&format!("managed({}|[{}]|[{}]|[{}])\n", m.address, m.ids.join(","), kv(&m.keys), kv(&m.refs)));
+    }
+    s
 }
 
 fn canon_str(parts: &[StrPart]) -> String {
@@ -2948,6 +3334,42 @@ action "scc-services" {
         assert!(e.msg.contains("output name"), "{}", e.msg);
         let c = canonical(&f);
         assert!(c.contains("export(team-a|folder|\"x\"|d|[])"), "{}", c);
+    }
+
+    /// `interface "<name>"` alone on its line heads a generated interface file, whose body
+    /// is data; `interface "<name>" common { … }` is a block in the library; `common` is no
+    /// interface name.
+    #[test]
+    fn an_interface_file_is_a_header_and_data_and_common_marks_a_block() {
+        let src = "interface \"pay\"\n\ncentral {\n  estate        = \"central\"\n  organizations = []\n}\n\noutput \"folders\" {\n  value = {\n    \"a\" = \"${{data.x.a.name}}\"\n  }\n  targets = [\"google_folder.a\"]\n}\n\nmanaged \"google_folder.a\" {\n  keys {\n    display_name = \"A\"\n  }\n  refs {\n    parent = \"google_folder.root\"\n  }\n}\n";
+        let f = parse(src).unwrap();
+        let i = f.interface_file.as_ref().expect("an interface file");
+        assert_eq!((i.name.as_str(), i.estate.as_str(), i.line), ("pay", "central", 1));
+        assert!(f.items.is_empty() && f.estate.is_none() && use_paths(&f).is_empty(), "nothing of it is a pack, an estate or a resource");
+        let mut want = serde_yaml::Mapping::new();
+        want.insert("a".into(), "${data.x.a.name}".into());
+        assert_eq!(i.outputs[0].value, serde_yaml::Value::Mapping(want));
+        assert_eq!(i.managed[0].refs.get("parent").map(String::as_str), Some("google_folder.root"));
+        assert!(canonical(&f).contains("interface_file(pay|central|[])") && canonical(&f).contains("managed(google_folder.a|[]|[display_name=A]|[parent=google_folder.root])"));
+        for (bad, msg) in [
+            ("estate e\ninterface \"pay\"\ncentral {\n  estate = \"c\"\n}\n", "holds an `estate` header"),
+            ("interface \"pay\"\n", "`central { estate = \"…\" }` block is missing"),
+            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\ngoogle_folder {\n}\n", "`google_folder`"),
+            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\noutput \"x\" {\n  value = x\n}\n", "never a param"),
+            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\noutput \"x\" {\n  value = 1\n  colour = \"r\"\n}\n", "`colour` is no field"),
+            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\nlookup \"google_x.y\" {\n  reads = \"r\"\n  permission = \"p\"\n}\n", "data.<data source>.<label>"),
+            ("interface \"pay\" x\n", "alone on its line"),
+        ] {
+            let e = parse(bad).unwrap_err();
+            assert!(e.msg.contains(msg), "{}: {}", bad, e.msg);
+        }
+        let f = parse("estate e\ninterface \"dns\" common {\n  export \"zone\" = \"z\"\n}\ninterface \"pay\" {\n}\n").unwrap();
+        assert_eq!(f.interfaces.iter().map(|i| i.common).collect::<Vec<_>>(), [true, false]);
+        assert!(canonical(&f).contains("common_interface(dns)"));
+        let e = parse("estate e\ninterface \"common\" {\n}\n").unwrap_err();
+        assert!(e.msg.contains("interfaces/common/ holds the common interfaces alone"), "{}", e.msg);
+        assert_eq!(quote("a{b}\"c\\"), "\"a{{b}}\\\"c\\\\\"");
+        assert_eq!(parse(&format!("interface \"q\"\ncentral {{\n  estate = {}\n}}\n", quote("x{y}\"\\z"))).unwrap().interface_file.unwrap().estate, "x{y}\"\\z");
     }
 
     /// `use interface` takes a name or a list of names and an optional `when`; it is no

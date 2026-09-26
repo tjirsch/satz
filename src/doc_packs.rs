@@ -45,6 +45,15 @@ pub(crate) fn packs(presets_dir: &Path) -> Result<Vec<(PathBuf, File, String)>, 
             }
             let src = std::fs::read_to_string(&p).map_err(|e| format!("{}: {}", p.display(), e))?;
             let file = satz::parse(&src).map_err(|e| format!("{}:{}: {}", p.display(), e.line, e.msg))?;
+            if let Some(i) = &file.interface_file {
+                return Err(format!(
+                    "{}: the interface file of `{}`, generated from the estate `{}` — it holds one estate's values and belongs beside that estate, never in the preset library",
+                    p.display(),
+                    i.name,
+                    i.estate
+                )
+                .into());
+            }
             if !file.is_pack {
                 return Err(format!("{}: not a pack (no `pack` header) — an estate does not belong in the preset library", p.display()).into());
             }
@@ -920,7 +929,7 @@ fn render(
         file.interfaces.iter().flat_map(|i| i.uses.iter().map(move |u| (i.name.as_str(), u))).collect();
     if !exports.is_empty() || !uses.is_empty() {
         md.push_str("## Exports\n\n");
-        md.push_str("Outputs of the root module and of `hcl/interfaces/` in every estate that uses this pack: a `core` export is an output of every interface module, another one of its interface's module alone.\n\n");
+        md.push_str("Outputs of the root module and values of the interfaces under `interfaces/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.\n\n");
     }
     if !exports.is_empty() {
         md.push_str("| interface | output | value | description |\n|---|---|---|---|\n");

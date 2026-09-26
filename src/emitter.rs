@@ -1323,6 +1323,35 @@ pub(crate) fn emit_variables(
     hcl::to_string(&body.build()).unwrap_or_default()
 }
 
+/// The `data` blocks a project estate's values read from the interface files it uses, once
+/// each, in the order the lookups need one another — the same data sources the HCL form of
+/// the interface reads, through the provider the estate's top-level resources are written
+/// with. Each carries the resource of the central estate it reads back and the read
+/// permission the project's plan needs.
+pub(crate) fn interface_lookups_tf(lookups: &[satz_core::satz::OfferedLookup], files: &[satz_core::pipeline::UsedInterfaceFile]) -> String {
+    let mut out = String::new();
+    for l in lookups {
+        let from = files.iter().find(|f| f.interface.lookups.iter().any(|x| x.address == l.address));
+        let (source, label) = l.source_and_label();
+        // through the provider every resource at the top of the estate is written with
+        let provider: hcl::Expression = alias_for(&[]).parse().expect("a provider alias is a traversal");
+        let mut b = hcl::Block::builder("data").add_label(source).add_label(label).add_attribute(("provider", provider));
+        for (k, v) in &l.arguments {
+            b = b.add_attribute((k.as_str(), crate::emit_shared::string_to_hcl_expr(v)));
+        }
+        out.push('\n');
+        out.push_str(&format!(
+            "# reads back {} of the estate `{}` ({}); needs {}\n",
+            l.reads,
+            from.map(|f| f.interface.estate.as_str()).unwrap_or_default(),
+            from.map(|f| f.file.as_str()).unwrap_or_default(),
+            l.permission
+        ));
+        out.push_str(&hcl::to_string(&hcl::Body::builder().add_block(b.build()).build()).expect("a data block of string arguments renders"));
+    }
+    out
+}
+
 /// tfvars from the front-end's accumulated params: kebab-cased names, scalar
 /// renderings matching the walk's output.
 pub(crate) fn emit_tfvars(env: &Env) -> String {
@@ -2175,5 +2204,31 @@ mod reset_comment_tests {
         let bare: String = text.lines().filter(|l| !l.starts_with('#')).map(|l| format!("{l}\n")).collect();
         assert_eq!(bare, hcl::to_string(&body).unwrap());
         assert_eq!(crate::manifest::Manifest::parse(&text), manifest);
+    }
+}
+
+#[cfg(test)]
+mod interface_lookup_tests {
+    use satz_core::satz::OfferedLookup;
+
+    /// A lookup a project reads is one `data` block, with its arguments as the interface
+    /// file writes them — a key that reads another lookup a template of its address — and
+    /// the provider the estate's top-level resources carry.
+    #[test]
+    fn a_lookup_is_one_data_block_through_the_estate_s_provider() {
+        let l = |label: &str, parent: &str| OfferedLookup {
+            address: format!("data.google_active_folder.{}", label),
+            reads: format!("google_folder.{}", label),
+            permission: "resourcemanager.folders.list on the parent".into(),
+            arguments: vec![("display_name".into(), label.to_uppercase()), ("parent".into(), parent.into())],
+            line: 1,
+        };
+        let tf = super::interface_lookups_tf(&[l("infra", "organizations/123456789012"), l("pay", "${data.google_active_folder.infra.name}")], &[]);
+        let body = hcl::parse(&tf).expect("the data blocks are HCL");
+        let blocks: Vec<&hcl::Block> = body.blocks().collect();
+        assert_eq!(blocks.len(), 2, "{}", tf);
+        assert!(tf.contains("data \"google_active_folder\" \"pay\" {") && tf.contains("parent = \"${data.google_active_folder.infra.name}\""), "{}", tf);
+        assert!(tf.contains("provider = google.google"), "{}", tf);
+        assert!(tf.contains("# reads back google_folder.pay"), "{}", tf);
     }
 }

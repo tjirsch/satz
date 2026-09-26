@@ -15,6 +15,10 @@ pub struct ToolConfig {
     pub yaml_dir: String,
     #[serde(default = "default_hcl_dir")]
     pub hcl_dir: String,
+    /// Where the estate's interfaces are written for the projects beside it: `common/`,
+    /// and one folder per project. satz rewrites it whole on every transpile.
+    #[serde(default = "default_interfaces_dir")]
+    pub interfaces_dir: String,
     #[serde(default = "default_include_dirs")]
     pub include_dirs: Vec<String>,
     #[serde(default = "default_schema_dir")]
@@ -90,6 +94,8 @@ impl ToolConfig {
 fn default_yaml_dir() -> String { "satz".to_string() }
 
 fn default_hcl_dir() -> String { "hcl".to_string() }
+
+fn default_interfaces_dir() -> String { "interfaces".to_string() }
 
 /// Includes are searched relative to the including file first, then these directories
 /// (resolved from config.toml's own directory). `"."` must be present so an `!include`
@@ -225,6 +231,7 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
         return Ok(ToolConfig {
             yaml_dir: default_yaml_dir(),
             hcl_dir: default_hcl_dir(),
+            interfaces_dir: default_interfaces_dir(),
             include_dirs: default_include_dirs(),
             schema_dir: default_schema_dir(),
             presets_dir: default_presets_dir(),
@@ -256,6 +263,9 @@ pub(crate) fn resolved_config(tool: &ToolConfig, config_dir: &Path) -> ToolConfi
     }
     if Path::new(&rc.hcl_dir).is_relative() {
         rc.hcl_dir = at(&rc.hcl_dir);
+    }
+    if Path::new(&rc.interfaces_dir).is_relative() {
+        rc.interfaces_dir = at(&rc.interfaces_dir);
     }
     if Path::new(&rc.schema_dir).is_relative() {
         rc.schema_dir = at(&rc.schema_dir);
