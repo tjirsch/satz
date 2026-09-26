@@ -473,6 +473,7 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
         files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let mut errors: Vec<PipelineError> = Vec::new();
     let mut read: Vec<String> = Vec::new();
+    let mut relabel: Vec<Address> = Vec::new();
     for slot in folded.slots.values_mut() {
         let crate::algebra::Slot::Ok(e) = slot else { continue };
         let (file, line) = e.provenance.first().map(|s| (s.file.clone(), s.line)).unwrap_or_default();
@@ -499,9 +500,40 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                 *edges = out;
             }
         }
+        // a grant map's scope (`project = "${{interface.project_id}}"`) and member live in
+        // its label, which is where the emitter reads the scope from: replaced there too
+        if matches!(e.body, Body::Grant(_)) {
+            match substitute_text(&e.addr.label, &outputs, files, &mut read) {
+                Ok(Some(label)) => {
+                    e.addr.label = label;
+                    relabel.push(e.addr.clone());
+                }
+                Ok(None) => {}
+                Err(m) => fail(m),
+            }
+        }
     }
     if !errors.is_empty() {
         return Err(errors);
+    }
+    // a slot is keyed by its address: the relabelled ones move to their new key
+    let moved: Vec<Address> = folded
+        .slots
+        .iter()
+        .filter_map(|(k, s)| match s {
+            crate::algebra::Slot::Ok(e) if &e.addr != k && relabel.contains(&e.addr) => Some(k.clone()),
+            _ => None,
+        })
+        .collect();
+    for k in moved {
+        if let Some(slot) = folded.slots.remove(&k) {
+            let crate::algebra::Slot::Ok(e) = &slot else { unreachable!("filtered to Ok above") };
+            let key = e.addr.clone();
+            if folded.slots.contains_key(&key) {
+                return Err(vec![PipelineError { file: String::new(), line: 0, msg: format!("{}: two grant maps name one scope once `${{interface.…}}` is replaced — write them as one map", key.tf_type) }]);
+            }
+            folded.slots.insert(key, slot);
+        }
     }
     // the lookups the values read, then the ones their arguments read, each once
     let lookups: BTreeMap<&str, &satz::OfferedLookup> =
