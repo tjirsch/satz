@@ -266,6 +266,31 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 [ -e $si/archive/CHANGES.md ] && fail "a transpile that changed nothing wrote a CHANGES.md"
 [ "$(grep -o 'sha256:[0-9a-f]*' $si/README.md)" = "$hash_before" ] || fail "the content hash depends on the previous state"
 
+step "add-project: the section into the estate, its interface out, and a project estate written from it"
+cp yaml/showcase.satz tmp/with-project.satz
+"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name payments --owner-group payments-owners@example.com > tmp/add-project.txt 2>&1 || fail "add-project failed:\n$(cat tmp/add-project.txt)"
+grep -q '^interface "payments"' tmp/with-project.satz || fail "the section was not appended:\n$(tail -20 tmp/with-project.satz)"
+"$satz" fmt --check tmp/with-project.satz || fail "add-project wrote a section that is not in the canonical layout"
+"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name payments --owner-group payments-owners@example.com > tmp/add-project-twice.txt 2>&1 && fail "a project was added twice"
+grep -q 'already' tmp/add-project-twice.txt || fail "the second add does not say why:\n$(cat tmp/add-project-twice.txt)"
+"$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
+pi=interfaces/payments/payments/satz/interface.satz
+[ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces)"
+for o in project_id project_number iac_account state_bucket; do
+  grep -q "^output \"$o\"" "$pi" || fail "the interface lacks $o:\n$(cat $pi)"
+done
+grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not emitted"
+pia="$PWD/$pi"
+rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
+(cd tmp/payments && "$satz" init --project payments --interface "$pia" > ../init-project.txt 2>&1) || fail "init could not write the project estate:\n$(cat tmp/init-project.txt)"
+"$satz" fmt --check tmp/payments/satz/payments.satz || fail "the project estate init wrote is not in the canonical layout"
+grep -q 'deployment_mode    = "cloud"' tmp/payments/satz/payments.satz || fail "the project estate does not run in cloud mode:\n$(cat tmp/payments/satz/payments.satz)"
+"$satz" --config tmp/payments/config.toml transpile payments.satz > tmp/project-transpile.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project-transpile.txt)"
+grep -q 'impersonate_service_account = "svc-iac-payments@corp-payments-001.iam.gserviceaccount.com"' tmp/payments/hcl/providers.tf || fail "the project estate does not run as its own account:\n$(cat tmp/payments/hcl/providers.tf)"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project estate's root module does not validate"
+fi
+
 # an estate that exports nothing keeps neither file from an earlier run
 cp yaml/showcase.satz tmp/no-exports.satz
 python3 - tmp/no-exports.satz <<'PY'

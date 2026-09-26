@@ -173,7 +173,8 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
+| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
+| `add-project <ESTATE>` | `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
@@ -283,10 +284,36 @@ satz init \
 - If customer details are provided, generates the Day-0 estate `satz/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
 
+**A project estate** (`--project <name> --interface <path>`): the estate of one project of a
+central estate, written from the four exports `satz add-project` published for it —
+`project_id`, `iac_account`, `state_bucket`, `default_region`. It runs in cloud mode as the
+project's own IaC service account, keeps its state in the project's bucket, and `use`s the
+interface file so its resources read the central estate as `${{interface.<export>}}`.
+Nothing is derived from the credentials; the interface answered it all
+([customer teams beside the estate](docs/workflows.md#onboarding-a-project-and-a-project-on-satz)).
+
 **Without the flags:** `satz interview satz/<name>.satz --create` writes an estate that
 asks for the same day-0 values one at a time and offers the derived ones as defaults;
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
+
+### Add a project (`add-project`)
+`add-project` onboards one project into the central estate: it appends the section that
+declares the project's Google project (under the workload folder), its IaC service
+account, its state bucket, the grants, and the `interface "<name>"` that publishes them —
+`project_id` (an attach point for `google_project_iam_member`), `project_number`,
+`iac_account`, `state_bucket`.
+
+```bash
+satz add-project C0example.satz --name payments --owner-group payments-owners@example.com
+```
+
+The section is plain Satz at the end of the estate, the operator's to edit; the pull
+request that carries it is the request's review. `satz transpile` then writes
+`interfaces/payments/`, and the project's own estate is `satz init --project payments
+--interface interfaces/payments/payments/satz/interface.satz` in its directory. Refused:
+a name that is no interface name, an estate that declares `interface "<name>"` already,
+and one that publishes no `workload_folder`, which says where a project goes.
 
 ### Day 0 Bootstrap (`bootstrap`)
 `bootstrap` runs the day-0 onboarding of a new customer organization.

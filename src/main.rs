@@ -9,6 +9,7 @@ mod emit_shared;
 mod emitter;
 mod interface;
 mod interface_changes;
+mod project;
 mod consumer;
 mod manifest;
 mod state_migration;
@@ -138,7 +139,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
@@ -271,6 +272,15 @@ pub(crate) enum Commands {
         /// customer's and the projects' folders. Without it they live at the organisation
         #[arg(long)]
         workload_folder_name: Option<String>,
+        /// Write a PROJECT estate instead: the estate of the project of this name, which
+        /// reads the central estate through the interface file `--interface` names and runs
+        /// as the project's own IaC service account
+        #[arg(long, requires = "interface")]
+        project: Option<String>,
+        /// With `--project`: the project's `interfaces/<project>/<project>/satz/interface.satz`,
+        /// as the central estate wrote it after `satz add-project`
+        #[arg(long)]
+        interface: Option<PathBuf>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
@@ -763,6 +773,20 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
+    /// Onboard a project: append to the estate the section that declares its Google project, IaC service account and state bucket, and the interface that publishes them
+    ///
+    /// The pull request that carries the section is the request's review; `satz transpile`
+    /// then writes `interfaces/<name>/`, which `satz init --project` reads.
+    AddProject {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The project's name: an interface name (lowercase letters, digits and `-`)
+        #[arg(long)]
+        name: String,
+        /// The group that reads the project and may become its IaC service account, `<name>@<domain>`
+        #[arg(long)]
+        owner_group: String,
+    },
     /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate deploys nothing
     ///
     /// Refused, naming them, while a pack that needs it is on — `--cascade` switches
@@ -1227,6 +1251,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             infra_bucket_name,
             iac_user,
             workload_folder_name,
+            project,
+            interface,
             from_live,
             force,
             interview,
@@ -1334,210 +1360,243 @@ Thumbs.db
                 println!("Created {}", gitignore_path.display());
             }
 
-            // 3b. What the operator TYPED, before anything is derived: a re-run
-            // merges exactly these into an estate that already exists, and
-            // nothing else, so a value somebody put there by hand survives.
-            let stated = crate::init_params::Stated {
-                customer_id: customer_id.clone(),
-                customer_shortname: customer_shortname.clone(),
-                billing_account_infra: billing_account_infra.clone(),
-                default_region: default_region.clone(),
-                customer_organization_id: customer_organization_id.clone(),
-                customer_domain: customer_domain.clone(),
-                infra_project_name: infra_project_name.clone(),
-                infra_bucket_name: infra_bucket_name.clone(),
-                iac_user: iac_user.clone(),
-                workload_folder_name: workload_folder_name.clone(),
-            };
-
-            // Derivation from the credentials is the DEFAULT, not a flag: every
-            // value below is sitting in the ADC the operator already
-            // authenticated with. Stated wins, derived fills the rest and says
-            // where it came from, and what nothing can answer stays EMPTY —
-            // never a placeholder. `--from-live` is accepted and ignored.
-            let _ = from_live;
-            let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
-                let need_org = customer_organization_id.is_none() || customer_id.is_none();
-                let need_billing = billing_account_infra.is_none();
-                match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
-                    Ok(live) => {
-                        let mut note = crate::init_params::Derivations::default();
-                        let customer_domain = note.fill(
-                            "customer_domain",
-                            customer_domain,
-                            Some(live.customer_domain.clone()),
-                            "the ADC identity",
-                        );
-                        let iac_user = note.fill(
-                            "first_admin",
-                            iac_user,
-                            Some(format!("{}@{}", live.first_admin, live.customer_domain)),
-                            "the ADC identity",
-                        );
-                        let customer_id =
-                            note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
-                        // No organization visible is the greenfield case: the id
-                        // stays empty and `bootstrap --greenfield` fills it in.
-                        let customer_organization_id = note.fill(
-                            "customer_organization_id",
-                            customer_organization_id,
-                            live.org_id.clone(),
-                            "organizations:search",
-                        );
-                        let billing_account_infra = note.fill(
-                            "billing_account_infra",
-                            billing_account_infra,
-                            live.billing_account.clone(),
-                            "billingAccounts.list (the one open account)",
-                        );
-                        // nothing on the platform names the customer: it is
-                        // reported as unanswered rather than guessed at
-                        let customer_shortname = note.fill("customer_shortname", customer_shortname, None, "");
-                        note.report();
-                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                    }
-                    Err(why) => {
-                        eprintln!("init: nothing could be derived from the credentials — {}", why);
-                        eprintln!(
-                            "      what you did not pass is written empty; `satz bootstrap` names each one, and \
-                             `satz init` merges them in later."
-                        );
-                        (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                    }
-                }
-            };
-
-            // 4. Generate the template estate if customer_id provided
-            if let Some(c_id) = customer_id {
-                // Every day-0 question lives in presets/estate-core.satz, and the pack lines
-                // come from the graph beside it: `--interview` fetches the library before the
-                // file is written, so the estate it asks about carries the menu.
-                if interview {
-                    let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
-                    if !core.exists() {
-                        println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
-                        crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
-                            .await
-                            .map_err(|e| {
-                                format!(
-                                    "init --interview: the questions live in {}, which is not here and could not be \
-                                     fetched ({}) — run `satz get-presets`, then `satz interview {}.satz`",
-                                    core.display(),
-                                    e,
-                                    c_id
-                                )
-                            })?;
-                    }
-                }
-                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
+            if let Some(project) = project.as_deref() {
+                // A project estate: written from the four exports `satz add-project`
+                // published for it, so nothing is derived from the credentials — the central
+                // estate answered it all.
+                let interface_path = interface.ok_or("init --project: `--interface <path>` names the project's interface file, `interfaces/<project>/<project>/satz/interface.satz` of the central estate")?;
+                let text = fsx::read_to_string(&interface_path).map_err(|e| format!("{}: {}", interface_path.display(), e))?;
+                let file = satz_core::satz::parse(&text)
+                    .map_err(|e| format!("{}:{}: {}", interface_path.display(), e.line, e.msg))?
+                    .interface_file
+                    .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/", interface_path.display()))?;
+                // the path the estate `use`s: relative to the config directory when it is under it
+                let absolute = fsx::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
+                let use_path = match fsx::canonicalize(&config_dir).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
+                    Some(rel) => fsx::slash(&rel),
+                    None => fsx::slash(&absolute),
+                };
+                let src = crate::project::estate(project, &file, &use_path)?;
+                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", crate::project::label(project)));
                 if yaml_path.exists() && !force {
-                    // A re-run MERGES: it used to print "Template already exists",
-                    // change nothing, and still sign off with "Initialization
-                    // complete" — so a param somebody added to the command line
-                    // never landed and nothing said so.
-                    let src = crate::fsx::read_to_string(&yaml_path)?;
-                    let (merged, log) = crate::init_params::merge(&src, &stated)?;
-                    if log.is_empty() {
-                        println!(
-                            "{} exists and this command named no params to merge into it (`--force` rewrites it).",
-                            yaml_path.display()
-                        );
-                    } else {
-                        for entry in &log {
-                            match entry {
-                                crate::init_params::Merged::Changed { param, from, to } if from.is_empty() => {
-                                    println!("  set     {} = {:?}", param, to)
-                                }
-                                crate::init_params::Merged::Changed { param, from, to } => {
-                                    println!("  changed {} = {:?} (was {:?})", param, to, from)
-                                }
-                                crate::init_params::Merged::Same { param, value } => {
-                                    println!("  kept    {} = {:?}", param, value)
+                    return Err(format!("{} exists — `--force` rewrites it", yaml_path.display()).into());
+                }
+                fsx::write_generated_satz(&yaml_path, &src)?;
+                println!(
+                    "Generated project estate: {} — the project `{}` of the central estate `{}`, read through {}; next: `satz transpile {}.satz`",
+                    yaml_path.display(),
+                    project,
+                    file.estate,
+                    use_path,
+                    crate::project::label(project)
+                );
+            } else {
+                // 3b. What the operator TYPED, before anything is derived: a re-run
+                // merges exactly these into an estate that already exists, and
+                // nothing else, so a value somebody put there by hand survives.
+                let stated = crate::init_params::Stated {
+                    customer_id: customer_id.clone(),
+                    customer_shortname: customer_shortname.clone(),
+                    billing_account_infra: billing_account_infra.clone(),
+                    default_region: default_region.clone(),
+                    customer_organization_id: customer_organization_id.clone(),
+                    customer_domain: customer_domain.clone(),
+                    infra_project_name: infra_project_name.clone(),
+                    infra_bucket_name: infra_bucket_name.clone(),
+                    iac_user: iac_user.clone(),
+                    workload_folder_name: workload_folder_name.clone(),
+                };
+
+                // Derivation from the credentials is the DEFAULT, not a flag: every
+                // value below is sitting in the ADC the operator already
+                // authenticated with. Stated wins, derived fills the rest and says
+                // where it came from, and what nothing can answer stays EMPTY —
+                // never a placeholder. `--from-live` is accepted and ignored.
+                let _ = from_live;
+                let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
+                    let need_org = customer_organization_id.is_none() || customer_id.is_none();
+                    let need_billing = billing_account_infra.is_none();
+                    match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
+                        Ok(live) => {
+                            let mut note = crate::init_params::Derivations::default();
+                            let customer_domain = note.fill(
+                                "customer_domain",
+                                customer_domain,
+                                Some(live.customer_domain.clone()),
+                                "the ADC identity",
+                            );
+                            let iac_user = note.fill(
+                                "first_admin",
+                                iac_user,
+                                Some(format!("{}@{}", live.first_admin, live.customer_domain)),
+                                "the ADC identity",
+                            );
+                            let customer_id =
+                                note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
+                            // No organization visible is the greenfield case: the id
+                            // stays empty and `bootstrap --greenfield` fills it in.
+                            let customer_organization_id = note.fill(
+                                "customer_organization_id",
+                                customer_organization_id,
+                                live.org_id.clone(),
+                                "organizations:search",
+                            );
+                            let billing_account_infra = note.fill(
+                                "billing_account_infra",
+                                billing_account_infra,
+                                live.billing_account.clone(),
+                                "billingAccounts.list (the one open account)",
+                            );
+                            // nothing on the platform names the customer: it is
+                            // reported as unanswered rather than guessed at
+                            let customer_shortname = note.fill("customer_shortname", customer_shortname, None, "");
+                            note.report();
+                            (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                        }
+                        Err(why) => {
+                            eprintln!("init: nothing could be derived from the credentials — {}", why);
+                            eprintln!(
+                                "      what you did not pass is written empty; `satz bootstrap` names each one, and \
+                                 `satz init` merges them in later."
+                            );
+                            (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
+                        }
+                    }
+                };
+
+                // 4. Generate the template estate if customer_id provided
+                if let Some(c_id) = customer_id {
+                    // Every day-0 question lives in presets/estate-core.satz, and the pack lines
+                    // come from the graph beside it: `--interview` fetches the library before the
+                    // file is written, so the estate it asks about carries the menu.
+                    if interview {
+                        let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
+                        if !core.exists() {
+                            println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
+                            crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
+                                .await
+                                .map_err(|e| {
+                                    format!(
+                                        "init --interview: the questions live in {}, which is not here and could not be \
+                                         fetched ({}) — run `satz get-presets`, then `satz interview {}.satz`",
+                                        core.display(),
+                                        e,
+                                        c_id
+                                    )
+                                })?;
+                        }
+                    }
+                    let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
+                    if yaml_path.exists() && !force {
+                        // A re-run MERGES: it used to print "Template already exists",
+                        // change nothing, and still sign off with "Initialization
+                        // complete" — so a param somebody added to the command line
+                        // never landed and nothing said so.
+                        let src = crate::fsx::read_to_string(&yaml_path)?;
+                        let (merged, log) = crate::init_params::merge(&src, &stated)?;
+                        if log.is_empty() {
+                            println!(
+                                "{} exists and this command named no params to merge into it (`--force` rewrites it).",
+                                yaml_path.display()
+                            );
+                        } else {
+                            for entry in &log {
+                                match entry {
+                                    crate::init_params::Merged::Changed { param, from, to } if from.is_empty() => {
+                                        println!("  set     {} = {:?}", param, to)
+                                    }
+                                    crate::init_params::Merged::Changed { param, from, to } => {
+                                        println!("  changed {} = {:?} (was {:?})", param, to, from)
+                                    }
+                                    crate::init_params::Merged::Same { param, value } => {
+                                        println!("  kept    {} = {:?}", param, value)
+                                    }
                                 }
                             }
+                            if merged != src {
+                                crate::fsx::write_edited_satz(&yaml_path, &src, &merged)?;
+                            }
+                            println!(
+                                "Merged into {} — every line this command did not name is unchanged.",
+                                yaml_path.display()
+                            );
                         }
-                        if merged != src {
-                            crate::fsx::write_edited_satz(&yaml_path, &src, &merged)?;
-                        }
-                        println!(
-                            "Merged into {} — every line this command did not name is unchanged.",
-                            yaml_path.display()
-                        );
-                    }
-                } else {
-                    let domain = customer_domain.clone().unwrap_or_default();
-                    // an admin nobody named stays empty: `first.admin` looked
-                    // like an answer and was not one
-                    let resolved_iac_user = iac_user.unwrap_or_default();
+                    } else {
+                        let domain = customer_domain.clone().unwrap_or_default();
+                        // an admin nobody named stays empty: `first.admin` looked
+                        // like an answer and was not one
+                        let resolved_iac_user = iac_user.unwrap_or_default();
 
-                    // The template and the shipped presets both compose members as
-                    // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
-                    // local part only. Emitting it as a variable is what lets the
-                    // `*first-admin` anchor resolve at all.
-                    let (first_admin, user_domain) = resolved_iac_user
-                        .split_once('@')
-                        .unwrap_or((resolved_iac_user.as_str(), ""));
-                    if !user_domain.is_empty() && !domain.is_empty() && user_domain != domain {
-                        eprintln!(
-                            "Warning: --iac-user domain '{}' differs from --customer-domain '{}'. \
-                             Members are built as first-admin@customer-domain, so they will use '{}@{}'.",
-                            user_domain, domain, first_admin, domain
-                        );
+                        // The template and the shipped presets both compose members as
+                        // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
+                        // local part only. Emitting it as a variable is what lets the
+                        // `*first-admin` anchor resolve at all.
+                        let (first_admin, user_domain) = resolved_iac_user
+                            .split_once('@')
+                            .unwrap_or((resolved_iac_user.as_str(), ""));
+                        if !user_domain.is_empty() && !domain.is_empty() && user_domain != domain {
+                            eprintln!(
+                                "Warning: --iac-user domain '{}' differs from --customer-domain '{}'. \
+                                 Members are built as first-admin@customer-domain, so they will use '{}@{}'.",
+                                user_domain, domain, first_admin, domain
+                            );
+                        }
+
+                        // the two names that FOLLOW from the short name, by the
+                        // defaults `presets/estate-core.satz` documents — derived
+                        // when it is known, empty when it is not
+                        let shortname = customer_shortname.clone().unwrap_or_default();
+                        let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
+                            match given {
+                                Some(v) => v,
+                                None if !shortname.trim().is_empty() => format!("{}{}", shortname.trim(), suffix),
+                                None => String::new(),
+                            }
+                        };
+                        let infra_project_name = derive_from_shortname(infra_project_name, "-infra-001");
+                        let infra_bucket_name = derive_from_shortname(infra_bucket_name, "-infra-001-state");
+                        let args = crate::template::TemplateArgs {
+                            customer_id: c_id.clone(),
+                            shortname: customer_shortname.unwrap_or_default(),
+                            billing_id: billing_account_infra.unwrap_or_default(),
+                            region: default_region.unwrap_or_else(|| crate::bootstrap::DEFAULT_REGION.to_string()),
+                            // never a placeholder: unset stays empty, and the
+                            // bootstrap gate refuses it by name
+                            org_id: customer_organization_id.unwrap_or_default(),
+                            domain: domain.clone(),
+                            project_id: infra_project_name,
+                            bucket_id: infra_bucket_name,
+                            first_admin: first_admin.to_string(),
+                            workload_folder_name,
+                        };
+                        let presets_dir = Path::new(&runtime_config.presets_dir);
+                        let graph = crate::pack_graph::read(presets_dir)?;
+                        crate::template::generate_template(&args, graph.as_ref(), &yaml_path)?;
+                        if graph.is_none() {
+                            println!("{}", crate::pack_graph::no_menu_note(presets_dir));
+                        }
+                        println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                     }
 
-                    // the two names that FOLLOW from the short name, by the
-                    // defaults `presets/estate-core.satz` documents — derived
-                    // when it is known, empty when it is not
-                    let shortname = customer_shortname.clone().unwrap_or_default();
-                    let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
-                        match given {
-                            Some(v) => v,
-                            None if !shortname.trim().is_empty() => format!("{}{}", shortname.trim(), suffix),
-                            None => String::new(),
+                    // A day-0 param is either stated, derived, or ASKED — there is
+                    // no fourth state where an estate is simply born incomplete.
+                    // Stating it is the flag because the interview is interactive
+                    // and a scripted run must not block on it.
+                    if interview {
+                        // init writes the estate-core `use` commented out so the estate compiles
+                        // before any library is fetched; the interview switches it on, or it
+                        // finds no pack declaring a question and asks nothing
+                        if crate::template::use_estate_core(&yaml_path)? {
+                            println!("switched on `use \"presets/estate-core.satz\"` in {}", yaml_path.display());
                         }
-                    };
-                    let infra_project_name = derive_from_shortname(infra_project_name, "-infra-001");
-                    let infra_bucket_name = derive_from_shortname(infra_bucket_name, "-infra-001-state");
-                    let args = crate::template::TemplateArgs {
-                        customer_id: c_id.clone(),
-                        shortname: customer_shortname.unwrap_or_default(),
-                        billing_id: billing_account_infra.unwrap_or_default(),
-                        region: default_region.unwrap_or_else(|| crate::bootstrap::DEFAULT_REGION.to_string()),
-                        // never a placeholder: unset stays empty, and the
-                        // bootstrap gate refuses it by name
-                        org_id: customer_organization_id.unwrap_or_default(),
-                        domain: domain.clone(),
-                        project_id: infra_project_name,
-                        bucket_id: infra_bucket_name,
-                        first_admin: first_admin.to_string(),
-                        workload_folder_name,
-                    };
-                    let presets_dir = Path::new(&runtime_config.presets_dir);
-                    let graph = crate::pack_graph::read(presets_dir)?;
-                    crate::template::generate_template(&args, graph.as_ref(), &yaml_path)?;
-                    if graph.is_none() {
-                        println!("{}", crate::pack_graph::no_menu_note(presets_dir));
+                        println!();
+                        let stdin = std::io::stdin();
+                        let mut input = stdin.lock();
+                        let mut out = std::io::stdout();
+                        crate::interview::run(&yaml_path, &runtime_config, false, false, &mut input, &mut out)?;
                     }
-                    println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                 }
 
-                // A day-0 param is either stated, derived, or ASKED — there is
-                // no fourth state where an estate is simply born incomplete.
-                // Stating it is the flag because the interview is interactive
-                // and a scripted run must not block on it.
-                if interview {
-                    // init writes the estate-core `use` commented out so the estate compiles
-                    // before any library is fetched; the interview switches it on, or it
-                    // finds no pack declaring a question and asks nothing
-                    if crate::template::use_estate_core(&yaml_path)? {
-                        println!("switched on `use \"presets/estate-core.satz\"` in {}", yaml_path.display());
-                    }
-                    println!();
-                    let stdin = std::io::stdin();
-                    let mut input = stdin.lock();
-                    let mut out = std::io::stdout();
-                    crate::interview::run(&yaml_path, &runtime_config, false, false, &mut input, &mut out)?;
-                }
             }
 
             // 4. Fetch Schemas
@@ -2281,6 +2340,22 @@ Thumbs.db
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
                 _ => print!("{}", crate::packs::render_change(&change)),
             }
+            Ok(())
+        }
+        Commands::AddProject { input, name, owner_group } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let src = fsx::read_to_string(&input_path).map_err(|e| format!("{}: {}", input_path.display(), e))?;
+            let out = crate::project::with_project(&src, &name, &owner_group).map_err(|e| format!("add-project {}: nothing changed.\n\n{}", name, e))?;
+            fsx::write_edited_satz(&input_path, &src, &out)?;
+            println!(
+                "add-project {}: the section stands at the end of {} — review it; `satz transpile` then writes interfaces/{}/, and the project's own estate is `satz init --project {} --interface interfaces/{}/{}/satz/interface.satz` in its directory",
+                name,
+                input_path.display(),
+                name,
+                name,
+                name,
+                name
+            );
             Ok(())
         }
         Commands::RemovePack { input, pack, cascade, format } => {
@@ -5391,6 +5466,7 @@ mod command_groups {
         ("update-prerequisites", Identity::NoGoogleApi),
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
+        ("add-project", Identity::NoGoogleApi),
         // The API preflight: as the identity the emitted provider impersonates,
         // which is the identity `tofu` is about to act as in the same directory.
         ("plan", Identity::EstateSa),
