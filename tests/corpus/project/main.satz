@@ -1,0 +1,62 @@
+// Corpus case: a project estate — one that reads a central estate's interface file
+// (`use "interface.satz"`, checked in beside this file as the case's input) and names its
+// values `${{interface.<export>}}`. A static value becomes its literal, a looked-up one
+// the data source's address with the `data` block written once into main.tf (its
+// argument reads the folder's parent, a literal), and one inside a longer string its
+// text. The project's own resources stand in the central estate's Google project, and the
+// grant is at an attach point. Snapshot-gated; the harness also holds the case to the
+// interface's rules, so a finding fails it.
+
+estate corpus_project
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_shortname       = "acme"
+  default_region           = "europe-west3"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "interface.satz"
+
+google_service_account {
+  app {
+    account_id   = "payments-app"
+    display_name = "Payments application"
+    description  = "Runs in ${{interface.payments_project}}, under ${{interface.infra_folder}}"
+    project      = "${{interface.payments_project}}"
+  }
+}
+
+google_storage_bucket {
+  data {
+    name     = "acme-payments-data"
+    project  = "${{interface.payments_project}}"
+    location = default_region
+    labels   = { project_number = "${{interface.payments_number}}" }
+  }
+}
+
+google_pubsub_topic {
+  events {
+    name    = "payments-events"
+    project = "${{interface.payments_project}}"
+    message_storage_policy {
+      allowed_persistence_regions = "${{interface.regions}}"
+    }
+  }
+}
+
+google_project_iam_member {
+  app_objects {
+    project = "${{interface.payments_project}}"
+    role    = "roles/storage.objectAdmin"
+    member  = "serviceAccount:payments-app@corp-payments-001.iam.gserviceaccount.com"
+  }
+}

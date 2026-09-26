@@ -38,6 +38,27 @@ const ORG_POLICY: &[(&str, &str)] = &[
 /// equals one of them names that resource.
 const IDENTITY: &[&str] = &["project_id", "name", "account_id", "dataset_id", "email", "id"];
 
+/// The form a managed value takes in an interface file. The file travels into every
+/// project's folder, and the rules need equality, not the names: a project that writes a
+/// value is told it collides, and one that does not learns nothing.
+const HASHED: &str = "sha256:";
+
+/// `value` as an interface file carries it.
+pub(crate) fn hashed(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{}{}", HASHED, hex::encode(Sha256::digest(value.as_bytes())))
+}
+
+/// Whether `mine`, as a project writes it, is what a fact holds — the text, when the facts
+/// come from the compiled central estate, or its hash, when they come from a file.
+fn same(fact: &str, mine: &str) -> bool {
+    if fact.starts_with(HASHED) {
+        hashed(mine) == fact
+    } else {
+        fact == mine
+    }
+}
+
 /// One export, as far as the rules read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FactOutput {
@@ -59,7 +80,8 @@ pub(crate) struct Facts {
     /// `organizations/<id>`, sorted
     pub organizations: Vec<String>,
     pub outputs: Vec<FactOutput>,
-    /// by address
+    /// by address; the ids and key values as satz writes them, or hashed (`hashed`) when
+    /// read from an interface file
     pub managed: Vec<ManagedFact>,
 }
 
@@ -244,7 +266,7 @@ impl<'a> Check<'a> {
                 for o in self.facts.outputs.iter().filter(|o| o.static_text.as_deref() == Some(l.as_str())) {
                     out.push(Hit { written: format!("\"{}\"", l), output: Some(o), resources: o.targets.clone() });
                 }
-                let resources: Vec<String> = self.facts.managed.iter().filter(|m| m.ids.iter().any(|i| i == l)).map(|m| m.address.clone()).collect();
+                let resources: Vec<String> = self.facts.managed.iter().filter(|m| m.ids.iter().any(|i| same(i, l))).map(|m| m.address.clone()).collect();
                 if !resources.is_empty() {
                     out.push(Hit { written: format!("\"{}\"", l), output: None, resources });
                 }
@@ -430,10 +452,10 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
         if let Some(row) = lookups.get(tf_type.as_str()) {
             for m in facts.managed.iter().filter(|m| m.address.split_once('.').is_some_and(|(t, _)| t == tf_type)) {
                 let same = row.keys.keys().all(|key| match (b.attrs.get(key), m.keys.get(key), m.refs.get(key)) {
-                    (Some(ConsumerValue::Literal(mine)), Some(theirs), _) => mine == theirs,
+                    (Some(ConsumerValue::Literal(mine)), Some(theirs), _) => same(theirs, mine),
                     (Some(v), None, Some(target)) => c.hits(v).iter().any(|h| h.resources.contains(target)),
                     (Some(v @ ConsumerValue::Reads(_)), Some(theirs), _) => {
-                        c.hits(v).iter().any(|h| h.output.and_then(|o| o.static_text.as_deref()) == Some(theirs.as_str()))
+                        c.hits(v).iter().any(|h| h.output.and_then(|o| o.static_text.as_deref()).is_some_and(|s| same(theirs, s)))
                     }
                     _ => false,
                 });

@@ -2860,6 +2860,23 @@ pub(crate) fn compile_tail(
     if conflict_findings(&folded, &mut f) {
         return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
+    // A `${interface.<export>}` inside an `hcl { }` block would reach Terraform as it
+    // stands: the passthrough is appended after emission, and nothing in it is replaced.
+    let stray: Vec<&satz_core::pipeline::HclPassthrough> = fe.hcl.iter().filter(|b| b.body.contains("${interface.") || b.body.contains("${{interface.")).collect();
+    if !stray.is_empty() {
+        for b in stray {
+            f.push(
+                Finding::new(
+                    Severity::Error,
+                    Kind::InterfaceUse,
+                    "the `hcl` block writes `${interface.<export>}` — a central estate's value is replaced in resource bodies only, and the block is emitted verbatim. Write what needs the value as a resource, where satz replaces it".to_string(),
+                )
+                .about(format!("{}:{}", b.file, b.line))
+                .located(b.file.clone(), b.line as u32),
+            );
+        }
+        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
+    }
     // A project reads a central estate's values as `${{interface.<export>}}`: replaced
     // before the emitter, which then writes a literal or the lookup's data address.
     let lookups = match satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files) {
@@ -5716,19 +5733,27 @@ mod corpus {
                 .map_err(|e| e.to_string())
         })
         .unwrap_or_else(|e| panic!("{}: front-end failed: {}", name, e));
-        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(
             folded.conflicts().is_empty(),
             "{}: conflicts on a conflict-free case: {:?}",
             name,
             folded.conflicts()
         );
+        // a project case reads interface files, the way `compile_tail` does
+        let lookups = satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files)
+            .unwrap_or_else(|e| panic!("{}: interface references refused: {:?}", name, e.iter().map(|x| &x.msg).collect::<Vec<_>>()));
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         // Same as production: without the registry the emitter drops
         // schema-derived detail (it once silently lost every alert policy's
         // notification_channels).
         ctx.registry = Some(&reg);
-        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+        let mut out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+        if !fe.interface_files.is_empty() {
+            out.main_tf.push_str(&crate::emitter::interface_lookups_tf(&lookups, &fe.interface_files));
+            let findings = crate::consumer::check_project(&out.manifest, &fe.interface_files);
+            assert!(findings.is_empty(), "{}: a project case is held to its interface: {:?}", name, findings.iter().map(|f| &f.message).collect::<Vec<_>>());
+        }
         let mut snapshot = format!(
             "{}\n---tfvars---\n{}\n---imports---\n{}",
             sorted_lines(&out.main_tf).join("\n"),
@@ -8373,6 +8398,23 @@ action "step" {
         assert!(refused.contains("deployment_mode = \"boot\""), "{}", refused);
         // the estate binds no mode: local, and the compile goes through
         assert!(tail("warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
+    }
+
+    /// A `${interface.<export>}` inside an `hcl { }` block is refused at the block: the
+    /// passthrough is appended after emission, and nothing in it is replaced.
+    #[test]
+    fn an_interface_reference_inside_a_passthrough_is_refused_at_the_block() {
+        let src = format!(
+            "{}\nhcl trust \"reviewed\" {{\n  resource \"google_compute_address\" \"ip\" {{\n    project = \"${{interface.payments_project}}\"\n  }}\n}}\n",
+            ESTATE
+        );
+        let t = tail_of(&src, "warn");
+        let f = t.findings.iter().find(|f| f.kind == Kind::InterfaceUse).expect("the passthrough");
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("emitted verbatim"), "{}", f.message);
+        let line = src.lines().position(|l| l.starts_with("hcl trust")).map(|i| i as u32 + 1);
+        assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
+        assert!(t.out.is_none(), "the compile went through with the reference in the block");
     }
 
     /// `workload_folder_name` and the section that publishes it: each disagreement is

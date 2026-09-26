@@ -1,0 +1,62 @@
+// The interface file of the central estate `corpus_central` for the project `payments`,
+// as `satz transpile` writes it under `interfaces/payments/payments/satz/`: the case's
+// input, checked in.
+interface "payments"
+
+central {
+  estate        = "corpus_central"
+  organizations = ["organizations/123456789012"]
+}
+
+output "organization_id" {
+  value       = "123456789012"
+  description = "The organisation id"
+}
+output "infra_folder" {
+  value       = "${{data.google_active_folder.infra_folder.name}}"
+  targets     = ["google_folder.infra_folder"]
+  description = "The folder that holds the infrastructure project, folders/<number>"
+}
+output "payments_project" {
+  value       = "corp-payments-001"
+  attach      = ["google_project_iam_member"]
+  targets     = ["google_project.payments"]
+  description = "The project's Google project"
+}
+output "payments_number" {
+  value   = "${{data.google_project.payments.number}}"
+  targets = ["google_project.payments"]
+}
+output "regions" {
+  value = ["europe-west3", "europe-west4"]
+}
+
+lookup "data.google_active_folder.infra_folder" {
+  reads      = "google_folder.infra_folder"
+  permission = "resourcemanager.folders.list on the parent"
+  arguments {
+    display_name = "Infrastructure"
+    parent       = "organizations/123456789012"
+  }
+}
+lookup "data.google_project.payments" {
+  reads      = "google_project.payments"
+  permission = "resourcemanager.projects.get"
+  arguments {
+    project_id = "corp-payments-001"
+  }
+}
+
+managed "google_folder.infra_folder" {
+  ids = ["sha256:ce0cff719a94747617230dde819ab25812021d6b80c236bf0c6891c0d46e45be"]
+  keys {
+    display_name = "sha256:ce0cff719a94747617230dde819ab25812021d6b80c236bf0c6891c0d46e45be"
+    parent       = "sha256:fa3d6fdeb2275800b234aacaf139e916e69483bf37c5632fe7b763e02ea37076"
+  }
+}
+managed "google_project.payments" {
+  ids = ["sha256:fafead70d61066550aeb040351c61d80be81b421216ab5ec89efbe7fdede6b5f"]
+  keys {
+    project_id = "sha256:fafead70d61066550aeb040351c61d80be81b421216ab5ec89efbe7fdede6b5f"
+  }
+}

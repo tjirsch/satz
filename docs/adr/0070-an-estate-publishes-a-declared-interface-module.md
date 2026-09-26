@@ -388,11 +388,28 @@ consumer.
   either way, and `interfaces_dir` may not hold `hcl_dir`, because satz removes it whole.
 - **A common interface uses only common interfaces.** It travels into every project's
   folder, and a project's interface it used would travel with it.
-- **The managed facts are in every interface file of the estate**, so a project learns
-  the natural keys of every resource the central estate declares that a project can name
-  — other projects' Google project ids among them. They are what the duplicate rule needs;
-  a project that must not see them is a reason for a second central estate, not for a
-  thinner file.
+- **The managed facts are in every interface file of the estate, hashed.** The duplicate
+  rule needs every resource the central estate declares that a project can name, and the
+  file travels into every project's folder — so with the values in clear, one project's
+  file named every other project's Google project id, folder name and service account.
+  Decided with Thomas (2026-09-26): the ids and key values are `sha256:<hex>` of the
+  value, and a project's compile hashes its own literals to compare (`same` in
+  `src/consumer.rs`); `check-consumer` against a compiled estate compares in clear, and
+  one function reads both. A name is not a secret — the point is that the file carries no
+  inventory; a project that writes a value is told it collides, and one that does not
+  learns nothing. The refs stay addresses, which name a label and no id. A `private`
+  resource is absent from the file, so a project that re-declares the state bucket is not
+  caught; accepted, since its name is not published, and it fails at apply.
+- **A `${interface.<export>}` inside an `hcl { }` block is refused at the block.** The
+  passthrough is appended after emission and nothing in it is replaced, so the reference
+  reached Terraform as an unknown object; the refusal names the block and says to write
+  what needs the value as a resource. Re-export — a project publishing what it read to
+  projects of its own — is not designed here; an `export` of an interface value is refused
+  by the reference rule already.
+- **The lookups keep the central estate's labels in the project's `main.tf`.** A
+  project's own `data` block of the same address, which only an `hcl { }` block can
+  declare, is a duplicate Terraform refuses at validate — loud, and rare enough that a
+  prefix on every label was not worth its three places.
 - `satz packs` lists an interface file under `interfaces`, not as an unmanaged pack; the
   language server compiles no interface file on its own.
 

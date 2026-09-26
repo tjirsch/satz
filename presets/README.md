@@ -1743,6 +1743,22 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.86.0
+
+**A `${{interface.<export>}}` inside an `hcl { }` block is refused.** The passthrough is
+appended to `main.tf` after emission and nothing in it is replaced, so the reference
+reached Terraform as `${interface.x}`, an unknown object at plan. Find it: `grep -n
+'interface\.' satz/*.satz` and look for hits inside `hcl {` blocks.
+
+```
+error    interface-use  satz/payments.satz:40
+    the `hcl` block writes `${interface.<export>}` — a central estate's value is replaced in resource bodies only, and the block is emitted verbatim. Write what needs the value as a resource, where satz replaces it
+```
+
+**The edit:** move what reads the value out of the block into a resource of the estate,
+where `${{interface.<export>}}` is replaced. The plan does not move: the block never
+planned.
+
 ### v0.85.0
 
 **The interfaces move from `hcl/interfaces/<name>/` to `interfaces/`, beside `hcl/`.**

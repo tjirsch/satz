@@ -2099,9 +2099,9 @@ lookup "data.google_active_folder.infra" {
 }
 
 managed "google_project.archive" {
-  ids = ["corp-archive-001", "corp-archive"]
+  ids = ["sha256:b402f051c263375f95b33ce0ce55df688ebb77c5e09c8310e162fe56c3178989"]
   keys {
-    project_id = "corp-archive-001"
+    project_id = "sha256:b402f051c263375f95b33ce0ce55df688ebb77c5e09c8310e162fe56c3178989"
   }
 }
 ```
@@ -2114,7 +2114,10 @@ permission it needs. Each `managed` is a resource the central estate declares th
 project can name — one of a type `presets/interface-lookups.yaml` reads back, or one an
 export names, never one marked `private` — with the identities satz writes on it
 (`project_id`, `name`, `account_id`, `dataset_id`, `email`, `id`) and the natural keys
-the interface reads it by. satz writes the file through its formatter; a file that holds
+the interface reads it by, each as `sha256:` of the value: the file travels into every
+project's folder, and the rules need equality, not the central estate's names — a project
+that writes a value is told it collides, and one that does not learns nothing from the
+file. satz writes the file through its formatter; a file that holds
 anything else is refused at its line. It is no estate: `satz transpile` of it is refused,
 and so is a copy of it in the preset library (`satz doc-packs`, `satz pack-graph`).
 
@@ -2156,7 +2159,9 @@ copied to `vendor/archive/`.)
   data sources the HCL module reads.
 - Refused, each at the resource that writes it: an export no used file carries (listing
   those that are), a reference with no interface file used, a reference that is not
-  `interface.<export>`, and a list or a map inside a longer string. One export name from
+  `interface.<export>`, and a list or a map inside a longer string. A
+  `${{interface.<export>}}` inside an `hcl { }` block is refused at the block: the
+  passthrough is emitted verbatim, and nothing in it is replaced. One export name from
   two used files is one value when both carry the same, and an error naming both files
   when they differ; a lookup two files read differently is refused the same way.
 - **The project's compile holds its own resources to the interface**, with the rules
