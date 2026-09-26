@@ -273,6 +273,22 @@ grep -q '^interface "payments"' tmp/with-project.satz || fail "the section was n
 "$satz" fmt --check tmp/with-project.satz || fail "add-project wrote a section that is not in the canonical layout"
 "$satz" --config . add-project "$PWD/tmp/with-project.satz" --name payments --owner-group payments-owners@example.com > tmp/add-project-twice.txt 2>&1 && fail "a project was added twice"
 grep -q 'already' tmp/add-project-twice.txt || fail "the second add does not say why:\n$(cat tmp/add-project-twice.txt)"
+# the report satz-studio reads: every export with its interface, and every interface
+"$satz" --config . interfaces "$PWD/tmp/with-project.satz" --format json --out tmp/interfaces.json >/dev/null 2>&1 || fail "satz interfaces failed"
+python3 - tmp/interfaces.json <<'PY' || fail "the interfaces report is not what the estate declares:\n$(cat tmp/interfaces.json)"
+import json, sys
+r = json.load(open(sys.argv[1]))
+names = {(e.get("interface"), e["name"]): e for e in r["exports"]}
+assert names[("payments", "project_id")]["attach"] == ["google_project_iam_member"], names[("payments", "project_id")]
+assert names[("payments", "project_number")]["how"] == "lookup"
+assert names[(None, "folders")]["how"] == "map"
+assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments"}, r["interfaces"]
+assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
+PY
+# an interface alone, carrying another interface's export and using a common one
+"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name billing --interface-only --use-interface audit --export archive.archive_project_number > tmp/add-interface.txt 2>&1 || fail "add-project --interface-only failed:\n$(cat tmp/add-interface.txt)"
+grep -q 'export "archive_project_number" = "${{google_project.archive.number}}"' tmp/with-project.satz || fail "the export was not copied as declared:\n$(tail -8 tmp/with-project.satz)"
+"$satz" fmt --check tmp/with-project.satz || fail "add-project --interface-only wrote a section that is not in the canonical layout"
 "$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
 pi=interfaces/payments/payments/satz/interface.satz
 [ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces)"

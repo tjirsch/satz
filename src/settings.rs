@@ -428,7 +428,7 @@ pub(crate) fn config_file_path(
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
                 Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. } | Commands::McpConfig { .. }
-                | Commands::Packs { .. } | Commands::AddPack { .. } | Commands::AddProject { .. } | Commands::RemovePack { .. } | Commands::CheckConsumer { .. }
+                | Commands::Packs { .. } | Commands::AddPack { .. } | Commands::AddProject { .. } | Commands::Interfaces { .. } | Commands::RemovePack { .. } | Commands::CheckConsumer { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPack { .. }
                 | Commands::PackGraph { presets_dir: None, .. }

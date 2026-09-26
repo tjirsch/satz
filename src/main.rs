@@ -10,6 +10,7 @@ mod emitter;
 mod interface;
 mod interface_changes;
 mod project;
+mod interface_report;
 mod consumer;
 mod manifest;
 mod state_migration;
@@ -139,7 +140,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project", "interfaces"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
@@ -773,6 +774,17 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
+    /// What the estate publishes to the projects beside it: every export, with the interface it stands in, how a project reads it and what may be attached to it, and every interface
+    Interfaces {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// Output format — json is the report satz-studio reads
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
+        format: OutFormat,
+        /// Where it goes — the one file this run writes (`-` for stdout)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
     /// Onboard a project: append to the estate the section that declares its Google project, IaC service account and state bucket, and the interface that publishes them
     ///
     /// The pull request that carries the section is the request's review; `satz transpile`
@@ -783,9 +795,20 @@ pub(crate) enum Commands {
         /// The project's name: an interface name (lowercase letters, digits and `-`)
         #[arg(long)]
         name: String,
-        /// The group that reads the project and may become its IaC service account, `<name>@<domain>`
+        /// The group that reads the project and may become its IaC service account, `<name>@<domain>`;
+        /// not with `--interface-only`
+        #[arg(long, required_unless_present = "interface_only", conflicts_with = "interface_only")]
+        owner_group: Option<String>,
+        /// An interface the project's module also carries, repeated for each
+        #[arg(long = "use-interface", value_name = "INTERFACE")]
+        use_interface: Vec<String>,
+        /// An export of another interface written into this one again, `<interface>.<name>`
+        /// (or `<name>` when one interface declares it), repeated for each
+        #[arg(long = "export", value_name = "EXPORT")]
+        export: Vec<String>,
+        /// The interface alone, for a workload that brings its own Google project
         #[arg(long)]
-        owner_group: String,
+        interface_only: bool,
     },
     /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate deploys nothing
     ///
@@ -2342,10 +2365,60 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::AddProject { input, name, owner_group } => {
+        Commands::Interfaces { input, format, out } => {
+            let out = crate::out::target(out, format)?;
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
+            let estate = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+            let report = crate::interface_report::report(&estate, compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces);
+            let text = match format {
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::interface_report::render_text(&report),
+            };
+            let what = format!("{} export(s), {} interface(s)", report.exports.len(), report.interfaces.len());
+            write_report(&out, text.as_bytes(), &what)?;
+            Ok(())
+        }
+        Commands::AddProject { input, name, owner_group, use_interface, export, interface_only } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let src = fsx::read_to_string(&input_path).map_err(|e| format!("{}: {}", input_path.display(), e))?;
-            let out = crate::project::with_project(&src, &name, &owner_group).map_err(|e| format!("add-project {}: nothing changed.\n\n{}", name, e))?;
+            let refused = |e: String| format!("add-project {}: nothing changed.\n\n{}", name, e);
+            let mut choices = crate::project::Choices { uses: use_interface, exports: Vec::new() };
+            if !export.is_empty() || !choices.uses.is_empty() {
+                // what the estate declares now, to copy from and to check a name against
+                let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
+                let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces);
+                for u in &choices.uses {
+                    if !report.interfaces.iter().any(|i| &i.name == u) {
+                        return Err(refused(format!(
+                            "`--use-interface {}`: the estate declares no such interface — it declares: {}",
+                            u,
+                            report.interfaces.iter().map(|i| format!("`{}`", i.name)).collect::<Vec<_>>().join(", ")
+                        ))
+                        .into());
+                    }
+                }
+                let dir = input_path.parent().map(Path::to_path_buf).unwrap_or_default();
+                let read = |file: &str| -> Result<String, String> {
+                    let candidates = std::iter::once(dir.join(file)).chain(runtime_config.include_dirs.iter().map(|d| Path::new(d).join(file)));
+                    for c in candidates {
+                        if c.is_file() {
+                            return fsx::read_to_string(&c).map_err(|e| format!("{}: {}", c.display(), e));
+                        }
+                    }
+                    Err(format!("{}: not found beside the estate or in include_dirs", file))
+                };
+                for x in &export {
+                    choices.exports.push(crate::project::copied_export(x, &report, &read).map_err(refused)?);
+                }
+            }
+            let out = if interface_only {
+                crate::project::with_interface(&src, &name, &choices)
+            } else {
+                crate::project::with_project(&src, &name, owner_group.as_deref().unwrap_or_default(), &choices)
+            }
+            .map_err(refused)?;
+            let out = satz_core::fmt::format(&out).map_err(|e| format!("add-project {}: the section does not parse ({}:{}) — a generator defect", name, e.line, e.msg))?;
             fsx::write_edited_satz(&input_path, &src, &out)?;
             println!(
                 "add-project {}: the section stands at the end of {} — review it; `satz transpile` then writes interfaces/{}/, and the project's own estate is `satz init --project {} --interface interfaces/{}/{}/satz/interface.satz` in its directory",
@@ -2537,6 +2610,9 @@ struct PipelineBOut {
     /// What the estate publishes to the projects beside it: the root `outputs.tf` and the
     /// folders under `interfaces_dir`. `None` when it exports nothing.
     interface: Option<crate::interface::Interface>,
+    /// the exports and interfaces as declared, with where — what `satz interfaces` reports
+    exports: Vec<satz_core::pipeline::ResolvedExport>,
+    interfaces: Vec<satz_core::pipeline::ResolvedInterface>,
     /// Claims declared by the estate and every pack it actually used — the
     /// compliance plane's input, produced by the same compile that produced
     /// main_tf, so witnesses and claims can never come from different reads.
@@ -2839,6 +2915,8 @@ fn pipeline_b_compile(
         tfvars: crate::emitter::emit_tfvars(&fe.tfvars),
         imports_tf: out.imports_tf,
         interface,
+        exports: fe.exports,
+        interfaces: fe.interfaces,
         claims: fe.claims,
         org_policies,
         customer_id,
@@ -5467,6 +5545,7 @@ mod command_groups {
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("add-project", Identity::NoGoogleApi),
+        ("interfaces", Identity::NoGoogleApi),
         // The API preflight: as the identity the emitted provider impersonates,
         // which is the identity `tofu` is about to act as in the same directory.
         ("plan", Identity::EstateSa),

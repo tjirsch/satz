@@ -927,6 +927,12 @@ interface "payments" {
 }
 ```
 
+`satz interfaces acme.satz --format text --out -` lists every export and interface there
+is to pick from. `--use-interface network` adds a `use interface` line to the project's
+interface, `--export archive.archive_project_id` writes that export into it again as its
+declaring line stands, and `--interface-only` writes the interface alone — for a workload,
+in HCL or in Satz, that brings its own Google project.
+
 The section is plain Satz the operator owns from then on. The pull request that carries it
 is the request's review; the apply creates the project; `satz transpile` writes
 `interfaces/payments/`. A second `add-project` of one name is refused, and so is an estate
