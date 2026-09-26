@@ -419,6 +419,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_essential_contacts` | on | `essential-contacts-organization` |
 | `use_budget` | off | `organization-budget` |
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
+| `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the three below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
@@ -870,6 +871,75 @@ billing account (declares its own `google_billing_budget` map).
 it for a fresh budget, or replace it with the real budget id (`satz adopt` does not
 resolve budgets: they are matched by display name, which needs the Budgets API). The
 amount and the thresholds are literals, not params.
+
+## shared-network.satz
+
+A shared VPC in a host project of its own: the host project, the shared-VPC host switch,
+one custom-mode network, and a network firewall policy attached to it. The subnets and
+the firewall rules are what the projects ask for: two lists with request points, filled
+through contributions, one resource per entry (`each`).
+
+**Use** — the host project lands in the folder `network_host_project_folder` names, so
+the line stands at the top level:
+
+```
+params {
+  use_shared_network          = true
+  network_host_project_folder = "google_folder.infra_folder.name"
+}
+
+use "presets/shared-network.satz" when use_shared_network
+```
+
+**Requests.** A project writes its entries as a small pack, checks it with `satz
+check-request <file> <estate>` and hands it to the estate's repository by pull request
+(`satz/requests/<project>.satz` and its `use` line):
+
+```
+pack requests_payments version "1.0"
+
+params {
+  contributes_shared_vpc_subnets = [
+    { name = "payments-app" cidr = "10.20.0.0/24" region = "europe-west3" },
+  ]
+  contributes_shared_firewall_rules = [
+    {
+      name        = "payments-https"
+      priority    = 1000
+      direction   = "INGRESS"
+      action      = "allow"
+      description = "HTTPS to the payments subnet from the internal range"
+      match       = { src_ip_ranges = ["10.0.0.0/8"] layer4_configs = [{ ip_protocol = "tcp" ports = ["443"] }] }
+    },
+  ]
+}
+```
+
+| request point | key | fields |
+|---|---|---|
+| `shared_vpc_subnets` | `name` | `name`, `cidr` (primary range), `region` |
+| `shared_firewall_rules` | `name` | `name`, `priority`, `direction` (`INGRESS`/`EGRESS`), `action` (`allow`/`deny`/`goto_next`), `description`, `match` — the policy rule's `match` block as an object |
+
+**What the projects read** — the common interface `network`:
+
+| export | value | attach point for |
+|---|---|---|
+| `network_host_project` | the host project's id | `google_compute_shared_vpc_service_project`: a project attaches its own Google project as a service project, in its own state, as an identity with Shared VPC Admin |
+| `shared_network` | `projects/<host>/global/networks/<name>` | — |
+| `shared_subnets` | every subnet of the host project, by label (`-` written `_`: `payments-app` is the key `payments_app`) | `google_compute_subnetwork_iam_member`: a project grants `roles/compute.networkUser` on its own subnet |
+
+**Overridable defaults:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `network_host_project_id` | `"{customer_shortname}-net-host-001"` | the host project's id, asked |
+| `network_host_project_folder` | `""` | the folder the host project is created in, asked; empty is the organisation |
+| `shared_network_name` | `"shared"` | the network's name; the policy is `<name>-policy` |
+| `shared_subnet_flow_sampling` | `0.5` | the share of flows every subnet logs — the CIS baseline's `compute.requireVpcFlowLogs` refuses a subnet without flow logs (CIS 3.8); an idle subnet logs nothing |
+| `shared_vpc_subnets` | `[]` | the subnets, filled by requests |
+| `shared_firewall_rules` | `[]` | the policy's rules, filled by requests |
+
+Nothing in the pack bills while idle.
 
 ## billing-export.satz
 
@@ -2510,6 +2580,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |
+| `estate_map` | 2.6 | 2026-09-26 | offers `shared-network` on `use_shared_network`, off by default, with its question; nothing already on changes |
 | `interface_notice` | 1.2 | 2026-09-26 | the header and the question's text say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; the resources are unchanged |
 | `estate_map` | 2.5 | 2026-09-26 | the `interface_notice` question and the notice's `offers` phase say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; nothing it offers changes |
 | `estate_core` | 2.4 | 2026-09-26 | the header, the `workload_folder_name` question and the section comments say project where they said team, and name the interfaces under `interfaces/`; params and exports are unchanged |

@@ -420,8 +420,9 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_shared_vpc_host_project:
+    import_id: "{project}"
     description: Compute Engine Shared VPC host project
-    import: false
+    import: true
     asset_type: compute.googleapis.com/Project
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -2153,20 +2154,23 @@ resource_types:
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network_firewall_policy:
+    import_id: "projects/{project}/global/firewallPolicies/{name}"
     description: Auto-generated entry for google_compute_network_firewall_policy
-    import: false
+    import: true
     asset_type: compute.googleapis.com/FirewallPolicy
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network_firewall_policy_association:
+    import_id: "projects/{project}/global/firewallPolicies/{firewall_policy}/associations/{name}"
     description: Auto-generated entry for google_compute_network_firewall_policy_association
-    import: false
+    import: true
     asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network_firewall_policy_rule:
+    import_id: "projects/{project}/global/firewallPolicies/{firewall_policy}/rules/{priority}"
     description: Auto-generated entry for google_compute_network_firewall_policy_rule
-    import: false
+    import: true
     asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name

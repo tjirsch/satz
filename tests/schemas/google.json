@@ -3192,6 +3192,977 @@
             "description_kind": "plain"
           }
         },
+        "google_compute_network": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "auto_create_subnetworks": {
+                "type": "bool",
+                "description": "When set to 'true', the network is created in \"auto subnet mode\" and\nit will create a subnet for each region automatically across the\n'10.128.0.0/9' address range.\n\nWhen set to 'false', the network is created in \"custom subnet mode\" so\nthe user can explicitly connect subnetwork resources.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "bgp_always_compare_med": {
+                "type": "bool",
+                "description": "Enables/disables the comparison of MED across routes with different Neighbor ASNs.\nThis value can only be set if the --bgp-best-path-selection-mode is STANDARD",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "bgp_best_path_selection_mode": {
+                "type": "string",
+                "description": "The BGP best selection algorithm to be employed. MODE can be LEGACY or STANDARD. Possible values: [\"LEGACY\", \"STANDARD\"]",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "bgp_inter_region_cost": {
+                "type": "string",
+                "description": "Choice of the behavior of inter-regional cost and MED in the BPS algorithm. Possible values: [\"DEFAULT\", \"ADD_COST_TO_MED\"]",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "delete_bgp_always_compare_med": {
+                "type": "bool",
+                "description": "If set to 'true', the 'bgp_always_compare_med' field will be cleared.\nIf set to 'false' (the default), 'bgp_always_compare_med' will be set to the value specified in the configuration.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "delete_default_routes_on_create": {
+                "type": "bool",
+                "description": "If set to 'true', default routes ('0.0.0.0/0') will be deleted\nimmediately after network creation. Defaults to 'false'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. The resource must be\nrecreated to modify this field.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "enable_ula_internal_ipv6": {
+                "type": "bool",
+                "description": "Enable ULA internal ipv6 on this network. Enabling this feature will assign\na /48 from google defined ULA prefix fd20::/20.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "gateway_ipv4": {
+                "type": "string",
+                "description": "The gateway address for default routing out of the network. This value\nis selected by GCP.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "internal_ipv6_range": {
+                "type": "string",
+                "description": "When enabling ula internal ipv6, caller optionally can specify the /48 range\nthey want from the google defined ULA prefix fd20::/20. The input must be a\nvalid /48 ULA IPv6 address and must be within the fd20::/20. Operation will\nfail if the speficied /48 is already in used by another resource.\nIf the field is not speficied, then a /48 range will be randomly allocated from fd20::/20 and returned via this field.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "mtu": {
+                "type": "number",
+                "description": "Maximum Transmission Unit in bytes. The default value is 1460 bytes.\nThe minimum value for this field is 1300 and the maximum value is 8896 bytes (jumbo frames).\nNote that packets larger than 1500 bytes (standard Ethernet) can be subject to TCP-MSS clamping or dropped\nwith an ICMP 'Fragmentation-Needed' message if the packets are routed to the Internet or other VPCs\nwith varying MTUs.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the resource. Provided by the client when the resource is\ncreated. The name must be 1-63 characters long, and comply with\nRFC1035. Specifically, the name must be 1-63 characters long and match\nthe regular expression '[a-z]([-a-z0-9]*[a-z0-9])?' which means the\nfirst character must be a lowercase letter, and all following\ncharacters must be a dash, lowercase letter, or digit, except the last\ncharacter, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "network_firewall_policy_enforcement_order": {
+                "type": "string",
+                "description": "Set the order that Firewall Rules and Firewall Policies are evaluated. Default value: \"AFTER_CLASSIC_FIREWALL\" Possible values: [\"BEFORE_CLASSIC_FIREWALL\", \"AFTER_CLASSIC_FIREWALL\"]",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "network_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "network_profile": {
+                "type": "string",
+                "description": "A full or partial URL of the network profile to apply to this network.\nThis field can be set only at resource creation time. For example, the\nfollowing are valid URLs:\n* https://www.googleapis.com/compute/v1/projects/{projectId}/global/networkProfiles/{network_profile_name}\n* projects/{projectId}/global/networkProfiles/{network_profile_name}",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "numeric_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "deprecated": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "routing_mode": {
+                "type": "string",
+                "description": "The network-wide routing mode to use. If set to 'REGIONAL', this\nnetwork's cloud routers will only advertise routes with subnetworks\nof this network in the same region as the router. If set to 'GLOBAL',\nthis network's cloud routers will advertise routes with all\nsubnetworks of this network, across regions. Possible values: [\"REGIONAL\", \"GLOBAL\"]",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "params": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "resource_manager_tags": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "Resource manager tags to be bound to the network. Tag keys and values have the\nsame definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id},\nand values are in the format tagValues/456.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Additional params passed with the request, but not persisted as part of resource payload",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_network_firewall_policy": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property when you create the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "Fingerprint of the resource. This field is used internally during updates of this resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "User-provided name of the Network firewall policy. The name should be unique in the project in which the firewall policy is created. The name must be 1-63 characters long, and comply with RFC1035. Specifically, the name must be 1-63 characters long and match the regular expression [a-z]([-a-z0-9]*[a-z0-9])? which means the first character must be a lowercase letter, and all following characters must be a dash, lowercase letter, or digit, except the last character, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "network_firewall_policy_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "policy_type": {
+                "type": "string",
+                "description": "Policy type is used to determine which resources (networks) the policy can be associated with.\nA policy can be associated with a network only if the network has the matching policyType in its network profile.\nDifferent policy types may support some of the Firewall Rules features. Possible values: [\"VPC_POLICY\"]",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Total count of all firewall policy rule tuples. A firewall policy can not exceed a set number of tuples.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "Server-defined URL for the resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link_with_id": {
+                "type": "string",
+                "description": "Server-defined URL for this resource with the resource id.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_network_firewall_policy_association": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "attachment_target": {
+                "type": "string",
+                "description": "The target that the firewall policy is attached to.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name for an association.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "short_name": {
+                "type": "string",
+                "description": "The short name of the firewall policy of the association.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_network_firewall_policy_rule": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "action": {
+                "type": "string",
+                "description": "The Action to perform when the client connection triggers the rule. Valid actions are \"allow\", \"deny\", \"goto_next\" and \"apply_security_profile_group\".",
+                "description_kind": "plain",
+                "required": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description for this resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "direction": {
+                "type": "string",
+                "description": "The direction in which this rule applies. Possible values: [\"INGRESS\", \"EGRESS\"]",
+                "description_kind": "plain",
+                "required": true
+              },
+              "disabled": {
+                "type": "bool",
+                "description": "Denotes whether the firewall policy rule is disabled.\nWhen set to true, the firewall policy rule is not enforced and traffic behaves as if it did not exist.\nIf this is unspecified, the firewall policy rule will be enabled.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "enable_logging": {
+                "type": "bool",
+                "description": "Denotes whether to enable logging for a particular rule.\nIf logging is enabled, logs will be exported to the configured export destination in Stackdriver.\nLogs may be exported to BigQuery or Pub/Sub.\nNote: you cannot enable logging on \"goto_next\" rules.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "firewall_policy": {
+                "type": "string",
+                "description": "The firewall policy of the resource.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "kind": {
+                "type": "string",
+                "description": "Type of the resource. Always 'compute#firewallPolicyRule' for firewall policy rules",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "priority": {
+                "type": "number",
+                "description": "An integer indicating the priority of a rule in the list.\nThe priority must be a positive value between 0 and 2147483647.\nRules are evaluated from highest to lowest priority where 0 is the highest priority and 2147483647 is the lowest prority.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "rule_name": {
+                "type": "string",
+                "description": "An optional name for the rule. This field is not a unique identifier and can be updated.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "rule_tuple_count": {
+                "type": "number",
+                "description": "Calculation of the complexity of a single firewall policy rule.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "security_profile_group": {
+                "type": "string",
+                "description": "A fully-qualified URL of a SecurityProfile resource instance.\nExample: https://networksecurity.googleapis.com/v1/projects/{project}/locations/{location}/securityProfileGroups/my-security-profile-group\nMust be specified if action = 'apply_security_profile_group' and cannot be specified for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "target_service_accounts": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of service accounts indicating the sets of instances that are applied with this rule.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "tls_inspect": {
+                "type": "bool",
+                "description": "Boolean flag indicating if the traffic should be TLS decrypted.\nCan be set only if action = 'apply_security_profile_group' and cannot be set for other actions.",
+                "description_kind": "plain",
+                "optional": true
+              }
+            },
+            "block_types": {
+              "match": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "dest_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic destination. Maximum number of destination address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic destination. Maximum number of destination fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of destination CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for destination of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of dest region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "dest_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic destination.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_address_groups": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Address groups which should be matched against the traffic source. Maximum number of source address groups is 10.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_fqdns": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Fully Qualified Domain Name (FQDN) which should be matched against traffic source. Maximum number of source fqdn allowed is 100.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_ip_ranges": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "CIDR IP address range. Maximum number of source CIDR IP ranges allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_region_codes": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Region codes whose IP addresses will be used to match for source of traffic. Should be specified as 2 letter country code defined as per ISO 3166 alpha-2 country codes. ex.\"US\" Maximum number of source region codes allowed is 5000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "src_threat_intelligences": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "Names of Network Threat Intelligence lists. The IPs in these lists will be matched against traffic source.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "layer4_configs": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "ip_protocol": {
+                            "type": "string",
+                            "description": "The IP protocol to which this rule applies. The protocol type is required when creating a firewall rule.\nThis value can either be one of the following well known protocol strings (tcp, udp, icmp, esp, ah, ipip, sctp), or the IP protocol number.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "ports": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "An optional list of ports to which this rule applies. This field is only applicable for UDP or TCP protocol. Each entry must be either an integer or a range. If not specified, this rule applies to connections through any port.\nExample inputs include: [\"22\"], [\"80\",\"443\"], and [\"12345-12349\"].",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Pairs of IP protocols and ports that the rule should match.",
+                        "description_kind": "plain"
+                      },
+                      "min_items": 1
+                    },
+                    "src_secure_tags": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "name": {
+                            "type": "string",
+                            "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                            "description_kind": "plain",
+                            "computed": true
+                          }
+                        },
+                        "description": "List of secure tag values, which should be matched at the source of the traffic. For INGRESS rule, if all the srcSecureTag are INEFFECTIVE, and there is no srcIpRange, this rule will be ignored. Maximum number of source tag values allowed is 256.",
+                        "description_kind": "plain"
+                      }
+                    }
+                  },
+                  "description": "A match condition that incoming traffic is evaluated against. If it evaluates to true, the corresponding 'action' is enforced.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1,
+                "max_items": 1
+              },
+              "target_secure_tags": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "name": {
+                      "type": "string",
+                      "description": "Name of the secure tag, created with TagManager's TagValue API.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "State of the secure tag, either EFFECTIVE or INEFFECTIVE. A secure tag is INEFFECTIVE when it is deleted or its network is deleted.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "A list of secure tags that controls which instances the firewall rule applies to.\nIf targetSecureTag are specified, then the firewall rule applies only to instances in the VPC network that have one of those EFFECTIVE secure tags, if all the targetSecureTag are in INEFFECTIVE state, then this rule will be ignored.\ntargetSecureTag may not be set at the same time as targetServiceAccounts. If neither targetServiceAccounts nor targetSecureTag are specified, the firewall rule applies to all instances on the specified network. Maximum number of target label tags allowed is 256.",
+                  "description_kind": "plain"
+                }
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_shared_vpc_host_project": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description": "The ID of the project that will serve as a Shared VPC host project",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_subnetwork": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property when\nyou create the resource. This field can be set only at resource\ncreation time.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "external_ipv6_prefix": {
+                "type": "string",
+                "description": "The range of external IPv6 addresses that are owned by this subnetwork.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "Fingerprint of this resource. This field is used internally during updates of this resource.",
+                "description_kind": "plain",
+                "deprecated": true,
+                "computed": true
+              },
+              "gateway_address": {
+                "type": "string",
+                "description": "The gateway address for default routes to reach destination addresses\noutside this subnetwork.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "internal_ipv6_prefix": {
+                "type": "string",
+                "description": "The internal IPv6 address range that is assigned to this subnetwork.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "ip_cidr_range": {
+                "type": "string",
+                "description": "The range of internal addresses that are owned by this subnetwork.\nProvide this property when you create the subnetwork. For example,\n10.0.0.0/8 or 192.168.0.0/16. Ranges must be unique and\nnon-overlapping within a network. Only IPv4 is supported.\nField is optional when 'reserved_internal_range' is defined, otherwise required.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "ip_collection": {
+                "type": "string",
+                "description": "Resource reference of a PublicDelegatedPrefix. The PDP must be a sub-PDP\nin EXTERNAL_IPV6_SUBNETWORK_CREATION or INTERNAL_IPV6_SUBNETWORK_CREATION\nmode. Use one of the following formats to specify a sub-PDP when creating\na dual stack or IPv6-only subnetwork using BYOIP:\nFull resource URL, as in:\n  * 'https://www.googleapis.com/compute/v1/projects/{{projectId}}/regions/{{region}}/publicDelegatedPrefixes/{{sub-pdp-name}}'\nPartial URL, as in:\n  * 'projects/{{projectId}}/regions/region/publicDelegatedPrefixes/{{sub-pdp-name}}'\n  * 'regions/{{region}}/publicDelegatedPrefixes/{{sub-pdp-name}}'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "ipv6_access_type": {
+                "type": "string",
+                "description": "The access type of IPv6 address this subnet holds. It's immutable and can only be specified during creation\nor the first time the subnet is updated into IPV4_IPV6 dual stack. If the ipv6_type is EXTERNAL then this subnet\ncannot enable direct path. Possible values: [\"EXTERNAL\", \"INTERNAL\"]",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "ipv6_cidr_range": {
+                "type": "string",
+                "description": "The range of internal IPv6 addresses that are owned by this subnetwork.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "ipv6_gce_endpoint": {
+                "type": "string",
+                "description": "Possible endpoints of this subnetwork. It can be one of the following:\n  * VM_ONLY: The subnetwork can be used for creating instances and IPv6 addresses with VM endpoint type. Such a subnetwork\n  gets external IPv6 ranges from a public delegated prefix and cannot be used to create NetLb.\n  * VM_AND_FR: The subnetwork can be used for creating both VM instances and Forwarding Rules. It can also be used to reserve\n  IPv6 addresses with both VM and FR endpoint types. Such a subnetwork gets its IPv6 range from Google IP Pool directly.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the resource, provided by the client when initially\ncreating the resource. The name must be 1-63 characters long, and\ncomply with RFC1035. Specifically, the name must be 1-63 characters\nlong and match the regular expression '[a-z]([-a-z0-9]*[a-z0-9])?' which\nmeans the first character must be a lowercase letter, and all\nfollowing characters must be a dash, lowercase letter, or digit,\nexcept the last character, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "network": {
+                "type": "string",
+                "description": "The network this subnet belongs to.\nOnly networks that are in the distributed mode can have subnetworks.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "private_ip_google_access": {
+                "type": "bool",
+                "description": "When enabled, VMs in this subnetwork without external IP addresses can\naccess Google APIs and services by using Private Google Access.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "private_ipv6_google_access": {
+                "type": "string",
+                "description": "The private IPv6 google access type for the VMs in this subnet.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "purpose": {
+                "type": "string",
+                "description": "The purpose of the resource. This field can be either 'PRIVATE', 'REGIONAL_MANAGED_PROXY', 'GLOBAL_MANAGED_PROXY', 'PRIVATE_SERVICE_CONNECT', 'PEER_MIGRATION' or 'PRIVATE_NAT'([Beta](https://terraform.io/docs/providers/google/guides/provider_versions.html)).\nA subnet with purpose set to 'REGIONAL_MANAGED_PROXY' is a user-created subnetwork that is reserved for regional Envoy-based load balancers.\nA subnetwork in a given region with purpose set to 'GLOBAL_MANAGED_PROXY' is a proxy-only subnet and is shared between all the cross-regional Envoy-based load balancers.\nA subnetwork with purpose set to 'PRIVATE_SERVICE_CONNECT' reserves the subnet for hosting a Private Service Connect published service.\nA subnetwork with purpose set to 'PEER_MIGRATION' is a user created subnetwork that is reserved for migrating resources from one peered network to another.\nA subnetwork with purpose set to 'PRIVATE_NAT' is used as source range for Private NAT gateways.\nNote that 'REGIONAL_MANAGED_PROXY' is the preferred setting for all regional Envoy load balancers.\nIf unspecified, the purpose defaults to 'PRIVATE'.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "region": {
+                "type": "string",
+                "description": "The GCP region for this subnetwork.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "reserved_internal_range": {
+                "type": "string",
+                "description": "The ID of the reserved internal range. Must be prefixed with 'networkconnectivity.googleapis.com'\nE.g. 'networkconnectivity.googleapis.com/projects/{project}/locations/global/internalRanges/{rangeId}'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "role": {
+                "type": "string",
+                "description": "The role of subnetwork.\nCurrently, this field is only used when 'purpose' is 'REGIONAL_MANAGED_PROXY'.\nThe value can be set to 'ACTIVE' or 'BACKUP'.\nAn 'ACTIVE' subnetwork is one that is currently being used for Envoy-based load balancers in a region.\nA 'BACKUP' subnetwork is one that is ready to be promoted to 'ACTIVE' or is currently draining. Possible values: [\"ACTIVE\", \"BACKUP\"]",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "send_secondary_ip_range_if_empty": {
+                "type": "bool",
+                "description": "Controls the removal behavior of secondary_ip_range.\nWhen false, removing secondary_ip_range from config will not produce a diff as\nthe provider will default to the API's value.\nWhen true, the provider will treat removing secondary_ip_range as sending an\nempty list of secondary IP ranges to the API.\nDefaults to false.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "stack_type": {
+                "type": "string",
+                "description": "The stack type for this subnet to identify whether the IPv6 feature is enabled or not.\nIf not specified IPV4_ONLY will be used. Possible values: [\"IPV4_ONLY\", \"IPV4_IPV6\", \"IPV6_ONLY\"]",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "state": {
+                "type": "string",
+                "description": "'The state of the subnetwork, which can be one of the following values:\n READY: Subnetwork is created and ready to use DRAINING: only applicable to subnetworks that have the purpose\n set to INTERNAL_HTTPS_LOAD_BALANCER and indicates that connections to the load balancer are being drained.\n A subnetwork that is draining cannot be used or modified until it reaches a status of READY'",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "subnetwork_id": {
+                "type": "number",
+                "description": "The unique identifier number for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "log_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "aggregation_interval": {
+                      "type": "string",
+                      "description": "Can only be specified if VPC flow logging for this subnetwork is enabled.\nToggles the aggregation interval for collecting flow logs. Increasing the\ninterval time will reduce the amount of generated flow logs for long\nlasting connections. Default is an interval of 5 seconds per connection. Default value: \"INTERVAL_5_SEC\" Possible values: [\"INTERVAL_5_SEC\", \"INTERVAL_30_SEC\", \"INTERVAL_1_MIN\", \"INTERVAL_5_MIN\", \"INTERVAL_10_MIN\", \"INTERVAL_15_MIN\"]",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "filter_expr": {
+                      "type": "string",
+                      "description": "Export filter used to define which VPC flow logs should be logged, as as CEL expression. See\nhttps://cloud.google.com/vpc/docs/flow-logs#filtering for details on how to format this field.\nThe default value is 'true', which evaluates to include everything.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "flow_sampling": {
+                      "type": "number",
+                      "description": "Can only be specified if VPC flow logging for this subnetwork is enabled.\nThe value of the field must be in [0, 1]. Set the sampling rate of VPC\nflow logs within the subnetwork where 1.0 means all collected logs are\nreported and 0.0 means no logs are reported. Default is 0.5 which means\nhalf of all collected logs are reported.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "metadata": {
+                      "type": "string",
+                      "description": "Can only be specified if VPC flow logging for this subnetwork is enabled.\nConfigures whether metadata fields should be added to the reported VPC\nflow logs. Default value: \"INCLUDE_ALL_METADATA\" Possible values: [\"EXCLUDE_ALL_METADATA\", \"INCLUDE_ALL_METADATA\", \"CUSTOM_METADATA\"]",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "metadata_fields": {
+                      "type": [
+                        "set",
+                        "string"
+                      ],
+                      "description": "List of metadata fields that should be added to reported logs.\nCan only be specified if VPC flow logs for this subnetwork is enabled and \"metadata\" is set to CUSTOM_METADATA.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "This field denotes the VPC flow logging options for this subnetwork. If\nlogging is enabled, logs are exported to Cloud Logging. Flow logging\nisn't supported if the subnet 'purpose' field is set to subnetwork is\n'REGIONAL_MANAGED_PROXY' or 'GLOBAL_MANAGED_PROXY'.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "params": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "resource_manager_tags": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "Resource manager tags to be bound to the subnetwork. Tag keys and values have the\nsame definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id},\nand values are in the format tagValues/456. The field is ignored when empty.\nThe field is immutable and causes resource replacement when mutated. This field is only\nset at create time and modifying this field after creation will trigger recreation.\nTo apply tags to an existing resource, see the google_tags_tag_binding resource.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Additional params passed with the request, but not persisted as part of resource payload",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "secondary_ip_range": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "ip_cidr_range": {
+                      "type": "string",
+                      "description": "The range of IP addresses belonging to this subnetwork secondary\nrange. Provide this property when you create the subnetwork.\nRanges must be unique and non-overlapping with all primary and\nsecondary IP ranges within a network. Only IPv4 is supported.\nField is optional when 'reserved_internal_range' is defined, otherwise required.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "range_name": {
+                      "type": "string",
+                      "description": "The name associated with this subnetwork secondary range, used\nwhen adding an alias IP range to a VM instance. The name must\nbe 1-63 characters long, and comply with RFC1035. The name\nmust be unique within the subnetwork.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "reserved_internal_range": {
+                      "type": "string",
+                      "description": "The ID of the reserved internal range. Must be prefixed with 'networkconnectivity.googleapis.com'\nE.g. 'networkconnectivity.googleapis.com/projects/{project}/locations/global/internalRanges/{rangeId}'",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "An array of configurations for secondary IP ranges for VM instances\ncontained in this subnetwork. The primary IP of such VM must belong\nto the primary ipCidrRange of the subnetwork. The alias IPs may belong\nto either primary or secondary ranges.\n\n**Note**: This field uses [attr-as-block mode](https://www.terraform.io/docs/configuration/attr-as-blocks.html) to avoid\nbreaking users during the 0.12 upgrade. To explicitly send a list of zero objects,\nset 'send_secondary_ip_range_if_empty = true'",
+                  "description_kind": "plain"
+                }
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_essential_contacts_contact": {
           "version": 0,
           "block": {

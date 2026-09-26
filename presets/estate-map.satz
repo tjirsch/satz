@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.5"
+pack estate_map version "2.6"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -46,6 +46,7 @@ params {
   // ---- optional: off until the customer asks --------------------------------
   use_budget                    = false
   use_billing_export            = false
+  use_shared_network            = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -121,6 +122,13 @@ question use_budget {
   why      = "The one alarm on runaway cost. The pack carries an import-id placeholder for adopting a budget that already exists — delete it for a fresh one, as its header says."
   reversal = recreate
   blast    = none
+}
+
+question use_shared_network {
+  prompt   = "Run a shared VPC for the projects: a host project, one network, and a firewall policy whose subnets and rules the projects request?"
+  why      = "Projects then run in one network the estate owns instead of each building its own: a project asks for a subnet or a firewall rule by pull request, the estate applies it, and the interface publishes it. Turning it off later destroys the host project, the network and every subnet and rule in it, and cuts off every project attached to it."
+  reversal = recreate
+  blast    = high
 }
 
 question use_billing_export {
@@ -288,6 +296,11 @@ offers "presets/organization-budget.satz" {
 
 offers "presets/billing-export.satz" {
   when = use_billing_export
+}
+
+offers "presets/shared-network.satz" {
+  when  = use_shared_network
+  phase = "once the estate runs as the service account and the projects are onboarded — the network they request subnets and rules in"
 }
 
 offers "presets/security-audit/sa-security-audit.satz" {
