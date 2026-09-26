@@ -523,9 +523,10 @@ impl OfferedLookup {
 pub struct ManagedFact {
     /// `<type>.<label>`
     pub address: String,
-    /// the values satz writes as its identity (`project_id`, `name`, `account_id`, …)
+    /// the values satz writes as its identity (`project_id`, `name`, `account_id`, …) —
+    /// in an interface file `sha256:<hex>` of each, so the file names no other project's ids
     pub ids: Vec<String>,
-    /// natural key → the value satz writes
+    /// natural key → the value satz writes, hashed the same way in an interface file
     pub keys: std::collections::BTreeMap<String, String>,
     /// natural key → the address of the central resource it names
     pub refs: std::collections::BTreeMap<String, String>,

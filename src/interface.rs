@@ -1156,8 +1156,10 @@ impl Interface {
         }
         for m in &facts.managed {
             s.push_str(&format!("\nmanaged {} {{\n", quote(&m.address)));
+            // the ids and key values hashed: the file travels into every project's folder,
+            // and the duplicate rule needs equality, not the central estate's inventory
             if !m.ids.is_empty() {
-                s.push_str(&format!("  ids = {}\n", list(&m.ids)));
+                s.push_str(&format!("  ids = {}\n", list(&m.ids.iter().map(|i| crate::consumer::hashed(i)).collect::<Vec<_>>())));
             }
             for (block, entries) in [("keys", &m.keys), ("refs", &m.refs)] {
                 if entries.is_empty() {
@@ -1165,7 +1167,8 @@ impl Interface {
                 }
                 s.push_str(&format!("  {} {{\n", block));
                 for (k, v) in entries {
-                    s.push_str(&format!("    {} = {}\n", k, quote(v)));
+                    let v = if block == "keys" { crate::consumer::hashed(v) } else { v.clone() };
+                    s.push_str(&format!("    {} = {}\n", k, quote(&v)));
                 }
                 s.push_str("  }\n");
             }
@@ -1622,10 +1625,18 @@ resource "google_project_iam_binding" "team_viewers" {
         let lookups: Vec<(&str, &str)> = file.lookups.iter().map(|l| (l.address.as_str(), l.reads.as_str())).collect();
         assert_eq!(lookups, [("data.google_active_folder.infra", "google_folder.infra"), ("data.google_active_folder.team", "google_folder.team")]);
         assert_eq!(file.lookups[1].arguments, [("display_name".to_string(), "Team".to_string()), ("parent".to_string(), "${data.google_active_folder.infra.name}".to_string())]);
+        // the managed facts travel hashed: the same addresses, refs and keys, no value in clear
         let lineless: Vec<satz_core::satz::ManagedFact> = file.managed.iter().map(|m| satz_core::satz::ManagedFact { line: 0, ..m.clone() }).collect();
-        assert_eq!(lineless, facts.managed);
+        let hashed = |m: &satz_core::satz::ManagedFact| satz_core::satz::ManagedFact {
+            line: 0,
+            ids: m.ids.iter().map(|i| crate::consumer::hashed(i)).collect(),
+            keys: m.keys.iter().map(|(k, v)| (k.clone(), crate::consumer::hashed(v))).collect(),
+            ..m.clone()
+        };
+        assert_eq!(lineless, facts.managed.iter().map(hashed).collect::<Vec<_>>());
         let project = file.managed.iter().find(|m| m.address == "google_project.infra").expect("the project is managed");
-        assert_eq!(project.ids, ["corp-infra-001"]);
+        assert_eq!(project.ids, [crate::consumer::hashed("corp-infra-001")]);
+        assert!(project.ids[0].starts_with("sha256:") && !project.ids[0].contains("corp"), "{}", project.ids[0]);
         let team = file.managed.iter().find(|m| m.address == "google_folder.team").unwrap();
         assert_eq!(team.refs.get("parent").map(String::as_str), Some("google_folder.infra"));
         // read back, the facts are the estate's

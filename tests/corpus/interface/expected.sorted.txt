@@ -312,14 +312,14 @@ lookup "data.google_project.infra" {
 
 managed "google_folder.infra_folder" {
   keys {
-    display_name = "Infrastructure"
-    parent       = "organizations/123456789012"
+    display_name = "sha256:ce0cff719a94747617230dde819ab25812021d6b80c236bf0c6891c0d46e45be"
+    parent       = "sha256:fa3d6fdeb2275800b234aacaf139e916e69483bf37c5632fe7b763e02ea37076"
   }
 }
 
 managed "google_folder.team" {
   keys {
-    display_name = "Team"
+    display_name = "sha256:5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63"
   }
   refs {
     parent = "google_folder.infra_folder"
@@ -327,16 +327,16 @@ managed "google_folder.team" {
 }
 
 managed "google_project.infra" {
-  ids = ["acme-infra-001"]
+  ids = ["sha256:50e0c9ff37548dc784798ac16ef6e4e7fac42d72f3cbc3f95e4ec69fa7965fe5"]
   keys {
-    project_id = "acme-infra-001"
+    project_id = "sha256:50e0c9ff37548dc784798ac16ef6e4e7fac42d72f3cbc3f95e4ec69fa7965fe5"
   }
 }
 
 managed "google_service_account.provisioner" {
-  ids = ["svc-iac-001"]
+  ids = ["sha256:7594a2dd673afe96b293959aa063f296ed794f436c060efad3df7f7be91a31f8"]
   keys {
-    account_id = "svc-iac-001"
+    account_id = "sha256:7594a2dd673afe96b293959aa063f296ed794f436c060efad3df7f7be91a31f8"
   }
   refs {
     project = "google_project.infra"
@@ -539,14 +539,14 @@ lookup "data.google_project.infra" {
 
 managed "google_folder.infra_folder" {
   keys {
-    display_name = "Infrastructure"
-    parent       = "organizations/123456789012"
+    display_name = "sha256:ce0cff719a94747617230dde819ab25812021d6b80c236bf0c6891c0d46e45be"
+    parent       = "sha256:fa3d6fdeb2275800b234aacaf139e916e69483bf37c5632fe7b763e02ea37076"
   }
 }
 
 managed "google_folder.team" {
   keys {
-    display_name = "Team"
+    display_name = "sha256:5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63"
   }
   refs {
     parent = "google_folder.infra_folder"
@@ -554,16 +554,16 @@ managed "google_folder.team" {
 }
 
 managed "google_project.infra" {
-  ids = ["acme-infra-001"]
+  ids = ["sha256:50e0c9ff37548dc784798ac16ef6e4e7fac42d72f3cbc3f95e4ec69fa7965fe5"]
   keys {
-    project_id = "acme-infra-001"
+    project_id = "sha256:50e0c9ff37548dc784798ac16ef6e4e7fac42d72f3cbc3f95e4ec69fa7965fe5"
   }
 }
 
 managed "google_service_account.provisioner" {
-  ids = ["svc-iac-001"]
+  ids = ["sha256:7594a2dd673afe96b293959aa063f296ed794f436c060efad3df7f7be91a31f8"]
   keys {
-    account_id = "svc-iac-001"
+    account_id = "sha256:7594a2dd673afe96b293959aa063f296ed794f436c060efad3df7f7be91a31f8"
   }
   refs {
     project = "google_project.infra"
