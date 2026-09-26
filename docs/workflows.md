@@ -826,6 +826,32 @@ it, and a Satz estate reads only the files it `use`s. The folder's `README.md` n
 estate, the satz version that wrote it and a content hash of every other file in it, so
 two copies are the same when their hashes are.
 
+**What changed, and what to do about it.** When a transpile changes a value of an
+interface, the interface's folder gains `CHANGES.md` beside its `README.md`: the previous
+`satz/interface.satz` on disk against the new one, written as the todo a project follows,
+in both spellings —
+
+```markdown
+## To do
+
+- [ ] Replace `module.satz.folder` / `${{interface.folder}}` with `…team_folder`: renamed, the same `google_folder.team`.
+- [ ] `number` is now looked up (`data.google_project.infra`): your plan needs resourcemanager.projects.get.
+- [ ] `folders` lost the key `"old"`: `module.satz.folders["old"]` fails at plan.
+
+## Also changed
+
+- `folders` gained the key `"new"`.
+```
+
+A rename is an output that went and one that came naming the same resources in the same
+shape; an output gone, a map key lost, an attach point dropped, a value now looked up
+and a shape that changed are the other todos; a new output, a key or an attach point
+gained and a value now static are information. A description edit is no change, and an
+interface the transpile did not change has no file. One transpile is one step, so
+nothing accumulates: a project that moves several commits of the central estate at once
+reads the file's history in the estate's repository. The file is not in the folder's
+content hash.
+
 Every interface has the same two forms, with the same values:
 
 - **`<name>/hcl/`** is a module. It names no file outside itself, takes no input variable,

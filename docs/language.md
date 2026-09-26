@@ -2056,7 +2056,14 @@ files is one export, and with a different one it is an error naming both files.
   folder: SHA-256 over each file in path order — its path relative to the folder, a NUL
   byte, its length as 8 little-endian bytes, its bytes. An interface copied whole costs
   nothing unused: HCL evaluates a module's lookups only where the project sources it, and
-  a Satz project reads only the files it `use`s.
+  a Satz project reads only the files it `use`s. `<name>/CHANGES.md` is there when the
+  transpile changed a value of the interface: the previous `satz/interface.satz` on disk
+  against the new one, as a todo for a project that reads it — an output renamed (one
+  removed and one added that name the same resources in the same shape), one gone, a map
+  that lost a key, an attach point dropped, a value now looked up and the permission its
+  plan needs, a shape that changed — then what else changed. A description edit is no
+  change. One transpile is one step and nothing accumulates: the estate's history of the
+  file is the guide across several. The file is not in the content hash.
 - `satz transpile` writes `outputs.tf` and `interfaces_dir` whole: the folder of an
   interface the estate no longer declares is removed, and so are both when the estate
   exports nothing. `interfaces_dir` holds nothing else, so an `interfaces_dir` that holds
