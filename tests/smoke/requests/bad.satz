@@ -1,0 +1,10 @@
+// A request file `satz check-request` refuses: a field the request point does not
+// declare.
+
+pack requests_payments version "1.0"
+
+params {
+  contributes_event_topics = [
+    { name = "payments" retention = "86400s" labels = ["x"] },
+  ]
+}

@@ -1,0 +1,10 @@
+// A project's request file: entries for the showcase's request point `event_topics`,
+// which `satz check-request` holds to its fields before the estate uses the file.
+
+pack requests_payments version "1.0"
+
+params {
+  contributes_event_topics = [
+    { name = "payments" retention = "86400s" },
+  ]
+}

@@ -2234,6 +2234,37 @@ copied to `vendor/archive/`.)
 An export emits no resource and is no witness: it never enters the fold, the emission
 manifest or a claim.
 
+#### `request` — what a project may add to a list
+
+```
+request event_topics {
+  key         = "name"
+  fields      = ["name", "retention"]
+  description = "A Pub/Sub topic in the infrastructure project"
+}
+```
+
+`request <list param> { … }` declares a list param a request point: a project may add
+entries to it through `contributes_<param>` (§6.3) in a file of its own — a pack, since a
+contribution is written in one — which the estate `use`s once the pull request that
+vendors it is reviewed. `key` is the field that names an entry, `fields` every field an
+entry may carry, `key` among them, `description` what an entry is. A pack declares it
+beside the list; like an export it reaches the estate from a used file after the `use …
+when` guard. An `each` over the list (§6.4) makes each entry a resource, which the
+interface then publishes like any other.
+
+Every compile holds every entry of the list to the request point, the estate's own and
+every contributed one: an object, carrying the key, no field `fields` does not name, no
+key twice. `satz check-request <file> [<estate>]` holds a project's file to it offline,
+before the file is vendored: the file holds a `pack` header and `params {
+contributes_<param> = [ … ] }` for request points alone, every entry shaped, no key the
+list already holds for another entry (the same entry again is the file already
+vendored). `satz interfaces` reports the request points, and every interface's
+`README.md` says what may be requested and how.
+
+Refused: a request point on a param no file declares or that is no list, two request
+points on one list, a `key` not among the `fields`, a field named twice.
+
 ### 6.18 Provenance: pristine, fork, ledger
 
 Suffix carries meaning; the tooling enforces it.
@@ -2523,6 +2554,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
 | keep a pack's resource out of every export | `private google_storage_bucket.logs` |
 | one resource per entry of a list param | `google_pubsub_topic { each event_topics by name { name = "{each.name}" } }` |
+| let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
 | comment | `#`, `//`, `/* … */` |

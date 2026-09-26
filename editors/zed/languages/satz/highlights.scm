@@ -24,7 +24,7 @@
   "export" "description" "attach" "all" "under"
   "each" "by"
   "interface" "common"
-  "suppress" "role" "private"
+  "suppress" "role" "private" "request"
   "hcl" "trust"
 ] @keyword
 (coverage) @keyword

@@ -152,6 +152,139 @@ fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, Pi
     }
 }
 
+/// Every `request` against the list it names, as the compile sees it — contributions
+/// included: the list is declared and is a list, and every entry is an object that
+/// carries the key, uses the declared fields only, and names itself uniquely. One param
+/// has one request point.
+fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Result<Vec<ResolvedRequest>, PipelineError> {
+    let mut out: Vec<ResolvedRequest> = Vec::new();
+    for (file, r) in declared {
+        if let Some(first) = out.iter().find(|x| x.param == r.param) {
+            return perr(file, r.line, format!("request {}: declared twice — here and {}:{}; one list has one request point", r.param, first.file, first.line));
+        }
+        let entries = match env.get(&r.param) {
+            Some(serde_yaml::Value::Sequence(s)) => s,
+            Some(other) => return perr(file, r.line, format!("request {}: `{}` is {} — a request point is a list param", r.param, r.param, yaml_kind(other))),
+            None => return perr(file, r.line, format!("request {}: unknown param '{}' — the request point names a list param a file of the estate declares", r.param, r.param)),
+        };
+        if let Err(msg) = check_request_entries(r, entries, &[]) {
+            return perr(file, r.line, msg);
+        }
+        out.push(ResolvedRequest {
+            param: r.param.clone(),
+            key: r.key.clone(),
+            fields: r.fields.clone(),
+            description: r.description.clone(),
+            entries: entries.clone(),
+            file: file.clone(),
+            line: r.line,
+        });
+    }
+    Ok(out)
+}
+
+/// The entries of a request point's list, or the ones a team asks for (`existing` then
+/// holds the list as it is, an entry equal to its own not a collision — the file is
+/// already vendored): each an object carrying the key, the declared fields only, keys
+/// unique.
+pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value], existing: &[serde_yaml::Value]) -> Result<(), String> {
+    let mut seen: Vec<String> = Vec::new();
+    for (n, e) in entries.iter().enumerate() {
+        let serde_yaml::Value::Mapping(fields) = e else {
+            return Err(format!("request {}: entry {} is {} — an entry is an object with the fields {}", r.param, n + 1, yaml_kind(e), r.fields.join(", ")));
+        };
+        let key = match fields.get(r.key.as_str()) {
+            Some(serde_yaml::Value::String(s)) => s.clone(),
+            Some(serde_yaml::Value::Number(v)) => v.to_string(),
+            Some(other) => return Err(format!("request {}: entry {} has `{}` = {} — the key is a string or a number", r.param, n + 1, r.key, yaml_text(other))),
+            None => return Err(format!("request {}: entry {} has no `{}`, the field that names an entry", r.param, n + 1, r.key)),
+        };
+        if let Some(f) = fields.keys().filter_map(|k| k.as_str()).find(|k| !r.fields.iter().any(|f| f == k)) {
+            return Err(format!("request {}: entry `{}` has `{}`, which is no field of this request — its fields: {}", r.param, key, f, r.fields.join(", ")));
+        }
+        if seen.contains(&key) {
+            return Err(format!("request {}: two entries are `{}` = \"{}\" — the key names one entry", r.param, r.key, key));
+        }
+        let taken = existing.iter().any(|x| {
+            let same_key = match x.get(r.key.as_str()) {
+                Some(serde_yaml::Value::String(s)) => *s == key,
+                Some(serde_yaml::Value::Number(v)) => v.to_string() == key,
+                _ => false,
+            };
+            same_key && x != e
+        });
+        if taken {
+            return Err(format!("request {}: `{}` = \"{}\" is taken — the estate's list holds another entry of that name", r.param, r.key, key));
+        }
+        seen.push(key);
+    }
+    Ok(())
+}
+
+/// A team's request file against the estate's request points: it holds `params { … }`
+/// with `contributes_<param>` entries alone (a `pack` header allowed), every param one
+/// the estate declares a request point for, every entry shaped by it. Each finding is
+/// (line, message).
+pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) -> Vec<(usize, String)> {
+    let file = match satz::parse(src) {
+        Ok(f) => f,
+        Err(e) => return vec![(e.line, e.msg)],
+    };
+    let mut out = Vec::new();
+    let other = [
+        (!file.items.is_empty(), "a resource or a `use`"),
+        (!file.exports.is_empty() || !file.interfaces.is_empty(), "an `export` or an `interface`"),
+        (!file.claims.is_empty(), "a `claim`"),
+        (!file.hcl_blocks.is_empty(), "an `hcl` block"),
+        (!file.actions.is_empty(), "an `action`"),
+        (!file.questions.is_empty() || !file.notices.is_empty() || !file.offers.is_empty(), "a `question`, `notice` or `offers`"),
+        (!file.suppressions.is_empty() || !file.privates.is_empty() || !file.requests.is_empty(), "a `suppress`, `private` or `request`"),
+        (file.estate.is_some() && !file.is_pack, "an `estate` header"),
+    ];
+    for (found, what) in other {
+        if found {
+            out.push((1, format!("the file holds {} — a request file holds `params {{ contributes_<param> = [ … ] }}` alone", what)));
+        }
+    }
+    if file.params.is_empty() {
+        out.push((1, "the file requests nothing — it holds no `params { contributes_<param> = [ … ] }`".to_string()));
+    }
+    for (name, value, line) in &file.params {
+        let Some(param) = name.strip_prefix("contributes_") else {
+            out.push((*line, format!("`{}` is no contribution — a request file adds entries through `contributes_<param>`", name)));
+            continue;
+        };
+        let Some(point) = requests.iter().find(|r| r.param == param) else {
+            out.push((
+                *line,
+                format!(
+                    "`{}`: the estate declares no request point for `{}` — it takes requests for: {}",
+                    name,
+                    param,
+                    if requests.is_empty() { "nothing".to_string() } else { requests.iter().map(|r| format!("`{}`", r.param)).collect::<Vec<_>>().join(", ") }
+                ),
+            ));
+            continue;
+        };
+        let entries = match resolve_value(value, env, "", *line) {
+            Ok(serde_yaml::Value::Sequence(s)) => s,
+            Ok(other) => {
+                out.push((*line, format!("`{}` is {} — a contribution is a list of entries", name, yaml_kind(&other))));
+                continue;
+            }
+            Err(e) => {
+                out.push((*line, e.msg));
+                continue;
+            }
+        };
+        let decl = satz::RequestDecl { param: point.param.clone(), key: point.key.clone(), fields: point.fields.clone(), description: None, line: point.line };
+        if let Err(msg) = check_request_entries(&decl, &entries, &point.entries) {
+            out.push((*line, msg));
+        }
+    }
+    out
+}
+
 /// The body of an `each` for one entry: `{each.x}` in a string or a key becomes the
 /// field's text, a bare `each.x` the field's value. A `use` and a second `each` inside the
 /// body are refused.
@@ -335,6 +468,8 @@ pub struct FrontEnd {
     pub suppressions: Vec<ResolvedSuppression>,
     /// The estate's `private <type>.<label>` statements: resources no export publishes.
     pub privates: Vec<ResolvedPrivate>,
+    /// What a team may add to a list param, from the estate and every file it uses.
+    pub requests: Vec<ResolvedRequest>,
     /// Raw `hcl { … }` blocks, in source order, from the estate and every file it
     /// uses. They bypass the fold entirely — that is what "opaque to the proof
     /// layer" means — and are appended verbatim at emission.
@@ -412,6 +547,19 @@ pub struct ResolvedInterface {
     pub common: bool,
     /// the interfaces it uses, directly or through another, first reached first
     pub uses: Vec<String>,
+    pub file: String,
+    pub line: usize,
+}
+
+/// A `request` point with the file that declares it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedRequest {
+    pub param: String,
+    pub key: String,
+    pub fields: Vec<String>,
+    pub description: Option<String>,
+    /// the entries the list holds now, contributions included
+    pub entries: Vec<serde_yaml::Value>,
     pub file: String,
     pub line: usize,
 }
@@ -1110,6 +1258,7 @@ pub fn compile_estate(
         notices: Vec::new(),
         actions: Vec::new(),
         exports: Vec::new(),
+        requests: Vec::new(),
         interfaces: Vec::new(),
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
@@ -1126,6 +1275,7 @@ pub fn compile_estate(
     let config = w.config;
     let walked_actions = w.actions;
     let walked_exports = w.exports;
+    let walked_requests = w.requests;
     let walked_interfaces = w.interfaces;
     let interface_files = merge_interface_files(w.interface_files)?;
     let mut hcl: Vec<HclPassthrough> = file
@@ -1264,7 +1414,10 @@ pub fn compile_estate(
         return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
     }
     let privates = file.privates.iter().map(|x| ResolvedPrivate { address: x.address.clone(), file: file_name.to_string(), line: x.line }).collect();
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, privates, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
+    let declared_requests: Vec<(String, satz::RequestDecl)> =
+        file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
+    let requests = resolve_requests(&declared_requests, &tfvars)?;
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
 /// The interface files the estate uses, each once. The same file used twice is one; one
@@ -1976,7 +2129,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -2019,6 +2172,8 @@ struct Walk<'a> {
     /// Exports collected from every file the walk visits, unresolved for the reason
     /// actions are.
     exports: Vec<(String, Option<String>, satz::ExportDecl)>,
+    /// `request` statements of the used files, after the `when` guard
+    requests: Vec<(String, satz::RequestDecl)>,
     /// `interface` blocks of every file the walk visits, for their `use interface` lines,
     /// each with whether its file is a pack (whose interfaces are common).
     interfaces: Vec<(String, satz::InterfaceDecl, bool)>,
@@ -2142,6 +2297,7 @@ impl Walk<'_> {
 
     /// After the guard too: a pack switched off publishes nothing.
     fn absorb_exports(&mut self, file: &satz::File, file_name: &str) {
+        self.requests.extend(file.requests.iter().map(|r| (file_name.to_string(), r.clone())));
         self.exports.extend(exports_of(file, file_name));
         self.interfaces.extend(file.interfaces.iter().map(|i| (file_name.to_string(), i.clone(), file.is_pack)));
         if let Some(i) = &file.interface_file {
@@ -4405,5 +4561,56 @@ google_storage_bucket {
         let src = format!("{}google_storage_bucket {{\n  each {{\n    name = \"x\"\n  }}\n}}\n", HEAD);
         let fe = compile(&src).expect("compiles");
         assert_eq!(expanded(&fe, "google_storage_bucket")[0].0, "each");
+    }
+
+    const REQUESTED: &str = r#"pack net version "1.0"
+params {
+  subnets = [ { name = "base" cidr = "10.0.0.0/24" } ]
+}
+request subnets {
+  key         = "name"
+  fields      = ["name", "cidr", "region"]
+  description = "A subnet"
+}
+"#;
+
+    /// The request point holds every entry of its list to its shape, a contributed one
+    /// included, and reports how many there are.
+    #[test]
+    fn a_request_point_checks_every_entry_of_its_list() {
+        let team = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" region = \"europe-west3\" } ]\n}\n";
+        let src = format!("{}use \"net.satz\"\nuse \"team.satz\"\n", HEAD);
+        let fe = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", team)]).expect("compiles");
+        assert_eq!(fe.requests.len(), 1);
+        assert_eq!((fe.requests[0].param.as_str(), fe.requests[0].entries.len()), ("subnets", 2));
+        let bad = team.replace("region = \"europe-west3\"", "zone = \"a\"");
+        let err = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", &bad)]).must_fail("an unknown field");
+        assert!(err.msg.contains("entry `team` has `zone`, which is no field of this request"), "{}", err.msg);
+        let twice = team.replace("name = \"team\"", "name = \"base\"");
+        let err = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", &twice)]).must_fail("a key twice");
+        assert!(err.msg.contains("two entries are `name` = \"base\""), "{}", err.msg);
+        let not_a_list = REQUESTED.replace("subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]", "subnets = \"x\"");
+        let err = compile_with(&format!("{}use \"net.satz\"\n", HEAD), &[("net.satz", &not_a_list)]).must_fail("not a list");
+        assert!(err.msg.contains("a request point is a list param"), "{}", err.msg);
+        // a pack switched off declares no request point
+        let off = format!("{}params {{ want = false }}\nuse \"net.satz\" when want\n", HEAD.replace("params { customer_organization_id = \"1\" }\n", "params { customer_organization_id = \"1\" want = false }\n"));
+        let off = off.replace("params { want = false }\n", "");
+        assert!(compile_with(&off, &[("net.satz", REQUESTED)]).expect("compiles").requests.is_empty());
+    }
+
+    /// A team's file, before it is vendored: contributions to request points alone, each
+    /// entry shaped, no key the estate's list holds for another entry.
+    #[test]
+    fn a_request_file_is_checked_against_the_request_points() {
+        let fe = compile_with(&format!("{}use \"net.satz\"\n", HEAD), &[("net.satz", REQUESTED)]).expect("compiles");
+        let check = |src: &str| check_request_file(src, &fe.requests, &fe.tfvars).into_iter().map(|(_, m)| m).collect::<Vec<_>>();
+        assert!(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" } ]\n}\n").is_empty());
+        let has = |got: Vec<String>, needle: &str| assert!(got.iter().any(|m| m.contains(needle)), "wanted `{}` in {:?}", needle, got);
+        has(check("pack team version \"1.0\"\nparams {\n  contributes_firewall = [ { name = \"x\" } ]\n}\n"), "no request point for `firewall`");
+        has(check("pack team version \"1.0\"\nparams {\n  subnets = [ ]\n}\n"), "is no contribution");
+        has(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"base\" cidr = \"10.9.0.0/24\" } ]\n}\n"), "is taken");
+        assert!(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\n").is_empty(), "the estate's own entry again is no collision");
+        has(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"t\" } ]\n}\ngoogle_storage_bucket {\n  b {\n    name = \"x\"\n  }\n}\n"), "a resource or a `use`");
+        has(check("pack t\n"), "requests nothing");
     }
 }

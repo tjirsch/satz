@@ -7,7 +7,7 @@
 use serde::Serialize;
 
 use crate::interface::{How, Interface};
-use satz_core::pipeline::{ResolvedExport, ResolvedInterface};
+use satz_core::pipeline::{ResolvedExport, ResolvedInterface, ResolvedRequest};
 
 #[derive(Debug, Serialize, PartialEq)]
 pub(crate) struct InterfacesReport {
@@ -17,6 +17,22 @@ pub(crate) struct InterfacesReport {
     /// every declared interface; `core` is not one — the core exports are the ones with
     /// no `interface`
     pub interfaces: Vec<InterfaceRow>,
+    /// what a team may add to a list param, and the shape of an entry
+    pub requests: Vec<RequestRow>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct RequestRow {
+    /// the list param a contribution adds to, `contributes_<param>`
+    pub param: String,
+    pub key: String,
+    pub fields: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// the entries the list holds now
+    pub entries: usize,
+    pub file: String,
+    pub line: usize,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -58,7 +74,7 @@ pub(crate) struct InterfaceRow {
 }
 
 /// The report of a compiled estate. `interface` is `None` when the estate exports nothing.
-pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[ResolvedExport], interfaces: &[ResolvedInterface]) -> InterfacesReport {
+pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[ResolvedExport], interfaces: &[ResolvedInterface], requests: &[ResolvedRequest]) -> InterfacesReport {
     let at = |i: &Option<String>, name: &str| declared.iter().find(|d| &d.interface == i && d.name == name).map(|d| (d.file.clone(), d.line)).unwrap_or_default();
     let exports = interface
         .map(|i| {
@@ -97,7 +113,43 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             line: d.line,
         })
         .collect();
-    InterfacesReport { estate: estate.to_string(), exports, interfaces }
+    let requests = requests
+        .iter()
+        .map(|r| RequestRow {
+            param: r.param.clone(),
+            key: r.key.clone(),
+            fields: r.fields.clone(),
+            description: r.description.clone(),
+            entries: r.entries.len(),
+            file: r.file.clone(),
+            line: r.line,
+        })
+        .collect();
+    InterfacesReport { estate: estate.to_string(), exports, interfaces, requests }
+}
+
+/// The README section every interface of the estate carries: what a project may ask the
+/// estate for, and how. Empty when the estate declares no request point.
+pub(crate) fn requests_readme(requests: &[ResolvedRequest]) -> String {
+    if requests.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("\n## What you may request\n\n");
+    s.push_str("A change the estate makes for you is an entry in one of its lists. Write the entries in a file of your\n");
+    s.push_str("own — `params { contributes_<param> = [ { … } ] }` — check it with `satz check-request <file>` against\n");
+    s.push_str("a checkout of the estate, and hand it to the estate's repository as a pull request: the review of that\n");
+    s.push_str("pull request is the change's approval, and the estate's apply makes it.\n\n");
+    s.push_str("| List | Key | Fields | What an entry is |\n|---|---|---|---|\n");
+    for r in requests {
+        s.push_str(&format!(
+            "| `{}` | `{}` | {} | {} |\n",
+            r.param,
+            r.key,
+            r.fields.iter().map(|f| format!("`{}`", f)).collect::<Vec<_>>().join(", "),
+            r.description.as_deref().unwrap_or("").replace('|', "\\|")
+        ));
+    }
+    s
 }
 
 /// The report for a person: the core exports, then each interface with its own.
@@ -111,6 +163,9 @@ pub(crate) fn render_text(r: &InterfacesReport) -> String {
         s
     };
     let mut s = format!("estate {}\n", r.estate);
+    for q in &r.requests {
+        s.push_str(&format!("request {} (key `{}`, fields {}) — {} entr{}  {}:{}\n", q.param, q.key, q.fields.join(", "), q.entries, if q.entries == 1 { "y" } else { "ies" }, q.file, q.line));
+    }
     if r.exports.is_empty() {
         s.push_str("\nno export — the estate publishes nothing to a project\n");
         return s;

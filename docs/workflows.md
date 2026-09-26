@@ -1068,6 +1068,30 @@ to read. A project hands its entries over as a pack the central estate `use`s, w
 a list param through a `contributes_<param>` param; fetching that pack from the project's
 repository is the central estate's pipeline's job.
 
+**What a project may ask for is declared.** A list that takes requests carries a
+`request` point — the field that names an entry and the fields an entry may carry — and
+every interface's `README.md` lists them under *What you may request*. The project writes
+its entries as a small pack:
+
+```
+pack requests_payments version "1.0"
+
+params {
+  contributes_event_topics = [
+    { name = "payments" retention = "86400s" },
+  ]
+}
+```
+
+checks it with `satz check-request <file> <central estate>` against a checkout of the
+central estate, and its pipeline opens a pull request that copies the file into the central
+estate's repository (`satz/requests/<project>.satz`) and adds its `use` line. The review of
+that pull request is the change's approval, the central estate's git history its record, a
+refused request a closed pull request; the apply makes the change, and an `each` over the
+list turns the entry into a resource the interface publishes. The file is vendored, not
+used from the project's repository: a `use` of a path that points there would put the
+project's next edit on the central estate's next apply with no review.
+
 ### The change notice
 
 A project learns that an exported value changed through the delivery form the estate

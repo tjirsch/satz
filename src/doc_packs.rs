@@ -979,6 +979,21 @@ fn render(
     if !file.interfaces.iter().all(|i| i.uses.is_empty()) {
         md.push('\n');
     }
+    if !file.requests.is_empty() {
+        md.push_str("## Requests\n\n");
+        md.push_str("What a team may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.\n\n");
+        md.push_str("| list | key | fields | description |\n|---|---|---|---|\n");
+        for r in &file.requests {
+            md.push_str(&format!(
+                "| `{}` | `{}` | {} | {} |\n",
+                r.param,
+                r.key,
+                r.fields.iter().map(|f| format!("`{}`", f)).collect::<Vec<_>>().join(", "),
+                r.description.as_deref().unwrap_or("").replace('|', "\\|")
+            ));
+        }
+        md.push('\n');
+    }
     md.push_str("## Claims\n\n");
     if file.claims.is_empty() {
         md.push_str("_None — this pack proves no control by itself._\n\n");

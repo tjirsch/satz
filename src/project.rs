@@ -454,7 +454,7 @@ mod tests {
         let shared = "\ninterface \"network\" common {\n  export \"region_list\" = [default_region]\n}\n\ninterface \"audit\" {\n  export \"infra\" = \"${{google_project.infra.project_id}}\" attach [\"google_project_iam_member\"]\n}\n";
         let base = format!("{}{}", central("choices", None), shared);
         let (fe, manifest, i) = compile(&base, &|p| Err(format!("no {}", p)));
-        let report = crate::interface_report::report("e", Some(&i), &fe.exports, &fe.interfaces);
+        let report = crate::interface_report::report("e", Some(&i), &fe.exports, &fe.interfaces, &fe.requests);
         let read = |_: &str| -> Result<String, String> { Ok(base.clone()) };
         let copied = copied_export("audit.infra", &report, &read).unwrap();
         assert_eq!(copied, "export \"infra\" = \"${{google_project.infra.project_id}}\" attach [\"google_project_iam_member\"]");

@@ -1579,7 +1579,7 @@ resource "google_project_iam_binding" "team_viewers" {
         let i = build("e", &two, &interfaces, &manifest, "hashicorp/google", None).unwrap();
         assert_eq!(i.library(), ["core", "net"]);
         assert_eq!(i.projects(), ["pay", "ship"]);
-        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        crate::write_interface(Some(&i), &manifest, &[], &hcl, &out, "e.satz").unwrap();
         let listing = |d: &std::path::Path| -> Vec<String> {
             let mut v: Vec<String> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
             v.sort();
@@ -1605,7 +1605,7 @@ resource "google_project_iam_binding" "team_viewers" {
 
         let one = [export("org", "123"), in_interface("pay", "a", "1")];
         let i = build("e", &one, &[ri("pay", false, &[])], &manifest, "hashicorp/google", None).unwrap();
-        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        crate::write_interface(Some(&i), &manifest, &[], &hcl, &out, "e.satz").unwrap();
         assert_eq!(listing(&out), ["common", "pay"], "the folder of a removed project survived");
         // `pay` no longer uses `net`, so its module lost `vpc`: a CHANGES.md beside its README,
         // and none for `core`, which did not change
@@ -1614,13 +1614,13 @@ resource "google_project_iam_binding" "team_viewers" {
         assert!(!out.join("pay/core/CHANGES.md").exists() && !out.join("common/core/CHANGES.md").exists());
         let hashed = hash_of("pay");
         // the same estate again: nothing changed, no file, and the hash never saw the file
-        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        crate::write_interface(Some(&i), &manifest, &[], &hcl, &out, "e.satz").unwrap();
         assert!(!out.join("pay/pay/CHANGES.md").exists(), "a transpile that changed nothing wrote a CHANGES.md");
         assert_eq!(hash_of("pay"), hashed, "the content hash depends on the previous state");
 
-        crate::write_interface(None, &manifest, &hcl, &out, "e.satz").unwrap();
+        crate::write_interface(None, &manifest, &[], &hcl, &out, "e.satz").unwrap();
         assert!(!out.exists() && !hcl.join("outputs.tf").exists(), "an estate that exports nothing keeps no interface");
-        let refused = crate::write_interface(Some(&i), &manifest, &hcl, &dir, "e.satz").unwrap_err();
+        let refused = crate::write_interface(Some(&i), &manifest, &[], &hcl, &dir, "e.satz").unwrap_err();
         assert!(refused.to_string().contains("holds hcl_dir"), "{}", refused);
         let _ = std::fs::remove_dir_all(&dir);
     }
