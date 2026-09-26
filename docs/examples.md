@@ -66,6 +66,8 @@ a fifth customer: **new examples use the four above.**
 
 - project ids `corp-infra-001` and `corp-log-infra-001` (the smoke estate and the
   corpus fixtures);
+- the project name `payments` (the docs' and the smoke matrix's example of a project
+  beside an estate: `satz add-project … --name payments`, `satz init --project payments`);
 - directory ids `C01234567` (README and tests) and `C0abcd123` (one test);
 - billing placeholders `A12345-B67890-C12345` and `123456-123456-123456` (README and
   a preset).

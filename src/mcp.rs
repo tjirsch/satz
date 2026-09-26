@@ -167,6 +167,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("packs", Parity::Tools(&["satz_packs"])),
     ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
     ("add-pack", Parity::Tools(&["satz_add_pack"])),
+    ("add-project", Parity::Off("the interface plane's tools are paused until it has settled; it edits the estate file the way `satz_add_pack` does, and a tool joins then")),
     ("remove-pack", Parity::Tools(&["satz_remove_pack"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),

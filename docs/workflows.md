@@ -903,6 +903,54 @@ it comes from, how it is obtained and what it takes. The root module's `tofu out
 names a project's values `<project>__<export>`, with `-` written `_`
 (`payments__folder`).
 
+### Onboarding a project, and a project on satz
+
+A project is one section of the central estate, and `satz add-project` writes it:
+
+```bash
+satz add-project acme.satz --name payments --owner-group payments-owners@example.com
+```
+
+appends, at the end of the estate, the project's Google project under the workload
+folder — `folder_id = "${{google_folder.workload_folder.name}}"`, or `org_id` when the
+workload folder is the organisation — with its IaC service account (`svc-iac-payments`)
+and its state bucket inside it, the grants (the account takes the project's IAM and its
+services and the bucket, so its estate grants itself the rest with `satz
+update-prerequisites`; the owner group reads the project and may become the account), and:
+
+```
+interface "payments" {
+  export "project_id"     = "${{google_project.payments.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+  export "project_number" = "${{google_project.payments.number}}" description "Its number, looked up"
+  export "iac_account"    = "${{google_service_account.payments_iac.email}}" description "The IaC service account the project's estate runs as"
+  export "state_bucket"   = "${{google_storage_bucket.payments_state.name}}" description "The bucket the project's estate keeps its state in"
+}
+```
+
+The section is plain Satz the operator owns from then on. The pull request that carries it
+is the request's review; the apply creates the project; `satz transpile` writes
+`interfaces/payments/`. A second `add-project` of one name is refused, and so is an estate
+that publishes no `workload_folder`, which says where a project goes. One project is one
+section because a pack is one instance — its params join one estate-wide namespace, and
+nothing expands a list into resources.
+
+**A project on satz** starts from that interface. In its own directory:
+
+```bash
+satz init --project payments --interface <the estate>/interfaces/payments/payments/satz/interface.satz
+satz transpile payments.satz
+```
+
+`init --project` writes `config.toml` and `satz/payments.satz` from the four exports and
+nothing else — no credential is read: `infra_project_name` is the project's Google project,
+`infra_bucket_name` its state bucket, `svc_iac_account` its account, `deployment_mode =
+"cloud"`, the `gcs` backend on the bucket, the providers, and the `use` of the interface
+file. The estate compiles as the project's own IaC service account, and the project's
+resources read the central estate as `${{interface.<export>}}` — `project =
+"${{interface.project_id}}"` on each — and are held to the interface's rules at every
+compile. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
+it, after a change of the central estate, says what to do about it.
+
 ### Static values and lookups
 
 An export whose value satz knows at compile time — a param, a Google project id satz

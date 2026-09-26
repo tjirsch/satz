@@ -461,6 +461,49 @@ not the state it replaced.
   wrote it and rewrites the directory whole, so a hand edit or an older satz's file is
   removed, not read around.
 
+## Amendment — onboarding a project is a generated section, and `init --project`
+
+A project written in Satz had no scaffold: an ordinary estate with its own backend and
+identity params, whose names (`svc_iac_account`, `infra_project_name`) read as the
+organisation's IaC account, and `estate-core.satz` could not be its core. Nothing created a
+project's state bucket or IaC account either — the first request every customer has,
+onboarding a project, had no form.
+
+**`satz add-project <estate> --name <n> --owner-group <g>` appends to the central estate
+the section that onboards one project** (`src/project.rs`): the Google project under the
+workload folder, its IaC service account and state bucket inside it, the grants, and
+`interface "<n>"` exporting `project_id` (an attach point for `google_project_iam_member`),
+`project_number`, `iac_account` and `state_bucket`. **`satz init --project <n> --interface
+<path>` writes the project's estate from those four exports**: cloud mode as the project's
+account, the `gcs` backend on its bucket, the `use` of the interface file; nothing derived
+from the credentials.
+
+- **A generated section, not a pack** (Thomas, 2026-09-26). A pack is one instance: its
+  params join one estate-wide namespace, `use … as google_x` reads a file as a map, and
+  nothing expands a list into resources — so a `project-onboarding.satz` taking
+  `projects = [{…}]` cannot be written, and a pack per project is the variable explosion
+  the library refuses. The generator is `init`'s own pattern (`with_workload_folder`), and
+  the text it writes is the operator's afterwards. *Pack instances in the language*
+  (`use "x.satz" as payments { params { … } }`) were weighed and deferred: a new scoping
+  rule through params, labels, references, the interview, the pack graph and
+  `merge-presets` — an ADR of its own when instances multiply. *A documented recipe alone*
+  was rejected: five blocks copied by hand per project, and the labels drift.
+- **The account's roles on its project are the minimum that lets its estate grant itself
+  the rest:** `roles/resourcemanager.projectIamAdmin` and
+  `roles/serviceusage.serviceUsageAdmin` on the project, `roles/storage.objectAdmin` on
+  the state bucket — named roles, never a basic one (ADR 0009). The project's estate runs
+  `satz update-prerequisites` for what its resource types need, as the central one does.
+- **The identity param names stay one rule** (ADR 0030): for a project estate
+  `svc_iac_account` and `infra_project_name` name its own account and Google project, and
+  the docs say so, rather than a second pair of names for one mechanism.
+- **The four exports are read as literals at `init` time**, not as `${{interface.x}}`
+  references: the backend block and the params are no resource body, where alone a
+  reference is replaced, and a static value the central estate wrote is the same either
+  way.
+- **The workload folder decides the parent.** `add-project` reads the estate's
+  `export "workload_folder"` line: the folder form writes `folder_id`, the organisation
+  form `org_id`, and an estate that publishes neither is refused, naming what writes it.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every

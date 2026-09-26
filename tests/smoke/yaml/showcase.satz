@@ -236,8 +236,10 @@ google_project {
 //     a `data` source the project's plan reads. An export outside every `interface`
 //     block is a core export, in every interface.
 export "customer_domain"      = customer_domain description "The customer's primary domain"
+export "default_region"       = default_region description "The region the estate builds in"
 export "infra_project_id"     = "${{google_project.infra.project_id}}" description "The infrastructure project"
 export "infra_folder"         = "${{google_folder.infra.name}}" description "The infrastructure folder, folders/<number>"
+export "workload_folder"      = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live: the organisation"
 export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]

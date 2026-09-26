@@ -109,6 +109,7 @@ project (acme|bolt|cedar|delta|corp)-[a-z0-9-]+
 project my-project
 project my-prj
 project p-one
+project payments
 project example-[a-z0-9-]+
 project [A-Za-z_-]*PROJECT[_-]?ID[A-Za-z_-]*
 project [^"]*[{<][^"]*
