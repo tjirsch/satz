@@ -1,0 +1,10 @@
+// A pack that adds an entry to the estate's `topics`: the estate's `each` expands it
+// like its own.
+
+pack corpus_each_pack version "1.0"
+
+params {
+  contributes_topics = [
+    { name = "audit" retention = "604800s" },
+  ]
+}

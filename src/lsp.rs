@@ -935,7 +935,7 @@ fn uses_of(file: &File) -> Vec<String> {
         for e in entries {
             match e {
                 Entry::Use { path, .. } => out.push(path.clone()),
-                Entry::Map { body, .. } => walk(body, out),
+                Entry::Map { body, .. } | Entry::Each { body, .. } => walk(body, out),
                 Entry::Attr { .. } => {}
             }
         }

@@ -547,6 +547,8 @@ entry   := KEY "=" value                  attribute
          | KEY "{" { entry } "}"          nested mapping
          | KEY NAME "{" { entry } "}"     named map entry
          | "use" STRING [ … ]             include inside this mapping
+         | "each" IDENT "by" IDENT "{" { entry } "}"
+                                          one labelled body per entry of a list param
 KEY     := IDENT | STRING                 (a string key may interpolate)
 NAME    := IDENT | STRING
 value   := STRING | NUMBER | true | false | IDENT
@@ -710,6 +712,49 @@ Every group block also carries `lifecycle { ignore_changes = [initial_group_conf
 (merged with a lifecycle you declare): `initial_group_config` is create-only and a
 live group does not report it, so without this an *adopted* group would plan as
 "must be replaced" — destroyed and recreated with its memberships.
+
+#### `each` — one labelled body per entry of a list
+
+```
+params {
+  event_topics = [
+    { name = "orders" retention = "86400s" },
+    { name = "billing" retention = "604800s" },
+  ]
+}
+
+google_pubsub_topic {
+  each event_topics by name {
+    name                       = "{customer_shortname}-{each.name}"
+    project                    = infra_project_name
+    message_retention_duration = each.retention
+  }
+}
+```
+
+`each <list param> by <field> { … }` stands inside a resource type map — a type's map,
+`google_folder { … }` or `google_project { … }`, at the top level or in a folder's or a
+project's body — and writes one labelled body per entry of the list. The label is the
+entry's `<field>`; in the body, `{each.x}` in a string or a key is the field's text and a
+bare `each.x` is its value, a list or an object included. The example writes
+`google_pubsub_topic.orders` and `google_pubsub_topic.billing`: the HCL two hand-written
+bodies give, with no `for_each` in it, so adoption, claims, attach points and the
+interface read them as any other resource. Resources nested in the body are expanded with
+it; a label that must differ per entry is a quoted key, `"{each.name}_iac" { … }`.
+
+The list is the param as the compile sees it, a pack's `contributes_<param>` entries
+included (ADR 0051), so a team's or a pack's entry expands like the estate's own. A label
+is the entry's field, never its place in the list: reordering the list moves nothing,
+and renaming an entry's label moves that resource, as renaming a written label does.
+
+Refused, at the `each` line: a list param no file declares, a param that is no list, an
+entry that is no object, one without the field or whose field is no label (a letter,
+then letters, digits, `_` and `-`), two entries with one label, `{each.x}` of a field the
+entry lacks or of a list or an object inside a string, a `use` or a second `each` inside
+the body, `each` at the top level of a file, in a resource body or in a grant map, and
+`{each.x}` outside an `each`. A label an `each` writes that the map also writes by hand is
+one address declared twice. `each` without `by`, or `each { … }`, is a label named
+`each`.
 
 ### 6.5 IAM grants
 
@@ -2477,6 +2522,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | publish values to one project's interface alone | `interface "payments" { export "folder" = "${{google_folder.payments.name}}" }` |
 | publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
 | keep a pack's resource out of every export | `private google_storage_bucket.logs` |
+| one resource per entry of a list param | `google_pubsub_topic { each event_topics by name { name = "{each.name}" } }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
 | comment | `#`, `//`, `/* … */` |

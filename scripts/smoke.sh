@@ -159,6 +159,11 @@ grep -q 'corp-pack-bucket-001' "$sc" || fail "top-level pack resource missing"
 grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override the pack default"
 grep -q 'groups/01abcdef2ghijk3' tmp/showcase-hcl/imports.tf || fail "import-id did not reach imports.tf"
 grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules missing"
+# `each`: one topic per entry of event_topics, labelled by name, the fields read
+for t in orders billing; do
+  grep -q "resource \"google_pubsub_topic\" \"$t\"" "$sc" || fail "each did not write the topic $t:\n$(grep -A4 google_pubsub_topic "$sc")"
+done
+grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "604800s"' "$sc" || fail "each did not read the entry's fields:\n$(grep -A5 'google_pubsub_topic" "billing"' "$sc")"
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
 grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
 [ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"

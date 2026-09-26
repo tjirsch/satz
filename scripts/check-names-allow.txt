@@ -73,6 +73,7 @@ domain ctan\.org
 domain [a-z0-9.-]*dejavu-fonts\.github\.io
 domain [a-z0-9.-]*rust-lang\.org
 domain [a-z0-9.-]*rustup\.rs
+domain zed\.dev
 domain [a-z0-9.-]*anthropic\.com
 domain [a-z0-9.-]*claude\.ai
 domain [a-z0-9.-]*astral\.sh

@@ -103,7 +103,8 @@ repository.
 **Domains.** Only IANA-reserved names (`example.com/org/net`, and the
 `.example`, `.test`, `.invalid`, `.localhost` TLDs) and the vendor hosts the
 project genuinely references (`googleapis.com`, `gserviceaccount.com`,
-`github.com`, `gcr.io`, `opentofu.org`, `terraform.io`, `cisecurity.org`, and Microsoft's
+`github.com`, `gcr.io`, `opentofu.org`, `terraform.io`, `cisecurity.org`, `zed.dev` (the
+editor the Satz extension is for), and Microsoft's
 `windows.net`, `microsoft.com`, `microsoftonline.com` — a workload-identity
 federation example cannot avoid naming the issuer it federates, and
 `sts.windows.net` is Microsoft's, not a customer's) may appear anywhere. Any

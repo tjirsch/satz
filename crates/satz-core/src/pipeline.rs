@@ -118,6 +118,9 @@ fn resolve_str(parts: &[StrPart], env: &Env, file: &str, line: usize) -> Result<
                 Some(v) => {
                     return perr(file, line, format!("param '{}' is not a scalar ({:?}) — cannot interpolate", name, v))
                 }
+                None if name.starts_with("each.") => {
+                    return perr(file, line, format!("`{{{}}}` reads a field of the entry an `each` expands, and stands inside its body", name))
+                }
                 None => return perr(file, line, format!("unknown param '{}'", name)),
             },
         }
@@ -149,6 +152,112 @@ fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, Pi
     }
 }
 
+/// The body of an `each` for one entry: `{each.x}` in a string or a key becomes the
+/// field's text, a bare `each.x` the field's value. A `use` and a second `each` inside the
+/// body are refused.
+fn each_entries(entries: &[Entry], fields: &serde_yaml::Mapping, line: usize) -> Result<Vec<Entry>, String> {
+    entries
+        .iter()
+        .map(|e| match e {
+            Entry::Attr { key, value, line } => Ok(Entry::Attr { key: each_key(key, fields)?, value: each_value(value, fields, *line)?, line: *line }),
+            Entry::Map { key, name, body, line } => Ok(Entry::Map {
+                key: each_key(key, fields)?,
+                name: name.as_ref().map(|n| each_key(n, fields)).transpose()?,
+                body: each_entries(body, fields, *line)?,
+                line: *line,
+            }),
+            Entry::Use { .. } => Err("a `use` inside `each` — a pack is used at the top level of a file".to_string()),
+            Entry::Each { .. } => Err(format!("an `each` inside `each` (line {}) — one level expands", line)),
+        })
+        .collect()
+}
+
+fn each_field<'f>(name: &str, fields: &'f serde_yaml::Mapping) -> Result<Option<&'f serde_yaml::Value>, String> {
+    let Some(field) = name.strip_prefix("each.") else { return Ok(None) };
+    match fields.get(field) {
+        Some(v) => Ok(Some(v)),
+        None => Err(format!(
+            "`each.{}`: the entry has no field `{}` — it has {}",
+            field,
+            field,
+            fields.keys().filter_map(|k| k.as_str()).map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
+fn each_parts(parts: &[StrPart], fields: &serde_yaml::Mapping) -> Result<Vec<StrPart>, String> {
+    parts
+        .iter()
+        .map(|p| match p {
+            StrPart::Param(name) => match each_field(name, fields)? {
+                Some(serde_yaml::Value::String(s)) => Ok(StrPart::Lit(s.clone())),
+                Some(serde_yaml::Value::Number(n)) => Ok(StrPart::Lit(n.to_string())),
+                Some(serde_yaml::Value::Bool(b)) => Ok(StrPart::Lit(b.to_string())),
+                Some(other) => Err(format!("`{{{}}}` is {} — a string holds a scalar; write `{}` alone as the value", name, yaml_kind(other), name)),
+                None => Ok(p.clone()),
+            },
+            StrPart::Lit(_) => Ok(p.clone()),
+        })
+        .collect()
+}
+
+fn each_key(k: &Key, fields: &serde_yaml::Mapping) -> Result<Key, String> {
+    match k {
+        Key::Str(parts) => Ok(Key::Str(each_parts(parts, fields)?)),
+        Key::Ident(_) => Ok(k.clone()),
+    }
+}
+
+fn each_value(v: &Value, fields: &serde_yaml::Mapping, line: usize) -> Result<Value, String> {
+    Ok(match v {
+        Value::Str(parts) => Value::Str(each_parts(parts, fields)?),
+        Value::Ref(name) => match each_field(name, fields)? {
+            Some(field) => ast_of(field, line)?,
+            None => v.clone(),
+        },
+        Value::List(items) => Value::List(items.iter().map(|i| each_value(i, fields, line)).collect::<Result<_, _>>()?),
+        Value::Obj(entries) => Value::Obj(each_entries(entries, fields, line)?),
+        Value::Num(_) | Value::Bool(_) => v.clone(),
+    })
+}
+
+/// A resolved value as the syntax it could have been written as: a string stays literal
+/// text (`${…}` in it stays a reference to what the estate emits), a mapping an object.
+fn ast_of(v: &serde_yaml::Value, line: usize) -> Result<Value, String> {
+    Ok(match v {
+        serde_yaml::Value::String(s) => Value::Str(vec![StrPart::Lit(s.clone())]),
+        serde_yaml::Value::Number(n) => Value::Num(n.to_string()),
+        serde_yaml::Value::Bool(b) => Value::Bool(*b),
+        serde_yaml::Value::Sequence(items) => Value::List(items.iter().map(|i| ast_of(i, line)).collect::<Result<_, _>>()?),
+        serde_yaml::Value::Mapping(m) => Value::Obj(
+            m.iter()
+                .map(|(k, v)| {
+                    let k = k.as_str().ok_or_else(|| format!("an object key is a string, found {}", yaml_text(k)))?;
+                    Ok(Entry::Attr { key: Key::Str(vec![StrPart::Lit(k.to_string())]), value: ast_of(v, line)?, line })
+                })
+                .collect::<Result<_, String>>()?,
+        ),
+        serde_yaml::Value::Null => return Err("a field holds no value".to_string()),
+        serde_yaml::Value::Tagged(t) => ast_of(&t.value, line)?,
+    })
+}
+
+fn yaml_kind(v: &serde_yaml::Value) -> &'static str {
+    match v {
+        serde_yaml::Value::Null => "empty",
+        serde_yaml::Value::Bool(_) => "a bool",
+        serde_yaml::Value::Number(_) => "a number",
+        serde_yaml::Value::String(_) => "a string",
+        serde_yaml::Value::Sequence(_) => "a list",
+        serde_yaml::Value::Mapping(_) => "an object",
+        serde_yaml::Value::Tagged(_) => "a tagged value",
+    }
+}
+
+fn yaml_text(v: &serde_yaml::Value) -> String {
+    serde_yaml::to_string(v).unwrap_or_default().trim().to_string()
+}
+
 fn resolve_obj(entries: &[Entry], env: &Env, file: &str) -> Result<serde_yaml::Mapping, PipelineError> {
     let mut map = serde_yaml::Mapping::new();
     for e in entries {
@@ -175,6 +284,9 @@ fn resolve_obj(entries: &[Entry], env: &Env, file: &str) -> Result<serde_yaml::M
             }
             Entry::Use { line, .. } => {
                 return perr(file, *line, "use inside a resource body is not supported")
+            }
+            Entry::Each { list, key, line, .. } => {
+                return perr(file, *line, format!("`each {} by {} {{ … }}` inside a resource body — it writes labelled bodies, so it stands directly inside a resource type map", list, key))
             }
         }
     }
@@ -1669,7 +1781,8 @@ fn collect_questions(
     }
     for item in items {
         match item {
-            Entry::Attr { .. } => {}
+            // an `each` body declares no param, asks no question and uses no pack
+            Entry::Attr { .. } | Entry::Each { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
                     if let Some(e) = renamed_param(p, file_name, *line) {
@@ -1720,7 +1833,8 @@ fn collect_params(
     }
     for item in items {
         match item {
-            Entry::Attr { .. } => {}
+            // an `each` body declares no param, asks no question and uses no pack
+            Entry::Attr { .. } | Entry::Each { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
                     if let Some(e) = renamed_param(p, file_name, *line) {
@@ -1955,6 +2069,9 @@ impl Walk<'_> {
                 Entry::Attr { key, line, .. } => (key, *line, None, false),
                 Entry::Map { key, name, body, line } => (key, *line, Some(body), name.is_some()),
                 Entry::Use { .. } => continue,
+                Entry::Each { list, key, line, .. } => {
+                    return perr(file_name, *line, format!("`each {} by {} {{ … }}` inside a resource body — it stands directly inside a resource type map", list, key))
+                }
             };
             let key = resolve_key(key, &self.genv, file_name, line)?;
             if path.is_empty() && satz_body_key(tf_type, &key) {
@@ -2077,6 +2194,60 @@ impl Walk<'_> {
 
     /// An entry against the position it stands in (`position`): the one check every
     /// walker makes before it reads an entry as what its position takes.
+    /// `body` with every `each <list> by <field> { … }` replaced by one labelled entry per
+    /// entry of the list param — `<label> { … }`, the label the entry's `<field>`, the body
+    /// with `{each.x}` and `each.x` read from the entry. The list is the param as the walk
+    /// sees it, contributions merged (ADR 0051), so an entry a pack contributes expands too.
+    /// Every other entry is kept as it stands; `pos` is where the `each` stands, which
+    /// `belongs` judges first.
+    fn expand_each(&self, body: &[Entry], pos: Position, file_name: &str) -> Result<Vec<Entry>, PipelineError> {
+        if !body.iter().any(|e| matches!(e, Entry::Each { .. })) {
+            return Ok(body.to_vec());
+        }
+        let mut out = Vec::new();
+        for e in body {
+            let Entry::Each { list, key, body: template, line } = e else {
+                out.push(e.clone());
+                continue;
+            };
+            self.belongs(pos, e, file_name)?;
+            let what = format!("each {} by {}", list, key);
+            let entries = match self.genv.get(list) {
+                Some(serde_yaml::Value::Sequence(s)) => s,
+                Some(other) => {
+                    return perr(file_name, *line, format!("`{}`: `{}` is {} — `each` expands a list of objects", what, list, yaml_kind(other)))
+                }
+                None => return perr(file_name, *line, format!("`{}`: unknown param '{}' — declare the list in `params {{ … }}` before the map that expands it", what, list)),
+            };
+            let mut seen: Vec<String> = Vec::new();
+            for (n, entry) in entries.iter().enumerate() {
+                let serde_yaml::Value::Mapping(fields) = entry else {
+                    return perr(file_name, *line, format!("`{}`: entry {} of `{}` is {} — each entry is an object, `{{ {} = \"…\" … }}`", what, n + 1, list, yaml_kind(entry), key));
+                };
+                let label = match fields.get(key.as_str()) {
+                    Some(serde_yaml::Value::String(s)) => s.clone(),
+                    Some(other) => {
+                        return perr(file_name, *line, format!("`{}`: entry {} of `{}` has `{}` = {} — a label is a string", what, n + 1, list, key, yaml_text(other)))
+                    }
+                    None => return perr(file_name, *line, format!("`{}`: entry {} of `{}` has no `{}`, the field that labels its body", what, n + 1, list, key)),
+                };
+                let fits = label.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+                if !fits {
+                    return perr(file_name, *line, format!("`{}`: `{}` = \"{}\" is no label — a letter, then letters, digits, `_` and `-`", what, key, label));
+                }
+                if let Some(first) = seen.iter().position(|l| *l == label) {
+                    return perr(file_name, *line, format!("`{}`: entries {} and {} of `{}` are both `{}` = \"{}\" — one label is one resource", what, first + 1, n + 1, list, key, label));
+                }
+                seen.push(label.clone());
+                let at = |msg: String| PipelineError { file: file_name.to_string(), line: *line, msg: format!("`{}`, entry `{}`: {}", what, label, msg) };
+                let body = each_entries(template, fields, *line).map_err(at)?;
+                out.push(Entry::Map { key: Key::Str(vec![StrPart::Lit(label)]), name: None, body, line: *line });
+            }
+        }
+        Ok(out)
+    }
+
     fn belongs(&self, pos: Position, entry: &Entry, file_name: &str) -> Result<(), PipelineError> {
         match position::misfit(pos, entry, self.types) {
             Some(m) => perr(file_name, m.line, m.message()),
@@ -2127,6 +2298,9 @@ impl Walk<'_> {
                 // project services vanish, so reaching this arm is an error too.
                 Entry::Attr { line, .. } => {
                     return perr(file_name, *line, "an attribute reached the walk at the top level of a file");
+                }
+                Entry::Each { line, .. } => {
+                    return perr(file_name, *line, "an `each` reached the walk at the top level of a file");
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
                     // Before the `when` guard: a line gated off still points at a
@@ -2216,7 +2390,8 @@ impl Walk<'_> {
         match name {
             // `google_folder { a {…} b {…} }` — each named child is a folder node.
             None => {
-                for e in body {
+                let expanded = self.expand_each(body, FOLDER_MAP, file_name)?;
+                for e in &expanded {
                     self.belongs(FOLDER_MAP, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
@@ -2262,7 +2437,7 @@ impl Walk<'_> {
                         other => {
                             let l = match other {
                                 Entry::Attr { line, .. } => *line,
-                                Entry::Map { line, .. } | Entry::Use { line, .. } => *line,
+                                Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
                             };
                             return perr(file_name, l, "unexpected entry directly under `folder`");
                         }
@@ -2334,6 +2509,9 @@ impl Walk<'_> {
                 Entry::Use { line, .. } => {
                     return perr(file_name, *line, "a `use` reached the walk in the body of a folder or a project")
                 }
+                Entry::Each { line, .. } => {
+                    return perr(file_name, *line, "an `each` reached the walk in the body of a folder or a project")
+                }
                 Entry::Map { key, line, .. } => {
                     let k = resolve_key(key, &self.genv, file_name, *line)?;
                     // Routing, not validation. A key that resolves only in its
@@ -2384,11 +2562,13 @@ impl Walk<'_> {
         line: usize,
         path: &[String],
     ) -> Result<(), PipelineError> {
+        let expanded: Vec<Entry>;
         let named: Vec<(String, &[Entry], usize)> = match name {
             Some(n) => vec![(resolve_key(n, &self.genv, file_name, line)?, body, line)],
             None => {
+                expanded = self.expand_each(body, Position::NodeMap { node: "google_project" }, file_name)?;
                 let mut v = Vec::new();
-                for e in body {
+                for e in &expanded {
                     self.belongs(Position::NodeMap { node: "google_project" }, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
@@ -2396,7 +2576,7 @@ impl Walk<'_> {
                         }
                         other => {
                             let l = match other {
-                                Entry::Attr { line, .. } | Entry::Use { line, .. } => *line,
+                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
                                 Entry::Map { line, .. } => *line,
                             };
                             return perr(file_name, l, "unexpected entry directly under `project`");
@@ -2536,11 +2716,13 @@ impl Walk<'_> {
         // pins its own scope wins for its own content.
         let own_pin = self.collect_scope_pin(rt, name, body, file_name, own, path)?;
         let pin = own_pin.as_ref().or(pin);
+        let expanded: Vec<Entry>;
         let named: Vec<(String, &[Entry], usize)> = match name {
             Some(n) => vec![(resolve_key(n, &self.genv, file_name, line)?, body, line)],
             None => {
+                expanded = self.expand_each(body, map_position(rt), file_name)?;
                 let mut v = Vec::new();
-                for e in body {
+                for e in &expanded {
                     self.belongs(map_position(rt), e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
@@ -2586,7 +2768,7 @@ impl Walk<'_> {
                         }
                         other => {
                             let l = match other {
-                                Entry::Attr { line, .. } | Entry::Use { line, .. } => *line,
+                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
                                 Entry::Map { line, .. } => *line,
                             };
                             return perr(file_name, l, format!("unexpected entry under resource map '{}'", rt.tf_type));
@@ -4099,5 +4281,129 @@ mod review_2026_08_29_tests {
         let src = format!("{}terraform {{ backend {{ local {{ path = \"a\" }} }} }}\nterraform {{ backend {{ local {{ path = \"b\" }} }} }}\n", HEAD);
         let err = compile(&src).must_fail("second block must not be dropped");
         assert!(err.msg.contains("declared twice"), "{}", err.msg);
+    }
+
+    /// The labels an `each` expanded to, with their bodies, from the fold.
+    fn expanded(fe: &FrontEnd, tf_type: &str) -> Vec<(String, serde_yaml::Value)> {
+        let folded = fold_fragments(&Table, &fe.fragments);
+        folded
+            .slots
+            .iter()
+            .filter(|(a, _)| a.tf_type == tf_type)
+            .filter_map(|(a, s)| match s {
+                crate::algebra::Slot::Ok(e) => match &e.body {
+                    Body::Attrs(v) => Some((a.label.clone(), v.clone())),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    const EACH: &str = r#"estate e
+params {
+  customer_organization_id = "1"
+  prefix = "acme"
+  buckets = [
+    { name = "logs" region = "europe-west3" versions = true },
+    { name = "audit-trail" region = "europe-west4" versions = false },
+  ]
+}
+google_storage_bucket {
+  each buckets by name {
+    name       = "{prefix}-{each.name}"
+    location   = each.region
+    versioning { enabled = each.versions }
+  }
+  hand_written {
+    name     = "acme-other"
+    location = "EU"
+  }
+}
+"#;
+
+    /// One labelled body per entry, the label the entry's field, `{each.x}` as text and a
+    /// bare `each.x` as the value — beside the map's own labels.
+    #[test]
+    fn each_writes_one_labelled_body_per_entry() {
+        let fe = compile(EACH).expect("compiles");
+        let got = expanded(&fe, "google_storage_bucket");
+        let labels: Vec<&str> = got.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(labels, ["audit-trail", "hand_written", "logs"]);
+        let logs = &got.iter().find(|(l, _)| l == "logs").unwrap().1;
+        assert_eq!(logs["name"], serde_yaml::Value::String("acme-logs".into()));
+        assert_eq!(logs["location"], serde_yaml::Value::String("europe-west3".into()));
+        assert_eq!(logs["versioning"]["enabled"], serde_yaml::Value::Bool(true));
+        let audit = &got.iter().find(|(l, _)| l == "audit-trail").unwrap().1;
+        assert_eq!(audit["versioning"]["enabled"], serde_yaml::Value::Bool(false));
+        // an empty list writes nothing
+        let empty = EACH.replace("  buckets = [\n    { name = \"logs\" region = \"europe-west3\" versions = true },\n    { name = \"audit-trail\" region = \"europe-west4\" versions = false },\n  ]", "  buckets = []");
+        assert_eq!(expanded(&compile(&empty).expect("compiles"), "google_storage_bucket").len(), 1);
+    }
+
+    /// An entry a pack contributes is an entry like any other: the list is read with the
+    /// contributions merged (ADR 0051).
+    #[test]
+    fn a_contributed_entry_expands_too() {
+        let pack = "pack p version \"1\"\nparams {\n  contributes_buckets = [ { name = \"team\" region = \"europe-west3\" versions = true } ]\n}\n";
+        let src = EACH.replace("google_storage_bucket {", "use \"p.satz\"\n\ngoogle_storage_bucket {");
+        let fe = compile_with(&src, &[("p.satz", pack)]).expect("compiles");
+        let labels: Vec<String> = expanded(&fe, "google_storage_bucket").into_iter().map(|(l, _)| l).collect();
+        assert!(labels.contains(&"team".to_string()), "{:?}", labels);
+    }
+
+    /// Folders from a list: `each` stands in `google_folder { … }` as in any map of labels.
+    #[test]
+    fn each_writes_folders_too() {
+        let src = "estate e\nparams {\n  customer_organization_id = \"1\"\n  teams = [ { key = \"payments\" title = \"Payments\" } ]\n}\ngoogle_folder {\n  each teams by key {\n    display_name = \"{each.title}\"\n  }\n}\n";
+        let fe = compile(src).expect("compiles");
+        let got = expanded(&fe, "google_folder");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "payments");
+        assert_eq!(got[0].1["display_name"], serde_yaml::Value::String("Payments".into()));
+    }
+
+    #[test]
+    fn what_each_refuses() {
+        let refused = |src: &str, needle: &str| {
+            let err = compile(src).must_fail(needle);
+            assert!(err.msg.contains(needle), "wanted `{}` in: {}", needle, err.msg);
+        };
+        let with = |params: &str, map: &str| format!("estate e\nparams {{\n  customer_organization_id = \"1\"\n{}\n}}\n{}", params, map);
+        let bucket_map = |body: &str| format!("google_storage_bucket {{\n  each xs by name {{\n{}\n  }}\n}}\n", body);
+        let ok_body = "    name = \"{each.name}\"";
+        refused(&with("", &bucket_map(ok_body)), "unknown param 'xs'");
+        refused(&with("  xs = \"a\"", &bucket_map(ok_body)), "`xs` is a string");
+        refused(&with("  xs = [ \"a\" ]", &bucket_map(ok_body)), "entry 1 of `xs` is a string");
+        refused(&with("  xs = [ { title = \"a\" } ]", &bucket_map(ok_body)), "has no `name`, the field that labels its body");
+        refused(&with("  xs = [ { name = 3 } ]", &bucket_map(ok_body)), "a label is a string");
+        refused(&with("  xs = [ { name = \"9lives\" } ]", &bucket_map(ok_body)), "is no label");
+        refused(&with("  xs = [ { name = \"a\" }, { name = \"a\" } ]", &bucket_map(ok_body)), "entries 1 and 2 of `xs` are both");
+        refused(&with("  xs = [ { name = \"a\" } ]", &bucket_map("    name = \"{each.nope}\"")), "the entry has no field `nope`");
+        refused(&with("  xs = [ { name = \"a\" tags = [\"x\"] } ]", &bucket_map("    name = \"{each.tags}\"")), "a string holds a scalar");
+        refused(&with("  xs = [ { name = \"a\" } ]", &bucket_map("    use \"p.satz\"")), "a `use` inside `each`");
+        // where it stands
+        refused(&with("  xs = [ { name = \"a\" } ]", "each xs by name {\n  name = \"x\"\n}\n"), "stands at the top level of a file");
+        refused(
+            &with("  xs = [ { name = \"a\" } ]", "google_folder {\n  f {\n    display_name = \"F\"\n    each xs by name {\n      display_name = \"x\"\n    }\n  }\n}\n"),
+            "the body of a `google_folder`",
+        );
+        refused(
+            &with("  xs = [ { name = \"a\" } ]", "google_organization_iam_member {\n  each xs by name {\n    x = \"y\"\n  }\n}\n"),
+            "a grant map",
+        );
+        refused(&with("  xs = [ { name = \"a\" } ]", "google_storage_bucket {\n  b {\n    each xs by name {\n      name = \"x\"\n    }\n  }\n}\n"), "inside a resource body");
+        // `{each.x}` outside an `each`
+        refused(&with("", "google_storage_bucket {\n  b {\n    name = \"{each.name}\"\n  }\n}\n"), "stands inside its body");
+        // an expanded label that meets a written one is two bodies for one address
+        refused(&with("  xs = [ { name = \"b\" } ]", "google_storage_bucket {\n  each xs by name {\n    name = \"x\"\n  }\n  b {\n    name = \"y\"\n  }\n}\n"), "declared twice in this file");
+    }
+
+    /// `each` alone, and `each <name> { … }`, are what they were: a label, a named entry.
+    #[test]
+    fn each_without_by_is_a_label() {
+        let src = format!("{}google_storage_bucket {{\n  each {{\n    name = \"x\"\n  }}\n}}\n", HEAD);
+        let fe = compile(&src).expect("compiles");
+        assert_eq!(expanded(&fe, "google_storage_bucket")[0].0, "each");
     }
 }

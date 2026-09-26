@@ -33,6 +33,12 @@ params {
     "cloudresourcemanager.googleapis.com",
     "storage.googleapis.com",
   ]
+  // A list of objects the `each` over `google_pubsub_topic` below writes one topic for,
+  // labelled by `name`.
+  event_topics = [
+    { name = "orders" retention = "86400s" },
+    { name = "billing" retention = "604800s" },
+  ]
 }
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting
@@ -225,6 +231,17 @@ google_project {
     project_id      = "{customer_shortname}-archive-001"
     folder_id       = archive_project_folder
     billing_account = billing_account_infra
+  }
+}
+
+// --- `each`: one labelled body per entry of a list param, labelled by the entry's
+//     `name`; `{each.x}` in a string and a bare `each.x` read the entry. The HCL is what
+//     a hand-written `orders { … }` and `billing { … }` give.
+google_pubsub_topic {
+  each event_topics by name {
+    name                       = "{customer_shortname}-{each.name}"
+    project                    = infra_project_name
+    message_retention_duration = each.retention
   }
 }
 

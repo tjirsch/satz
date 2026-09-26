@@ -237,6 +237,20 @@ fn relocation_advice(node: &str, label: &str) -> String {
 /// resource that really is called `params` is written.
 pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> Option<Misfit> {
     match entry {
+        // `each` writes labelled bodies, so it stands where labels do
+        Entry::Each { list, key, line, .. } => match pos {
+            Position::ResourceMap { grant: false, .. } | Position::NodeMap { .. } => None,
+            Position::ResourceMap { grant: true, .. } => Some(Misfit {
+                line: *line,
+                what: format!("`each {} by {} {{ … }}` inside {}, a grant map, whose entries are members with their roles", list, key, pos.written()),
+                fix: "A grant map takes a list param as a member's roles, or write the grant as a labelled resource".to_string(),
+            }),
+            Position::File | Position::NodeBody { .. } => Some(Misfit {
+                line: *line,
+                what: format!("`each {} by {} {{ … }}` stands at {} — it writes one labelled body per entry, so it stands where labels do", list, key, pos.written()),
+                fix: "Write it inside a resource type map, `google_x { each … }`".to_string(),
+            }),
+        },
         Entry::Use { path, line, .. } => match pos {
             Position::NodeMap { node: "google_project" } => Some(Misfit {
                 line: *line,
