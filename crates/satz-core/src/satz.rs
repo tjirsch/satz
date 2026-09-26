@@ -379,6 +379,21 @@ pub struct ExportDecl {
     pub line: usize,
 }
 
+/// `request <list param> { key = "<field>" fields = [ … ] description = "…" }`: what a
+/// team may add to a list param through a contribution (ADR 0051), and the shape of each
+/// entry. Checked against every entry at every compile, and by `satz check-request`
+/// against a team's file before it is vendored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestDecl {
+    pub param: String,
+    /// the field that names an entry, unique across the list
+    pub key: String,
+    /// every field an entry may carry, `key` among them
+    pub fields: Vec<String>,
+    pub description: Option<String>,
+    pub line: usize,
+}
+
 /// `private <type>.<label>`: the estate keeps that resource — a pack's too — out of every
 /// export, as `private = true` in its body would. Read from the estate's own file.
 #[derive(Debug, Clone, PartialEq)]
@@ -581,6 +596,8 @@ pub struct File {
     pub suppressions: Vec<Suppression>,
     /// `private <type>.<label>` statements, in source order
     pub privates: Vec<PrivateDecl>,
+    /// `request <list param> { … }` statements, in source order
+    pub requests: Vec<RequestDecl>,
     pub hcl_blocks: Vec<HclBlock>,
     pub actions: Vec<ActionDecl>,
     pub questions: Vec<QuestionDecl>,
@@ -1628,6 +1645,51 @@ impl P {
         Ok(NoticeDecl { param, text, run, severity: severity.unwrap_or_default(), line })
     }
 
+    fn request_stmt(&mut self, line: usize) -> Result<RequestDecl, SatzError> {
+        let param = match self.next() {
+            Some(Tok::Ident(p)) if !p.contains('.') => p,
+            other => return err(line, format!("request: expected the list param a team adds to, found {:?}", other)),
+        };
+        self.expect(Tok::LBrace, "'{' after the requested list param")?;
+        let body = self.entries()?;
+        let (mut key, mut fields, mut description) = (None, None, None);
+        for e in body {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "key" => {
+                    key = Some(lit_str(&parts, l, "request: key")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "description" => {
+                    description = Some(lit_str(&parts, l, "request: description")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::List(items), line: l } if k == "fields" => {
+                    let mut out = Vec::new();
+                    for it in items {
+                        match it {
+                            Value::Str(parts) => out.push(lit_str(&parts, l, "request: a field")?),
+                            other => return err(l, format!("request {}: fields lists field names as strings, found {:?}", param, other)),
+                        }
+                    }
+                    fields = Some(out);
+                }
+                other => {
+                    return err(
+                        line,
+                        format!("request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …] and description = \"…\"", param, other),
+                    )
+                }
+            }
+        }
+        let key = key.ok_or_else(|| SatzError { line, msg: format!("request {}: `key` names the field that names an entry", param) })?;
+        let fields = fields.ok_or_else(|| SatzError { line, msg: format!("request {}: `fields` lists every field an entry may carry", param) })?;
+        if !fields.contains(&key) {
+            return err(line, format!("request {}: the key `{}` is not among the fields [{}]", param, key, fields.join(", ")));
+        }
+        if let Some(d) = fields.iter().enumerate().find_map(|(i, f)| fields[..i].contains(f).then_some(f)) {
+            return err(line, format!("request {}: the field `{}` is named twice", param, d));
+        }
+        Ok(RequestDecl { param, key, fields, description, line })
+    }
+
     fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
         let path = match self.next() {
             Some(Tok::Str(parts)) => lit_str(&parts, line, "offers: the pack path")?,
@@ -2072,7 +2134,7 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "private", "question", "suppress", "use"];
+    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "private", "question", "request", "suppress", "use"];
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
@@ -2285,6 +2347,14 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
                 file.privates.push(PrivateDecl { address, line });
             }
+            Some(Tok::Ident(id)) if id == "request" => {
+                p.next();
+                let r = p.request_stmt(line)?;
+                if let Some(first) = file.requests.iter().find(|x| x.param == r.param) {
+                    return err(line, format!("request {}: declared twice in this file (line {} and line {})", r.param, first.line, line));
+                }
+                file.requests.push(r);
+            }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
                 let tf_type = match p.next() {
@@ -2471,6 +2541,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
         (!file.claims.is_empty(), "a `claim`"),
         (!file.suppressions.is_empty(), "a `suppress`"),
         (!file.privates.is_empty(), "a `private`"),
+        (!file.requests.is_empty(), "a `request`"),
         (!file.hcl_blocks.is_empty(), "an `hcl` block"),
         (!file.actions.is_empty(), "an `action`"),
         (!file.questions.is_empty(), "a `question`"),
@@ -2866,6 +2937,9 @@ pub fn canonical_parts(file: &File) -> Canonical {
     }
     for x in &file.privates {
         body.push_str(&format!("private({})\n", x.address));
+    }
+    for r in &file.requests {
+        body.push_str(&format!("request({}|{}|{}|{})\n", r.param, r.key, r.fields.join(","), r.description.as_deref().unwrap_or("")));
     }
     for h in &file.hcl_blocks {
         body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
@@ -3680,6 +3754,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
         "private" => "estate e\nprivate google_x.y\n".into(),
+        "request" => "pack p version \"1.0\"\nparams { xs = [] }\nrequest xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n".into(),
         "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
         "interface" => "estate e\ninterface \"team-a\" {\n  export \"a\" = \"1\"\n}\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
@@ -3889,5 +3964,26 @@ mod review_2026_08_29_tests {
         assert_ne!(with, without);
         let e = parse("estate e\ngoogle_x {\n  each xs by name\n}\n").unwrap_err();
         assert!(e.msg.contains("'{' after `each <list> by <field>`"), "{}", e.msg);
+    }
+
+    #[test]
+    fn a_request_names_its_list_its_key_and_its_fields() {
+        let f = parse("pack p version \"1.0\"\nparams { subnets = [] }\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\n").unwrap();
+        assert_eq!(
+            f.requests,
+            [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], description: Some("A subnet".into()), line: 3 }]
+        );
+        let refused = |src: &str, needle: &str| {
+            let e = parse(src).unwrap_err();
+            assert!(e.msg.contains(needle), "wanted `{}` in: {}", needle, e.msg);
+        };
+        refused("pack p\nrequest s {\n  fields = [\"a\"]\n}\n", "`key` names the field");
+        refused("pack p\nrequest s {\n  key = \"a\"\n}\n", "`fields` lists every field");
+        refused("pack p\nrequest s {\n  key = \"b\"\n  fields = [\"a\"]\n}\n", "the key `b` is not among the fields");
+        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"a\"]\n}\n", "named twice");
+        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  size = 3\n}\n", "unexpected entry");
+        let a = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n}\n").unwrap());
+        let b = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap());
+        assert_ne!(a, b);
     }
 }

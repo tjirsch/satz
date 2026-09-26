@@ -103,6 +103,7 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("params", "goes to the estate's parameter namespace", Used::Absorbed),
     ("private", "keeps a resource out of every export", Used::EstateOnly),
     ("question", "goes to the interview", Used::Absorbed),
+    ("request", "declares what a team may add to a list param", Used::Absorbed),
     ("suppress", "removes a resource from the estate's fold", Used::EstateOnly),
     ("use", "pulls in another file", Used::Entry),
 ];
@@ -115,7 +116,7 @@ fn statement(k: &str) -> Option<&'static (&'static str, &'static str, Used)> {
 /// the parser keeps one.
 pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usize>)> {
     let header = |pack: bool| (file.estate.is_some() && file.is_pack == pack).then_some(None);
-    let found: [(&'static str, Option<Option<usize>>); 14] = [
+    let found: [(&'static str, Option<Option<usize>>); 15] = [
         ("action", file.actions.first().map(|a| Some(a.line))),
         ("claim", file.claims.first().map(|c| Some(c.line))),
         ("estate", header(false)),
@@ -128,6 +129,7 @@ pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usiz
         ("params", file.params.first().map(|(_, _, line)| Some(*line))),
         ("question", file.questions.first().map(|q| Some(q.line))),
         ("private", file.privates.first().map(|s| Some(s.line))),
+        ("request", file.requests.first().map(|r| Some(r.line))),
         ("suppress", file.suppressions.first().map(|s| Some(s.line))),
         (
             "use",

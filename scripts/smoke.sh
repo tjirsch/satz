@@ -294,7 +294,14 @@ assert names[("payments", "project_number")]["how"] == "lookup"
 assert names[(None, "folders")]["how"] == "map"
 assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments"}, r["interfaces"]
 assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
+q = [x for x in r["requests"] if x["param"] == "event_topics"]
+assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention"] and q[0]["entries"] == 2, r["requests"]
 PY
+# a project's request file, checked offline against the estate's request points
+"$satz" --config . check-request "$root/tests/smoke/requests/ok.satz" "$PWD/tmp/with-project.satz" > tmp/check-request.txt 2>&1 || fail "a fitting request file was refused:\n$(cat tmp/check-request.txt)"
+"$satz" --config . check-request "$root/tests/smoke/requests/bad.satz" "$PWD/tmp/with-project.satz" > tmp/check-request-bad.txt 2>&1 && fail "a request file with an undeclared field passed"
+grep -q 'has `labels`, which is no field of this request' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
+grep -q '## What you may request' interfaces/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/common/core/README.md)"
 # an interface alone, carrying another interface's export and using a common one
 "$satz" --config . add-project "$PWD/tmp/with-project.satz" --name billing --interface-only --use-interface audit --export archive.archive_project_number > tmp/add-interface.txt 2>&1 || fail "add-project --interface-only failed:\n$(cat tmp/add-interface.txt)"
 grep -q 'export "archive_project_number" = "${{google_project.archive.number}}"' tmp/with-project.satz || fail "the export was not copied as declared:\n$(tail -8 tmp/with-project.satz)"

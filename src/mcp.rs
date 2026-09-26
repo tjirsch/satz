@@ -167,6 +167,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("packs", Parity::Tools(&["satz_packs"])),
     ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
     ("add-pack", Parity::Tools(&["satz_add_pack"])),
+    ("check-request", Parity::Off("the interface plane's tools are paused until it has settled; a team's pipeline runs the command on the pull request that vendors the file")),
     ("interfaces", Parity::Off("the interface plane's tools are paused until it has settled; satz-studio reads the json form through the CLI")),
     ("add-project", Parity::Off("the interface plane's tools are paused until it has settled; it edits the estate file the way `satz_add_pack` does, and a tool joins then")),
     ("remove-pack", Parity::Tools(&["satz_remove_pack"])),

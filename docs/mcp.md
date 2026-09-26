@@ -452,7 +452,7 @@ as the plain ADC.
   returns every row's status rather than an exit code.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.
-- **`satz add-project` and `satz interfaces` have no tool.** The interface plane's tools
-  are paused until it has settled; `add-project` edits the estate file the way
-  `satz_add_pack` does, `interfaces` reports what `satz_packs` does not, and tools join
-  then.
+- **`satz add-project`, `satz interfaces` and `satz check-request` have no tool.** The
+  interface plane's tools are paused until it has settled; `add-project` edits the estate
+  file the way `satz_add_pack` does, `interfaces` reports what `satz_packs` does not,
+  `check-request` runs in a project's pipeline, and tools join then.

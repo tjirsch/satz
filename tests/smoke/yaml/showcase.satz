@@ -234,6 +234,14 @@ google_project {
   }
 }
 
+// --- `request`: what a project may add to a list, and each entry's shape — checked at
+//     every compile, and by `satz check-request` on a project's file before it is used.
+request event_topics {
+  key         = "name"
+  fields      = ["name", "retention"]
+  description = "A Pub/Sub topic in the infrastructure project"
+}
+
 // --- `each`: one labelled body per entry of a list param, labelled by the entry's
 //     `name`; `{each.x}` in a string and a bare `each.x` read the entry. The HCL is what
 //     a hand-written `orders { … }` and `billing { … }` give.

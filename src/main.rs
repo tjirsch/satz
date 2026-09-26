@@ -140,7 +140,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project", "interfaces"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
@@ -773,6 +773,13 @@ pub(crate) enum Commands {
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
+    },
+    /// A team's request file, checked offline against the estate's request points before it is vendored into the estate
+    CheckRequest {
+        /// The request file: `params { contributes_<param> = [ … ] }` for the estate's request points
+        file: PathBuf,
+        /// Estate file (.satz, inside yaml_dir if relative); the one estate in yaml_dir when left out
+        estate: Option<String>,
     },
     /// What the estate publishes to the projects beside it: every export, with the interface it stands in, how a project reads it and what may be attached to it, and every interface
     Interfaces {
@@ -2367,12 +2374,31 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::CheckRequest { file, estate } => {
+            let input_path = match estate {
+                Some(e) => estate_path(PathBuf::from(e), &runtime_config),
+                None => sole_estate(Path::new(&runtime_config.yaml_dir))?,
+            };
+            let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
+            let src = fsx::read_to_string(&file).map_err(|e| format!("{}: {}", file.display(), e))?;
+            let found = satz_core::pipeline::check_request_file(&src, &compiled.requests, &compiled.env);
+            if !found.is_empty() {
+                let findings: Vec<crate::findings::Finding> = found
+                    .into_iter()
+                    .map(|(line, msg)| crate::findings::Finding::new(crate::findings::Severity::Error, crate::findings::Kind::Consumer, msg).located(file.display().to_string(), line as u32))
+                    .collect();
+                eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
+                return Err(format!("check-request: {} finding(s) in {}", findings.len(), file.display()).into());
+            }
+            eprintln!("check-request: {} fits the request points of {}", file.display(), input_path.display());
+            Ok(())
+        }
         Commands::Interfaces { input, format, out } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
             let estate = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
-            let report = crate::interface_report::report(&estate, compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces);
+            let report = crate::interface_report::report(&estate, compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces, &compiled.requests);
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
                 _ => crate::interface_report::render_text(&report),
@@ -2389,7 +2415,7 @@ Thumbs.db
             if !export.is_empty() || !choices.uses.is_empty() {
                 // what the estate declares now, to copy from and to check a name against
                 let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
-                let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces);
+                let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces, &compiled.requests);
                 for u in &choices.uses {
                     if !report.interfaces.iter().any(|i| &i.name == u) {
                         return Err(refused(format!(
@@ -2615,6 +2641,8 @@ struct PipelineBOut {
     /// the exports and interfaces as declared, with where — what `satz interfaces` reports
     exports: Vec<satz_core::pipeline::ResolvedExport>,
     interfaces: Vec<satz_core::pipeline::ResolvedInterface>,
+    /// what a team may add to a list param (`request`), with the entries the list holds
+    requests: Vec<satz_core::pipeline::ResolvedRequest>,
     /// Claims declared by the estate and every pack it actually used — the
     /// compliance plane's input, produced by the same compile that produced
     /// main_tf, so witnesses and claims can never come from different reads.
@@ -2919,6 +2947,7 @@ fn pipeline_b_compile(
         interface,
         exports: fe.exports,
         interfaces: fe.interfaces,
+        requests: fe.requests,
         claims: fe.claims,
         org_policies,
         customer_id,
@@ -3995,7 +4024,7 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
         fsx::write(&p, content)?;
         written.push(p);
     }
-    written.extend(write_interface(out.interface.as_ref(), &out.manifest, dir, interfaces_dir, estate)?);
+    written.extend(write_interface(out.interface.as_ref(), &out.manifest, &out.requests, dir, interfaces_dir, estate)?);
     Ok(written)
 }
 
@@ -4009,6 +4038,7 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
 pub(crate) fn write_interface(
     interface: Option<&crate::interface::Interface>,
     manifest: &crate::manifest::Manifest,
+    requests: &[satz_core::pipeline::ResolvedRequest],
     dir: &Path,
     interfaces_dir: &Path,
     estate: &str,
@@ -4048,7 +4078,7 @@ pub(crate) fn write_interface(
     // one interface's files, by path relative to the folder it stands in
     let files_of = |m: &str| -> Result<std::collections::BTreeMap<String, Vec<u8>>, Box<dyn std::error::Error>> {
         let mut files = std::collections::BTreeMap::new();
-        files.insert(format!("{}/README.md", m), i.readme(m, version, estate, notice.as_ref()).into_bytes());
+        files.insert(format!("{}/README.md", m), format!("{}{}", i.readme(m, version, estate, notice.as_ref()), crate::interface_report::requests_readme(requests)).into_bytes());
         for (name, content) in i.module_files(m) {
             files.insert(format!("{}/{}/{}", m, HCL_DIR, name), format!("{}{}", stamp, content).into_bytes());
         }
@@ -5564,6 +5594,7 @@ mod command_groups {
         ("hcl-init", Identity::NoGoogleApi),
         ("add-project", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
+        ("check-request", Identity::NoGoogleApi),
         // The API preflight: as the identity the emitted provider impersonates,
         // which is the identity `tofu` is about to act as in the same directory.
         ("plan", Identity::EstateSa),

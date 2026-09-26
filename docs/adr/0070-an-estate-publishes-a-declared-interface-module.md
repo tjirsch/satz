@@ -530,6 +530,29 @@ bucket and the IaC service account, where the resource is the estate's own.
 - *A per-resource "exportable" marker* stays rejected: nothing leaves the estate unless an
   export names it, so the opt-out is the only marker needed.
 
+## Amendment — request points, and a request is vendored
+
+The *Contribute* protocol above had no declaration: nothing told a project what it may
+ask for or in what shape, and a list param was indistinguishable from any other.
+
+**`request <list param> { key fields description }` declares a request point**, checked
+against every entry of the list at every compile and by `satz check-request` against a
+project's file before it is vendored; `satz interfaces` reports the request points and
+every interface README lists them. With `each` (ADR 0071) an entry becomes a resource,
+so a request always has this one form — entries contributed to a list — whatever the
+entries become.
+
+- **The request file is vendored, by pull request** (Thomas, 2026-09-26). A `use` of a
+  path into the project's repository would put the project's next edit on the central
+  estate's next apply with no review there; copied into the estate
+  (`satz/requests/<project>.satz`), the pull request is the approval, the estate's history
+  the record, a refusal a closed pull request.
+- **A request file is a pack** — the parser takes `contributes_<param>` in a pack alone —
+  holding `params` and nothing else; a resource, an export or any other statement in it
+  is refused by `check-request`.
+- *A second form declaring whole resources a request file may hold* was designed and
+  superseded by `each` before it was built.
+
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every
