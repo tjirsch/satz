@@ -72,6 +72,10 @@ pub enum Entry {
     Attr { key: Key, value: Value, line: usize },
     Map { key: Key, name: Option<Key>, body: Vec<Entry>, line: usize },
     Use { path: String, as_key: Option<String>, when: Option<String>, line: usize },
+    /// `each <list param> by <field> { … }` inside a resource type map: one labelled body
+    /// per entry of the list, labelled by the entry's `<field>`; `{each.x}` and `each.x` in
+    /// the body read the entry's fields. Expanded by the walk, once params are resolved.
+    Each { list: String, key: String, body: Vec<Entry>, line: usize },
 }
 
 /// `suppress <tf_type> "<label>"` — estate-level subtractive override: remove a
@@ -1012,7 +1016,8 @@ pub fn lex_spanned(src: &str, trivia: bool) -> Result<Vec<Token>, SatzError> {
                             }
                             i += 1;
                             let mut name = String::new();
-                            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == '_') {
+                            // a dot reads a field: `{each.name}`
+                            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == '.') {
                                 name.push(b[i]);
                                 i += 1;
                             }
@@ -1168,6 +1173,27 @@ impl P {
                 Some(Tok::Ident(id)) if id == "use" => {
                     self.next();
                     out.push(self.use_stmt(line)?);
+                }
+                // `each <list> by <field> { … }` — `each` alone, or `each <name> { … }`, is an
+                // ordinary label
+                Some(Tok::Ident(id))
+                    if id == "each"
+                        && matches!(self.toks.get(self.i + 1), Some((Tok::Ident(_), _)))
+                        && matches!(self.toks.get(self.i + 2), Some((Tok::Ident(b), _)) if b == "by") =>
+                {
+                    self.next();
+                    let list = match self.next() {
+                        Some(Tok::Ident(l)) => l,
+                        _ => unreachable!("matched above"),
+                    };
+                    self.next();
+                    let key = match self.next() {
+                        Some(Tok::Ident(k)) if !k.contains('.') => k,
+                        other => return err(line, format!("each {} by: expected the field of each entry that labels its body, found {:?}", list, other)),
+                    };
+                    self.expect(Tok::LBrace, "'{' after `each <list> by <field>`")?;
+                    let body = self.entries()?;
+                    out.push(Entry::Each { list, key, body, line });
                 }
                 Some(Tok::Ident(_)) | Some(Tok::Str(_)) => {
                     let key = match self.next().unwrap() {
@@ -2307,6 +2333,14 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                             Tok::Str(s) => Key::Str(s),
                             _ => unreachable!(),
                         };
+                        if let (Key::Ident(k), Key::Ident(list), Some(Tok::Ident(b))) = (&key, &name, p.peek()) {
+                            if k == "each" && b == "by" {
+                                return err(
+                                    line,
+                                    format!("`each {} by …` stands at the top level of a file — it writes one labelled body per entry, so it stands where labels do: inside a resource type map, `google_x {{ each … }}`", list),
+                                );
+                            }
+                        }
                         p.expect(Tok::LBrace, "'{' after block name")?;
                         let body = p.entries()?;
                         file.items.push(Entry::Map { key, name: Some(name), body, line });
@@ -2458,7 +2492,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
     for item in std::mem::take(&mut file.items) {
         let (kind, name, body, line) = match item {
             Entry::Map { key: Key::Ident(k), name, body, line } => (k, name, body, line),
-            Entry::Map { line, .. } | Entry::Attr { line, .. } | Entry::Use { line, .. } => {
+            Entry::Map { line, .. } | Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
                 return err(line, format!("interface \"{}\": holds `central`, `output`, `lookup` and `managed` blocks only", iface.name));
             }
         };
@@ -2477,7 +2511,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
                 Entry::Map { key: Key::Ident(k), name: None, body, .. } => {
                     fields.insert(k, (None, Some(body)));
                 }
-                Entry::Attr { line, .. } | Entry::Map { line, .. } | Entry::Use { line, .. } => {
+                Entry::Attr { line, .. } | Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
                     return err(line, format!("{}: an unexpected entry", kind));
                 }
             }
@@ -2606,7 +2640,9 @@ fn plain_value(v: &Value, line: usize) -> Result<serde_yaml::Value, SatzError> {
                         };
                         m.insert(serde_yaml::Value::String(k), plain_value(value, *line)?);
                     }
-                    Entry::Map { line, .. } | Entry::Use { line, .. } => return err(*line, "an object value holds `key = value` entries only"),
+                    Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
+                        return err(*line, "an object value holds `key = value` entries only")
+                    }
                 }
             }
             serde_yaml::Value::Mapping(m)
@@ -2990,6 +3026,14 @@ fn canon_entry(e: &Entry, out: &mut String) {
                 as_key.as_deref().unwrap_or(""),
                 when.as_deref().unwrap_or("")
             ));
+        }
+        Entry::Each { list, key, body, .. } => {
+            out.push_str(&format!("each({}|{}){{", list, key));
+            for b in body {
+                canon_entry(b, out);
+                out.push(';');
+            }
+            out.push('}');
         }
     }
 }
@@ -3829,5 +3873,21 @@ mod review_2026_08_29_tests {
         assert_ne!(a, b);
         let c = canonical_parts(&parse("estate e\nprivate google_storage_bucket.logs\n").unwrap());
         assert_ne!(canonical_parts(&parse("estate e\n").unwrap()), c);
+    }
+
+    #[test]
+    fn each_parses_and_its_canonical_form_carries_it() {
+        let f = parse("estate e\ngoogle_x {\n  each xs by name {\n    a = \"{each.name}\"\n    b = each.size\n  }\n}\n").unwrap();
+        let Entry::Map { body, .. } = &f.items[0] else { panic!("{:?}", f.items) };
+        let Entry::Each { list, key, body, line } = &body[0] else { panic!("{:?}", body) };
+        assert_eq!((list.as_str(), key.as_str(), *line), ("xs", "name", 3));
+        assert_eq!(body.len(), 2);
+        let Entry::Attr { value: Value::Str(parts), .. } = &body[0] else { panic!() };
+        assert_eq!(parts, &[StrPart::Param("each.name".into())]);
+        let with = canonical_parts(&f);
+        let without = canonical_parts(&parse("estate e\ngoogle_x {\n  name {\n    a = \"x\"\n  }\n}\n").unwrap());
+        assert_ne!(with, without);
+        let e = parse("estate e\ngoogle_x {\n  each xs by name\n}\n").unwrap_err();
+        assert!(e.msg.contains("'{' after `each <list> by <field>`"), "{}", e.msg);
     }
 }

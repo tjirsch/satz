@@ -1,0 +1,51 @@
+// Corpus case: `each <list> by <field> { … }` — one labelled body per entry of a list
+// param, the label the entry's field. Google projects from a list, each with a service
+// account whose label and account id come from the entry; topics from a list a pack adds
+// entries to (`contributes_topics`, ADR 0051) beside the estate's own. The HCL is what
+// hand-written blocks give. Snapshot-gated.
+
+estate corpus_each
+
+params {
+  customer_organization_id = "123456789012"
+  customer_shortname       = "acme"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  teams = [
+    { name = "payments" owner = "payments-owners" },
+    { name = "shipping" owner = "shipping-owners" },
+  ]
+  topics = [
+    { name = "orders" retention = "86400s" },
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "pack.satz"
+
+google_project {
+  each teams by name {
+    name            = "{each.name}"
+    project_id      = "{customer_shortname}-{each.name}-001"
+    billing_account = billing_account_infra
+    labels          = { owner = each.owner }
+    google_service_account {
+      "{each.name}_iac" {
+        account_id   = "svc-iac-{each.name}"
+        display_name = "IaC provisioner of {each.name}"
+      }
+    }
+  }
+}
+
+google_pubsub_topic {
+  each topics by name {
+    name                       = "{customer_shortname}-{each.name}"
+    project                    = "acme-infra-001"
+    message_retention_duration = each.retention
+  }
+}

@@ -22,6 +22,7 @@
   "action"
   "notice"
   "export" "description" "attach" "all" "under"
+  "each" "by"
   "interface" "common"
   "suppress" "role" "private"
   "hcl" "trust"

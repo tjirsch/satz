@@ -1,0 +1,69 @@
+    "owner" = "payments-owners"
+    "owner" = "shipping-owners"
+  account_id = "svc-iac-payments"
+  account_id = "svc-iac-shipping"
+  billing_account = "012345-6789AB-CDEF01"
+  billing_account = "012345-6789AB-CDEF01"
+  display_name = "IaC provisioner of payments"
+  display_name = "IaC provisioner of shipping"
+  labels = {
+  labels = {
+  message_retention_duration = "604800s"
+  message_retention_duration = "86400s"
+  name = "acme-audit"
+  name = "acme-orders"
+  name = "payments"
+  name = "shipping"
+  org_id = "123456789012"
+  org_id = "123456789012"
+  project = "acme-infra-001"
+  project = "acme-infra-001"
+  project = google_project.payments.project_id
+  project = google_project.shipping.project_id
+  project_id = "acme-payments-001"
+  project_id = "acme-shipping-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_payments
+  provider = google.project_shipping
+  }
+  }
+resource "google_project" "payments" {
+resource "google_project" "shipping" {
+resource "google_pubsub_topic" "audit" {
+resource "google_pubsub_topic" "orders" {
+resource "google_service_account" "payments_iac" {
+resource "google_service_account" "shipping_iac" {
+}
+}
+}
+}
+}
+}
+---tfvars---
+    "name" = "audit"
+    "name" = "orders"
+    "name" = "payments"
+    "name" = "shipping"
+    "owner" = "payments-owners"
+    "owner" = "shipping-owners"
+    "retention" = "604800s"
+    "retention" = "86400s"
+  {
+  {
+  {
+  {
+  }
+  }
+  },
+  },
+]
+]
+billing-account-infra = "012345-6789AB-CDEF01"
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+teams = [
+topics = [
+---imports---

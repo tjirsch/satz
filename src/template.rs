@@ -783,7 +783,7 @@ pub(crate) mod tests {
         use satz_core::satz::Entry;
         items.iter().any(|e| match e {
             Entry::Use { .. } => true,
-            Entry::Map { body, .. } => uses_a_pack(body),
+            Entry::Map { body, .. } | Entry::Each { body, .. } => uses_a_pack(body),
             Entry::Attr { .. } => false,
         })
     }

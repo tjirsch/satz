@@ -119,6 +119,7 @@ fn entry_text(e: &Entry) -> String {
             }
             s
         }
+        Entry::Each { list, key, body, .. } => format!("each {} by {} {{ {} }}", list, key, body.iter().map(entry_text).collect::<Vec<_>>().join(" ")),
     }
 }
 
@@ -301,6 +302,8 @@ fn shape(items: &[Entry]) -> Shape {
                             }
                             Entry::Attr { key, .. } => format!("{} (grant map)", key_text(key)),
                             Entry::Use { .. } => entry_text(b),
+                            // one label per entry of the list, known once the estate compiles
+                            Entry::Each { list, key, .. } => format!("one per entry of `{}`, by `{}`", list, key),
                         })
                         .collect();
                     s.typed.entry(k).or_default().extend(labels);
@@ -312,6 +315,7 @@ fn shape(items: &[Entry]) -> Shape {
             Entry::Map { key, name: Some(n), .. } => s.bare.push(format!("{} {}", key_text(key), key_text(n))),
             Entry::Attr { key, .. } => s.bare.push(format!("{} (attribute)", key_text(key))),
             Entry::Use { .. } => s.uses.push(entry_text(e)),
+            Entry::Each { list, key, .. } => s.bare.push(format!("each {} by {}", list, key)),
         }
     }
     s
@@ -372,8 +376,11 @@ fn note(out: &mut Refs, name: &str, line: usize) {
 
 pub(crate) fn refs_in_str(parts: &[StrPart], line: usize, out: &mut Refs) {
     for p in parts {
+        // `{each.x}` reads the entry an `each` expands, not a param
         if let StrPart::Param(r) = p {
-            note(out, r, line);
+            if !r.starts_with("each.") {
+                note(out, r, line);
+            }
         }
     }
 }
@@ -413,6 +420,11 @@ pub(crate) fn refs_in_entry(e: &Entry, out: &mut Refs) {
             if let Some(w) = when {
                 note(out, w, *line);
             }
+        }
+        // the list it expands is a param the pack reads
+        Entry::Each { list, body, line, .. } => {
+            note(out, list, *line);
+            body.iter().for_each(|b| refs_in_entry(b, out));
         }
     }
 }

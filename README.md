@@ -8,6 +8,13 @@ It also bootstraps a new Google Cloud organization, imports an existing one from
 > [preset pack pages](https://tjirsch.github.io/satz/presets/docs/index.html), searchable,
 > rebuilt on every release. Also: `satz open-readme`, or `satz <command> --html-help`.
 
+> **✏️ Write Satz in [Zed](https://zed.dev).** Zed is a fast, uncluttered editor from the
+> people who built Atom — an editor rather than an IDE, native and built in Rust. The Satz
+> extension in `editors/zed/` brings highlighting, the outline, bracket matching and the
+> language server (diagnostics, completion, hover, go-to-definition, format on save); its
+> grammar is [satz-tree-sitter](https://github.com/tjirsch/satz-tree-sitter). Install:
+> [Editor support (Zed)](#editor-support-zed).
+
 ## Folder Structure
 
 The project is structured such that `satz` (the tool) is kept separate from customer-specific definitions. Each customer repository follows this layout:
