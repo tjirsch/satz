@@ -285,7 +285,7 @@ pub(crate) struct EstateArg {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct CheckConsumerArgs {
-    /// The team's configuration: a directory of `.tf` files under the server's root,
+    /// The project's configuration: a directory of `.tf` files under the server's root,
     /// relative to it or absolute
     pub dir: String,
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
@@ -293,12 +293,12 @@ pub(crate) struct CheckConsumerArgs {
     pub estate: Option<String>,
 }
 
-/// What `satz_check_consumer` found: every finding names the team's file and line.
+/// What `satz_check_consumer` found: every finding names the project's file and line.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ConsumerReport {
     pub estate: String,
     pub dir: String,
-    /// the team's `resource` blocks read
+    /// the project's `resource` blocks read
     pub resources: usize,
     pub findings: Vec<crate::findings::Finding>,
 }
@@ -1504,11 +1504,11 @@ impl SatzMcp {
     #[tool(
         name = "satz_check_consumer",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ConsumerReport>(),
-        description = "Check a team's HCL beside the estate against the estate's interface, as `satz \
+        description = "Check a project's HCL beside the estate against the estate's interface, as `satz \
                        check-consumer` does: an attachment resource whose target is the estate's and no attach \
                        point allowing its type (`export … attach [ … ]`), an authoritative grant (`*_iam_policy`, \
                        `*_iam_binding`) or an organisation policy on a node the estate manages, and a resource the \
-                       estate declares too, by natural key. Each finding names the team's file and line; an empty \
+                       estate declares too, by natural key. Each finding names the project's file and line; an empty \
                        list is a pass. Offline: parses the `.tf` files under `dir` and compiles the estate in \
                        memory, writing nothing.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1847,8 +1847,12 @@ impl SatzMcp {
         if let Err(r) = self.confine(dir.clone()) {
             return Ok(Err(r));
         }
+        let interfaces = PathBuf::from(&open.runtime.interfaces_dir);
+        if let Err(r) = self.confine(interfaces.clone()) {
+            return Ok(Err(r));
+        }
         let label = estate.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-        match crate::write_hcl(&out, &dir, &label) {
+        match crate::write_hcl(&out, &dir, &interfaces, &label) {
             Ok(written) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),

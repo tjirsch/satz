@@ -135,7 +135,7 @@ output "team_a__team_folder_id" {
 output "team_a__team_project_number" {
   value = local.satz_interface.interfaces["team-a"].team_project_number
 }
----interfaces/core/versions.tf---
+---core/hcl/versions.tf---
 terraform {
   required_providers {
     google = {
@@ -144,7 +144,7 @@ terraform {
     }
   }
 }
----interfaces/core/main.tf---
+---core/hcl/main.tf---
 # reads back google_folder.infra_folder; needs resourcemanager.folders.list on the parent
 data "google_active_folder" "infra_folder" {
   display_name = "Infrastructure"
@@ -161,7 +161,7 @@ data "google_active_folder" "team" {
 data "google_project" "infra" {
   project_id = "acme-infra-001"
 }
----interfaces/core/outputs.tf---
+---core/hcl/outputs.tf---
 output "infra_folder" {
   description = "The folder that holds the infrastructure project, folders/<number>"
   value       = data.google_active_folder.infra_folder.name
@@ -216,7 +216,133 @@ output "iac_service_account" {
   description = "The service account the estate is applied as"
   value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
 }
----interfaces/team-a/versions.tf---
+---core/satz/interface.satz---
+interface "core"
+
+central {
+  estate        = "corpus_interface"
+  organizations = ["organizations/123456789012"]
+}
+
+output "infra_folder" {
+  value       = "${{data.google_active_folder.infra_folder.name}}"
+  targets     = ["google_folder.infra_folder"]
+  description = "The folder that holds the infrastructure project, folders/<number>"
+}
+
+output "team_folder" {
+  value   = "${{data.google_active_folder.team.name}}"
+  targets = ["google_folder.team"]
+}
+
+output "infra_project_number" {
+  value   = "${{data.google_project.infra.number}}"
+  targets = ["google_project.infra"]
+}
+
+output "provisioner_email" {
+  value   = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  targets = ["google_service_account.provisioner"]
+}
+
+output "workload_pool_prefix" {
+  value   = "principalSet://iam.googleapis.com/projects/${{data.google_project.infra.number}}/locations/global"
+  targets = ["google_project.infra"]
+}
+
+output "regions" {
+  value = ["europe-west3", "europe-west4"]
+}
+
+output "organization_id" {
+  value       = "123456789012"
+  description = "The organisation id"
+}
+
+output "customer_domain" {
+  value       = "example.com"
+  description = "The customer's primary domain"
+}
+
+output "customer_shortname" {
+  value       = "acme"
+  description = "The short name project ids, bucket names and group prefixes derive from"
+}
+
+output "default_region" {
+  value       = "europe-west3"
+  description = "The default region for regional resources"
+}
+
+output "infra_project_id" {
+  value       = "acme-infra-001"
+  description = "The infrastructure project, which holds the state bucket"
+}
+
+output "iac_service_account" {
+  value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  description = "The service account the estate is applied as"
+}
+
+lookup "data.google_active_folder.infra_folder" {
+  reads      = "google_folder.infra_folder"
+  permission = "resourcemanager.folders.list on the parent"
+  arguments {
+    display_name = "Infrastructure"
+    parent       = "organizations/123456789012"
+  }
+}
+
+lookup "data.google_active_folder.team" {
+  reads      = "google_folder.team"
+  permission = "resourcemanager.folders.list on the parent"
+  arguments {
+    display_name = "Team"
+    parent       = "${{data.google_active_folder.infra_folder.name}}"
+  }
+}
+
+lookup "data.google_project.infra" {
+  reads      = "google_project.infra"
+  permission = "resourcemanager.projects.get"
+  arguments {
+    project_id = "acme-infra-001"
+  }
+}
+
+managed "google_folder.infra_folder" {
+  keys {
+    display_name = "Infrastructure"
+    parent       = "organizations/123456789012"
+  }
+}
+
+managed "google_folder.team" {
+  keys {
+    display_name = "Team"
+  }
+  refs {
+    parent = "google_folder.infra_folder"
+  }
+}
+
+managed "google_project.infra" {
+  ids = ["acme-infra-001"]
+  keys {
+    project_id = "acme-infra-001"
+  }
+}
+
+managed "google_service_account.provisioner" {
+  ids = ["svc-iac-001"]
+  keys {
+    account_id = "svc-iac-001"
+  }
+  refs {
+    project = "google_project.infra"
+  }
+}
+---team-a/hcl/versions.tf---
 terraform {
   required_providers {
     google = {
@@ -225,7 +351,7 @@ terraform {
     }
   }
 }
----interfaces/team-a/main.tf---
+---team-a/hcl/main.tf---
 # reads back google_folder.infra_folder; needs resourcemanager.folders.list on the parent
 data "google_active_folder" "infra_folder" {
   display_name = "Infrastructure"
@@ -242,7 +368,7 @@ data "google_active_folder" "team" {
 data "google_project" "infra" {
   project_id = "acme-infra-001"
 }
----interfaces/team-a/outputs.tf---
+---team-a/hcl/outputs.tf---
 output "infra_folder" {
   description = "The folder that holds the infrastructure project, folders/<number>"
   value       = data.google_active_folder.infra_folder.name
@@ -305,4 +431,141 @@ output "team_folder_id" {
 
 output "team_project_number" {
   value = data.google_project.infra.number
+}
+---team-a/satz/interface.satz---
+interface "team-a"
+
+central {
+  estate        = "corpus_interface"
+  organizations = ["organizations/123456789012"]
+}
+
+output "infra_folder" {
+  value       = "${{data.google_active_folder.infra_folder.name}}"
+  targets     = ["google_folder.infra_folder"]
+  description = "The folder that holds the infrastructure project, folders/<number>"
+}
+
+output "team_folder" {
+  value   = "${{data.google_active_folder.team.name}}"
+  targets = ["google_folder.team"]
+}
+
+output "infra_project_number" {
+  value   = "${{data.google_project.infra.number}}"
+  targets = ["google_project.infra"]
+}
+
+output "provisioner_email" {
+  value   = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  targets = ["google_service_account.provisioner"]
+}
+
+output "workload_pool_prefix" {
+  value   = "principalSet://iam.googleapis.com/projects/${{data.google_project.infra.number}}/locations/global"
+  targets = ["google_project.infra"]
+}
+
+output "regions" {
+  value = ["europe-west3", "europe-west4"]
+}
+
+output "organization_id" {
+  value       = "123456789012"
+  description = "The organisation id"
+}
+
+output "customer_domain" {
+  value       = "example.com"
+  description = "The customer's primary domain"
+}
+
+output "customer_shortname" {
+  value       = "acme"
+  description = "The short name project ids, bucket names and group prefixes derive from"
+}
+
+output "default_region" {
+  value       = "europe-west3"
+  description = "The default region for regional resources"
+}
+
+output "infra_project_id" {
+  value       = "acme-infra-001"
+  description = "The infrastructure project, which holds the state bucket"
+}
+
+output "iac_service_account" {
+  value       = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
+  description = "The service account the estate is applied as"
+}
+
+output "team_folder_id" {
+  value       = "${{trimprefix(data.google_active_folder.team.name, \"folders/\")}}"
+  targets     = ["google_folder.team"]
+  description = "Team A's folder number"
+}
+
+output "team_project_number" {
+  value   = "${{data.google_project.infra.number}}"
+  targets = ["google_project.infra"]
+}
+
+lookup "data.google_active_folder.infra_folder" {
+  reads      = "google_folder.infra_folder"
+  permission = "resourcemanager.folders.list on the parent"
+  arguments {
+    display_name = "Infrastructure"
+    parent       = "organizations/123456789012"
+  }
+}
+
+lookup "data.google_active_folder.team" {
+  reads      = "google_folder.team"
+  permission = "resourcemanager.folders.list on the parent"
+  arguments {
+    display_name = "Team"
+    parent       = "${{data.google_active_folder.infra_folder.name}}"
+  }
+}
+
+lookup "data.google_project.infra" {
+  reads      = "google_project.infra"
+  permission = "resourcemanager.projects.get"
+  arguments {
+    project_id = "acme-infra-001"
+  }
+}
+
+managed "google_folder.infra_folder" {
+  keys {
+    display_name = "Infrastructure"
+    parent       = "organizations/123456789012"
+  }
+}
+
+managed "google_folder.team" {
+  keys {
+    display_name = "Team"
+  }
+  refs {
+    parent = "google_folder.infra_folder"
+  }
+}
+
+managed "google_project.infra" {
+  ids = ["acme-infra-001"]
+  keys {
+    project_id = "acme-infra-001"
+  }
+}
+
+managed "google_service_account.provisioner" {
+  ids = ["svc-iac-001"]
+  keys {
+    account_id = "svc-iac-001"
+  }
+  refs {
+    project = "google_project.infra"
+  }
 }

@@ -96,7 +96,7 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("estate", "names the file", Used::Header),
     ("export", "joins the estate's interface, the outputs customer HCL reads", Used::Absorbed),
     ("hcl", "passes through to main.tf beside the resources", Used::Absorbed),
-    ("interface", "joins one team's interface module, hcl/interfaces/<name>/", Used::Absorbed),
+    ("interface", "joins one project's interface, interfaces/<name>/, or — as a header — names a generated interface file", Used::Absorbed),
     ("notice", "joins the estate's notices", Used::Absorbed),
     ("offers", "goes to the pack graph", Used::Absorbed),
     ("pack", "names the file", Used::Header),
@@ -120,7 +120,7 @@ pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usiz
         ("estate", header(false)),
         ("export", file.exports.first().map(|x| Some(x.line))),
         ("hcl", file.hcl_blocks.first().map(|h| Some(h.line))),
-        ("interface", file.interfaces.first().map(|i| Some(i.line))),
+        ("interface", file.interfaces.first().map(|i| Some(i.line)).or(file.interface_file.as_ref().map(|i| Some(i.line)))),
         ("notice", file.notices.first().map(|n| Some(n.line))),
         ("offers", file.offers.first().map(|o| Some(o.line))),
         ("pack", header(true)),
@@ -348,6 +348,14 @@ pub(super) fn used_file_fits(
 ) -> Result<(), PipelineError> {
     let refuse = |msg: String| Err(PipelineError { file: using_file.to_string(), line: use_line, msg });
     let (stands, takes) = pos.stands_and_takes();
+    if let Some(i) = &file.interface_file {
+        if pos != Position::File {
+            return refuse(format!(
+                "use \"{}\" {}: it is the interface file of `{}`, which is used at the top level of a file, without `as` — its values are read as `${{{{interface.<export>}}}}` wherever they are needed",
+                use_path, stands, i.name
+            ));
+        }
+    }
     let carried = statements_in(file);
     for (kw, at) in &carried {
         if statement(kw).is_some_and(|(_, _, used)| *used == Used::EstateOnly) {

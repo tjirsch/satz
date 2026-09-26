@@ -1,13 +1,18 @@
-//! The interface an estate publishes to the HCL customer teams write beside it (ADR 0070).
+//! The interface an estate publishes to the projects beside it (ADR 0070). A project is an
+//! estate that depends on parts of another estate's interface: its own repository or
+//! folder, config, state and pipeline, written in HCL or in Satz.
 //!
 //! Every `export` becomes an output of the root module's `outputs.tf`, where the operator
-//! reads it with `tofu output`, and of the generated modules under `hcl/interfaces/`, which
-//! the teams source from wherever they keep their own code. An export outside every
-//! `interface` block is a core export: an output of every module. One inside
-//! `interface "<name>" { … }` is an output of `hcl/interfaces/<name>/` alone, and
-//! `hcl/interfaces/core/` carries the core exports by themselves. Each module is
-//! relocatable: it names no file outside itself, takes no variable, has no backend and
-//! reads no state.
+//! reads it with `tofu output`, and a value of the generated interfaces under
+//! `interfaces/`, beside `hcl/`. An export outside every `interface` block is a core
+//! export, carried by every interface. Each interface has two forms side by side:
+//! `<name>/hcl/`, a relocatable module (it names no file outside itself, takes no variable,
+//! has no backend and reads no state), and `<name>/satz/interface.satz`, a file a project
+//! estate written in Satz `use`s.
+//!
+//! `interfaces/common/` holds the library alone — `core`, every interface a pack declares
+//! and every one marked `common`. `interfaces/<project>/` holds one project's own
+//! interface and the whole library beside it, so a project takes its folder whole.
 //!
 //! Per `${type.label.attr}` reference, the compile decides what the value is:
 //!
@@ -23,11 +28,16 @@
 use crate::manifest::{EmittedResource, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The directory under `hcl_dir` the modules are written to, one folder per interface.
-pub(crate) const DIR: &str = "interfaces";
-
 /// The module that carries the core exports alone.
 pub(crate) const CORE: &str = satz_core::satz::CORE_INTERFACE;
+
+/// The folder under `interfaces_dir` that holds the library alone.
+pub(crate) const COMMON: &str = satz_core::satz::COMMON_LIBRARY;
+
+/// Inside one interface's folder: the HCL module, and the directory of the Satz file.
+pub(crate) const HCL_DIR: &str = "hcl";
+pub(crate) const SATZ_DIR: &str = "satz";
+pub(crate) const SATZ_FILE: &str = "interface.satz";
 
 /// The local in the root `outputs.tf` that holds every exported value: the outputs read it,
 /// and a pack reads it whole (`interface-notice` publishes `jsonencode` of it).
@@ -118,6 +128,9 @@ pub(crate) struct DataBlock {
     pub resource: String,
     /// argument → HCL expression
     pub args: Vec<(String, String)>,
+    /// argument → the same as text, `${…}` where it reads another lookup: the form a
+    /// project's own emission writes
+    pub texts: Vec<(String, String)>,
     pub permission: String,
     /// the other data blocks its keys read
     deps: BTreeSet<String>,
@@ -148,8 +161,11 @@ pub(crate) struct Output {
     pub module_value: String,
     /// the value in the root module
     pub root_value: String,
+    /// the value a Satz project reads as `${{interface.<name>}}`: a literal, or text over
+    /// `${data.<type>.<label>.<attr>}` where it is looked up
+    pub value: serde_yaml::Value,
     pub how: How,
-    /// the attachment types a team may create against it
+    /// the attachment types a project may create against it
     pub attach: Vec<String>,
     /// the emitted resources its value reads, by address; for `all <type>`, every one
     /// the map holds
@@ -167,6 +183,8 @@ pub(crate) struct Interface {
     /// every declared interface, by name, with the interfaces its module also carries
     /// (`use interface`, transitively)
     pub uses: BTreeMap<String, Vec<String>>,
+    /// the declared interfaces in the library: marked `common`, or declared in a pack
+    pub common: BTreeSet<String>,
     /// by address
     pub data: BTreeMap<String, DataBlock>,
     pub google_source: String,
@@ -211,7 +229,7 @@ pub(crate) fn build(
             }),
         };
         match resolved {
-            Ok((module_value, root_value, parts_all_static, used)) => {
+            Ok((module_value, root_value, parts_all_static, used, value)) => {
                 let how = if parts_all_static {
                     How::Static(module_value.clone())
                 } else {
@@ -234,6 +252,7 @@ pub(crate) fn build(
                     description: x.description.clone(),
                     module_value,
                     root_value,
+                    value,
                     how,
                     attach: x.attach.clone(),
                     targets,
@@ -252,11 +271,16 @@ pub(crate) fn build(
         estate: estate.to_string(),
         outputs,
         uses: interfaces.iter().map(|i| (i.name.clone(), i.uses.clone())).collect(),
+        common: interfaces.iter().filter(|i| i.common).map(|i| i.name.clone()).collect(),
         data: r.data,
         google_source: google_source.to_string(),
         google_version: google_version.map(str::to_string),
     })
 }
+
+/// (module HCL, root HCL, whether it is known now, the data blocks it reads directly, the
+/// value a Satz project reads)
+type Resolved = (String, String, bool, Vec<String>, serde_yaml::Value);
 
 struct Resolver<'a> {
     manifest: &'a Manifest,
@@ -276,7 +300,7 @@ impl Resolver<'_> {
 
     /// `all <type>`: a map keyed by resource label, each value the attribute the lookup
     /// table's `all` names — static where satz knows it, a lookup where the cloud does.
-    fn all(&mut self, tf_type: &str) -> Result<(String, String, bool, Vec<String>), String> {
+    fn all(&mut self, tf_type: &str) -> Result<Resolved, String> {
         let attr = match self.table.get(tf_type) {
             Some(row) => row.all.clone(),
             None => {
@@ -290,8 +314,10 @@ impl Resolver<'_> {
         };
         let labels: Vec<String> = self.members(tf_type).iter().map(|r| r.label.clone()).collect();
         let (mut module, mut root, mut known, mut used) = (Vec::new(), Vec::new(), true, Vec::new());
+        let mut value = serde_yaml::Mapping::new();
         for label in labels {
             let parts = self.attribute(tf_type, &label, &attr)?;
+            value.insert(serde_yaml::Value::String(label.clone()), serde_yaml::Value::String(template_text(&parts)));
             for p in &parts {
                 if let Part::Expr(e) = p {
                     used.extend(data_address_in(e));
@@ -302,12 +328,12 @@ impl Resolver<'_> {
             root.push(format!("{} = {}.{}.{}", hcl_string(&label), tf_type, label, attr));
         }
         let map = |entries: Vec<String>| if entries.is_empty() { "{}".to_string() } else { format!("{{ {} }}", entries.join(", ")) };
-        Ok((map(module), map(root), known, used))
+        Ok((map(module), map(root), known, used, serde_yaml::Value::Mapping(value)))
     }
 
     /// One export value: (module HCL, root HCL, whether it is known now, the data blocks it
-    /// reads directly).
-    fn value(&mut self, v: &serde_yaml::Value) -> Result<(String, String, bool, Vec<String>), String> {
+    /// reads directly, the value a Satz project reads).
+    fn value(&mut self, v: &serde_yaml::Value) -> Result<Resolved, String> {
         use serde_yaml::Value;
         match v {
             Value::String(s) => {
@@ -321,26 +347,28 @@ impl Resolver<'_> {
                     .flatten()
                     .collect();
                 let known = parts.iter().all(|p| matches!(p, Part::Lit(_)));
-                Ok((render_parts(&parts), root_text(s), known, used))
+                Ok((render_parts(&parts), root_text(s), known, used, Value::String(template_text(&parts))))
             }
-            Value::Number(n) => Ok((n.to_string(), n.to_string(), true, Vec::new())),
-            Value::Bool(b) => Ok((b.to_string(), b.to_string(), true, Vec::new())),
+            Value::Number(n) => Ok((n.to_string(), n.to_string(), true, Vec::new(), v.clone())),
+            Value::Bool(b) => Ok((b.to_string(), b.to_string(), true, Vec::new(), v.clone())),
             Value::Sequence(items) => {
                 let mut module = Vec::new();
                 let mut root = Vec::new();
                 let mut known = true;
                 let mut used = Vec::new();
+                let mut value = Vec::new();
                 for i in items {
                     if matches!(i, Value::Sequence(_) | Value::Mapping(_)) {
                         return Err("a list export holds strings, numbers or bools — a nested list or an object is no output value here".to_string());
                     }
-                    let (m, r, k, u) = self.value(i)?;
+                    let (m, r, k, u, pv) = self.value(i)?;
                     module.push(m);
                     root.push(r);
                     known &= k;
                     used.extend(u);
+                    value.push(pv);
                 }
-                Ok((format!("[{}]", module.join(", ")), format!("[{}]", root.join(", ")), known, used))
+                Ok((format!("[{}]", module.join(", ")), format!("[{}]", root.join(", ")), known, used, Value::Sequence(value)))
             }
             Value::Mapping(_) => Err("the value is an object — an export is a string, a number, a bool or a list of them".to_string()),
             Value::Null | Value::Tagged(_) => Err("the value is empty — an export publishes a value".to_string()),
@@ -498,6 +526,7 @@ impl Resolver<'_> {
         }
         self.visiting.push(resource.clone());
         let mut args = Vec::new();
+        let mut texts = Vec::new();
         let mut deps = BTreeSet::new();
         for (attr, arg) in &row.keys {
             let parts = match self.written(tf_type, label, attr)? {
@@ -519,6 +548,7 @@ impl Resolver<'_> {
                 }
             }
             args.push((arg.clone(), render_parts(&parts)));
+            texts.push((arg.clone(), template_text(&parts)));
         }
         self.visiting.pop();
         let block = DataBlock {
@@ -526,6 +556,7 @@ impl Resolver<'_> {
             label: label.to_string(),
             resource,
             args,
+            texts,
             permission: row.permission.clone(),
             deps,
         };
@@ -595,7 +626,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                     for other in manifest.of_type(&central_type) {
                         if on_node(other, r) {
                             out.push(format!(
-                                "attach \"{}\": `{}` lets a team add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a team adds. Grant with `{}` in the estate instead",
+                                "attach \"{}\": `{}` lets a project add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a team adds. Grant with `{}` in the estate instead",
                                 t,
                                 t,
                                 address,
@@ -612,7 +643,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                 if let Some(key) = &c.sets {
                     if r.set.contains_key(key) {
                         out.push(format!(
-                            "attach \"{}\": teams attach to `{}` in their own state, and the estate sets its `{}` — the list the attachments add to. Remove `{}` from `{}`",
+                            "attach \"{}\": projects attach to `{}` in their own state, and the estate sets its `{}` — the list the attachments add to. Remove `{}` from `{}`",
                             t, address, key, key, address
                         ));
                     }
@@ -621,7 +652,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                     let held = r.set.get("lifecycle.ignore_changes").is_some_and(|l| l.replace(' ', "").contains(ignore.as_str()));
                     if !held {
                         out.push(format!(
-                            "attach \"{}\": teams attach to `{}` in their own state, and its `lifecycle` does not ignore `{}` — the estate's next apply would remove what they attached. Write `lifecycle {{ ignore_changes = [{}] }}` on `{}`",
+                            "attach \"{}\": projects attach to `{}` in their own state, and its `lifecycle` does not ignore `{}` — the estate's next apply would remove what they attached. Write `lifecycle {{ ignore_changes = [{}] }}` on `{}`",
                             t, address, ignore, ignore, address
                         ));
                     }
@@ -710,6 +741,24 @@ fn render_parts(parts: &[Part]) -> String {
     }
 }
 
+/// The parts as the text a Satz project's string holds: a literal with its template openers
+/// escaped (`$${`, `%%{`), an expression as `${…}`. The emitter writes such text as an HCL
+/// template, so it reads what `render_parts` reads.
+fn template_text(parts: &[Part]) -> String {
+    let mut out = String::new();
+    for p in parts {
+        match p {
+            Part::Lit(s) => out.push_str(&s.replace("${", "$${").replace("%{", "%%{")),
+            Part::Expr(e) => {
+                out.push_str("${");
+                out.push_str(e);
+                out.push('}');
+            }
+        }
+    }
+    out
+}
+
 /// The export's text in the root module, where its references name the resources: a
 /// whole-value reference as the bare traversal, anything else as the template it is.
 fn root_text(s: &str) -> String {
@@ -760,11 +809,9 @@ impl Output {
         }
     }
 
-    /// The text of a static string output, as a team's HCL would write it literally.
+    /// The text of a static string output, as a project would write it literally.
     pub fn static_text(&self) -> Option<String> {
-        let How::Static(v) = &self.how else { return None };
-        let inner = v.strip_prefix('"')?.strip_suffix('"')?;
-        (!inner.contains('\\') && !inner.contains('"')).then(|| inner.to_string())
+        static_text(&self.value)
     }
 
     /// Where the root module's local holds it.
@@ -777,12 +824,23 @@ impl Output {
 }
 
 impl Interface {
-    /// The modules written under `hcl/interfaces/`: `core`, then every declared interface
+    /// The interfaces written under `interfaces/`: `core`, then every declared interface
     /// — one that holds only `use interface` lines included.
     pub fn modules(&self) -> Vec<String> {
         let mut named: BTreeSet<&str> = self.outputs.iter().filter_map(|o| o.interface.as_deref()).collect();
         named.extend(self.uses.keys().map(String::as_str));
         std::iter::once(CORE.to_string()).chain(named.into_iter().map(str::to_string)).collect()
+    }
+
+    /// The library: `core`, then every common interface.
+    pub fn library(&self) -> Vec<String> {
+        std::iter::once(CORE.to_string()).chain(self.common.iter().cloned()).collect()
+    }
+
+    /// The projects: every declared interface that is not common, each a folder of its own
+    /// under `interfaces/`.
+    pub fn projects(&self) -> Vec<String> {
+        self.modules().into_iter().filter(|m| m != CORE && !self.common.contains(m)).collect()
     }
 
     /// The interfaces one module carries besides the core: its own, then each it uses.
@@ -892,7 +950,7 @@ impl Interface {
         out
     }
 
-    /// The `.tf` files of `hcl/interfaces/<module>/`, by name, without their stamps. A file
+    /// The `.tf` files of `<module>/hcl/`, by name, without their stamps. A file
     /// with nothing in it is not written.
     pub fn module_files(&self, module: &str) -> Vec<(&'static str, String)> {
         let mut files = vec![("versions.tf", self.module_versions_tf())];
@@ -904,18 +962,20 @@ impl Interface {
         files
     }
 
-    /// `hcl/interfaces/<module>/README.md`, which travels with the module.
+    /// `<module>/README.md`, beside the two forms, which travels with them.
     pub fn readme(&self, module: &str, version: &str, estate_path: &str, notice: Option<&Notice>) -> String {
         let outputs = self.module_outputs(module);
         let mut s = String::new();
         s.push_str(&format!("# The `{}` interface of estate `{}`\n\n", module, self.estate));
         s.push_str(&format!(
-            "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` writes `hcl/{}/` whole.\n\n",
-            version, estate_path, DIR
+            "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` of the estate writes `interfaces/` whole.\n\n",
+            version, estate_path
         ));
-        s.push_str("This module publishes values the estate exports to HCL that is not part of it — a team's own\n");
-        s.push_str("code, with its own state, in its own repository. It references no file outside this directory, takes\n");
-        s.push_str("no input variable and reads no state: copy it, move it, or source it by git URL.\n\n");
+        s.push_str("It publishes values the estate exports to a project: an estate with its own repository or\n");
+        s.push_str("folder, config, state and pipeline, written in HCL or in Satz. It has two forms with the same\n");
+        s.push_str("values: `hcl/` is a module that references no file outside itself, takes no input variable and\n");
+        s.push_str("reads no state — copy it, move it, or source it by git URL — and `satz/interface.satz` is a file\n");
+        s.push_str("a project estate `use`s.\n\n");
         if module == CORE {
             s.push_str("It holds the core values alone: the ones every interface of this estate carries.\n\n");
         } else {
@@ -934,9 +994,10 @@ impl Interface {
             }
         }
         s.push_str("## How to use it\n\n");
-        s.push_str(&format!("```hcl\nmodule \"satz\" {{\n  source = \"<path or git URL>/{}/{}\"\n}}\n\n", DIR, module));
+        s.push_str("From HCL, source the module:\n\n");
+        s.push_str(&format!("```hcl\nmodule \"satz\" {{\n  source = \"<path or git URL>/{}/{}\"\n}}\n", module, HCL_DIR));
         match outputs.first() {
-            Some(o) => s.push_str(&format!("# module.satz.{}\n```\n\n", o.name)),
+            Some(o) => s.push_str(&format!("\n# module.satz.{}\n```\n\n", o.name)),
             None => s.push_str("```\n\n"),
         }
         s.push_str(&format!(
@@ -945,6 +1006,16 @@ impl Interface {
             self.google_source,
             self.google_version.as_deref().map(|v| format!(" {}", v)).unwrap_or_default()
         ));
+        s.push_str("From a project estate written in Satz, use the file at the top level and name a value by its\n");
+        s.push_str("export:\n\n");
+        s.push_str(&format!("```\nuse \"<path>/{}/{}/{}\"\n", module, SATZ_DIR, SATZ_FILE));
+        match outputs.first() {
+            Some(o) => s.push_str(&format!("\n// \"${{{{interface.{}}}}}\"\n```\n\n", o.name)),
+            None => s.push_str("```\n\n"),
+        }
+        s.push_str("A static value becomes its literal. A looked-up value becomes the same `data` source the module\n");
+        s.push_str("reads, written once into the project's root module. The project's compile holds its own resources\n");
+        s.push_str("to the capabilities below.\n\n");
         s.push_str("## Exports\n\n");
         if outputs.is_empty() {
             s.push_str("None: the estate exports no core value.\n");
@@ -998,7 +1069,8 @@ impl Interface {
             s.push_str("Every value is read. An attach point also takes the attachment resources named beside it, in your\n");
             s.push_str("own state: they add your object to the shared one, and the estate leaves what you add alone.\n");
             s.push_str("Any other write to shared infrastructure goes into this estate as a contribution. `satz\n");
-            s.push_str("check-consumer <your directory>` checks your HCL against this table.\n\n");
+            s.push_str("check-consumer <your directory>` checks your HCL against this table; a project estate's own\n");
+            s.push_str("compile checks its resources against it.\n\n");
             s.push_str("| Output | Read | Attach |\n|---|---|---|\n");
             for o in &outputs {
                 let attach = if o.attach.is_empty() {
@@ -1021,7 +1093,7 @@ impl Interface {
                      Subscribe in your own state:\n\n\
                      ```hcl\n\
                      resource \"google_pubsub_subscription\" \"satz_interface\" {{\n  \
-                       name    = \"<team>-satz-interface\"\n  \
+                       name    = \"<project>-satz-interface\"\n  \
                        project = \"<your project>\"\n  \
                        topic   = module.satz.{}\n\
                      }}\n\
@@ -1035,6 +1107,156 @@ impl Interface {
     }
 }
 
+impl Interface {
+    /// `<module>/satz/interface.satz`: the same values as the module, as data a project
+    /// estate `use`s — each value in the form `${{interface.<name>}}` stands for, the
+    /// lookups those read, and the facts its compile holds the project's resources to.
+    pub fn satz_file(&self, module: &str, facts: &crate::consumer::Facts, version: &str, estate_path: &str) -> String {
+        use satz_core::satz::quote;
+        let list = |items: &[String]| format!("[{}]", items.iter().map(|i| quote(i)).collect::<Vec<_>>().join(", "));
+        let mut s = String::new();
+        s.push_str(&format!(
+            "// Generated by satz v{} from `{}` (estate `{}`) — do not edit: every\n\
+             // `satz transpile` of that estate writes it whole. A project estate reads it with\n\
+             // `use \"<path>/{}/{}/{}\"` and names a value `${{{{interface.<export>}}}}`.\n\
+             interface {}\n\n",
+            version,
+            estate_path,
+            self.estate,
+            module,
+            SATZ_DIR,
+            SATZ_FILE,
+            quote(module)
+        ));
+        s.push_str(&format!("central {{\n  estate = {}\n  organizations = {}\n}}\n", quote(&self.estate), list(&facts.organizations)));
+        for o in self.module_outputs(module) {
+            s.push_str(&format!("\noutput {} {{\n  value = {}\n", quote(&o.name), satz_value(&o.value, "  ")));
+            if !o.attach.is_empty() {
+                s.push_str(&format!("  attach = {}\n", list(&o.attach)));
+            }
+            if !o.targets.is_empty() {
+                s.push_str(&format!("  targets = {}\n", list(&o.targets)));
+            }
+            if let Some(d) = &o.description {
+                s.push_str(&format!("  description = {}\n", quote(d)));
+            }
+            s.push_str("}\n");
+        }
+        for d in self.data_of(module) {
+            s.push_str(&format!(
+                "\nlookup {} {{\n  reads = {}\n  permission = {}\n  arguments {{\n",
+                quote(&d.address()),
+                quote(&d.resource),
+                quote(&d.permission)
+            ));
+            for (k, v) in &d.texts {
+                s.push_str(&format!("    {} = {}\n", k, quote(v)));
+            }
+            s.push_str("  }\n}\n");
+        }
+        for m in &facts.managed {
+            s.push_str(&format!("\nmanaged {} {{\n", quote(&m.address)));
+            if !m.ids.is_empty() {
+                s.push_str(&format!("  ids = {}\n", list(&m.ids)));
+            }
+            for (block, entries) in [("keys", &m.keys), ("refs", &m.refs)] {
+                if entries.is_empty() {
+                    continue;
+                }
+                s.push_str(&format!("  {} {{\n", block));
+                for (k, v) in entries {
+                    s.push_str(&format!("    {} = {}\n", k, quote(v)));
+                }
+                s.push_str("  }\n");
+            }
+            s.push_str("}\n");
+        }
+        s
+    }
+
+    /// `interfaces/<folder>/README.md`: what the folder holds, where it came from, and the
+    /// content hash of every other file in it. `folder` is `common` or a project.
+    pub fn index_readme(&self, folder: &str, version: &str, estate_path: &str, hash: &str) -> String {
+        let mut s = String::new();
+        if folder == COMMON {
+            s.push_str(&format!("# The common interfaces of estate `{}`\n\n", self.estate));
+        } else {
+            s.push_str(&format!("# The interfaces of estate `{}` for the project `{}`\n\n", self.estate, folder));
+        }
+        s.push_str(&format!(
+            "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` of the estate writes this\n\
+             folder whole.\n\n\
+             Content hash: `sha256:{}`\n\n\
+             The hash is SHA-256 over every other file of this folder: per file in path order, its path\n\
+             relative to the folder, a NUL byte, its length as 8 little-endian bytes, and its bytes. Two\n\
+             copies of the folder are the same when their hashes are.\n\n",
+            version, estate_path, hash
+        ));
+        if folder == COMMON {
+            s.push_str("It holds the library alone — the interfaces every project's folder carries — for a project that\n");
+            s.push_str("reads no interface of its own. Take the folder whole.\n\n");
+        } else {
+            s.push_str("A project is an estate that depends on parts of this estate's interface, with its own repository or\n");
+            s.push_str("folder, config, state and pipeline. Take the folder whole: it holds the project's own interface and\n");
+            s.push_str("the library every project's folder carries.\n\n");
+        }
+        s.push_str("Every interface has the same two forms: `<name>/hcl/` is a module a configuration written in HCL\n");
+        s.push_str("sources, and `<name>/satz/interface.satz` is a file a project estate written in Satz `use`s, reading a\n");
+        s.push_str("value as `\"${{interface.<export>}}\"`. `<name>/README.md` lists the values and what may be done with them.\n\n");
+        s.push_str("| Interface | What it holds |\n|---|---|\n");
+        if folder != COMMON {
+            let used = &self.carried(folder)[1..];
+            s.push_str(&format!(
+                "| `{}` | the project's own: its exports and the core ones{} |\n",
+                folder,
+                if used.is_empty() { String::new() } else { format!(", and those of {}", used.iter().map(|u| format!("`{}`", u)).collect::<Vec<_>>().join(", ")) }
+            ));
+        }
+        for m in self.library() {
+            let what = if m == CORE { "the core exports alone" } else { "a common interface, and the core exports" };
+            s.push_str(&format!("| `{}` | {} |\n", m, what));
+        }
+        s
+    }
+}
+
+/// A value as Satz text: a string quoted, a list inline, a map one entry per line.
+fn satz_value(v: &serde_yaml::Value, pad: &str) -> String {
+    use satz_core::satz::quote;
+    match v {
+        serde_yaml::Value::String(s) => quote(s),
+        serde_yaml::Value::Number(n) => n.to_string(),
+        serde_yaml::Value::Bool(b) => b.to_string(),
+        serde_yaml::Value::Sequence(items) => format!("[{}]", items.iter().map(|i| satz_value(i, pad)).collect::<Vec<_>>().join(", ")),
+        serde_yaml::Value::Mapping(m) if m.is_empty() => "{}".to_string(),
+        serde_yaml::Value::Mapping(m) => {
+            let mut out = String::from("{\n");
+            for (k, val) in m {
+                let key = quote(k.as_str().expect("a map export is keyed by resource label"));
+                out.push_str(&format!("{}  {} = {}\n", pad, key, satz_value(val, &format!("{}  ", pad))));
+            }
+            out.push_str(pad);
+            out.push('}');
+            out
+        }
+        serde_yaml::Value::Null | serde_yaml::Value::Tagged(_) => unreachable!("`build` refuses an empty export"),
+    }
+}
+
+/// The content hash of one folder: SHA-256 over each file in path order — its path
+/// relative to the folder, a NUL byte, its length as 8 little-endian bytes, its bytes.
+pub(crate) fn content_hash(files: &BTreeMap<String, Vec<u8>>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for (path, bytes) in files {
+        h.update(path.as_bytes());
+        h.update([0u8]);
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
+    }
+    hex::encode(h.finalize())
+}
+
 /// What the change notice publishes, when the estate uses `interface-notice`.
 pub(crate) struct Notice {
     /// the object URL (`gs://…/interface.json`)
@@ -1043,6 +1265,14 @@ pub(crate) struct Notice {
     pub topic: String,
     /// the output a consumer reads the topic from
     pub topic_output: String,
+}
+
+/// The text of a string value that holds no template — a value a project could write as a
+/// literal. One definition for both forms of the interface, so a literal matches the same
+/// export whichever form the project reads.
+pub(crate) fn static_text(v: &serde_yaml::Value) -> Option<String> {
+    let serde_yaml::Value::String(s) = v else { return None };
+    (!s.contains("${") && !s.contains("%{")).then(|| s.clone())
 }
 
 /// The change notice, read off the core outputs: `interface_topic` and `interface_object`
@@ -1188,13 +1418,13 @@ resource "google_cloud_identity_group" "g" {
         assert!(root.contains("\"team-b\" = {"), "{}", root);
     }
 
-    /// A team's module carries the exports of every interface it uses, the README names
+    /// A project's interface carries the exports of every interface it uses, the README names
     /// the interface each value comes from, and the root module still has each export once.
     #[test]
     fn a_module_carries_the_interfaces_it_uses_and_says_where_each_value_is_from() {
         use satz_core::pipeline::ResolvedInterface;
         let exports = [export("org", "123"), in_interface("network", "vpc", "v"), in_interface("team-a", "own", "1")];
-        let ri = |name: &str, uses: &[&str]| ResolvedInterface { name: name.into(), uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 };
+        let ri = |name: &str, uses: &[&str]| ResolvedInterface { name: name.into(), common: false, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 };
         let interfaces = [ri("network", &[]), ri("team-a", &["network"]), ri("team-b", &["network"])];
         let i = build("e", &exports, &interfaces, &Manifest::parse(MAIN_TF), "hashicorp/google", None).unwrap();
         assert_eq!(i.modules(), ["core", "network", "team-a", "team-b"], "an interface of uses alone is a module");
@@ -1304,34 +1534,127 @@ resource "google_project_iam_binding" "team_viewers" {
         }
     }
 
-    /// `hcl/interfaces/` is satz's: a transpile writes one folder per interface, removes
-    /// the folder of an interface the estate no longer declares, and removes the directory
-    /// and `outputs.tf` when the estate exports nothing.
+    fn ri(name: &str, common: bool, uses: &[&str]) -> satz_core::pipeline::ResolvedInterface {
+        satz_core::pipeline::ResolvedInterface { name: name.into(), common, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 }
+    }
+
+    /// `interfaces/` is satz's: `common/` holds the library, each project's folder its own
+    /// interface and the whole library — never another project's — each interface in both
+    /// forms; a transpile removes a project the estate no longer declares, `hcl/interfaces/`,
+    /// and the directory and `outputs.tf` when the estate exports nothing.
     #[test]
-    fn the_interfaces_directory_holds_exactly_the_declared_interfaces() {
+    fn the_interfaces_directory_holds_the_library_and_one_folder_per_project() {
         let dir = std::env::temp_dir().join(format!("satz-interfaces-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let (hcl, out) = (dir.join("hcl"), dir.join("interfaces"));
+        std::fs::create_dir_all(hcl.join("interfaces/old")).unwrap();
         let manifest = Manifest::parse(MAIN_TF);
-        let two = [export("org", "123"), in_interface("team-a", "a", "1"), in_interface("team-b", "b", "2")];
-        let i = build("e", &two, &[], &manifest, "hashicorp/google", None).unwrap();
-        crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
-        for m in ["core", "team-a", "team-b"] {
-            for f in ["versions.tf", "outputs.tf", "README.md"] {
-                assert!(dir.join(DIR).join(m).join(f).exists(), "{}/{} missing", m, f);
+        let two = [export("org", "123"), in_interface("net", "vpc", "v"), in_interface("pay", "a", "1"), in_interface("ship", "b", "2")];
+        let interfaces = [ri("net", true, &[]), ri("pay", false, &["net"]), ri("ship", false, &[])];
+        let i = build("e", &two, &interfaces, &manifest, "hashicorp/google", None).unwrap();
+        assert_eq!(i.library(), ["core", "net"]);
+        assert_eq!(i.projects(), ["pay", "ship"]);
+        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        let listing = |d: &std::path::Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(listing(&out), ["common", "pay", "ship"]);
+        assert_eq!(listing(&out.join("common")), ["README.md", "core", "net"]);
+        assert_eq!(listing(&out.join("pay")), ["README.md", "core", "net", "pay"], "a project carries its own and the library, never another project's");
+        assert_eq!(listing(&out.join("ship")), ["README.md", "core", "net", "ship"]);
+        for m in ["core", "net", "pay"] {
+            for f in ["README.md", "hcl/versions.tf", "hcl/outputs.tf", "satz/interface.satz"] {
+                assert!(out.join("pay").join(m).join(f).exists(), "pay/{}/{} missing", m, f);
             }
         }
-        assert!(dir.join("outputs.tf").exists());
+        let index = std::fs::read_to_string(out.join("pay/README.md")).unwrap();
+        assert!(index.contains("Content hash: `sha256:") && index.contains("| `pay` |") && index.contains("| `net` |"), "{}", index);
+        assert!(hcl.join("outputs.tf").exists());
+        assert!(!hcl.join("interfaces").exists(), "hcl/interfaces/ survived");
 
-        let one = [export("org", "123"), in_interface("team-a", "a", "1")];
-        let i = build("e", &one, &[], &manifest, "hashicorp/google", None).unwrap();
-        crate::write_interface(Some(&i), &dir, "e.satz").unwrap();
-        assert!(dir.join(DIR).join("team-a").exists());
-        assert!(!dir.join(DIR).join("team-b").exists(), "the folder of a removed interface survived");
+        let one = [export("org", "123"), in_interface("pay", "a", "1")];
+        let i = build("e", &one, &[ri("pay", false, &[])], &manifest, "hashicorp/google", None).unwrap();
+        crate::write_interface(Some(&i), &manifest, &hcl, &out, "e.satz").unwrap();
+        assert_eq!(listing(&out), ["common", "pay"], "the folder of a removed project survived");
 
-        crate::write_interface(None, &dir, "e.satz").unwrap();
-        assert!(!dir.join(DIR).exists() && !dir.join("outputs.tf").exists(), "an estate that exports nothing keeps no interface");
+        crate::write_interface(None, &manifest, &hcl, &out, "e.satz").unwrap();
+        assert!(!out.exists() && !hcl.join("outputs.tf").exists(), "an estate that exports nothing keeps no interface");
+        let refused = crate::write_interface(Some(&i), &manifest, &hcl, &dir, "e.satz").unwrap_err();
+        assert!(refused.to_string().contains("holds hcl_dir"), "{}", refused);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Satz form carries what the HCL form does, as data: generated, parsed back, every
+    /// value, lookup, attach point and managed fact is there.
+    #[test]
+    fn the_interface_file_round_trips_every_value_lookup_attach_point_and_managed_fact() {
+        let manifest = Manifest::parse(MAIN_TF);
+        let with_attach = ResolvedExport { attach: vec!["google_folder_iam_member".into()], ..in_interface("pay", "team_folder", "${google_folder.team.name}") };
+        let exports = [
+            export("org", "123"),
+            export("regions", ""),
+            with_attach,
+            in_interface("pay", "infra_project", "${google_project.infra.project_id}"),
+            ResolvedExport { all: Some("google_folder".into()), value: serde_yaml::Value::Null, ..in_interface("pay", "folders", "") },
+        ];
+        let mut exports = exports.to_vec();
+        exports[1].value = serde_yaml::Value::Sequence(vec!["europe-west3".into(), serde_yaml::Value::Number(2.into())]);
+        let i = build("e", &exports, &[ri("pay", false, &[])], &manifest, "hashicorp/google", Some("7.14.1")).unwrap();
+        let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
+        let text = i.satz_file("pay", &facts, "0.0.0", "satz/e.satz");
+        let formatted = satz_core::fmt::format(&text).unwrap_or_else(|e| panic!("{}: {}\n{}", e.line, e.msg, text));
+        let file = satz_core::satz::parse(&formatted).unwrap().interface_file.expect("an interface file");
+        assert_eq!(file.name, "pay");
+        assert_eq!(file.estate, "e");
+        assert_eq!(file.organizations, ["organizations/123456789012"]);
+        let names: Vec<String> = file.outputs.iter().map(|o| o.name.clone()).collect();
+        assert_eq!(names, ["org", "regions", "team_folder", "infra_project", "folders"]);
+        for (o, x) in file.outputs.iter().zip(i.module_outputs("pay")) {
+            assert_eq!(o.value, x.value, "{}", o.name);
+            assert_eq!(o.attach, x.attach, "{}", o.name);
+            assert_eq!(o.targets, x.targets, "{}", o.name);
+            assert_eq!(o.description, x.description, "{}", o.name);
+        }
+        assert_eq!(file.outputs[2].value, serde_yaml::Value::String("${data.google_active_folder.team.name}".into()));
+        assert_eq!(file.outputs[3].value, serde_yaml::Value::String("corp-infra-001".into()));
+        let lookups: Vec<(&str, &str)> = file.lookups.iter().map(|l| (l.address.as_str(), l.reads.as_str())).collect();
+        assert_eq!(lookups, [("data.google_active_folder.infra", "google_folder.infra"), ("data.google_active_folder.team", "google_folder.team")]);
+        assert_eq!(file.lookups[1].arguments, [("display_name".to_string(), "Team".to_string()), ("parent".to_string(), "${data.google_active_folder.infra.name}".to_string())]);
+        let lineless: Vec<satz_core::satz::ManagedFact> = file.managed.iter().map(|m| satz_core::satz::ManagedFact { line: 0, ..m.clone() }).collect();
+        assert_eq!(lineless, facts.managed);
+        let project = file.managed.iter().find(|m| m.address == "google_project.infra").expect("the project is managed");
+        assert_eq!(project.ids, ["corp-infra-001"]);
+        let team = file.managed.iter().find(|m| m.address == "google_folder.team").unwrap();
+        assert_eq!(team.refs.get("parent").map(String::as_str), Some("google_folder.infra"));
+        // read back, the facts are the estate's
+        let used = [satz_core::pipeline::UsedInterfaceFile { file: "pay.satz".into(), interface: file }];
+        let back = crate::consumer::Facts::of_files(&used);
+        // an interface file names no declaring interface: its names are unique
+        let carried: Vec<crate::consumer::FactOutput> =
+            facts.outputs.iter().filter(|o| names.contains(&o.name)).map(|o| crate::consumer::FactOutput { interface: None, ..o.clone() }).collect();
+        assert_eq!(back.outputs, carried);
+        assert_eq!(back.organizations, facts.organizations);
+    }
+
+    /// The content hash changes when, and only when, a file changes.
+    #[test]
+    fn the_content_hash_follows_the_files_and_nothing_else() {
+        let a: BTreeMap<String, Vec<u8>> = [("x/README.md".to_string(), b"one".to_vec()), ("x/hcl/outputs.tf".to_string(), b"two".to_vec())].into();
+        let same = a.clone();
+        assert_eq!(content_hash(&a), content_hash(&same));
+        let mut changed = a.clone();
+        changed.insert("x/hcl/outputs.tf".into(), b"twO".to_vec());
+        assert_ne!(content_hash(&a), content_hash(&changed));
+        let mut renamed = BTreeMap::new();
+        renamed.insert("x/README.md".to_string(), b"one".to_vec());
+        renamed.insert("x/hcl/output.tf".to_string(), b"two".to_vec());
+        assert_ne!(content_hash(&a), content_hash(&renamed), "a renamed file is a change");
+        // bytes cannot move across a file boundary unnoticed
+        let split: BTreeMap<String, Vec<u8>> = [("a".to_string(), b"bc".to_vec())].into();
+        let moved: BTreeMap<String, Vec<u8>> = [("ab".to_string(), b"c".to_vec())].into();
+        assert_ne!(content_hash(&split), content_hash(&moved));
     }
 
     #[test]

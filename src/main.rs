@@ -267,7 +267,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         iac_user: Option<String>,
         /// Display name of the folder directly under the organisation that holds the
-        /// customer's and the teams' folders. Without it they live at the organisation
+        /// customer's and the projects' folders. Without it they live at the organisation
         #[arg(long)]
         workload_folder_name: Option<String>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
@@ -718,12 +718,13 @@ pub(crate) enum Commands {
         #[arg(long)]
         check: bool,
     },
-    /// Check a team's HCL beside the estate against the estate's interface: attachments only at attach points, no authoritative grant or policy on a node the estate manages, no resource the estate declares too
+    /// Check a project's HCL beside the estate against the estate's interface: attachments only at attach points, no authoritative grant or policy on a node the estate manages, no resource the estate declares too
     ///
     /// Read-only, offline: parses the `.tf` files under DIR and compiles the estate in
-    /// memory. Each finding names the team's file and line; any finding exits 1.
+    /// memory. Each finding names the project's file and line; any finding exits 1. A project
+    /// written in Satz is held to the same rules by its own compile.
     CheckConsumer {
-        /// The team's configuration: a directory of `.tf` files, read with its subdirectories
+        /// The project's configuration: a directory of `.tf` files, read with its subdirectories
         dir: PathBuf,
         /// Estate file (.satz, inside yaml_dir if relative); default: the one estate in yaml_dir
         estate: Option<String>,
@@ -1169,7 +1170,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             let base_output_path = hcl_target(output.as_deref(), &runtime_config);
-            for p in write_hcl(&out, &base_output_path, &input)? {
+            for p in write_hcl(&out, &base_output_path, Path::new(&runtime_config.interfaces_dir), &input)? {
                 println!("Created {}", p.display());
             }
             if plan || apply {
@@ -1284,6 +1285,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     format!("presets_dir = \"{}\"", tool_config.presets_dir),
                     format!("yaml_dir = \"{}\"", tool_config.yaml_dir),
                     format!("hcl_dir = \"{}\"", tool_config.hcl_dir),
+                    format!("interfaces_dir = \"{}\"", tool_config.interfaces_dir),
                     // From the same source as the serde default, so the generated file
                     // and an omitted key can never disagree again.
                     format!("include_dirs = {:?}", tool_config.include_dirs),
@@ -2456,8 +2458,8 @@ struct PipelineBOut {
     variables_tf: String,
     tfvars: String,
     imports_tf: String,
-    /// What the estate publishes to the HCL beside it: the root `outputs.tf` and the module
-    /// `hcl/interface/`. `None` when it exports nothing.
+    /// What the estate publishes to the projects beside it: the root `outputs.tf` and the
+    /// folders under `interfaces_dir`. `None` when it exports nothing.
     interface: Option<crate::interface::Interface>,
     /// Claims declared by the estate and every pack it actually used — the
     /// compliance plane's input, produced by the same compile that produced
@@ -2615,7 +2617,7 @@ fn compile_summary(
     let compiled = pipeline_b_compile(input_path, tool_config, runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent);
     match compiled {
         Ok(out) => {
-            let written = if check { Vec::new() } else { write_hcl(&out, &hcl_target(output, runtime_config), input)? };
+            let written = if check { Vec::new() } else { write_hcl(&out, &hcl_target(output, runtime_config), Path::new(&runtime_config.interfaces_dir), input)? };
             let summary = crate::mcp::CompileSummary {
                 estate,
                 addresses: out.manifest.addresses().into_iter().collect(),
@@ -2858,15 +2860,30 @@ pub(crate) fn compile_tail(
     if conflict_findings(&folded, &mut f) {
         return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
+    // A project reads a central estate's values as `${{interface.<export>}}`: replaced
+    // before the emitter, which then writes a literal or the lookup's data address.
+    let lookups = match satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files) {
+        Ok(l) => l,
+        Err(errors) => {
+            for e in errors {
+                f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
+            }
+            return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
+        }
+    };
     let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     ctx.registry = Some(registry);
-    let out = match crate::emitter::emit(&folded, &ctx) {
+    let mut out = match crate::emitter::emit(&folded, &ctx) {
         Ok(o) => o,
         Err(e) => {
             f.push(Finding::new(Severity::Error, Kind::Emit, format!("emit: {}", e)));
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
+    if !fe.interface_files.is_empty() {
+        out.main_tf.push_str(&crate::emitter::interface_lookups_tf(&lookups, &fe.interface_files));
+        f.extend(crate::consumer::check_project(&out.manifest, &fe.interface_files));
+    }
     written_reference_findings(&folded, &out.manifest, &mut f);
     workload_folder_findings(fe, &out.manifest, estate, estate_src, &mut f);
     let (provider_sources, provider_versions) = provider_maps(tool_config);
@@ -3023,7 +3040,7 @@ fn workload_folder_findings(
         ),
         (true, Some(x), Some(read)) => f.push(
             err(format!(
-                "`export \"workload_folder\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organisation. Bind `{}` to the folder's display name, or — once the teams' folders have moved to the organisation — remove the folder and export \"organizations/{{customer_organization_id}}\"",
+                "`export \"workload_folder\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organisation. Bind `{}` to the folder's display name, or — once the projects' folders have moved to the organisation — remove the folder and export \"organizations/{{customer_organization_id}}\"",
                 x.file, x.line, read, NAME, at_name(name_line), NAME
             ))
             .located(x.file.clone(), x.line as u32),
@@ -3740,10 +3757,10 @@ pub(crate) fn prerequisites_write(
 }
 
 /// Write a compile's HCL into `dir`: `main.tf` with its provenance line, the other
-/// files when they are non-empty, and no `imports.tf` left from an earlier run.
-/// Returns the files written. `estate` is what the provenance line names. The CLI
-/// and the MCP `satz_transpile` tool both write through here.
-pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+/// files when they are non-empty, and no `imports.tf` left from an earlier run; and the
+/// interfaces into `interfaces_dir`. Returns the files written. `estate` is what the
+/// provenance line names. The CLI and the MCP `satz_transpile` tool both write through here.
+pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     if !dir.exists() {
         fsx::create_dir_all(dir)?;
     }
@@ -3789,42 +3806,93 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, estate: &str) -> Result<
         fsx::write(&p, content)?;
         written.push(p);
     }
-    written.extend(write_interface(out.interface.as_ref(), dir, estate)?);
+    written.extend(write_interface(out.interface.as_ref(), &out.manifest, dir, interfaces_dir, estate)?);
     Ok(written)
 }
 
-/// The estate's interfaces: the root `outputs.tf` and one module per interface under
-/// `hcl/interfaces/` — `core/` and one folder per `interface` block — each written whole,
-/// and none left from an earlier run: satz owns `hcl/interfaces/`, so the folder of an
-/// interface the estate no longer declares goes with the rest, and the directory and
-/// `outputs.tf` go when the estate exports nothing.
-fn write_interface(interface: Option<&crate::interface::Interface>, dir: &Path, estate: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+/// The estate's interfaces: the root `outputs.tf` in `dir`, and `interfaces_dir` — the
+/// library in `common/`, and per project `<project>/` with its own interface and the whole
+/// library — each interface in both forms, each folder stamped with its content hash. Each
+/// is written whole and none left from an earlier run: satz owns `interfaces_dir`, so the
+/// folder of an interface the estate no longer declares goes with the rest, and the
+/// directory and `outputs.tf` go when the estate exports nothing. `hcl/interfaces/`, where
+/// the modules stood before `interfaces_dir`, is satz's too and goes.
+pub(crate) fn write_interface(
+    interface: Option<&crate::interface::Interface>,
+    manifest: &crate::manifest::Manifest,
+    dir: &Path,
+    interfaces_dir: &Path,
+    estate: &str,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    use crate::interface::{COMMON, HCL_DIR, SATZ_DIR, SATZ_FILE};
+    // satz removes `interfaces_dir` whole, so it may hold nothing satz does not write
+    if dir.starts_with(interfaces_dir) {
+        return Err(format!(
+            "interfaces_dir {} holds hcl_dir {} — satz rewrites interfaces_dir whole, so it is a directory of its own (`interfaces`, beside `hcl`)",
+            interfaces_dir.display(),
+            dir.display()
+        )
+        .into());
+    }
     let outputs = dir.join("outputs.tf");
-    let modules = dir.join(crate::interface::DIR);
     if outputs.exists() {
         fsx::remove_file(&outputs)?;
     }
-    if modules.exists() {
-        fsx::remove_dir_all(&modules)?;
+    let old = dir.join("interfaces");
+    if old.exists() {
+        fsx::remove_dir_all(&old)?;
+    }
+    if interfaces_dir.exists() {
+        fsx::remove_dir_all(interfaces_dir)?;
     }
     let Some(i) = interface else { return Ok(Vec::new()) };
     let version = env!("CARGO_PKG_VERSION");
     let stamp = crate::interface::stamp(version, estate);
     let notice = crate::interface::notice(i);
+    let facts = crate::consumer::Facts::of_estate(&i.estate, Some(i), manifest);
     let mut written = Vec::new();
     fsx::write(&outputs, format!("{}{}", stamp, i.root_outputs_tf()))?;
     written.push(outputs);
-    for m in i.modules() {
-        let module = modules.join(&m);
-        fsx::create_dir_all(&module)?;
-        for (name, content) in i.module_files(&m) {
-            let p = module.join(name);
-            fsx::write(&p, format!("{}{}", stamp, content))?;
+    // one interface's files, by path relative to the folder it stands in
+    let files_of = |m: &str| -> Result<std::collections::BTreeMap<String, Vec<u8>>, Box<dyn std::error::Error>> {
+        let mut files = std::collections::BTreeMap::new();
+        files.insert(format!("{}/README.md", m), i.readme(m, version, estate, notice.as_ref()).into_bytes());
+        for (name, content) in i.module_files(m) {
+            files.insert(format!("{}/{}/{}", m, HCL_DIR, name), format!("{}{}", stamp, content).into_bytes());
+        }
+        let satz = satz_core::fmt::format(&i.satz_file(m, &facts, version, estate))
+            .map_err(|e| format!("the interface file of `{}` does not parse ({}:{}) — a generator defect", m, e.line, e.msg))?;
+        files.insert(format!("{}/{}/{}", m, SATZ_DIR, SATZ_FILE), satz.into_bytes());
+        Ok(files)
+    };
+    let mut folders: Vec<(String, Vec<String>)> = vec![(COMMON.to_string(), i.library())];
+    for p in i.projects() {
+        let mut members = vec![p.clone()];
+        members.extend(i.library());
+        folders.push((p, members));
+    }
+    for (folder, members) in folders {
+        let mut files = std::collections::BTreeMap::new();
+        for m in &members {
+            files.extend(files_of(m)?);
+        }
+        let hash = crate::interface::content_hash(&files);
+        let root = interfaces_dir.join(&folder);
+        for (rel, bytes) in &files {
+            let p = root.join(rel);
+            if let Some(parent) = p.parent() {
+                fsx::create_dir_all(parent)?;
+            }
+            if rel.ends_with(".satz") {
+                fsx::write_generated_satz(&p, std::str::from_utf8(bytes)?)?;
+            } else {
+                fsx::write(&p, bytes)?;
+            }
             written.push(p);
         }
-        let readme = module.join("README.md");
-        fsx::write(&readme, i.readme(&m, version, estate, notice.as_ref()))?;
-        written.push(readme);
+        let index = root.join("README.md");
+        fsx::write(&index, i.index_readme(&folder, version, estate, &hash))?;
+        written.push(index);
     }
     Ok(written)
 }
@@ -4651,7 +4719,7 @@ fn satz_estate_env(
 
 /// Resolve a `use` path the way the compiler does: beside the using file first,
 /// then the configured include dirs.
-fn satz_loader(
+pub(crate) fn satz_loader(
     input: &Path,
     include_dirs: &[String],
 ) -> impl Fn(&str) -> Result<String, String> {
@@ -4704,7 +4772,7 @@ pub(crate) fn transpile_sorted_b(
         sections.push(i.root_outputs_tf());
         for m in i.modules() {
             for (name, content) in i.module_files(&m) {
-                sections.push(format!("{}/{}/{}\n{}", crate::interface::DIR, m, name, content));
+                sections.push(format!("{}/{}/{}\n{}", m, crate::interface::HCL_DIR, name, content));
             }
         }
     }
@@ -5674,10 +5742,15 @@ mod corpus {
                 .unwrap_or_else(|r| panic!("{}: an export refused: {:?}", name, r));
             snapshot.push_str("\n---outputs.tf---\n");
             snapshot.push_str(&i.root_outputs_tf());
+            let facts = crate::consumer::Facts::of_estate(&i.estate, Some(&i), &out.manifest);
             for m in i.modules() {
                 for (file, content) in i.module_files(&m) {
-                    snapshot.push_str(&format!("---{}/{}/{}---\n{}", crate::interface::DIR, m, file, content));
+                    snapshot.push_str(&format!("---{}/{}/{}---\n{}", m, crate::interface::HCL_DIR, file, content));
                 }
+                // without its stamp, which names the binary's version
+                let text = satz_core::fmt::format(&i.satz_file(&m, &facts, "0", "main.satz")).unwrap_or_else(|e| panic!("{}: the interface file of {} does not parse: {}", name, m, e.msg));
+                let body: Vec<&str> = text.lines().filter(|l| !l.starts_with("//")).collect();
+                snapshot.push_str(&format!("---{}/{}/{}---\n{}\n", m, crate::interface::SATZ_DIR, crate::interface::SATZ_FILE, body.join("\n")));
             }
         }
         snapshot
@@ -7393,7 +7466,7 @@ mod init_template {
     }
 
     /// `satz init` writes the workload folder in the form its flag names, and the core
-    /// interface — the module every team's HCL reads — carries it as `workload_folder`: the
+    /// interface — the one every project reads — carries it as `workload_folder`: the
     /// organisation as a static value, a named folder as a lookup of the folder the estate
     /// declares.
     #[test]

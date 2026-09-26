@@ -1,0 +1,12 @@
+# A project beside the showcase estate, written in Satz, for scripts/smoke.sh: it reads
+# the showcase's interface from vendor/, where the smoke copies interfaces/archive/ whole.
+# Paths resolve against this file's directory.
+yaml_dir = "satz"
+hcl_dir = "hcl"
+interfaces_dir = "interfaces"
+include_dirs = [".", "satz"]
+schema_dir = "../../schemas"
+presets_dir = "../../../presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"

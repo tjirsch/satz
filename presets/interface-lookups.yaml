@@ -1,10 +1,10 @@
-# How the interface modules (hcl/interfaces/, docs/workflows.md) read back what an
+# How the interfaces (interfaces/, docs/workflows.md) read back what an
 # estate emits, per resource type. The table is compiled into satz; it sits beside
 # import-config.yaml because both say how a resource is found again by its natural key.
 #
 # An export whose value satz writes itself is a literal output and needs no row. An
 # export of an attribute only the cloud knows — a folder's `name`, a project's `number`
-# — becomes a `data` source here, looked up through the consumer's own provider and
+# — becomes a `data` source here, looked up through the project's own provider and
 # credentials. An export that needs a lookup of a type with no row is refused at compile.
 #
 # data_source  the provider's data source that reads the resource back
@@ -17,7 +17,7 @@
 # derived      resource attribute -> a text over attributes satz writes, `{project}`
 #              included: known at compile time, so it is a literal output and no lookup
 # all          the attribute `export "<name>" = all <type>` gives for each resource of
-#              the type: the one that names it where a team's HCL takes it (a folder's
+#              the type: the one that names it where a project takes it (a folder's
 #              `folders/<number>`, a project's id). A type without a row takes no `all`
 
 google_folder:

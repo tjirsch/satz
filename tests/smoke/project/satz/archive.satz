@@ -1,0 +1,53 @@
+// A project beside the showcase estate: its own repository, config, state and
+// pipeline. It takes the folder interfaces/archive/ of the showcase whole — here
+// vendor/archive/ — and reads the central estate's values as
+// `${{interface.<export>}}`. A static value becomes its literal; a looked-up one
+// becomes the same `data` source the HCL module reads, written once into hcl/.
+
+estate archive_project
+
+params {
+  customer_organization_id = "123456789012"
+  customer_domain          = "example.com"
+  customer_shortname       = "corp"
+  infra_project_name       = "corp-infra-001"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  deployment_mode          = "local"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+providers {
+  google {
+    alias   = "google"
+    project = infra_project_name
+  }
+}
+
+use "vendor/archive/archive/satz/interface.satz"
+
+// A Google project of the project's own, under the central estate's folder.
+google_project {
+  archive_work {
+    name            = "corp-archive-work"
+    project_id      = "corp-archive-work-001"
+    folder_id       = "${{interface.infra_folder}}"
+    billing_account = billing_account_infra
+    labels = {
+      central = "${{interface.customer_domain}}"
+    }
+  }
+}
+
+// A grant on the central estate's Google project, at its attach point.
+google_project_iam_member {
+  archive_readers {
+    project = "${{interface.archive_project_id}}"
+    role    = "roles/viewer"
+    member  = "group:gcp-auditors@example.com"
+  }
+}

@@ -29,7 +29,7 @@ pub struct TemplateArgs {
     /// carry the domain.
     pub first_admin: String,
     /// The display name of the folder directly under the organisation that holds the
-    /// customer's and the teams' folders; `None` when they live at the organisation.
+    /// customer's and the projects' folders; `None` when they live at the organisation.
     pub workload_folder_name: Option<String>,
 }
 
@@ -186,22 +186,22 @@ google_folder {
   }
 }
 
-// The folder, published to the HCL teams write beside the estate (hcl/interfaces/). Its
-// number exists once the folder does, so the interface modules look it up.
+// The folder, published to the projects beside the estate (interfaces/). Its number
+// exists once the folder does, so the interfaces look it up.
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;
 
 /// The param that names the workload folder; empty is the organisation.
 pub(crate) const WORKLOAD_FOLDER_NAME: &str = "workload_folder_name";
 
-/// The workload folder: where the customer's and the teams' folders live, published as the
+/// The workload folder: where the customer's and the projects' folders live, published as the
 /// core export `workload_folder` — the organisation (`organizations/<id>`, a static value,
 /// nothing created) or one folder directly under it (`folders/<number>`, looked up). `init`
 /// writes it from its flag, a re-run with the flag through [`with_workload_folder`]. The
 /// folder's name is the param, so renaming it moves nothing here.
 pub(crate) fn workload_folder_section(folder: bool) -> String {
-    const HEAD: &str = "// ---- the workload folder: where the customer's and the teams' folders live ----------\n";
-    const DESCRIPTION: &str = "Where the customer's and the teams' folders live: organizations/<id>, or folders/<number> for a folder directly under it";
+    const HEAD: &str = "// ---- the workload folder: where the customer's and the projects' folders live -------\n";
+    const DESCRIPTION: &str = "Where the customer's and the projects' folders live: organizations/<id>, or folders/<number> for a folder directly under it";
     if folder {
         format!(
             r#"{HEAD}// One folder directly under the organisation, `workload_folder_name`. Google refuses a
@@ -213,14 +213,14 @@ google_folder {{
   }}
 }}
 
-// Published to the teams' HCL, whose folders take it as their parent. The folder's number
-// exists once the folder does, so the interface modules look it up.
+// Published to the projects, whose folders take it as their parent. The folder's number
+// exists once the folder does, so the interfaces look it up.
 export "workload_folder" = "${{{{google_folder.workload_folder.name}}}}" description "{DESCRIPTION}"
 "#
         )
     } else {
         format!(
-            r#"{HEAD}// The organisation itself. Published to the teams' HCL, whose folders take it as their parent.
+            r#"{HEAD}// The organisation itself. Published to the projects, whose folders take it as their parent.
 export "workload_folder" = "organizations/{{customer_organization_id}}" description "{DESCRIPTION}"
 "#
         )
@@ -229,7 +229,7 @@ export "workload_folder" = "organizations/{{customer_organization_id}}" descript
 
 /// `src` with its workload folder in the form `folder` names: the section appended when the
 /// estate publishes none, `src` unchanged when it already publishes that form. The other
-/// form is refused, never rewritten: the teams' folders sit under the root, and turning a
+/// form is refused, never rewritten: the projects' folders sit under the root, and turning a
 /// folder into the organisation, or the reverse, moves every one of them.
 pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, String> {
     let export = src
@@ -252,7 +252,7 @@ pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, St
     let (now, edit) = if is_folder {
         (
             "the folder `google_folder.workload_folder`",
-            "once the teams' folders have moved to the organisation, remove the folder and export \"organizations/{customer_organization_id}\"",
+            "once the projects' folders have moved to the organisation, remove the folder and export \"organizations/{customer_organization_id}\"",
         )
     } else {
         (
@@ -261,7 +261,7 @@ pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, St
         )
     };
     Err(format!(
-        "{}: line {} publishes the workload folder as {}. Changing it moves every folder the teams created under it, so satz does not rewrite it — edit that section by hand ({}), then run this again",
+        "{}: line {} publishes the workload folder as {}. Changing it moves every folder the projects created under it, so satz does not rewrite it — edit that section by hand ({}), then run this again",
         if folder { "a workload folder" } else { "the organisation as the workload folder" },
         n + 1,
         now,
@@ -575,7 +575,7 @@ params {{
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
   // the folder: unbound, that pack creates its project under the organisation.
   logsink_project_folder = "google_folder.infra_folder.name"
-  // Where the customer's and the teams' folders live: "" is the organisation, a name one
+  // Where the customer's and the projects' folders live: "" is the organisation, a name one
   // folder directly under it. The section at the end of this file publishes it as
   // `workload_folder`; the compile refuses a name and a section that disagree.
 {workload_folder}}}
@@ -879,7 +879,7 @@ pub(crate) mod tests {
     }
 
     /// The section is written once, in the form asked for; the other form is refused,
-    /// because the teams' folders sit under the root.
+    /// because the projects' folders sit under the root.
     #[test]
     fn the_workload_folder_section_follows_the_answer_and_is_never_flipped() {
         let sk = skeleton("x", None);

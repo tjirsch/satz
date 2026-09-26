@@ -2,12 +2,12 @@
   "nodes": [
     {
       "path": "presets/estate-core.satz",
-      "version": "2.3",
+      "version": "2.4",
       "role": "core"
     },
     {
       "path": "presets/estate-map.satz",
-      "version": "2.4",
+      "version": "2.5",
       "role": "map",
       "order": 0,
       "phase": "once the estate runs as the service account — the map, which declares the questions\nevery line below is gated on. This is the one to uncomment first.",
@@ -562,12 +562,12 @@
     },
     {
       "path": "presets/interface-notice.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "interface_notice_pubsub",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 44,
-      "phase": "once the estate exports what other teams read — the notice publishes when an export changes",
+      "phase": "once the estate exports what projects read — the notice publishes when an export changes",
       "at": "presets/estate-map.satz:486"
     }
   ],

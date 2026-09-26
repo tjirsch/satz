@@ -34,7 +34,7 @@ export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cach
 export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
 cd "$root/tests/smoke"
-rm -rf hcl tmp yaml/imported-*.satz yaml/identity-*.satz evidence
+rm -rf hcl interfaces project/vendor project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 mkdir -p tmp
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -74,6 +74,8 @@ rm -rf tmp/init && mkdir -p tmp/init && seed_schemas tmp/init && ln -s "$root/pr
 # the estate directory init creates, and names in config.toml, is satz/
 grep -qx 'yaml_dir = "satz"' tmp/init/config.toml && [ ! -e tmp/init/yaml ] \
   || fail "satz init must create satz/ and name it in config.toml:\n$(cat tmp/init/config.toml)"
+grep -qx 'interfaces_dir = "interfaces"' tmp/init/config.toml \
+  || fail "satz init must name interfaces_dir in config.toml:\n$(cat tmp/init/config.toml)"
 # no --workload-folder-name: the organisation is the workload folder, published, nothing created
 grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/init/satz/C0example.satz \
   && ! grep -q 'google_folder.workload_folder' tmp/init/satz/C0example.satz \
@@ -171,65 +173,106 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
 
-step "interfaces: the showcase's exports as outputs.tf and one relocatable module per interface"
-si=tmp/showcase-hcl/interfaces
-for m in core audit archive-team; do
-  for f in versions.tf main.tf outputs.tf README.md; do
-    [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/$m/$f was not written"
+step "interfaces: the showcase's exports as outputs.tf, the library in interfaces/common/, and one folder per project"
+si=interfaces/archive
+for m in core audit archive; do
+  for f in README.md hcl/versions.tf hcl/main.tf hcl/outputs.tf satz/interface.satz; do
+    [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/archive/$m/$f was not written"
   done
 done
-[ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
-grep -q 'infra_folder *= google_folder.infra.name' tmp/showcase-hcl/outputs.tf || fail "the root output does not name the folder:\n$(cat tmp/showcase-hcl/outputs.tf)"
-grep -q 'output "archive_team__archive_project_id"' tmp/showcase-hcl/outputs.tf || fail "an interface's root output is not <interface>__<export>:\n$(cat tmp/showcase-hcl/outputs.tf)"
-grep -q 'value *= "corp-infra-001"' $si/core/outputs.tf || fail "a written attribute is not a literal output:\n$(cat $si/core/outputs.tf)"
-grep -q 'value *= data.google_active_folder.infra.name' $si/archive-team/outputs.tf || fail "a core export is missing from the team's module:\n$(cat $si/archive-team/outputs.tf)"
-grep -q 'output "archive_project_number"' $si/core/outputs.tf && fail "the core module carries a team's export"
-grep -q 'value *= data.google_project.archive.number' $si/archive-team/outputs.tf || fail "the team's project number is not looked up:\n$(cat $si/archive-team/outputs.tf)"
-grep -q 'output "audit_bucket_name"' $si/archive-team/outputs.tf || fail "the team's module lacks the exports of the interface it uses:\n$(cat $si/archive-team/outputs.tf)"
-grep -q '^| `audit_bucket_name` | audit |' $si/archive-team/README.md || fail "the README does not name the interface a value comes from:\n$(cat $si/archive-team/README.md)"
-[ "$(grep -c 'output "audit__audit_bucket_name"' tmp/showcase-hcl/outputs.tf)" = 1 ] || fail "a used interface's export is not one root output:\n$(cat tmp/showcase-hcl/outputs.tf)"
-grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/*.tf && fail "an interface module reaches outside itself:\n$(cat $si/*/*.tf)"
-for m in core audit archive-team; do
-  [ "$(sed -n '/^## Exports/,/^## Capabilities/p' $si/$m/README.md | grep -c '^| `')" = "$(grep -c '^output ' $si/$m/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
+for m in core audit; do
+  [ -f "interfaces/common/$m/satz/interface.satz" ] || fail "the library lacks interfaces/common/$m/"
 done
-grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/outputs.tf || fail "all google_folder is not a map of the folders keyed by label:\n$(cat $si/core/outputs.tf)"
-grep -q 'value *= { "audit_logs" = "corp-audit-logs" }' $si/core/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket:\n$(cat $si/core/outputs.tf)"
+[ -e interfaces/common/archive ] && fail "the library carries a project's interface"
+[ "$(ls interfaces)" = "$(printf 'archive\ncommon')" ] || fail "interfaces/ holds more than the library and the project:\n$(ls interfaces)"
+grep -q 'Content hash: `sha256:[0-9a-f]\{64\}`' $si/README.md || fail "the project's folder carries no content hash:\n$(cat $si/README.md)"
+[ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
+[ -e tmp/showcase-hcl/interfaces ] && fail "the root module holds interfaces/"
+grep -q 'infra_folder *= google_folder.infra.name' tmp/showcase-hcl/outputs.tf || fail "the root output does not name the folder:\n$(cat tmp/showcase-hcl/outputs.tf)"
+grep -q 'output "archive__archive_project_id"' tmp/showcase-hcl/outputs.tf || fail "an interface's root output is not <interface>__<export>:\n$(cat tmp/showcase-hcl/outputs.tf)"
+grep -q 'value *= "corp-infra-001"' $si/core/hcl/outputs.tf || fail "a written attribute is not a literal output:\n$(cat $si/core/hcl/outputs.tf)"
+grep -q 'value *= data.google_active_folder.infra.name' $si/archive/hcl/outputs.tf || fail "a core export is missing from the project's module:\n$(cat $si/archive/hcl/outputs.tf)"
+grep -q 'output "archive_project_number"' $si/core/hcl/outputs.tf && fail "the core module carries a project's export"
+grep -q 'value *= data.google_project.archive.number' $si/archive/hcl/outputs.tf || fail "the project's number is not looked up:\n$(cat $si/archive/hcl/outputs.tf)"
+grep -q 'output "audit_bucket_name"' $si/archive/hcl/outputs.tf || fail "the project's module lacks the exports of the interface it uses:\n$(cat $si/archive/hcl/outputs.tf)"
+grep -q '^| `audit_bucket_name` | audit |' $si/archive/README.md || fail "the README does not name the interface a value comes from:\n$(cat $si/archive/README.md)"
+[ "$(grep -c 'output "audit__audit_bucket_name"' tmp/showcase-hcl/outputs.tf)" = 1 ] || fail "a used interface's export is not one root output:\n$(cat tmp/showcase-hcl/outputs.tf)"
+grep -q '\.\./\|var\.\|terraform_remote_state\|backend' $si/*/hcl/*.tf && fail "an interface module reaches outside itself:\n$(cat $si/*/hcl/*.tf)"
+for m in core audit archive; do
+  [ "$(sed -n '/^## Exports/,/^## Capabilities/p' $si/$m/README.md | grep -c '^| `')" = "$(grep -c '^output ' $si/$m/hcl/outputs.tf)" ] || fail "the $m README does not list every output:\n$(cat $si/$m/README.md)"
+  [ "$(grep -c '^output ' $si/$m/satz/interface.satz)" = "$(grep -c '^output ' $si/$m/hcl/outputs.tf)" ] || fail "the $m Satz form does not carry every output:\n$(cat $si/$m/satz/interface.satz)"
+done
+grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/hcl/outputs.tf || fail "all google_folder is not a map of the folders keyed by label:\n$(cat $si/core/hcl/outputs.tf)"
+grep -q 'value *= { "audit_logs" = "corp-audit-logs" }' $si/core/hcl/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket:\n$(cat $si/core/hcl/outputs.tf)"
 grep -q 'keys `infra`' $si/core/README.md || fail "the README does not list the map's keys:\n$(cat $si/core/README.md)"
+grep -q 'pack_bucket' $si/*/satz/interface.satz && fail "a private resource reached an interface file"
 grep -q 'private' tmp/showcase-hcl/main.tf && fail "private reached main.tf"
 grep -q 'resource "google_storage_bucket" "pack_bucket"' tmp/showcase-hcl/main.tf || fail "a private bucket must still be emitted"
 cp yaml/showcase.satz tmp/private-export.satz
 printf '%s\n' 'export "pack_bucket" = "${{google_storage_bucket.pack_bucket.name}}"' >> tmp/private-export.satz
 "$satz" --config . transpile tmp/private-export.satz --check > tmp/private-export.txt 2>&1 && fail "an export of a private resource compiled"
 grep -q 'is marked `private = true`' tmp/private-export.txt || fail "the refusal does not name the private mark:\n$(cat tmp/private-export.txt)"
-grep -q '^| `archive_project_id` | yes | `google_project_iam_member` |' $si/archive-team/README.md || fail "the README's capability table does not show the attach point:\n$(cat $si/archive-team/README.md)"
+grep -q '^| `archive_project_id` | yes | `google_project_iam_member` |' $si/archive/README.md || fail "the README's capability table does not show the attach point:\n$(cat $si/archive/README.md)"
 if command -v tofu >/dev/null 2>&1; then
-  # moved away from the estate, a team's module still initialises and validates on its own
-  rm -rf tmp/relocated && mkdir -p tmp/relocated/elsewhere && cp -R "$si/archive-team" tmp/relocated/elsewhere/satz-interface
+  # moved away from the estate, a project's module still initialises and validates on its own
+  rm -rf tmp/relocated && mkdir -p tmp/relocated/elsewhere && cp -R "$si/archive/hcl" tmp/relocated/elsewhere/satz-interface
   (cd tmp/relocated/elsewhere/satz-interface && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) \
-    || fail "the archive-team module does not validate away from the estate"
+    || fail "the archive module does not validate away from the estate"
 fi
+
+step "project: a Satz estate takes interfaces/archive/ whole and reads the showcase's values as \${{interface.<export>}}"
+mkdir -p project/vendor && cp -R "$si" project/vendor/archive
+"$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project.txt)"
+pm=project/hcl/main.tf
+grep -q 'project = "corp-archive-001"' "$pm" || fail "a static value is not its literal:\n$(cat $pm)"
+grep -q 'folder_id = "${data.google_active_folder.infra.name}"' "$pm" || fail "a looked-up value is not its data address:\n$(cat $pm)"
+[ "$(grep -c '^data "google_active_folder" "infra"' "$pm")" = 1 ] || fail "the lookup is not one data block:\n$(cat $pm)"
+[ -e project/interfaces ] && fail "a project that exports nothing wrote interfaces/"
+"$satz" --config project/config.toml packs archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz packs failed on the project:\n$(cat tmp/project-packs.txt)"
+grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'vendor/archive/archive/satz/interface.satz' || fail "satz packs does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
+sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && fail "satz packs reads the interface file as a pack:\n$(cat tmp/project-packs.txt)"
+if command -v tofu >/dev/null 2>&1; then
+  (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's root module does not validate"
+fi
+# an attachment off an attach point is refused at the project's own compile
+cp project/satz/archive.satz project/satz/tmp-forbidden.satz
+cat >> project/satz/tmp-forbidden.satz <<'SATZ'
+
+google_folder_iam_member {
+  infra_readers {
+    folder = "${{interface.infra_folder}}"
+    role   = "roles/viewer"
+    member = "group:gcp-auditors@example.com"
+  }
+}
+SATZ
+"$satz" --config project/config.toml transpile tmp-forbidden.satz --check > tmp/project-forbidden.txt 2>&1 && fail "the project compiled an attachment off an attach point"
+rm -f project/satz/tmp-forbidden.satz
+grep -q 'interface-use' tmp/project-forbidden.txt && grep -q 'no attach point for `google_folder_iam_member`' tmp/project-forbidden.txt \
+  || fail "the refusal does not say why:\n$(cat tmp/project-forbidden.txt)"
+
 # an estate that exports nothing keeps neither file from an earlier run
 cp yaml/showcase.satz tmp/no-exports.satz
 python3 - tmp/no-exports.satz <<'PY'
 import re, sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
-s = re.sub(r'(?ms)^interface "[^"]*" \{.*?^\}\n', "", s)
+s = re.sub(r'(?ms)^interface "[^"]*"( common)? \{.*?^\}\n', "", s)
 s = re.sub(r'(?m)^export .*\n', "", s)
 open(p, "w", encoding="utf-8").write(s)
 PY
 "$satz" --config . transpile tmp/no-exports.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/no-exports.err \
   || fail "the showcase without exports does not compile:\n$(cat tmp/no-exports.err)"
 [ -e tmp/showcase-hcl/outputs.tf ] && fail "outputs.tf survived a transpile of an estate that exports nothing"
-[ -e "$si" ] && fail "hcl/interfaces/ survived a transpile of an estate that exports nothing"
+[ -e interfaces ] && fail "interfaces/ survived a transpile of an estate that exports nothing"
 
-step "check-consumer: a team's attachment at an attach point passes, one elsewhere is refused at its line"
+step "check-consumer: a project's attachment at an attach point passes, one elsewhere is refused at its line"
 "$satz" --config . check-consumer consumer yaml/showcase.satz > tmp/consumer.txt 2>&1 && fail "check-consumer passed an attachment onto an export that takes none:\n$(cat tmp/consumer.txt)"
-grep -q 'consumer/main.tf:16' tmp/consumer.txt || fail "the refusal does not name the team's file and line:\n$(cat tmp/consumer.txt)"
+grep -q 'consumer/main.tf:16' tmp/consumer.txt || fail "the refusal does not name the project's file and line:\n$(cat tmp/consumer.txt)"
 grep -q 'no attach point for `google_folder_iam_member`' tmp/consumer.txt || fail "the refusal does not say why:\n$(cat tmp/consumer.txt)"
 grep -q 'archive_readers' tmp/consumer.txt && fail "the attachment at an attach point was refused:\n$(cat tmp/consumer.txt)"
 mkdir -p tmp/consumer-ok && sed '/^# refused/,$d' consumer/main.tf > tmp/consumer-ok/main.tf
-"$satz" --config . check-consumer tmp/consumer-ok yaml/showcase.satz > tmp/consumer-ok.txt 2>&1 || fail "check-consumer refused a team that attaches only at attach points:\n$(cat tmp/consumer-ok.txt)"
+"$satz" --config . check-consumer tmp/consumer-ok yaml/showcase.satz > tmp/consumer-ok.txt 2>&1 || fail "check-consumer refused a project that attaches only at attach points:\n$(cat tmp/consumer-ok.txt)"
 
 step "interface notice: bucket, topic, grant, notification, and the object that holds the interface"
 cp yaml/smoke.satz tmp/notice.satz
@@ -240,8 +283,8 @@ SATZ
 grep -q 'resource "google_storage_notification" "interface_notice"' tmp/notice-hcl/main.tf || fail "no storage notification"
 grep -q 'topic = "${google_pubsub_topic_iam_member.interface_notice_publisher.topic}"' tmp/notice-hcl/main.tf || fail "the notification does not wait for the grant:\n$(grep -A6 'google_storage_notification' tmp/notice-hcl/main.tf)"
 grep -q 'content = "${jsonencode(local.satz_interface)}"' tmp/notice-hcl/main.tf || fail "the object does not carry the interface"
-grep -q 'value *= "projects/corp-infra-001/topics/corp-satz-interface"' tmp/notice-hcl/interfaces/core/outputs.tf || fail "the topic is not a static export:\n$(cat tmp/notice-hcl/interfaces/core/outputs.tf)"
-grep -q 'google_pubsub_subscription' tmp/notice-hcl/interfaces/core/README.md || fail "the README does not show the subscription to write"
+grep -q 'value *= "projects/corp-infra-001/topics/corp-satz-interface"' interfaces/common/core/hcl/outputs.tf || fail "the topic is not a static export:\n$(cat interfaces/common/core/hcl/outputs.tf)"
+grep -q 'google_pubsub_subscription' interfaces/common/core/README.md || fail "the README does not show the subscription to write"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/notice-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the interface notice does not validate"
 fi
@@ -2309,5 +2352,5 @@ else
   (cd "$root" && cargo test --workspace --locked --quiet 2>&1 | tail -3)
 fi
 
-rm -rf hcl tmp yaml/imported-*.satz yaml/identity-*.satz evidence
+rm -rf hcl interfaces project/vendor project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 printf '\nsmoke: every command ran.\n'

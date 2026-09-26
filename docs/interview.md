@@ -101,7 +101,7 @@ order is a path:
    an empty answer means (`empty`), so Enter and `--accept-defaults` take it. Answering
    it also writes the section that publishes `workload_folder`, as `init` does; an
    answer whose form differs from the section the estate already carries is refused,
-   because the teams' folders sit under it. The pack emits
+   because the projects' folders sit under it. The pack emits
    nothing. An estate written by `init` does not use it and does not need to: given
    its flags, `init` has answered everything.
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The

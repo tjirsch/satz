@@ -20,13 +20,13 @@
 // Which packs make up the estate — the security-group model included — is the
 // next pack, estate-map.satz: this one is the day-0 params and nothing else.
 //
-// This pack declares no resource. It publishes the day-0 answers every team beside
-// the estate needs as the estate's core exports — outputs of every module under
-// hcl/interfaces/, the modules the teams' own HCL reads them from — so an estate has
+// This pack declares no resource. It publishes the day-0 answers every project beside
+// the estate needs as the estate's core exports — values of every interface under
+// interfaces/, which a project's own HCL or Satz reads them from — so an estate has
 // them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything compiles to exactly what `satz init` would have written.
 //
-// `workload_folder_name` is the folder where the customer's and the teams' folders live,
+// `workload_folder_name` is the folder where the customer's and the projects' folders live,
 // named like `infra_folder_name`. It may be empty — the default — which is the
 // organisation itself, and nothing is created for it; its question says so (`empty`), so
 // "" is an answer the interview offers and the gate counts. Its export, `workload_folder`,
@@ -35,7 +35,7 @@
 // from `--workload-folder-name`, an interview when the question is answered. The folder's
 // parent is where its block stands in the estate, like any folder's.
 
-pack estate_core version "2.3"
+pack estate_core version "2.4"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -58,7 +58,7 @@ params {
   default_region      = "europe-west3"
   default_zone        = "{default_region}-a"
 
-  // ---- where the customer's and the teams' folders live: "" is the organisation
+  // ---- where the customer's and the projects' folders live: "" is the organisation
   workload_folder_name = ""
 
   // ---- what the customer answers to, which no pack can know -----------------
@@ -121,8 +121,8 @@ question infra_folder_name {
 }
 
 question workload_folder_name {
-  prompt   = "Display name of the folder that holds the customer's and the teams' folders"
-  why      = "Every team's folder takes it as its parent, through the core export `workload_folder`. Empty is the organisation itself, and nothing is created. A name declares the folder directly under the organisation; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the teams created under it."
+  prompt   = "Display name of the folder that holds the customer's and the projects' folders"
+  why      = "Every project's folder takes it as its parent, through the core export `workload_folder`. Empty is the organisation itself, and nothing is created. A name declares the folder directly under the organisation; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the projects created under it."
   reversal = state_surgery
   blast    = high
   empty    = "the organisation itself; no folder is created"
@@ -193,7 +193,7 @@ question compliance_frameworks {
   recommend = ["cis-gcp-5.0"]
 }
 
-// ---- the core exports: what every team beside the estate reads ----------------
+// ---- the core exports: what every project beside the estate reads -------------
 
 export "organization_id"     = customer_organization_id description "The organisation id"
 export "customer_domain"     = customer_domain description "The customer's primary domain"

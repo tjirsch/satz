@@ -4,3 +4,7 @@ tmp/
 yaml/imported-*.satz
 yaml/identity-*.satz
 evidence/
+interfaces/
+project/vendor/
+project/hcl/
+project/interfaces/

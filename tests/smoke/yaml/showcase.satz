@@ -228,12 +228,13 @@ google_project {
   }
 }
 
-// --- `export`: what the estate publishes to the HCL customer teams write beside
-//     it. Each one is an output of the root module and of the generated modules
-//     under hcl/interfaces/. A param, a literal, or an attribute satz writes is
-//     known now and is a literal output; an attribute only the cloud knows is a
-//     lookup, a `data` source the consumer's plan reads. An export outside every
-//     `interface` block is a core export, in every module.
+// --- `export`: what the estate publishes to the projects beside it — estates with
+//     their own repository, config, state and pipeline, written in HCL or in Satz.
+//     Each one is an output of the root module and a value of the generated
+//     interfaces under interfaces/. A param, a literal, or an attribute satz writes
+//     is known now and is a literal; an attribute only the cloud knows is a lookup,
+//     a `data` source the project's plan reads. An export outside every `interface`
+//     block is a core export, in every interface.
 export "customer_domain"      = customer_domain description "The customer's primary domain"
 export "infra_project_id"     = "${{google_project.infra.project_id}}" description "The infrastructure project"
 export "infra_folder"         = "${{google_folder.infra.name}}" description "The infrastructure folder, folders/<number>"
@@ -247,20 +248,21 @@ export "regions"              = [default_region, "europe-west4"]
 export "folders" = all google_folder description "Every folder, by label"
 export "buckets" = all google_storage_bucket
 
-// --- `interface`: what one team reads, in a module of its own —
-//     hcl/interfaces/archive-team/ — beside the core exports above, which every
-//     interface module carries. The same interface in another file adds to it.
-//     `use interface` brings another interface's exports into the team's module
-//     too: `audit` is published once, and every team that uses it receives it.
-//     `attach [ … ]` makes an export an attach point: the team may grant on its
-//     project with `google_project_iam_member` in its own state.
-interface "audit" {
+// --- `interface`: what one project reads — interfaces/archive/, the folder the
+//     project takes whole — beside the core exports above, which every interface
+//     carries. The same interface in another file adds to it. `common` puts an
+//     interface into the library every project's folder carries (a pack's
+//     interface is common without the word). `use interface` brings another
+//     interface's exports into the project's own. `attach [ … ]` makes an export an
+//     attach point: the project may grant on its Google project with
+//     `google_project_iam_member` in its own state.
+interface "audit" common {
   export "audit_bucket_name" = "${{google_storage_bucket.audit_logs.name}}" description "The audit log bucket"
 }
 
-interface "archive-team" {
+interface "archive" {
   use interface "audit"
-  export "archive_project_id"     = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The team's project"
+  export "archive_project_id"     = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
 
