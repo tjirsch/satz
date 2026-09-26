@@ -24,6 +24,10 @@ params {
   shared_network_name         = "shared"
   // What the projects ask for: one subnet per entry, `{ name cidr region }`.
   shared_vpc_subnets          = []
+  // Every subnet logs its flows: the CIS baseline's `compute.requireVpcFlowLogs` refuses a
+  // subnet without them (CIS 3.8). The share of flows sampled, 0 to 1; a subnet with no
+  // traffic logs nothing.
+  shared_subnet_flow_sampling = 0.5
   // One rule of the network firewall policy per entry,
   // `{ name priority direction action description match }` — `match` is the policy
   // rule's `match` block as an object, `{ src_ip_ranges = [ … ] layer4_configs = [ { ip_protocol ports } ] }`.
@@ -97,6 +101,11 @@ google_compute_subnetwork {
     network                  = "${{google_compute_network.shared.id}}"
     project                  = "${{google_project.network_host.project_id}}"
     private_ip_google_access = true
+    log_config {
+      aggregation_interval = "INTERVAL_5_SEC"
+      flow_sampling        = shared_subnet_flow_sampling
+      metadata             = "INCLUDE_ALL_METADATA"
+    }
   }
 }
 

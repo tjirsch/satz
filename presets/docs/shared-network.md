@@ -29,6 +29,7 @@ params {
   network_host_project_folder = ""
   shared_network_name = "shared"
   shared_vpc_subnets = []
+  shared_subnet_flow_sampling = 0.5
   shared_firewall_rules = []
 }
 
@@ -50,6 +51,7 @@ use "presets/shared-network.satz" when use_shared_network
 | `network_host_project_folder` | `""` |
 | `shared_network_name` | `"shared"` |
 | `shared_vpc_subnets` | `[]` |
+| `shared_subnet_flow_sampling` | `0.5` |
 | `shared_firewall_rules` | `[]` |
 
 ## Questions
@@ -106,7 +108,7 @@ _None — this pack proves no control by itself._
 
 | version | date | change |
 |---|---|---|
-| 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each; the common interface `network` publishes the host project, the network and every subnet |
+| 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |
 
 The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 

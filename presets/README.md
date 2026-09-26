@@ -935,6 +935,7 @@ params {
 | `network_host_project_id` | `"{customer_shortname}-net-host-001"` | the host project's id, asked |
 | `network_host_project_folder` | `""` | the folder the host project is created in, asked; empty is the organisation |
 | `shared_network_name` | `"shared"` | the network's name; the policy is `<name>-policy` |
+| `shared_subnet_flow_sampling` | `0.5` | the share of flows every subnet logs — the CIS baseline's `compute.requireVpcFlowLogs` refuses a subnet without flow logs (CIS 3.8); an idle subnet logs nothing |
 | `shared_vpc_subnets` | `[]` | the subnets, filled by requests |
 | `shared_firewall_rules` | `[]` | the policy's rules, filled by requests |
 
@@ -2579,7 +2580,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
-| `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each; the common interface `network` publishes the host project, the network and every subnet |
+| `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |
 | `estate_map` | 2.6 | 2026-09-26 | offers `shared-network` on `use_shared_network`, off by default, with its question; nothing already on changes |
 | `interface_notice` | 1.2 | 2026-09-26 | the header and the question's text say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; the resources are unchanged |
 | `estate_map` | 2.5 | 2026-09-26 | the `interface_notice` question and the notice's `offers` phase say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; nothing it offers changes |
