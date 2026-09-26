@@ -282,6 +282,7 @@ fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Res
 /// in full, so the short spelling gets rewritten like any other.
 const NEVER_A_TYPE_KEY: &[&str] = &[
     "params",
+    "private",
     "terraform",
     "providers",
     "backend",

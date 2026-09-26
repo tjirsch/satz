@@ -221,6 +221,8 @@ pub struct FrontEnd {
     pub tfvars: Env,
     /// Resolved estate-level suppressions (subtractive override channel).
     pub suppressions: Vec<ResolvedSuppression>,
+    /// The estate's `private <type>.<label>` statements: resources no export publishes.
+    pub privates: Vec<ResolvedPrivate>,
     /// Raw `hcl { … }` blocks, in source order, from the estate and every file it
     /// uses. They bypass the fold entirely — that is what "opaque to the proof
     /// layer" means — and are appended verbatim at emission.
@@ -283,6 +285,8 @@ pub struct ResolvedExport {
     pub description: Option<String>,
     /// the attachment types a project may create against it (`attach [ … ]`)
     pub attach: Vec<String>,
+    /// `all <type> under <address>`: the folder or project the map's resources stand under
+    pub under: Option<String>,
     pub file: String,
     pub line: usize,
 }
@@ -296,6 +300,14 @@ pub struct ResolvedInterface {
     pub common: bool,
     /// the interfaces it uses, directly or through another, first reached first
     pub uses: Vec<String>,
+    pub file: String,
+    pub line: usize,
+}
+
+/// A `private <type>.<label>` statement of the estate, where it is written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedPrivate {
+    pub address: String,
     pub file: String,
     pub line: usize,
 }
@@ -1084,11 +1096,12 @@ pub fn compile_estate(
             },
             description: x.description.clone(),
             attach: x.attach.clone(),
+            under: x.under.clone(),
             file: f,
             line: x.line,
         };
         match exports.iter().find(|e| e.name == r.name && e.interface == r.interface) {
-            Some(first) if first.value == r.value && first.all == r.all && first.description == r.description && first.attach == r.attach => {}
+            Some(first) if first.value == r.value && first.all == r.all && first.under == r.under && first.description == r.description && first.attach == r.attach => {}
             Some(first) => {
                 let what = match &r.interface {
                     Some(i) => format!("interface \"{}\": export \"{}\"", i, r.name),
@@ -1138,7 +1151,8 @@ pub fn compile_estate(
     if let Some(e) = deferred {
         return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
     }
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
+    let privates = file.privates.iter().map(|x| ResolvedPrivate { address: x.address.clone(), file: file_name.to_string(), line: x.line }).collect();
+    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, privates, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
 /// The interface files the estate uses, each once. The same file used twice is one; one

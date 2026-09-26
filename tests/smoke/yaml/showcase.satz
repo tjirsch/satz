@@ -245,10 +245,15 @@ export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
 
 // --- `all <type>`: every resource of one type the estate emits, as one map keyed by
-//     the resource's label — a folder's `folders/<number>`, a bucket's name. A
-//     resource marked `private = true` (the pack's bucket) is left out.
-export "folders" = all google_folder description "Every folder, by label"
-export "buckets" = all google_storage_bucket
+//     the resource's label — a folder's `folders/<number>`, a bucket's name. `under`
+//     keeps the ones placed under one folder or project. A resource marked private —
+//     `private = true` in its body, or the statement below for a pack's — is left out.
+export "folders"        = all google_folder description "Every folder, by label"
+export "buckets"        = all google_storage_bucket
+export "infra_projects" = all google_project under google_folder.infra description "The Google projects in the infrastructure folder"
+
+// --- `private`: the pack's bucket stays out of every export, without forking the pack.
+private google_storage_bucket.pack_bucket
 
 // --- `interface`: what one project reads — interfaces/archive/, the folder the
 //     project takes whole — beside the core exports above, which every interface

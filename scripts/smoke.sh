@@ -206,6 +206,11 @@ grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/h
 grep -q 'value *= { "audit_logs" = "corp-audit-logs" }' $si/core/hcl/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket:\n$(cat $si/core/hcl/outputs.tf)"
 grep -q 'keys `infra`' $si/core/README.md || fail "the README does not list the map's keys:\n$(cat $si/core/README.md)"
 grep -q 'pack_bucket' $si/*/satz/interface.satz && fail "a private resource reached an interface file"
+grep -q 'value *= { "archive" = "corp-archive-001", "infra" = "corp-infra-001" }' $si/core/hcl/outputs.tf || fail "all google_project under google_folder.infra is not the two projects placed in it:\n$(grep -A1 infra_projects $si/core/hcl/outputs.tf)"
+cp yaml/showcase.satz tmp/private-stale.satz
+printf '%s\n' 'private google_storage_bucket.no_such_bucket' >> tmp/private-stale.satz
+"$satz" --config . transpile tmp/private-stale.satz --check > tmp/private-stale.txt 2>&1 && fail "a private statement naming nothing compiled"
+grep -q 'private google_storage_bucket.no_such_bucket: the estate emits no such resource' tmp/private-stale.txt || fail "the stale private statement is not named:\n$(cat tmp/private-stale.txt)"
 grep -q 'private' tmp/showcase-hcl/main.tf && fail "private reached main.tf"
 grep -q 'resource "google_storage_bucket" "pack_bucket"' tmp/showcase-hcl/main.tf || fail "a private bucket must still be emitted"
 cp yaml/showcase.satz tmp/private-export.satz

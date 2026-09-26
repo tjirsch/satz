@@ -307,9 +307,13 @@ fn export_value(rest: &[Piece]) -> &[Piece] {
     }
 }
 
-/// `all <type>`, an export's value that is every resource of a type.
+/// `all <type> [under <address>]`, an export's value that is every resource of a type.
 fn is_all(p: &[Piece]) -> bool {
-    matches!(p, [Piece { tok: Tok::Ident(a), .. }, Piece { tok: Tok::Ident(_), .. }] if a == "all")
+    match p {
+        [Piece { tok: Tok::Ident(a), .. }, Piece { tok: Tok::Ident(_), .. }] => a == "all",
+        [Piece { tok: Tok::Ident(a), .. }, Piece { tok: Tok::Ident(_), .. }, Piece { tok: Tok::Ident(u), .. }, Piece { tok: Tok::Ident(_), .. }] => a == "all" && u == "under",
+        _ => false,
+    }
 }
 
 /// One value, whole on this line: a scalar, or a bracket group that closes here.

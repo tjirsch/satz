@@ -3051,6 +3051,22 @@ pub(crate) fn compile_tail(
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
+    // `private <type>.<label>`: the resource joins the ones the interface publishes nothing of
+    for x in &fe.privates {
+        if out.manifest.resources.contains_key(&x.address) {
+            out.manifest.private.insert(x.address.clone());
+        } else {
+            f.push(
+                Finding::new(
+                    Severity::Error,
+                    Kind::Export,
+                    format!("private {}: the estate emits no such resource — a stale or mistyped address keeps nothing out", x.address),
+                )
+                .about(x.address.clone())
+                .located(x.file.clone(), x.line as u32),
+            );
+        }
+    }
     if !fe.interface_files.is_empty() {
         out.main_tf.push_str(&crate::emitter::interface_lookups_tf(&lookups, &fe.interface_files));
         f.extend(crate::consumer::check_project(&out.manifest, &fe.interface_files));

@@ -100,6 +100,37 @@ impl Manifest {
         })
     }
 
+    /// The folder or project a resource is placed in, by address: the reference its
+    /// `folder_id`, `parent` or `project` writes, or the project whose `project_id` its
+    /// literal `project` is. `None` at the organisation, and where the parent is a literal
+    /// satz does not declare.
+    pub fn placed_in(&self, r: &EmittedResource) -> Option<String> {
+        for key in ["folder_id", "parent", "project"] {
+            if let Some(target) = r.refs.get(key) {
+                let mut parts = target.split('.');
+                if let (Some(t), Some(l)) = (parts.next(), parts.next()) {
+                    return Some(format!("{}.{}", t, l));
+                }
+            }
+        }
+        let project = r.attrs.get("project").filter(|p| !p.is_empty())?;
+        self.of_type("google_project").find(|p| p.attrs.get("project_id") == Some(project)).map(|p| p.address())
+    }
+
+    /// Whether `r` stands under `ancestor`, a folder or a project, at any depth.
+    pub fn placed_under(&self, r: &EmittedResource, ancestor: &str) -> bool {
+        let mut current = r;
+        for _ in 0..64 {
+            let Some(parent) = self.placed_in(current) else { return false };
+            if parent == ancestor {
+                return true;
+            }
+            let Some(next) = self.resources.get(&parent) else { return false };
+            current = next;
+        }
+        false
+    }
+
     /// Every address this resource reaches through its references, transitively,
     /// including its own. An edge INTO this set is a cycle: the target already
     /// waits for the source.

@@ -219,7 +219,7 @@ pub(crate) fn build(
     let mut refusals = Vec::new();
     for x in exports {
         let resolved = match &x.all {
-            Some(t) => r.all(t),
+            Some(t) => r.all(t, x.under.as_deref()),
             None => r.value(&x.value).and_then(|v| {
                 // a resource marked `private` is published by no export
                 match addresses_in(&x.value).into_iter().find(|a| manifest.private.contains(a)) {
@@ -240,7 +240,7 @@ pub(crate) fn build(
                     How::Lookup(all.into_iter().collect())
                 };
                 let targets = match &x.all {
-                    Some(t) => r.members(t).iter().map(|m| m.address()).collect(),
+                    Some(t) => r.members(t, x.under.as_deref()).iter().map(|m| m.address()).collect(),
                     None => addresses_in(&x.value),
                 };
                 for msg in attach_refusals(&x.attach, &targets, manifest, &attach_table) {
@@ -291,16 +291,36 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
-    /// Every resource of `tf_type` the estate emits and does not mark `private`, by label.
-    fn members<'s>(&'s self, tf_type: &'s str) -> Vec<&'s EmittedResource> {
-        let mut out: Vec<&EmittedResource> = self.manifest.of_type(tf_type).filter(|r| !self.manifest.private.contains(&r.address())).collect();
+    /// Every resource of `tf_type` the estate emits and does not mark `private`, by label —
+    /// with `under`, the ones placed under that folder or project.
+    fn members<'s>(&'s self, tf_type: &'s str, under: Option<&str>) -> Vec<&'s EmittedResource> {
+        let mut out: Vec<&EmittedResource> = self
+            .manifest
+            .of_type(tf_type)
+            .filter(|r| !self.manifest.private.contains(&r.address()))
+            .filter(|r| under.is_none_or(|u| self.manifest.placed_under(r, u)))
+            .collect();
         out.sort_by(|a, b| a.label.cmp(&b.label));
         out
     }
 
     /// `all <type>`: a map keyed by resource label, each value the attribute the lookup
     /// table's `all` names — static where satz knows it, a lookup where the cloud does.
-    fn all(&mut self, tf_type: &str) -> Result<Resolved, String> {
+    fn all(&mut self, tf_type: &str, under: Option<&str>) -> Result<Resolved, String> {
+        if let Some(u) = under {
+            match self.manifest.resources.get(u) {
+                Some(r) if matches!(r.tf_type.as_str(), "google_folder" | "google_project") => {}
+                _ => {
+                    let places: Vec<String> = self.manifest.of_type("google_folder").chain(self.manifest.of_type("google_project")).map(|r| format!("`{}`", r.address())).collect();
+                    return Err(format!(
+                        "`all {} under {}`: the estate declares no such folder or project — it declares: {}",
+                        tf_type,
+                        u,
+                        if places.is_empty() { "none".to_string() } else { places.join(", ") }
+                    ));
+                }
+            }
+        }
         let attr = match self.table.get(tf_type) {
             Some(row) => row.all.clone(),
             None => {
@@ -312,7 +332,7 @@ impl Resolver<'_> {
                 ))
             }
         };
-        let labels: Vec<String> = self.members(tf_type).iter().map(|r| r.label.clone()).collect();
+        let labels: Vec<String> = self.members(tf_type, under).iter().map(|r| r.label.clone()).collect();
         let (mut module, mut root, mut known, mut used) = (Vec::new(), Vec::new(), true, Vec::new());
         let mut value = serde_yaml::Mapping::new();
         for label in labels {
@@ -1325,7 +1345,7 @@ resource "google_cloud_identity_group" "g" {
 "#;
 
     fn export(name: &str, value: &str) -> ResolvedExport {
-        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, attach: Vec::new(), all: None, file: "e.satz".into(), line: 3 }
+        ResolvedExport { interface: None, name: name.into(), value: serde_yaml::Value::String(value.into()), description: None, attach: Vec::new(), all: None, under: None, file: "e.satz".into(), line: 3 }
     }
 
     fn build_one(value: &str) -> Result<Interface, Vec<Refusal>> {
