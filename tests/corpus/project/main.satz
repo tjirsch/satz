@@ -60,3 +60,11 @@ google_project_iam_member {
     member  = "serviceAccount:payments-app@corp-payments-001.iam.gserviceaccount.com"
   }
 }
+
+// the map form: its scope is written beside the members and replaced like any value
+google_project_iam_member {
+  project = "${{interface.payments_project}}"
+  "group:payments-readers@example.com" = [
+    "roles/viewer",
+  ]
+}

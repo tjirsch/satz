@@ -75,6 +75,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::Interview { .. }
         | Commands::AddPack { .. }
         | Commands::AddProject { .. }
+        | Commands::Interfaces { .. }
         | Commands::RemovePack { .. }
         | Commands::MergePresets { .. }
         | Commands::GetPresets { .. }

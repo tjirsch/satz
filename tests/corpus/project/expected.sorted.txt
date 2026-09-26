@@ -12,11 +12,13 @@
   display_name = "Payments application"
   labels = {
   location = "europe-west3"
+  member = "group:payments-readers@example.com"
   member = "serviceAccount:payments-app@corp-payments-001.iam.gserviceaccount.com"
   message_storage_policy {
   name = "acme-payments-data"
   name = "payments-events"
   parent = "organizations/123456789012"
+  project = "corp-payments-001"
   project = "corp-payments-001"
   project = "corp-payments-001"
   project = "corp-payments-001"
@@ -28,7 +30,9 @@
   provider = google.google
   provider = google.google
   provider = google.google
+  provider = google.google
   role = "roles/storage.objectAdmin"
+  role = "roles/viewer"
   }
   }
 # reads back google_folder.infra_folder of the estate `corpus_central` (interface.satz); needs resourcemanager.folders.list on the parent
@@ -36,9 +40,11 @@
 data "google_active_folder" "infra_folder" {
 data "google_project" "payments" {
 resource "google_project_iam_member" "app_objects" {
+resource "google_project_iam_member" "iam_group_payments_readers_example_com_ebed1a1b27be0c95" {
 resource "google_pubsub_topic" "events" {
 resource "google_service_account" "app" {
 resource "google_storage_bucket" "data" {
+}
 }
 }
 }

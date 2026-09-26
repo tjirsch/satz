@@ -174,7 +174,8 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
-| `add-project <ESTATE>` | `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
+| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, and every interface with what it uses; the json form is what satz-studio reads |
+| `add-project <ESTATE>` | `--use-interface <name>` and `--export <interface>.<name>` (each repeated: what the project's interface also carries), `--interface-only` (the interface alone, no `--owner-group`), `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
@@ -314,6 +315,14 @@ request that carries it is the request's review. `satz transpile` then writes
 --interface interfaces/payments/payments/satz/interface.satz` in its directory. Refused:
 a name that is no interface name, an estate that declares `interface "<name>"` already,
 and one that publishes no `workload_folder`, which says where a project goes.
+
+The interface takes more than the project's own four exports when the command says so:
+`--use-interface <name>` adds a `use interface` line, and `--export <interface>.<name>`
+writes an export of another interface into this one again, as the line that declares
+it stands, so a param it reads stays a param (a core export is refused: every
+interface carries it). `--interface-only` writes the interface alone, for a workload
+that brings its own Google project — it needs at least one of the two. `satz interfaces
+<estate> --format text --out -` lists what there is to pick.
 
 ### Day 0 Bootstrap (`bootstrap`)
 `bootstrap` runs the day-0 onboarding of a new customer organization.
