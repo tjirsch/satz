@@ -1394,8 +1394,10 @@ Thumbs.db
                     .interface_file
                     .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/", interface_path.display()))?;
                 // the path the estate `use`s: relative to the config directory when it is under it
+                // `./config.toml` has the empty path for its directory, which is the current one
                 let absolute = fsx::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
-                let use_path = match fsx::canonicalize(&config_dir).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
+                let base = if config_dir.as_os_str().is_empty() { Path::new(".") } else { config_dir.as_path() };
+                let use_path = match fsx::canonicalize(base).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
                     Some(rel) => fsx::slash(&rel),
                     None => fsx::slash(&absolute),
                 };
