@@ -120,8 +120,8 @@ _None — this pack proves no control by itself._
 
 | version | date | change |
 |---|---|---|
-| 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
 | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
+| 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
 
 The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
 

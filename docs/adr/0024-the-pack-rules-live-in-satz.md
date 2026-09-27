@@ -1,6 +1,6 @@
 # 0024 — the rules a pack must clear live in satz, as a command
 
-- **Status:** accepted
+- **Status:** accepted; "the privacy shapes are not in it yet" is superseded by ADR-0050, which runs them inside `review-pack`
 - **Date:** 2026-09-15
 - **Shipped in:** v0.58.1
 
@@ -54,7 +54,7 @@ are. `--against <estate>` judges it inside a real estate instead.
 types need — the same two halves `update-prerequisites` writes into an estate (ADR 0023).
 That is the number an author and an adopter both want, and it falls out of the table.
 
-**The privacy shapes are not in it yet.** A pack written against its author's own
+**The privacy shapes are not in it yet** *(superseded: ADR 0050 runs them inside `review-pack`)*. A pack written against its author's own
 organisation carries project ids, domains and e-mail addresses, and those are what must
 become params before it can leave that machine. The check is `scripts/check-names.sh`,
 a shell script CI runs; moving its SHAPES into the binary would put the check where the

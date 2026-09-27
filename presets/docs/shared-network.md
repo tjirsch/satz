@@ -76,9 +76,9 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `google_compute_network` | `shared` |
 | `google_compute_network_firewall_policy` | `shared` |
 | `google_compute_network_firewall_policy_association` | `shared` |
-| `google_compute_network_firewall_policy_rule` | `one per entry of `shared_firewall_rules`, by `name`` |
+| `google_compute_network_firewall_policy_rule` | `one per entry of shared_firewall_rules, by name` |
 | `google_compute_shared_vpc_host_project` | `host` |
-| `google_compute_subnetwork` | `one per entry of `shared_vpc_subnets`, by `name`` |
+| `google_compute_subnetwork` | `one per entry of shared_vpc_subnets, by name` |
 | `google_project` | `network_host` |
 
 ## Exports
@@ -93,7 +93,7 @@ Outputs of the root module and values of the interfaces under `interfaces/` in e
 
 ## Requests
 
-What a team may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.
+What a project may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.
 
 | list | key | fields | description |
 |---|---|---|---|

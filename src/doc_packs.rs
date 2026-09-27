@@ -303,7 +303,7 @@ fn shape(items: &[Entry]) -> Shape {
                             Entry::Attr { key, .. } => format!("{} (grant map)", key_text(key)),
                             Entry::Use { .. } => entry_text(b),
                             // one label per entry of the list, known once the estate compiles
-                            Entry::Each { list, key, .. } => format!("one per entry of `{}`, by `{}`", list, key),
+                            Entry::Each { list, key, .. } => format!("one per entry of {}, by {}", list, key),
                         })
                         .collect();
                     s.typed.entry(k).or_default().extend(labels);
@@ -981,7 +981,7 @@ fn render(
     }
     if !file.requests.is_empty() {
         md.push_str("## Requests\n\n");
-        md.push_str("What a team may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.\n\n");
+        md.push_str("What a project may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.\n\n");
         md.push_str("| list | key | fields | description |\n|---|---|---|---|\n");
         for r in &file.requests {
             md.push_str(&format!(

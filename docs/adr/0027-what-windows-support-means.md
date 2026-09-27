@@ -1,6 +1,6 @@
 # 0027 — what Windows support means: a tested build that works or refuses clearly
 
-- **Status:** accepted; its ARM64 build is superseded by ADR-0029, which releases Windows
+- **Status:** accepted; a `.py` action runs through uv (ADR-0066), other script actions stay refused; its ARM64 build is superseded by ADR-0029, which releases Windows
   on x86_64 only
 - **Date:** 2026-09-17
 - **Shipped in:** the release that follows
@@ -40,6 +40,7 @@ failed `fmt --check` and `get-presets`; `.sh` actions died with an OS error.
 - `--out -` is stdout on every platform; `/dev/…` is refused on Windows.
 - `/` in Satz text and in compared pack paths; the `\\?\` prefix is dropped.
 - An action whose `run` is a script is refused before the spawn, naming the bash line.
+  *(A `.py` action runs through uv, ADR 0066.)*
 
 ## Consequences
 

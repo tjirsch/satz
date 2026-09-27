@@ -1,6 +1,6 @@
 # 0045 — a project says its parent, and an empty parent says nothing
 
-- **Status:** accepted
+- **Status:** accepted; a `use` in a folder's body is refused (ADR-0046) — a pack is used at the top level
 - **Date:** 2026-09-21
 - **Shipped in:** the release that follows
 

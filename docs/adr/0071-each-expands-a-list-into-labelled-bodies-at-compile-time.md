@@ -28,7 +28,7 @@ compile into one labelled body per entry of the list** — the label the entry's
 - **Keyed by a field, not by position.** Reordering the list moves nothing; renaming an
   entry's key moves its resource, as renaming a written label does.
 - **The list is the one the compile sees, contributions merged** (ADR 0051), so an entry
-  a pack or a team contributes expands like the estate's own.
+  a pack or a project contributes expands like the estate's own.
 - **Where it stands:** inside a resource type map — a type's, `google_folder { … }`,
   `google_project { … }`, at the top level or in a node's body. Not in a grant map, whose
   entries are members; not in a resource body; not at the top level of a file.

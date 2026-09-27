@@ -67,8 +67,9 @@ satz v0.71.0 is the last release that converts it:
 The release is written once, in `satz_core::LAST_YAML_CONVERTING_RELEASE`, so the CLI's
 refusal and the compiler's `use "x.yaml"` error cannot drift apart.
 
-`presets/import-config.yaml` and `presets/catalogs/*.yaml` are data files that configure
-satz, not estates written in a language. They are YAML and stay YAML.
+`presets/import-config.yaml`, `presets/catalogs/*.yaml`, `presets/interface-lookups.yaml`,
+`presets/attach-points.yaml`, an estate's `attestations.yaml` and `type-map.yaml` are data
+files that configure satz, not estates written in a language. They are YAML and stay YAML.
 
 ## Options
 

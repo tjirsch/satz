@@ -76,6 +76,9 @@ test of those and the smoke step for the gating.
 
 ## Consequences
 
+- Generated output is outside the rule: before it writes `interfaces/`, `write_interface`
+  removes `hcl/interfaces/`, the directory a release before v0.85.0 wrote — satz's own
+  output, never the estate.
 - An estate holding an old form does not compile after the upgrade, and `merge-presets`
   stops on the same error before it writes anything. The operator, or their agent, makes
   the hand edit `## Breaking changes` describes. Every entry there has to be actionable

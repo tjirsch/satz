@@ -95,7 +95,7 @@ partner directory). Customer A's separate contacts domain and Customer D's
 subdomain exist so that "the org and the contacts live on different domains"
 can be shown without inventing a value.
 
-**Fleet estates in working-state files** (CLAUDE.md, ROADMAP.md, apply
+**Fleet estates in working-state files** (`CLAUDE.local.md`, the private roadmap, apply
 worklists) use opaque codenames and never a domain, id or
 path beyond `~/estates/E0n`. The mapping to real customers lives outside the
 repository.
@@ -166,13 +166,12 @@ id". See [from nothing to applied](workflows.md#from-nothing-to-applied).
 ## A working estate, end to end
 
 `tests/smoke/yaml/smoke.satz` is the fixture every estate-consuming command runs
-against in CI. In about a hundred lines it carries:
+against in CI. In about 150 lines it carries:
 
-- **params** — the seventeen an estate normally binds, including a param defined in
-  terms of another (`cis_central_bucket_project = logsink_project_id`);
+- **params** — the twenty an estate normally binds;
 - **`terraform` and `providers` blocks**, which become `providers.tf` and the
   backend;
-- **three pristine packs**, each in the position its entries fit: the CIS
+- **four pristine packs**, each in the position its entries fit: the CIS
   baseline at the top level, because it declares its own resource type; the contacts
   pack as the *content* of a resource map
   (`google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" }`),

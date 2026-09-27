@@ -1,6 +1,6 @@
 # 0023 — one command for every prerequisite, and the compiler orders the services
 
-- **Status:** accepted
+- **Status:** accepted; supersedes the `iac-roles` command of ADR-0009; its billing rule is refined by ADR-0059 (a per-project provider alias bills to its own project)
 - **Date:** 2026-09-15
 - **Shipped in:** v0.58.0
 - **Extends:** [0009](0009-iac-service-account-named-roles.md) (the IaC service account holds named roles)
@@ -60,7 +60,7 @@ the service block's own reference closure, not a list of types — the infra pro
 services reference it, and the folder above it is reached through the project, so both
 would otherwise wait for a service that waits for them.
 
-**The API is judged on the project the call is BILLED to.** Every provider block
+**The API is judged on the project the call is BILLED to** *(refined by ADR 0059: a per-project provider alias bills to its own project)*. Every provider block
 carries `user_project_override` with `billing_project = infra_project_name`, so Google
 requires the service enabled on the infrastructure project whatever the resource's own
 scope is — a budget hangs off the billing account, an org policy off the organisation,

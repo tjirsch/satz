@@ -35,6 +35,11 @@ Three terms, for a reader who has not used them:
 generates one relocatable module per interface under `hcl/interfaces/`, plus the same
 outputs in the root module's `outputs.tf`.**
 
+*As amended below (*projects, `interfaces/`, and the Satz form*): a consumer is a
+project, the block is `interface "<project>"`, and the modules are written under
+`interfaces/` beside `hcl/` — `common/` with the library and one folder per project.
+This section keeps the terms of the original decision.*
+
 - **Named interfaces, so each team finds its own code.** An export outside every
   `interface` block is a core export; each `interface` block is one team's.
   `hcl/interfaces/<team>/` carries the team's exports and every core export, so a team's
@@ -66,8 +71,8 @@ outputs in the root module's `outputs.tf`.**
   change needs coordination, the change is an entry in the estate (a list param a pack's
   `contributes_<param>` or the operator fills, ADR 0051), applied by satz, and the result
   is exported. Declaring attach points and checking a consumer's HCL against them are the
-  next steps; the language and emission here do not depend on them.
-- **The change notice is a pack.** `interface-notice.satz` publishes `jsonencode` of the
+  amendment *attach points* below; the language and emission here do not depend on them.
+- **The change notice is a pack** *(refined below: a choice, `interface_notice`)*. `interface-notice.satz` publishes `jsonencode` of the
   root module's `local.satz_interface` as an object in a bucket with a storage
   notification to a Pub/Sub topic; Terraform rewrites the object only when a value
   changes, so a message means an exported value changed.
@@ -86,8 +91,11 @@ Decisions the design left open, made here:
   table read from `presets_dir` would make two checkouts of one satz emit different
   modules.
 - **An object value is refused.** A list of scalars is published; a map would need a
-  lookup per field and a type for the output, and no export needs one yet.
-- **`hcl/interfaces/` is satz's.** `transpile` removes and rewrites the directory whole,
+  lookup per field and a type for the output, and no export needed one then; the
+  amendment *every resource of one kind as a map* below publishes a map keyed by label,
+  `all <type>`.
+- **The interface directory is satz's** *(`hcl/interfaces/` here; `interfaces/` beside
+  `hcl/` after the amendment* projects *below)*. `transpile` removes and rewrites the directory whole,
   so the folder of an interface the estate no longer declares goes, and it removes the
   directory and `outputs.tf` when the estate exports nothing. A module holds only the
   lookups its own outputs read.
@@ -156,7 +164,7 @@ estate that uses `estate-core.satz` answers the question; the one-line edit per 
 was accepted. The parent is where the folder block stands in the estate: at the top
 level it is the organisation, and inside another folder's block — a top-level folder
 named after the organisation — it is that folder, which the interface lookup follows.
-Thomas chose this shape.
+This shape was decided.
 
 - **A question may say what an empty answer means** (`empty = "…"`). The question model
   read `""` as "not known yet", so an empty answer could not be recorded; with `empty`,
@@ -200,9 +208,9 @@ export — `<interface>__<export>` of the interface that declares it — because
 module is not what a team reads, and a second output of one value would be two names for
 it in `tofu output` and in the notice object.
 
-- **The verb is `use`, not `include`** (Thomas). One verb brings something in, and
+- **The verb is `use`, not `include`.** One verb brings something in, and
   `include` is the YAML dialect's word (`!include`).
-- **`interface` qualifies the line; `use "<path>"` stays unqualified** (Thomas). The
+- **`interface` qualifies the line; `use "<path>"` stays unqualified.** The
   argument here is a NAME, not a path, so the word says which kind of thing is meant. A
   file declares no kind — what it is follows from its contents — so `use preset` /
   `use module` would be a second source of truth needing a mismatch refusal, packs do not
@@ -218,7 +226,7 @@ it in `tofu output` and in the notice object.
   definition across the estate. It would be reconsidered for a set that crosses packs and
   resource types and cannot be named as an interface.
 
-**An interface change that breaks its consumers is a breaking change** (Thomas). A pack
+**An interface change that breaks its consumers is a breaking change.** A pack
 version that removes or renames an export, or changes its value's shape, gets a
 `## Breaking changes` entry in `presets/README.md` and makes the release a minor one
 (ADR 0010), like any other refusal. Handing a new or changed interface to the teams is the
@@ -231,13 +239,13 @@ objects it may attach to, and nothing stopped the estate from writing the member
 attached to — its next apply would remove the team's attachment.
 
 **`export "<name>" = <value> attach ["<resource type>", …] [description "…"]` declares an
-attach point.** The capability is per export, not per interface (discussed with Thomas):
+attach point.** The capability is per export, not per interface:
 one team's interface mixes reading `org_id`, attaching to the host VPC and requesting a
 firewall rule, so a read/write qualifier on the interface would say nothing true. Each
 team README shows a capability table: every export is read, an attach point also takes the
-types it names. A *request* column — the list param a central pack takes for the teams'
-contributions — joins the table when a pack declares one; none does yet, so the table
-has no such column.
+types it names. The request points a central pack declares (the amendment *request points* below) are
+a section of the README of their own, *What you may request*, not a column of this
+table.
 
 - **Spelling: a keyword clause after the value, like `description`**, in either order and
   each once. The roadmap sketched `{ attach = [ … ] }`, a block after the value; the
@@ -258,7 +266,7 @@ has no such column.
   `crates/satz-hcl` and holds them to the compiled estate, offline: an attachment off an
   attach point, an authoritative grant or an org policy on a node the estate manages, a
   resource the estate declares too (by the lookup table's keys). A value reads the estate
-  when it is `module.<m>.<output>` of a module sourced from `interfaces/<interface>`, or a
+  when it is `module.<m>.<output>` of a module whose `source` ends in `<interface>/hcl`, or a
   literal equal to a value the estate publishes or writes; anything else is the team's own,
   and the check says nothing about it. Without an estate argument it takes the one estate
   in `yaml_dir`, and refuses naming them when there are several.
@@ -276,7 +284,7 @@ A team that creates projects under the estate's folders needed one export per fo
 a folder the estate added later reached no team until someone wrote its export.
 
 **`export "<name>" = all <resource type>` publishes every resource of the type as one map
-output, keyed by satz's resource label** (Thomas: "if that changes it should be for a
+output, keyed by satz's resource label** ("if that changes it should be for a
 reason"). Labels are predictable and every README lists them; a display name can hold
 anything and changes for cosmetic reasons, and a numeric id is unknown at compile time.
 Each value is the attribute the lookup table's new `all` column names for the type —
@@ -375,8 +383,9 @@ consumer.
    no longer recognises a literal that names a resource of a type outside the lookup
    table (a secret, a key ring) as the central estate's, and a private resource is outside
    both checks.
-7. **Request is unchanged**: a contribution is a pack the central estate `use`s (ADR 0051);
-   fetching it from the project's repository is the pipeline's job.
+7. **Request is unchanged**: a contribution is a pack the central estate `use`s (ADR 0051).
+   *Superseded by the amendment* request points *below: the file is vendored into the
+   estate by pull request, never fetched from the project's repository.*
 
 *Chosen here too:*
 
@@ -392,7 +401,7 @@ consumer.
   rule needs every resource the central estate declares that a project can name, and the
   file travels into every project's folder — so with the values in clear, one project's
   file named every other project's Google project id, folder name and service account.
-  Decided with Thomas (2026-09-26): the ids and key values are `sha256:<hex>` of the
+  Decided 2026-09-26: the ids and key values are `sha256:<hex>` of the
   value, and a project's compile hashes its own literals to compare (`same` in
   `src/consumer.rs`); `check-consumer` against a compiled estate compares in clear, and
   one function reads both. A name is not a secret — the point is that the file carries no
@@ -474,15 +483,18 @@ the section that onboards one project** (`src/project.rs`): the Google project u
 workload folder, its IaC service account and state bucket inside it, the grants, and
 `interface "<n>"` exporting `project_id` (an attach point for `google_project_iam_member`),
 `project_number`, `iac_account` and `state_bucket`. **`satz init --project <n> --interface
-<path>` writes the project's estate from those four exports**: cloud mode as the project's
+<path>` writes the project's estate from the interface file** — `project_id`, `iac_account`,
+`state_bucket` and the core export `default_region` (a central estate that does not use
+`estate-core.satz` publishes none and is refused): cloud mode as the project's
 account, the `gcs` backend on its bucket, the `use` of the interface file; nothing derived
 from the credentials.
 
-- **A generated section, not a pack** (Thomas, 2026-09-26). A pack is one instance: its
+- **A generated section, not a pack** (decided 2026-09-26). A pack is one instance: its
   params join one estate-wide namespace, `use … as google_x` reads a file as a map, and
-  nothing expands a list into resources — so a `project-onboarding.satz` taking
-  `projects = [{…}]` cannot be written, and a pack per project is the variable explosion
-  the library refuses. The generator is `init`'s own pattern (`with_workload_folder`), and
+  no `interface` block is written per entry of a list (`each`, ADR 0071, expands resources,
+  not interfaces) — so a `project-onboarding.satz` taking `projects = [{…}]` cannot publish
+  one interface per project, and a pack per project is the variable explosion the library
+  refuses. The generator is `init`'s own pattern (`with_workload_folder`), and
   the text it writes is the operator's afterwards. *Pack instances in the language*
   (`use "x.satz" as payments { params { … } }`) were weighed and deferred: a new scoping
   rule through params, labels, references, the interview, the pack graph and
@@ -491,12 +503,13 @@ from the credentials.
 - **The account's roles on its project are the minimum that lets its estate grant itself
   the rest:** `roles/resourcemanager.projectIamAdmin` and
   `roles/serviceusage.serviceUsageAdmin` on the project, `roles/storage.objectAdmin` on
-  the state bucket — named roles, never a basic one (ADR 0009). The project's estate runs
+  the state bucket — named roles, never `roles/owner` (ADR 0009); the owner group holds
+  `roles/viewer` on the project beside its token-creator and service-account-user grants. The project's estate runs
   `satz update-prerequisites` for what its resource types need, as the central one does.
 - **The identity param names stay one rule** (ADR 0030): for a project estate
   `svc_iac_account` and `infra_project_name` name its own account and Google project, and
   the docs say so, rather than a second pair of names for one mechanism.
-- **The four exports are read as literals at `init` time**, not as `${{interface.x}}`
+- **The exports `init --project` reads are literals at `init` time**, not as `${{interface.x}}`
   references: the backend block and the params are no resource body, where alone a
   reference is replaced, and a static value the central estate wrote is the same either
   way.
@@ -542,7 +555,7 @@ every interface README lists them. With `each` (ADR 0071) an entry becomes a res
 so a request always has this one form — entries contributed to a list — whatever the
 entries become.
 
-- **The request file is vendored, by pull request** (Thomas, 2026-09-26). A `use` of a
+- **The request file is vendored, by pull request** (decided 2026-09-26). A `use` of a
   path into the project's repository would put the project's next edit on the central
   estate's next apply with no review there; copied into the estate
   (`satz/requests/<project>.satz`), the pull request is the approval, the estate's history
@@ -556,7 +569,8 @@ entries become.
 ## Consequences
 
 - An estate that exports anything — every estate that uses `estate-core.satz`, every
-  estate `satz init` writes — gains `hcl/outputs.tf` and `hcl/interfaces/core/`. Its resources
+  estate `satz init` writes — gains `hcl/outputs.tf` and `interfaces/common/core/` (`hcl/interfaces/core/` before the
+  amendment *projects*). Its resources
   do not change; its plan shows the new outputs. That is an emission change: a minor
   release.
 - `presets/interface-lookups.yaml` is derived from the provider's data source schemas and

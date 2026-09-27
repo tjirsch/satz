@@ -9,8 +9,9 @@
 #
 # key        the attachment type; `*_iam_member` stands for every member grant type
 # target     the attachment's argument that names the shared object. For `*_iam_member`
-#            it is every argument but `role`, `member` and `condition`: the node the
-#            grant is on
+#            it is every argument but the grant's own (`role`, `member`, `members`,
+#            `condition`, `policy_data`, `etag`) and Terraform's meta-arguments: the
+#            node the grant is on
 # central    what in the estate conflicts with an attachment of this type on the
 #            exported object, one entry each:
 #              type       the resource type the entry is about; `*` in it stands for

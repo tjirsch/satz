@@ -3,19 +3,22 @@
 //! "Satz": German for both *sentence* and *theorem* — a file is simultaneously a
 //! statement of intent and a provable claim.
 //!
-//! A file parses to a `File` of params, `use`s, claims, questions and typed
-//! resource bodies; the pipeline resolves it into per-file fragments. A param is
-//! a lexically scoped declaration, aliasing is `a = b`, a string interpolates
-//! with `"{param}"`, and a binding holds wherever it is written — the emitter
-//! places params before the uses that read them.
+//! A file parses to a `File` of params, `use`s, statements and typed resource
+//! bodies; the pipeline resolves it into per-file fragments. A param is bound once
+//! per estate, in document order across its files (`docs/language.md` §6.3),
+//! aliasing is `a = b`, and a string interpolates with `"{param}"` — inside an
+//! `each`, with `"{each.<field>}"` too.
 //!
-//! # Grammar (v0, line-oriented, brace-blocked)
+//! # Grammar sketch (line-oriented, brace-blocked; `docs/language.md` §6.2 is the reference)
 //!
 //! ```text
 //! file        := { item }
 //! item        := "estate" IDENT
 //!              | "params" "{" { param } "}"
 //!              | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
+//!              | statement                one of `STATEMENT_KEYWORDS`: claim, question,
+//!                                         action, offers, notice, export, interface,
+//!                                         suppress, private, request, hcl
 //!              | block
 //! param       := IDENT "=" value
 //! block       := IDENT [ IDENT | STRING ] "{" { entry } "}"
@@ -23,6 +26,7 @@
 //!              | IDENT "{" { entry } "}"    nested mapping
 //!              | IDENT IDENT "{" ... "}"    map entry: name -> body   (folder x {...})
 //!              | IDENT STRING "{" ... "}"   interpolated-key map entry
+//!              | "each" IDENT "by" IDENT "{" ... "}"   one body per entry of a list param
 //!              | STRING "=" value           interpolated key -> value (IAM grants)
 //!              | STRING "{" { entry } "}"
 //!              | "use" STRING [...]         include inside this mapping
@@ -492,9 +496,9 @@ pub struct InterfaceUse {
 /// }
 ///
 /// managed "google_project.archive" {
-///   ids = ["corp-archive-001"]
+///   ids = ["sha256:3f1a…"]
 ///   keys {
-///     project_id = "corp-archive-001"
+///     project_id = "sha256:3f1a…"
 ///   }
 /// }
 /// ```
@@ -1173,9 +1177,9 @@ impl P {
     /// Entries until the matching `}` (consumed).
     fn entries(&mut self) -> Result<Vec<Entry>, SatzError> {
         let mut out = Vec::new();
-        // (key, name) → first line. A key that repeats inside ONE body used to
-        // last-win silently (`lifecycle_rule { A } lifecycle_rule { B }` emitted
-        // only B); it is an error naming both lines now. Resource-type maps
+        // (key, name) → first line. A key that repeats inside ONE body is an error
+        // naming both lines (`lifecycle_rule { A } lifecycle_rule { B }` would
+        // otherwise emit only B). Resource-type maps
         // (`google_…`) may repeat — two `google_org_policy_policy { … }` groups
         // in one file are the same map, folded by address.
         let mut seen: Vec<(String, Option<String>, usize)> = Vec::new();
@@ -1296,17 +1300,11 @@ impl P {
                         }
                     }
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "reason" => {
-                    let lit: String = parts.iter().map(|p| match p {
-                        StrPart::Lit(s) => s.as_str(), _ => "",
-                    }).collect();
-                    decl.reason = Some(lit);
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l, .. } if k == "reason" => {
+                    decl.reason = Some(lit_str(&parts, l, "claim: reason")?);
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "interpretation" => {
-                    let lit: String = parts.iter().map(|p| match p {
-                        StrPart::Lit(s) => s.as_str(), _ => "",
-                    }).collect();
-                    decl.interpretation = Some(lit);
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l, .. } if k == "interpretation" => {
+                    decl.interpretation = Some(lit_str(&parts, l, "claim: interpretation")?);
                 }
                 Entry::Map { key: Key::Ident(k), name: Some(Key::Str(_)), .. } if k == "duty" => {
                     // the block form `duty "id" { text = "..." }` is refused in favour of the attribute
@@ -1315,8 +1313,11 @@ impl P {
                 Entry::Attr { key: Key::Str(_), .. } => {
                     return err(line, "claim: unexpected string key (a duty is `duty_<id> = \"text\"`)")
                 }
-                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k.starts_with("duty_") || k == "duty" => {
-                    let text: String = parts.iter().map(|p| match p { StrPart::Lit(s) => s.as_str(), _ => "" }).collect();
+                Entry::Attr { key: Key::Ident(k), line: l, .. } if k == "duty" => {
+                    return err(l, "duty: write it as an attribute, `duty_<id> = \"text\"`");
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l, .. } if k.starts_with("duty_") => {
+                    let text = lit_str(&parts, l, &format!("claim: {}", k))?;
                     decl.duties.push((k.trim_start_matches("duty_").replace('_', "-"), text));
                 }
                 other => return err(line, format!("claim: unexpected entry {:?}", other)),
@@ -1621,7 +1622,7 @@ impl P {
                 // severity says it once, for every command that writes to the
                 // organisation rather than for two named ones.
                 Entry::Attr { key: Key::Ident(k), line: l, .. } if k == "before" => {
-                    return err(l, format!("notice {}: `before = apply` is gone — write `severity = error`", param))
+                    return err(l, format!("notice {}: `before` is no notice key — write `severity = error`", param))
                 }
                 other => {
                     return err(
@@ -1648,7 +1649,7 @@ impl P {
     fn request_stmt(&mut self, line: usize) -> Result<RequestDecl, SatzError> {
         let param = match self.next() {
             Some(Tok::Ident(p)) if !p.contains('.') => p,
-            other => return err(line, format!("request: expected the list param a team adds to, found {:?}", other)),
+            other => return err(line, format!("request: expected the list param a project adds to, found {:?}", other)),
         };
         self.expect(Tok::LBrace, "'{' after the requested list param")?;
         let body = self.entries()?;

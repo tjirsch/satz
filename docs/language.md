@@ -105,7 +105,10 @@ Every attribute — `project`, `name`, `location`, `storage_class`,
 ### 2.2 The complete list of transformations
 
 Nine syntactic ones — and, below them, the short list of attributes the emitter
-*derives* for you. If it is not on either list, Satz did not change it.
+*derives* for you. Beside them, three things the compile does before emission: `each`
+expands a list into labelled bodies (§6.4), `private` is read from a body and never
+emitted (§6.17), and `depends_on` edges are derived where a resource must wait for
+another (§6.5). If it is not on these lists, Satz did not change it.
 
 1. `resource "T" "L" {` → `T { L { } }`. Label quoted only when it is not an
    identifier; `-` → `_` in the emitted address.
@@ -284,7 +287,9 @@ sections below cite instead of carrying loose snippets:
   block, a bucket-scoped grant in both forms (labelled and member map with its
   own scope), `hcl trust`, questions including a required choice, one that is
   not and one whose empty answer means something, and claims of all three kinds with
-  duties and an `interpretation`. `scripts/smoke.sh` transpiles it,
+  duties and an `interpretation`; its `export`s, an `interface … common`, `use interface`,
+  `all … under`, a `private` statement, a `request` point and an `each` over it are the
+  interface plane's features (§6.17, §6.4). `scripts/smoke.sh` transpiles it,
   validates the HCL and checks each feature's effect.
 
 Every snippet in this section is either one of those files or compiles the
@@ -309,10 +314,12 @@ compiles, formats and compares exactly as its LF twin, triple-quoted strings and
 ```
 
 **Identifiers** — `[A-Za-z_][A-Za-z0-9_.]*`, conventionally `snake_case`; the
-dot is for dotted pack names (`pack monitoring.audit_logsink`). Used for param
+dot is for dotted pack names (`pack monitoring.audit_logsink`), a resource address in
+`private <type>.<label>` and `all … under <type>.<label>`, and `each.<field>` inside an
+`each`. Used for param
 names, block keywords, resource types, map keys and param references.
 
-**Numbers and booleans** — bare literals (`400`, `1.5`) and `true` / `false`.
+**Numbers and booleans** — bare literals (`400`, `1.5`, `-1`; no exponent) and `true` / `false`.
 
 **Strings** — single-line, double-quoted; multi-line, triple-quoted (the only
 form that may contain a raw newline; `{param}` interpolates in both forms —
@@ -329,8 +336,13 @@ second line
 
 **Escapes** (single-line only): `\n`, `\"`, `\\`. Any other escape is an error.
 
-**Interpolation** — `{param_name}` inside any string splices a param's value.
-The name must be `[A-Za-z0-9_]+` and terminated by `}`.
+**Interpolation** — `{param_name}` inside a string splices a param's value. The name is
+`[A-Za-z0-9_]+`, terminated by `}`; inside an `each` it may be `each.<field>` (§6.4), and
+any other dotted name is an unknown param. Interpolation works in values and keys, in an
+`action`'s `args` and `execute_args`, and in a `suppress` label and role. Every other
+statement string — a `use` path, a claim's header, `reason`, `interpretation` and duties, a
+question's texts, an export's or interface's name, an action's name and `run` — is literal,
+and `{…}` in one is refused: `no interpolation allowed`.
 
 ```
 parent = "organizations/{customer_organization_id}"
@@ -347,7 +359,8 @@ parameters = "{{\"allowedDomains\" : [\"@{customer_domain}\"]}}"
 value = "${{google_project.x.project_id}}"   # a literal Terraform reference
 ```
 
-**`{x}` interpolates a param; `{{` is a literal brace.**
+**`{x}` interpolates a param; `{{` is a literal brace.** A lone `}` is literal text; only
+`{` must be doubled.
 
 **A reference must name something the estate emits.** Every `${{…}}` is checked
 against what was actually emitted — including a project's expanded services and
@@ -386,6 +399,7 @@ rather than matched against live state as if the `${…}` text were literal.
 ```ebnf
 file    := [ header ] { item }
 header  := ("estate" | "pack") IDENT [ "version" STRING ]
+         | "interface" STRING                          # a generated interface file (§6.17)
 item    := "params" "{" { param } "}"
          | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
@@ -393,16 +407,25 @@ item    := "params" "{" { param } "}"
          | "suppress" IDENT STRING [ "role" STRING ]
          | "hcl" [ "trust" STRING ] "{" … "}"
          | "action" STRING "{" { action-entry } "}"
+         | "notice" IDENT "{" { notice-entry } "}"        # a pack only
          | "offers" STRING "{" { offers-entry } "}"      # the map only
-         | "export" STRING "=" value [ "description" STRING ]
-         | "interface" STRING "{" { "export" STRING "=" value [ "description" STRING ] } "}"
+         | export
+         | "interface" STRING [ "common" ] "{" { export | use-interface } "}"
+         | "private" IDENT "." IDENT
+         | "request" IDENT "{" "key" "=" STRING "fields" "=" "[" { STRING } "]" "description" "=" STRING "}"
          | block
+
+export  := "export" STRING "=" ( value | "all" IDENT [ "under" IDENT "." IDENT ] )
+           [ "attach" "[" { STRING } "]" ] [ "description" STRING ]
+use-interface := "use" "interface" ( STRING | "[" { STRING } "]" ) [ "when" IDENT ]
 
 block   := KEY [ KEY ] "{" { entry } "}"
 entry   := KEY "=" value | block | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
+         | "each" IDENT "by" IDENT "{" { entry } "}"
 ```
 
-An `item` stands at the top level of a file and nowhere else. A `use` is the one
+An `item` stands at the top level of a file and nowhere else (an `export` also inside an
+`interface` block). A `use` is the one
 statement that is also an `entry`: it stands in `google_folder { … }` and in a resource
 type map (§6.9).
 
@@ -556,8 +579,8 @@ value   := STRING | NUMBER | true | false | IDENT
          | "{" { entry } "}"
 ```
 
-List items may be separated by commas **or** newlines; a trailing comma is
-allowed.
+List items are separated by commas, newlines or nothing at all — the comma is optional and
+a trailing one is allowed; `satz fmt` writes commas.
 
 **The resource types are the ones the provider schemas declare**, matched
 exactly: `google_org_policy_policy`, `google_folder`, `google_project`. A key
@@ -587,7 +610,9 @@ they belong to:
 
 The only bare block keywords are Satz's own: `estate`, `pack`, `params`,
 `terraform`, `providers`, `use`, `suppress`, `claim`, `question`, `action`, `notice`, `offers`,
-`hcl`. `terraform` and `providers` are blocks and `use` also stands inside a block (§6.9);
+`hcl`, `export`, `interface`, `private`, `request` — and `each`, an entry of a resource type
+map (§6.4). `private = true` inside a body is the table's attribute, not the statement.
+`terraform` and `providers` are blocks and `use` also stands inside a block (§6.9);
 the rest are statements, written at the top level of a file, and an error as the key of a
 block anywhere else.
 
@@ -743,9 +768,11 @@ interface read them as any other resource. Resources nested in the body are expa
 it; a label that must differ per entry is a quoted key, `"{each.name}_iac" { … }`.
 
 The list is the param as the compile sees it, a pack's `contributes_<param>` entries
-included (ADR 0051), so a team's or a pack's entry expands like the estate's own. A label
+included (ADR 0051), so a project's or a pack's entry expands like the estate's own. A label
 is the entry's field, never its place in the list: reordering the list moves nothing,
-and renaming an entry's label moves that resource, as renaming a written label does.
+and renaming an entry's label moves that resource, as renaming a written label does. A
+folder's or a project's label reaches the HCL with `-` as `_` (§2.2), so `payments-app` is
+the address `google_project.payments_app`.
 
 Refused, at the `each` line: a list param no file declares, a param that is no list, an
 entry that is no object, one without the field or whose field is no label (a letter,
@@ -1140,7 +1167,7 @@ project is created in with a param of its own
 refused, naming the node and the param to bind:
 
 ```
-use "presets/monitoring/organization-audit-logsink.satz"` stands in the body of `google_folder.infra_folder`, which holds the estate's own resources — a pack is used at the top level of a file. Move the line to the top level. A pack that creates a project names the folder it is created in with a param of its own — `logsink_project_folder` in `presets/monitoring/organization-audit-logsink.satz`, `mdc_mgmt_project_folder` in `presets/integrations/microsoft-defender-for-cloud.satz` — so bind that param to `google_folder.infra_folder.name` in the estate's `params { … }`. Every other pack emits the same resources wherever its line stands
+`use "presets/monitoring/organization-audit-logsink.satz"` stands in the body of `google_folder.infra_folder`, which holds the estate's own resources — a pack is used at the top level of a file. Move the line to the top level. A pack that creates a project names the folder it is created in with a param of its own — `logsink_project_folder` in `presets/monitoring/organization-audit-logsink.satz`, `mdc_mgmt_project_folder` in `presets/integrations/microsoft-defender-for-cloud.satz` — so bind that param to `google_folder.infra_folder.name` in the estate's `params { … }`. Every other pack emits the same resources wherever its line stands
 ```
 
 A file declares no kind. It is judged by whether its entries fit the position of its
@@ -1151,7 +1178,7 @@ inside the map of its type. An entry that does not fit is an error at the `use` 
 naming the entry's line in the used file:
 
 ```
-use "presets/cis/cmek.satz" inside `google_folder { … }`: presets/cis/cmek.satz:59 does not belong there — `google_org_policy_policy { … }` opens a map of its own, and directly inside `google_folder { … }` every key is a name — it is read as a folder named `google_org_policy_policy`. A file used inside `google_folder { … }` holds named folders. This one declares its own resource types, so it is written bare, at the top level: `use "presets/cis/cmek.satz"`
+use "presets/cis/cmek.satz" inside `google_folder { … }`: presets/cis/cmek.satz:58 does not belong there — `google_org_policy_policy { … }` opens a map of its own, and directly inside `google_folder { … }` every key is a name — it is read as a folder named `google_org_policy_policy`. A file used inside `google_folder { … }` holds named folders. This one declares its own resource types, so it is written bare, at the top level: `use "presets/cis/cmek.satz"`
 ```
 
 Each pack states its own line in its header comment, and `presets/docs/` prints it.
@@ -1160,12 +1187,13 @@ Each pack states its own line in its header comment, and `presets/docs/` prints 
 join the estate's parameter namespace, where the estate's own binding wins; its
 `question`s go to the interview; its `claim`s to the compliance plane; its `notice`s
 and `action`s join the estate's; its `hcl` blocks pass through to `main.tf` beside the
-resources. None of them is emitted as part of the map the `use` stands in — a bare
+resources; its `export`s, `interface`s, `request` points and `offers` entries join the
+estate's after the `use … when` guard. None of them is emitted as part of the map the `use` stands in — a bare
 list with a `params` block and a `question` is the content of a resource type map, and
 the map receives its labelled bodies alone. A file that holds statements and no entry
 (`presets/estate-core.satz`, `presets/estate-map.satz`) is `use`d at the top level;
 inside `google_folder { … }` or a resource type map it is refused, because it brings
-nothing that position takes. `suppress` is read from the estate's own file: a used
+nothing that position takes. `suppress` and `private` are read from the estate's own file: a used
 file that carries one is refused.
 
 **An organisation-level resource type is written at the top level of a file, and reaches
@@ -1902,8 +1930,7 @@ its pristine source. An active line of a gated pack that has no `when` is a comp
 finding naming the line to write ([workflows](workflows.md#when-a-pack-line-has-no-gate)).
 Every line satz writes goes where the graph's order puts it: after
 the line of the pack before it in the same place, inside the block the graph names, after
-the estate-core line — or, in an estate without one, after its top-level `params` — and at
-the end for a pack placed after the scaffold.
+the estate-core line — or, in an estate without one, after its top-level `params`.
 
 A gate's value is the estate's own binding, else the default in the file that declares
 it while that file is used. What a pack needs is read from the edges: its `requires` are
@@ -2126,7 +2153,7 @@ files is one export, and with a different one it is an error naming both files.
 statement of an estate:
 
 ```
-// Generated by satz v0.85.0 from `showcase.satz` (estate `showcase`) — do not edit: …
+// Generated by satz v<version> from `showcase.satz` (estate `showcase`) — do not edit: …
 interface "archive"
 
 central {
@@ -2172,10 +2199,11 @@ permission it needs. Each `managed` is a resource the central estate declares th
 project can name — one of a type `presets/interface-lookups.yaml` reads back, or one an
 export names, never one marked `private` — with the identities satz writes on it
 (`project_id`, `name`, `account_id`, `dataset_id`, `email`, `id`) and the natural keys
-the interface reads it by, each as `sha256:` of the value: the file travels into every
-project's folder, and the rules need equality, not the central estate's names — a project
-that writes a value is told it collides, and one that does not learns nothing from the
-file. satz writes the file through its formatter; a file that holds
+the interface reads it by, each as `sha256:` of the value, and its `refs` — the addresses it
+points at (`parent = "google_folder.infra"`) — in clear: the file travels into every
+project's folder, and the rules need equality, not the central estate's values — a project
+that writes a value is told it collides, and one that does not learns the estate's resource
+addresses and nothing of their values. satz writes the file through its formatter; a file that holds
 anything else is refused at its line. It is no estate: `satz transpile` of it is refused,
 and so is a copy of it in the preset library (`satz doc-packs`, `satz pack-graph`).
 
@@ -2248,7 +2276,8 @@ request event_topics {
 entries to it through `contributes_<param>` (§6.3) in a file of its own — a pack, since a
 contribution is written in one — which the estate `use`s once the pull request that
 vendors it is reviewed. `key` is the field that names an entry, `fields` every field an
-entry may carry, `key` among them, `description` what an entry is. A pack declares it
+entry may carry, `key` among them, `description` what an entry is; an entry's key is a
+string or a number. A pack declares it
 beside the list; like an export it reaches the estate from a used file after the `use …
 when` guard. An `each` over the list (§6.4) makes each entry a resource, which the
 interface then publishes like any other.
@@ -2277,7 +2306,10 @@ Suffix carries meaning; the tooling enforces it.
 
 - A semantic upstream change to a preset the estate **includes** (the canonical
   form of the parsed pack differs — params or body) auto-forks it and repoints the
-  estate. Comment, format and version-line changes upgrade in place.
+  estate. Comment, format and version-line changes upgrade in place. Refused instead of
+  forked: a pack the estate uses only through another pack ("fork it by hand"), and an
+  estate with uncommitted changes; an existing `.local.satz` gets its pristine tracked and
+  its `.diff.satz` refreshed; `--adopt <stem|all>` upgrades in place.
 - Pack versions live **in-file**; filenames carry only framework versions.
   Never `X.local.2.satz`.
 - Most customisation is **params**, the rest a `.local` fork. If a fork's whole
@@ -2528,6 +2560,8 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | reference a param as a value | `bucket = infra_bucket_name` |
 | write a literal brace | `"{{"` / `"}}"` |
 | write a Terraform reference | `"${{google_project.x.project_id}}"` |
+| compose an interface from another | `interface "payments" { use interface "network" }` |
+| declare an attach point | `export "host" = "${{google_project.host.project_id}}" attach ["google_compute_shared_vpc_service_project"]` |
 | include a pack | `use "presets/x.satz"` |
 | include as a resource map's content | `use "presets/x.satz" as google_org_policy_policy` |
 | include conditionally | `use "presets/x.satz" when want_x` |
@@ -2563,7 +2597,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 
 | command | layer | does |
 |---|---|---|
-| `transpile <estate>.satz` | Satz → HCL | emit `hcl/`; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
+| `transpile <estate>.satz` | Satz → HCL | emit `hcl/` and `interfaces/`; `--check` compiles in memory and writes nothing; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
 | `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance [<framework>] <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). With no framework it reports each one the estate's `compliance_frameworks` names, one section per framework in the one file, and `--format json` answers `{frameworks, reports}`. `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
@@ -2576,6 +2610,14 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
 | `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out-dir d] [--merge f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, written as JSON, CSV and XLSX; `--merge` fills the authored columns from an `authored.json` written against the run's dossier |
 | `check-presets <estate>.satz --format text\|json --out f` | Satz | drift of packs vs upstream |
+| `fmt <paths…> [--check] [--stdin]` | Satz | rewrite Satz files in the canonical layout (§12.3); `--check` names the files that are not, `--stdin` formats one file from stdin to stdout |
+| `lsp` | Satz | the language server on stdio, started by the editor: diagnostics, completion, hover, go-to-definition, formatting |
+| `init [flags] [--interview]` / `init --project <n> --interface <file>` | Satz | write a new estate from the day-0 values, or a project's estate from its interface file (§6.17) |
+| `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and request point the estate publishes (§6.17) |
+| `add-project <estate>.satz --name <n> --owner-group <g> [--use-interface i] [--export i.x] [--interface-only]` | Satz | append the section that onboards one project — its Google project, IaC account, state bucket and `interface "<n>"` |
+| `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, before the pull request that vendors it |
+| `check-consumer <dir> [<estate>.satz]` | HCL | a project's HCL against the interface it reads: attach points, authoritative grants, duplicates |
+| `mcp [--allow read,write,exec] [--root d]` / `mcp-config <estate>.satz` | — | serve the estate over the Model Context Protocol (`docs/mcp.md`); write the client's configuration |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |
 | `adopt <estate>.satz [--execute] [--import] [--activate] [--only t,…]` | Satz | resolve live ids of declared resources, write `"import-id"`s or import; `adopt-org-policies` is an alias |
 | `plan` / `apply` / `hcl-init` | HCL | run the configured tool (`tf_tool`, OpenTofu by default) in `hcl_dir`; the estate is the one `--config` names and every other argument is the tool's, so a `.satz` file among them is refused |
@@ -2588,15 +2630,15 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `doc-packs [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
 | `silence list [<estate>.satz]` / `silence add <kind>[:<subject>] --reason "…" [--machine]` / `silence remove <kind>[:<subject>] [--machine]` | — | what an estate or this machine leaves out of its printed output, named by a finding's `kind` and `subject`. `list` with an estate says what each row still silences, or that it is stale. A silenced finding stays in `--format json` and in what MCP returns; an error is never silenced. `--silence <kind>[:<subject>]` and `SATZ_SILENCE` do it for one run |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
-| `bootstrap <estate>.satz [--dry-run] [--greenfield]` | Satz | first apply for a new organisation: management project, state bucket, service account |
-| `migrate <estate>.satz --mode local\|cloud` | Satz | rewrite `deployment_mode` in the estate's params and move the state |
+| `bootstrap <estate>.satz [--dry-run] [--greenfield] [--no-default-grants]` | Satz | first apply for a new organisation: management project, state bucket, service account |
+| `migrate <estate>.satz [--mode local\|cloud]` | Satz | rewrite `deployment_mode` in the estate's params and move the state |
 | `export-organizational-policies <estate>.satz [--output f]`; `diff-` / `report-organizational-policies <estate>.satz --format … --out f [--recursive]` | Evidence | the org-policy specialist tools: snapshot live policies as a pack, diff desired vs live by (parent, constraint), inventory report |
 
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere. A command
 that produces a report takes `--format`, the rendering, and `--out`, the file it lands in:
 one invocation, one artefact, one named path, and nothing on the console but the line on
-stderr saying where it went — `--out -` pipes. `update-prerequisites` and `prowler` answer
-on the console instead: an exit code and a command line to paste are not documents.
+stderr saying where it went — `--out -` pipes. `update-prerequisites`, `prowler`, `add-pack`
+and `remove-pack` answer on the console instead: an exit code and a command line to paste are not documents.
 The estate file is a positional argument, relative to `yaml_dir`.
 
 ---
@@ -2607,7 +2649,7 @@ Every error carries the file and line and, where a fix exists, names it.
 Verbatim:
 
 ```
-unterminated interpolation '{custome
+unterminated interpolation '{custome'
 empty interpolation {} (use {{}} for a literal brace)
 newline in single-line string (use """ for multi-line)
 unterminated block comment
@@ -2621,7 +2663,7 @@ block `folder`: unknown resource type. Satz names Terraform types in full — wr
 `x` is an attribute at the top level of the file — attributes live inside a resource block
 pack header: `content` is not a header word — the header is `pack <name> [version "…"]`; delete `content`
 `hcl` is a Satz statement: it is written at the top level of a file, never inside a block — move it out
-use "presets/estate-core.satz" inside `google_essential_contacts_contact { … }`: that file holds no entry — only `params`, `question`, which reach the estate from any position. A file used inside `google_essential_contacts_contact { … }` holds labelled `google_essential_contacts_contact` bodies. Write this one at the top level of the estate: `use "presets/estate-core.satz"`
+use "presets/estate-core.satz" inside `google_essential_contacts_contact { … }`: that file holds no entry — only `export`, `params`, `question`, which reach the estate from any position. A file used inside `google_essential_contacts_contact { … }` holds labelled `google_essential_contacts_contact` bodies. Write this one at the top level of the estate: `use "presets/estate-core.satz"`
 use "x.satz": x.satz:3 is a `suppress`, which is read from the estate alone — in a used file it is never applied. Write it in the estate, or take the resource out of the used file
 use … when want_cs: unknown param `want_cs` — a `when` on a param nobody declares would silently drop the pack
 use … as google_cloud_identity_group inside `google_org_policy_policy { … }`: the pack is this map's content; move the `use` to the folder or top level to re-key it
@@ -2654,7 +2696,7 @@ across files it is the fold's conflict above.
 | `action "x": run = "…" is required` | Nothing to run. |
 | `action "x": phase = "…" — expected "before-apply" or "after-apply"` | Those are the two phases. |
 | `action: unexpected entry … (keys are reason, run, args, execute_args, phase)` | An unknown key is refused. |
-| `action "x": no interpolation allowed` | The name and `run` are literal; only `args` and `execute_args` interpolate. |
+| `action: the name: no interpolation allowed`, `action run: …`, `action reason: …` | The name, `run`, `reason` and `phase` are literal; only `args` and `execute_args` interpolate. |
 | `action "x": declared twice — a.satz:3 and b.satz:9` | Names are unique across the estate. |
 | `run = "x.sh" not found. Looked in: …` | Every place that was tried, in order: the declaring file's directory, then the include dirs. |
 | `… is not executable. chmod +x …` | satz does not set the bit; a script that arrived via `get-presets` becomes executable when someone runs the `chmod +x`. |
@@ -2672,8 +2714,13 @@ across files it is the fold's conflict above.
 - **No `force` / priority channel.** "Keep my version of one pack resource" is
   a fork; `suppress` + redeclare cannot express it because the
   redeclaration lands at the same address and folds to a conflict.
-- **An estate with no resources emits no `main.tf`** — only `providers.tf`,
-  `variables.tf` and `terraform.tfvars`.
+- **`each` expands one level.** The label comes from a string field; a `use` or a second
+  `each` inside the body is refused; and `each` stands in a resource type map only — not in
+  a body, a grant map or at the top level of a file, so a bare-list pack cannot hold one.
+- **A pack is one instance.** Its params join one estate-wide namespace, the same pack
+  used twice is the same resources, and no `interface` block is written per entry of a
+  list (ADR 0071).
+- **`private` and `suppress` are read from the estate's own files**, never from a used one.
 - **`satz apply` does not run actions.** `run-actions` is a separate verb, and
   `phase` only orders and selects — nothing enforces that a `before-apply`
   action ran before the apply. Coupling the two would change what `plan` means,

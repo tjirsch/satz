@@ -1,6 +1,6 @@
 # 0035 — an answer is what the estate binds, not what the library defaults to
 
-- **Status:** accepted
+- **Status:** accepted; `merge-presets` binds no gate (ADR-0041)
 - **Date:** 2026-09-20
 - **Shipped in:** the release that follows
 

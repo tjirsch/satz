@@ -846,7 +846,8 @@ in both spellings —
 A rename is an output that went and one that came naming the same resources in the same
 shape; an output gone, a map key lost, an attach point dropped, a value now looked up
 and a shape that changed are the other todos; a new output, a key or an attach point
-gained and a value now static are information. A description edit is no change, and an
+gained, a value now static, an output that now names other resources and one whose value
+changed are information. A description edit is no change, and an
 interface the transpile did not change has no file. One transpile is one step, so
 nothing accumulates: a project that moves several commits of the central estate at once
 reads the file's history in the estate's repository. The file is not in the folder's
@@ -943,8 +944,9 @@ The section is plain Satz the operator owns from then on. The pull request that 
 is the request's review; the apply creates the project; `satz transpile` writes
 `interfaces/payments/`. A second `add-project` of one name is refused, and so is an estate
 that publishes no `workload_folder`, which says where a project goes. One project is one
-section because a pack is one instance — its params join one estate-wide namespace, and
-nothing expands a list into resources.
+section because a pack is one instance — its params join one estate-wide namespace, and no
+`interface` block is written per entry of a list (`each`, §6.4 of the language reference,
+expands resources, not interfaces).
 
 **A project on satz** starts from that interface. In its own directory:
 
@@ -953,8 +955,11 @@ satz init --project payments --interface <the estate>/interfaces/payments/paymen
 satz transpile payments.satz
 ```
 
-`init --project` writes `config.toml` and `satz/payments.satz` from the four exports and
-nothing else — no credential is read: `infra_project_name` is the project's Google project,
+`init --project` writes `config.toml` and `satz/payments.satz` from the interface file and
+nothing else — no credential is read. It reads `project_id`, `iac_account`, `state_bucket`
+and the core export `default_region` (a central estate without `estate-core.satz` publishes
+none and is refused), and writes `default_region`, `default_zone` and `deployment_engine`
+beside these: `infra_project_name` is the project's Google project,
 `infra_bucket_name` its state bucket, `svc_iac_account` its account, `deployment_mode =
 "cloud"`, the `gcs` backend on the bucket, the providers, and the `use` of the interface
 file. The estate compiles as the project's own IaC service account, and the project's
@@ -1023,8 +1028,9 @@ interface "payments" {
 }
 ```
 
-Each interface's README carries a table of its exports and what each takes: every one is
-read, an attach point also takes the types it names. The types an export may name, and
+Each interface's README lists its exports and what each takes — a table when one of them
+is an attach point, prose otherwise: every one is read, an attach point also takes the
+types it names. The types an export may name, and
 what each conflicts with in the estate, are `presets/attach-points.yaml`, compiled into
 satz. The compile refuses the estate's own authoritative form of a membership a project
 attaches to:
@@ -1065,8 +1071,8 @@ exists, or the change needs coordination — a subnet whose range must not overl
 another's, a new folder — the change is an entry in the central estate, applied by satz,
 and the estate then exports the result, the project's subnet or folder, for the project
 to read. A project hands its entries over as a pack the central estate `use`s, which fills
-a list param through a `contributes_<param>` param; fetching that pack from the project's
-repository is the central estate's pipeline's job.
+a list param through a `contributes_<param>` param — vendored into the central estate by
+pull request, as the next section says.
 
 **What a project may ask for is declared.** A list that takes requests carries a
 `request` point — the field that names an entry and the fields an entry may carry — and

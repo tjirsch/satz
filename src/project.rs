@@ -2,12 +2,12 @@
 //! section that onboards one project — its Google project, IaC service account and state
 //! bucket, and the `interface "<name>"` that publishes them — the way `init` writes the
 //! infra section; the pull request that carries it is the request's review. `satz init
-//! --project` writes the project's own estate from exactly those exports.
+//! --project` writes the project's own estate from that interface file.
 //!
 //! A pack cannot do the first half: a pack is one instance — its params join one
-//! estate-wide namespace, `use … as` reads a file as a map, and nothing expands a list
-//! into resources — so one project is one generated section, plain Satz the operator owns
-//! afterwards (ADR 0070).
+//! estate-wide namespace, `use … as` reads a file as a map, and no `interface` block is
+//! written per entry of a list (`each`, ADR 0071, expands resources, not interfaces) — so
+//! one project is one generated section, plain Satz the operator owns afterwards (ADR 0070).
 
 use satz_core::satz::InterfaceFile;
 
@@ -101,7 +101,8 @@ google_service_account_iam_member {
 }
 
 // What the project's estate reads: `satz init --project @NAME@ --interface
-// interfaces/@NAME@/@NAME@/satz/interface.satz` writes it from the first four.
+// interfaces/@NAME@/@NAME@/satz/interface.satz` writes it from `project_id`,
+// `iac_account`, `state_bucket` and the core export `default_region`.
 "#;
     let parent = if folder {
         "folder_id       = \"${{google_folder.workload_folder.name}}\""

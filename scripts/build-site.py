@@ -52,7 +52,7 @@ SITE_DOCS: list[str] = [
 SITE_DOCS_EXCLUDED: dict[str, str] = {
     "security-toolset-integration": "proposal under rework; it describes an audit loop that is not what satz does today",
     "fast-delta": "source material for the competitive matrix, which carries the conclusions",
-    "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in the README",
+    "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in `docs/language.md` §12.3",
 }
 
 _docs = {md.stem for md in (ROOT / "docs").glob("*.md")}
