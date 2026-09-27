@@ -1816,6 +1816,22 @@ names the file and the line.
 
 ### v0.87.0
 
+**`satz check-request <file> <estate>` refuses a request file the estate's compile would
+refuse once it is vendored.** After the shape checks the estate is compiled with the file
+in place, so an entry without a field the pack's `each` body reads, which passed before
+and broke the estate's compile after the pull request, is refused at the check:
+
+```
+check-request: requests/payments.satz fits the request points of satz/e.satz, and the estate refuses it once used — presets/shared-network.satz:97 `google_compute_subnetwork`, entry `payments`: `each.cidr`: the entry has no field `cidr` — it has name
+```
+
+**The edit:** give the entry every field the pack reads; the interface README's *What you
+may request* section lists them.
+
+**`satz add-project --name <n>` is refused when a pack the estate uses declares
+`interface "<n>"`**, as it was for the estate's own text; before, the section merged into
+the pack's common interface and reached every project's folder. **The edit:** another name.
+
 **A `{param}` inside a claim's `reason`, `interpretation` or `duty_<id>` is refused.** These
 strings are literal, as every other statement string is; before, the interpolation was
 dropped and the text kept the words around it. Find it: `grep -nE '^ *(reason|interpretation|duty_[a-z_]+) *= *".*\{' satz/*.satz`.

@@ -1090,7 +1090,8 @@ params {
 ```
 
 checks it with `satz check-request <file> <central estate>` against a checkout of the
-central estate, and its pipeline opens a pull request that copies the file into the central
+central estate — the request points, then the estate's compile with the file in place —
+and its pipeline opens a pull request that copies the file into the central
 estate's repository (`satz/requests/<project>.satz`) and adds its `use` line. The review of
 that pull request is the change's approval, the central estate's git history its record, a
 refused request a closed pull request; the apply makes the change, and an `each` over the

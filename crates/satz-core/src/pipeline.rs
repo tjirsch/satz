@@ -1231,8 +1231,25 @@ pub fn compile_estate(
     types: &dyn TypeResolver,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<FrontEnd, PipelineError> {
-    let file = satz::parse(src)
+    compile_estate_using(file_name, src, &[], types, load)
+}
+
+/// `compile_estate` with `extra_uses` at the estate's top level, as if the estate `use`d
+/// each of them: `check-request` compiles the estate with the request file in place, so
+/// what the compile would refuse once the file is vendored is refused before the pull
+/// request — an entry without a field the pack's `each` body reads, a key the list holds.
+pub fn compile_estate_using(
+    file_name: &str,
+    src: &str,
+    extra_uses: &[&str],
+    types: &dyn TypeResolver,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<FrontEnd, PipelineError> {
+    let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    for path in extra_uses {
+        file.items.push(Entry::Use { path: path.to_string(), as_key: None, when: None, line: 0 });
+    }
     if let Some(i) = &file.interface_file {
         return perr(
             file_name,
@@ -4612,5 +4629,25 @@ request subnets {
         assert!(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\n").is_empty(), "the estate's own entry again is no collision");
         has(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"t\" } ]\n}\ngoogle_storage_bucket {\n  b {\n    name = \"x\"\n  }\n}\n"), "a resource or a `use`");
         has(check("pack t\n"), "requests nothing");
+    }
+
+    /// `compile_estate_using` reads the estate with the request file at its top level, so
+    /// an entry without a field the pack's `each` body reads is refused as the estate's own
+    /// compile would refuse it once the file is vendored.
+    #[test]
+    fn a_request_file_is_compiled_with_the_estate() {
+        const EXPANDING: &str = "pack net version \"1.0\"\nparams {\n  subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\ngoogle_storage_bucket {\n  each subnets by name {\n    name     = \"{each.name}-{each.cidr}\"\n    location = \"EU\"\n  }\n}\n";
+        let src = format!("{}use \"net.satz\"\n", HEAD);
+        let whole = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" } ]\n}\n";
+        let short = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" } ]\n}\n";
+        let with = |req: &str| {
+            let files = [("net.satz", EXPANDING), ("req.satz", req)];
+            let load = |p: &str| files.iter().find(|(n, _)| *n == p).map(|(_, s)| s.to_string()).ok_or_else(|| format!("no such file {}", p));
+            compile_estate_using("main.satz", &src, &["req.satz"], &Table, &load)
+        };
+        let fe = with(whole).expect("compiles with the file");
+        assert_eq!(fe.requests[0].entries.len(), 2);
+        let err = with(short).must_fail("a field the each reads");
+        assert!(err.msg.contains("the entry has no field `cidr`"), "{}", err.msg);
     }
 }
