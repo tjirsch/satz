@@ -1074,6 +1074,9 @@ PYEOF
 step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
 "$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
 
+step "the packaged skills are current (scripts/build-skills.py --check)"
+python3 "$root/scripts/build-skills.py" --check || fail "a skills/<name>.skill is behind its folder — run scripts/build-skills.py and commit"
+
 step "the pack graph passes its checks and is current (satz pack-graph --check)"
 "$satz" pack-graph --presets-dir "$root/presets" --check > tmp/pack-graph.txt 2>&1 \
   || fail "satz pack-graph --check:\n$(cat tmp/pack-graph.txt)"

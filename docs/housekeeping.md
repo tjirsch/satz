@@ -24,6 +24,7 @@ ships it).
 | `presets/attach-points.yaml` (the attachment types an export may allow, the argument that names the shared object, and the estate's authoritative form of each membership) | by hand, from the provider's resource documentation (which attachment resources exist, and which attribute of the shared resource they fight with) | the provider pin moves; a new attachment resource or a changed `ignore_changes` requirement in the provider's docs | the rows' shape: `cargo test` (`every_attach_row_is_an_attachment_with_a_target`); whether a row matches the provider: **nothing** |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
 | `presets/docs/*.md` | `satz doc-packs` | any pack changes | smoke: `doc-packs --check` |
+| `skills/<name>.skill` (the packaged form of `skills/<name>/`, for Cowork and the desktop app) | `scripts/build-skills.py` | any file of the skill's folder changes | smoke: `build-skills.py --check`, byte for byte |
 | `presets/pack-graph.json` | `satz pack-graph` | any pack or the map's `offers` entries change | smoke: `pack-graph --check`; `cargo test` (`the_shipped_pack_graph_is_current`) |
 | `presets/cis/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
 | `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
@@ -302,6 +303,7 @@ second kind.
 | `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `update_cai_asset_types.py` | helper | refresh `presets/cai-asset-types.txt` from Google's published asset-type list; refuses when a type it carries is no longer published, `--check` says whether it is behind |
+| `build-skills.py` | helper + gate | package every `skills/<name>/` as `skills/<name>.skill`, stored and sorted so the bytes are the same on every platform; `--check` names a zip behind its folder |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every PR and every push to `main` |
 | `mcp-probe.py` | gate | every tool of `satz mcp` over raw JSON-RPC, per capability group: no stdout byte that is not JSON-RPC, results valid against their published schema, refusals as prose, each tool's largest result. Run by hand, not by CI |
 | `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
@@ -704,6 +706,17 @@ At the live shape an enabled row with `asset_type: TODO/UNKNOWN` (or an
 unknown `content_type`) is a hard error; an enabled row with no `asset_type`
 (a type Cloud Asset does not carry — Cloud Identity groups, say) is reported
 once as "state shape only" and skipped there.
+
+## `build-skills.py` — the packaged skills
+
+`python3 scripts/build-skills.py` writes `skills/<name>.skill` for every `skills/<name>/SKILL.md` —
+the zip a Claude skill is uploaded as (Cowork, the desktop app), with the folder's files under
+`<name>/`. The folder is the source and the zip is derived: entries are stored, not compressed
+(so no zlib version shows), sorted by path, dated 1980-01-01, mode 0644 (0755 under `scripts/`),
+and `__pycache__`, `.pyc` and `.DS_Store` are left out, so one folder gives one byte sequence on
+every platform. `--check` exits 1 naming each zip behind its folder; the smoke matrix runs it,
+so a skill change that forgets the zip fails CI. A clone that wants the skills in Claude Code
+links the folder once, `ln -sfn ../skills .claude/skills`.
 
 ## `update_cai_asset_types.py` — the asset-type list against Google's page
 

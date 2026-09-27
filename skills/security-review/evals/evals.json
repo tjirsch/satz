@@ -1,0 +1,34 @@
+{
+  "skill_name": "security-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Rebuild the CIS 5.0 checklist and the remediation plan for acme from the existing scan of 2026-09-10 (raw data and satz evidence are in ~/projects/ccc/acme/audit/example.com/2026-09-10). Offline only — do not scan anything. Write the two files to a scratch output folder, not over the existing ones.",
+      "expected_output": "CIS-5.0-Checkliste_rio_2026-09-10.xlsx (3 sheets, 93 control rows, statuses 17 FAIL / 2 LÜCKE / 22 MANUAL / 13 PASS / 39 N/A) and Remediation-Plan_rio_CIS-5.0_2026-09-10.docx (measures in phase order, every FAIL/LÜCKE control mapped to a measure, German), verify_outputs.py OK, no other customer's name.",
+      "files": [],
+      "assertions": [
+        "Both files exist with the expected names in the output folder",
+        "The checklist has exactly 93 control rows and every status is from the taxonomy",
+        "Status counts are 17 FAIL, 2 LÜCKE, 22 MANUAL, 13 PASS, 39 N/A",
+        "Every FAIL/LÜCKE row carries a measure id Mn that has a section in the docx",
+        "The docx has sections Ausgangslage, Reihenfolge, Manuelle Kontrollen, Nachweis, Offene Punkte",
+        "No other customer's name (sibling folders under ~/projects/ccc) appears in either file",
+        "No live cloud call was made (no prowler run, no report-compliance without --no-live)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Do a security review of the mmt01 organisation: scan it with prowler and checkov, run the satz compliance evidence, and produce the findings Excel and the remediation plan.",
+      "expected_output": "Preflight prints org/identity; prowler_scan.sh per service with deadline (compute on own projects); merge + MANIFEST.md; satz_evidence.sh output in evidence/; scope.yaml under audit/tools; both documents built and verified; nothing applied or changed live.",
+      "files": [],
+      "assertions": [
+        "satz whoami was run before any live call and the identity matches the mmt01 estate",
+        "Prowler ran per service (svc-*.log per service in raw/), not as one monolithic org run",
+        "raw/MANIFEST.md exists with sha256 and per-service outcome",
+        "evidence/ contains satz-report-cis-gcp-5.0.json, satz-triage-cis-gcp-5.0.md, satz-require-cis-gcp-5.0.json",
+        "No tofu apply, gcloud update/set, or satz adopt --execute was run",
+        "Both documents exist and verify_outputs.py reports OK"
+      ]
+    }
+  ]
+}
