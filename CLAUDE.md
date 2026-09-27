@@ -50,6 +50,18 @@ and in the maintainer's notes. Nothing in this file names a customer.
   no shape. That is what the local, never-committed denylist
   (`$NAMES_DENYLIST`, a file of one extended regex per line, unset by default)
   is for, and what review is for.
+- **A skill an agent runs beside satz lives in `skills/<name>/` (2026-09-27).** The
+  security review (`skills/security-review/`) reads satz's compliance report, its packs and its
+  control catalogue and writes the two audit deliverables; the estate documentation
+  (`skills/estate-documentation/`) writes a customer's documentation package from the estate,
+  the decisions workbook and the review's documents. Both read satz's output, so they version
+  with it here; satz's binary writes no document (ADR 0003: satz states facts, an agent judges
+  and authors). A skill's files pass the privacy gate like every other file — example values
+  only (`docs/examples.md`), no customer folder, finding or id. Each folder is also packaged as
+  `skills/<name>.skill` by `scripts/build-skills.py`, the zip Cowork and the desktop app take;
+  the zip is derived and `--check` is a smoke gate, so a skill change rebuilds it in the same
+  PR. `.claude/` is git-ignored and gate-rejected, so a clone links the directory once,
+  `ln -sfn ../skills .claude/skills`, and Claude Code lists the skills from then on.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
   `.github/workflows/release.yml` is generated from `dist-workspace.toml`: change

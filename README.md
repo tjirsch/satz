@@ -2226,6 +2226,30 @@ cargo fmt && cargo clippy --workspace --all-targets  # format + lint
 cargo install --path .                             # install the release binary (see Installation)
 ```
 
+### Skills beside satz
+
+`skills/<name>/` holds what an agent runs beside satz and satz's binary does not do: satz
+states facts, an agent judges and authors (ADR 0003). `skills/security-review/` is the CIS GCP
+Foundations v5.0 security review of one organisation — phase 1 creates the evidence live
+(Prowler per service, `satz report-compliance` with Checkov, `triage`, `require`), phase 2 builds
+the two deliverables offline from it, the checklist of every control with its status and the
+remediation plan of satz packs and `gcloud` steps. `skills/estate-documentation/` writes a
+customer's documentation package from the estate: a short description with a diagram of the
+organisation, its folders, projects and workloads, the decisions workbook (`satz questions`),
+and the review's two documents beside them. Each skill's scripts, references and assets are in
+its directory, its files carry example values only, and `skills/<name>.skill` is the same
+folder packaged for Cowork and the desktop app (`scripts/build-skills.py`, checked by the smoke
+matrix). Claude Code reads a repository's skills from `.claude/skills/`, which is git-ignored
+here, so link the directory once per clone:
+
+```bash
+ln -sfn ../skills .claude/skills
+```
+
+How to install the skills in Claude Code, Claude and Cowork, what the customer folder they
+read looks like, and how a review and a documentation package are run:
+[The security review and the documentation package](docs/workflows.md#the-security-review-and-the-documentation-package).
+
 ### Editor support (Zed)
 
 `editors/zed/` is a Zed extension for Satz: syntax highlighting, the outline panel,

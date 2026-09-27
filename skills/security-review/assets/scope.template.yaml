@@ -1,0 +1,50 @@
+# Scope und Umgebungswerte für die Deliverables. Alles Kundenspezifische steht hier;
+# build_audit.py ist generisch. Erzeugt von discover_scope.py — Platzhalter prüfen.
+kunde: {{SHORTCODE}}
+kunde_lang: {{LONGNAME}} ({{SHORTCODE}})
+domain: {{DOMAIN}}
+org_id: "{{ORG_ID}}"
+scan_date: {{SCAN_DATE}}
+scan_date_de: {{SCAN_DATE_DE}} (Erstscan)
+scanner: Prowler (read-only, Impersonation {{IAC_SA}}) · satz (Evidence, Triage) · Checkov (IaC)
+framework: CIS GCP Foundations Benchmark v5.0
+infra_project: {{INFRA_PROJECT}}
+estate_repo: {{ESTATE_REPO}}
+estate_file: {{ESTATE_FILE}}
+iac_sa: {{IAC_SA}}
+# Workloads neben dem Estate: Projekte, die das Interface des Estates lesen. discover_scope.py
+# findet sie im Kundenordner — kind `satz` (eigenes satz-Estate, `use "…/interface.satz"`) oder
+# `hcl` (Terraform-Verzeichnis, liest `module.satz.<export>`). `folder` ist der Ordnername
+# relativ zum Kundenordner, `interface` das Interface, das der Workload liest, `project_id` das
+# Google-Projekt aus dem statischen Export `project_id` dieses Interfaces (leer = von Hand
+# ergänzen). Die Google-Projekte gehören zu --own-projects des Prowler-Laufs; satz_evidence.sh
+# prüft jeden Workload (transpile --check, check-consumer, Checkov) und build_audit.py führt
+# das Ergebnis im Abschnitt und Blatt »Workloads«. Keine Workloads: `workloads: []`.
+{{WORKLOADS}}
+# Generierte/Flotten-Projekte (gleiches Bild in jeder Kontrolle) werden aggregiert.
+# Leer lassen (fleet_regex: "") wenn es keine gibt. fleet_label ist ein Nomen OHNE Zahl
+# ("generierte Projekte (cust-*-NN)") — der Generator setzt die Anzahl selbst davor.
+fleet_regex: ""
+fleet_label: ""
+# Status des Estates für Kopf und Ausgangslage (ein Satz)
+estate_status: Estate in satz deklariert; Konvergenzstand siehe report-compliance
+# Automatisierte Kontrollen ohne Scan-Ergebnis: N/A (Ressourcentyp fehlt) ist der Default;
+# LÜCKE, wo die Grundlage fehlt (Kontrolle: Begründung).
+luecke: {}
+# Bekannte False Positives (Kontrolle: Begründung, mit Nachweiskommando)
+false_positives: {}
+# Werkzeuggrenzen, die in Übersicht und Plan genannt werden (aus MANIFEST.md übernehmen)
+scan_caveats: []
+# Maßnahmen: der Katalog assets/measures.yaml deckt jede CIS-5.0-Kontrolle. Hier nur
+# Abweichungen: Maßnahmen ausblenden (skip), Texte überschreiben (override), zusätzliche
+# eigene Maßnahmen (extra) — siehe references/format.md.
+measures:
+  skip: []
+  override: {}
+  extra: []
+# Prowler-Checks, deren OCSF-Compliance-Zuordnung eine CIS-5.0-Kontrolle NICHT trägt,
+# obwohl der Katalog sie dort führt (Mapping-Lücke in Prowler 5.37).
+check_overrides:
+  logging_sink_created: ["2.13"]
+# Offene Punkte für das Review (zusätzlich zu den automatisch abgeleiteten)
+open_points: []

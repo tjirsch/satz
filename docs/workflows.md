@@ -1252,6 +1252,74 @@ satz remediation-plan cis-gcp-4.0 C0example.satz --prowler evidence/prowler/2026
 satz reads the OCSF export of Prowler 5 only, and checks the version the export carries:
 an older one is refused by its version rather than read as empty.
 
+## The security review and the documentation package
+
+Two skills in `skills/` do the two things an agent does beside satz and satz's binary does not:
+judge and author (ADR 0003). `skills/security-review/` runs a CIS GCP Foundations v5.0 security
+review of one organisation and writes its two deliverables; `skills/estate-documentation/` writes
+a customer's documentation package from the estate. Each is a folder (`SKILL.md`, `scripts/`,
+`references/`, `assets/`) and a zip of the same folder, `skills/<name>.skill`.
+
+### Installing a skill
+
+- **Claude Code**, in a clone of this repository: `ln -sfn ../skills .claude/skills` once
+  (`.claude/` is git-ignored); Claude Code lists both skills from then on. For every project on
+  the machine: `ln -sfn <clone>/skills/security-review ~/.claude/skills/security-review`, and
+  the same for `estate-documentation`.
+- **Claude (the desktop app, claude.ai) and Cowork:** upload `skills/<name>.skill` in the Skills
+  section of the settings — the zip is the folder under `<name>/`, the form the upload takes.
+  Cowork uses the skills the app holds.
+- After a change to a skill's folder, `python3 scripts/build-skills.py` rewrites the zips; the
+  smoke matrix fails on a zip behind its folder, so the two forms cannot drift.
+
+### The customer folder the skills read
+
+Both skills start from a customer's shortcode and read the folder `~/projects/ccc/<shortcode>/`
+(`CCC_ROOT` names another root): the central estate repository `<shortcode>-C<dirid>/` with its
+`config.toml` (`yaml_dir` names the estate directory, `satz/` when absent), the estate file inside
+it, `hcl/` and `interfaces/`; beside it the workload folders — a satz project estate (a
+`config.toml` and a `.satz` that `use`s an `interface.satz`) or an HCL project (`.tf` files that
+read `module.satz.<export>`); and `audit/`, which the review owns. Everything else there is left
+alone. The central estate's own view of its projects is `satz interfaces <estate>.satz --format
+json --out -`, which is where the skills read the projects' ids and request points.
+
+### Running the review
+
+Phase 0 discovers the scope and checks the tools and the identity, with no cloud call but
+`whoami`:
+
+```bash
+python3 $SKILL/scripts/discover_scope.py acme --scan-date 2026-09-27 --write ~/projects/ccc/acme/audit/tools/scope.yaml
+cd ~/projects/ccc/acme/acme-C0example && satz --config . whoami C0example.satz
+```
+
+Phase 1 creates the evidence live and read-only, as the estate's IaC service account: Prowler one
+service at a time with a deadline (`scripts/prowler_scan.sh`, the own project ids from phase 0
+including the workloads'), then `scripts/satz_evidence.sh` — `satz report-compliance` with
+Checkov, `triage` and `require` for the central estate, and per workload the interface check
+(`satz check-consumer` on its HCL, `satz transpile --check` on a satz project). Nothing in this
+phase changes the organisation. Phase 2 builds the two documents offline from `scope.yaml` and the
+evidence (`scripts/build_audit.py`, then `scripts/verify_outputs.py`): the checklist of every
+control with its status, and the remediation plan of satz packs and `gcloud` steps, with a
+section per workload. The documents are reproducible from scope and evidence and carry no local
+path; a change of wording goes into `scope.yaml` or `assets/measures.yaml`, never into the
+document. The skill's `SKILL.md` carries the whole procedure and its rules.
+
+### Building the documentation package
+
+```bash
+uv run --with python-docx --with matplotlib python3 $SKILL/scripts/build_estate_documentation.py --shortcode acme --index 01
+```
+
+The script finds the estate repository and its estate file, runs `satz questions … --format xlsx`
+and `--format pdf` for the decisions, reads the facts from the estate and its `hcl/main.tf`, draws
+the diagram of the organisation, its folders, projects and workloads, and writes the short
+description with the facts, the group model, the enabled services, the organisation policies, the
+compliance framework and the workloads — their Google projects, what each reads through its
+interface and what the estate lets a project request. The review's two documents are copied in
+from `audit/`; the package refuses to be written while one of the four files is missing. Nothing
+in the package is written by hand: a change goes into the estate and the package is rebuilt.
+
 ## Keeping presets current
 
 How to tell whether a newer preset exists, what to do about it, and which command to
