@@ -8,6 +8,7 @@
 (reference) @variable
 (string) @string
 (hcl_string) @string
+(hcl_heredoc) @string
 (escape_sequence) @string.escape
 
 ["{" "}" "[" "]"] @punctuation.bracket
@@ -21,6 +22,7 @@
   "question" "oneof"
   "action"
   "notice"
+  "offers"
   "export" "description" "attach" "all" "under"
   "each" "by"
   "interface" "common"
@@ -48,7 +50,12 @@
 (use_statement condition: (identifier) @variable)
 (use_interface condition: (identifier) @variable)
 (all_resources type: (identifier) @type)
+(all_resources under: (identifier) @variable)
 (suppress type: (identifier) @type)
+(private resource: (identifier) @variable)
+(request param: (identifier) @variable)
+(each list: (identifier) @variable)
+(each key: (identifier) @property)
 
 ; {name} inside a string: the parameter it interpolates.
 (interpolation
