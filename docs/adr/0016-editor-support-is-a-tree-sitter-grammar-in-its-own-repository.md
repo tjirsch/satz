@@ -1,6 +1,6 @@
 # 0016 — editor support is a tree-sitter grammar in its own repository
 
-- **Status:** accepted
+- **Status:** accepted; amended 2026-09-27 — the grammar repository is public and the check runs in this repository's CI
 - **Date:** 2026-09-13
 - **Shipped in:** v0.56.1; the repository went public in v0.56.3 for Zed's registry, and the corpus-parse gate joined this repository's CI with it
 
@@ -52,8 +52,9 @@ comments as extras. The scanner handles heredocs; the rule does not. The corpus 
 ## Decision
 
 Option 3. The grammar is the repository `satz-tree-sitter` (parser name `satz`, the
-generated `src/` committed, MIT). It is private: it carries no privacy gate, so its own
-test inputs use example values only, and the corpus it is verified against is this
+generated `src/` committed, MIT). It is public (`tjirsch/satz-tree-sitter`); it carries no
+privacy gate, so its own test inputs use example values only, and the corpus it is
+verified against is this
 repository's, cloned by its CI on every push and weekly. The Zed extension is
 `editors/zed/` here, pinning a grammar commit. It was installed as a dev extension
 while the grammar was private; the grammar is public now and the extension is
@@ -70,9 +71,9 @@ from the top), so `highlights.scm` lists generic patterns first and specific one
 a quoted key is `@property`, not `@string`, because the key pattern comes later.
 
 `scripts/check-grammar.sh` parses every `.satz` under `presets/` and `tests/` with the
-pinned grammar and fails on any error. It is not in this repository's CI, which holds no
-credential for a private repository; the grammar repository's weekly run is the automatic
-check, and the script is the pre-PR check for a language change.
+pinned grammar and fails on any error. The `grammar` job of `.github/workflows/smoke.yml`
+runs it on every pull request and every push to `main`; it is also the pre-PR check for a
+language change.
 
 ## Consequences
 

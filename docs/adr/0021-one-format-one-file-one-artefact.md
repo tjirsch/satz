@@ -1,6 +1,6 @@
 # 0021 — a reporting command takes one format and writes one file
 
-- **Status:** accepted
+- **Status:** accepted; `iac-roles` is `update-prerequisites` (ADR-0023)
 - **Date:** 2026-09-15
 - **Shipped in:** v0.57.0
 

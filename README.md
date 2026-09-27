@@ -8,9 +8,8 @@ It also bootstraps a new Google Cloud organization, imports an existing one from
 > [preset pack pages](https://tjirsch.github.io/satz/presets/docs/index.html), searchable,
 > rebuilt on every release. Also: `satz open-readme`, or `satz <command> --html-help`.
 
-> **✏️ Write Satz in [Zed](https://zed.dev).** Zed is a fast, uncluttered editor from the
-> people who built Atom — an editor rather than an IDE, native and built in Rust. The Satz
-> extension in `editors/zed/` brings highlighting, the outline, bracket matching and the
+> **✏️ Write Satz in [Zed](https://zed.dev).** Zed is a fast native editor with tree-sitter
+> grammars and language servers built in. The Satz extension in `editors/zed/` brings highlighting, the outline, bracket matching and the
 > language server (diagnostics, completion, hover, go-to-definition, format on save); its
 > grammar is [satz-tree-sitter](https://github.com/tjirsch/satz-tree-sitter). Install:
 > [Editor support (Zed)](#editor-support-zed).
@@ -29,9 +28,10 @@ customer-repo/ (e.g. project-root/)
 │   ├── main.tf, providers.tf, variables.tf, terraform.tfvars, imports.tf
 │   └── outputs.tf       # what the estate exports, as outputs of the root module
 └── interfaces/          # Generated: what the estate exports, for the projects beside it
-    ├── common/          #   the library alone: core and every common interface
-    └── <project>/       #   one project's folder, taken whole: its own interface and the library
-        └── <interface>/ #     README.md, hcl/ (a module), satz/interface.satz (a file a Satz estate uses)
+    ├── common/          #   the library alone: README.md (the content hash), core/ and every common interface
+    │   └── <interface>/ #     README.md, hcl/ (a module), satz/interface.satz (a file a Satz estate uses)
+    └── <project>/       #   one project's folder, taken whole: README.md, its own interface and the library
+        └── <interface>/ #     the same three, and CHANGES.md when the last transpile changed the interface
 ```
 
 A **project** is an estate that depends on parts of this estate's interface — its own
@@ -172,9 +172,9 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 ## CLI Usage
 
-All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, and the three `--no-*action*` switches below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
+All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, `--html-help`, `--silence`, `--no-impersonate`, `--no-api-preflight`, `--no-actions`, `--no-pack-actions`, all below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Three commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, `prowler`, which prints a command line to paste, and `mcp-config`, which prints the block an MCP client reads. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Five commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, `prowler`, which prints a command line to paste, `mcp-config`, which prints the block an MCP client reads, and `add-pack` and `remove-pack`, which report the switch they made. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -182,7 +182,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked offline before it is vendored into the estate: request points only, each entry shaped, no key the list holds for another entry |
-| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, and every interface with what it uses; the json form is what satz-studio reads |
+| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields and entries; the json form is what satz-studio reads |
 | `add-project <ESTATE>` | `--use-interface <name>` and `--export <interface>.<name>` (each repeated: what the project's interface also carries), `--interface-only` (the interface alone, no `--owner-group`), `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
@@ -222,7 +222,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `export-organizational-policies <ESTATE>` (alias `export-org-policies`) | `--customer-organization-id`, `--output` |
-| `diff-organizational-policies <ESTATE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--format` (`text`\|`markdown`\|`json`), `--out <FILE>`, `-r/--recursive` (every folder and project below) |
+| `diff-organizational-policies <ESTATE>` (alias `diff-org-policies`) | `--customer-organization-id`, `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>`, `-r/--recursive` (every folder and project below) |
 | `report-organizational-policies <ESTATE>` (alias `report-org-policies`) | `--customer-organization-id`, `--scope` (`active`\|`inactive`\|`full`), `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `-r/--recursive` |
 | `adopt-org-policies <INPUT>` | `--dry-run` — alias of `adopt --only google_org_policy_policy --activate --execute --import` |
 
@@ -230,13 +230,13 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `questions <INPUT>` | `--format` (`text`\|`json`\|`markdown`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
+| `questions <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
 | `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-pack` does — refused, naming it, while a pack it needs is off — and prints the notice that pack carries. An answer that would leave an estate satz refuses is refused and writes nothing. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance [<FRAMEWORK>] <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
 | `prowler <INPUT>` | `--format` (`text`\|`json`) — the Prowler invocation this estate needs, printed. `text` puts the command line on stdout and NOTHING else, so it can be pasted into a shell or piped to a clipboard; what the line cannot say — a scan not narrowed to projects, a project left out of `--project-ids` because its id is built from a reference to another resource (which only an apply resolves), a framework the estate names that Prowler has no equivalent of, an estate that binds no `compliance_frameworks`, the command to run afterwards — goes to stderr. The organisation and the project ids the estate declares (a `{param}` in an id is its value), as `--compliance` the union of the frameworks it is HELD TO (`compliance_frameworks`) and the frameworks its packs CLAIM (which also filters which checks run), `--output-formats json-ocsf`, and an output file under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute (`org-2026-09-13T08-30Z.ocsf.json`) — Prowler appends to an output file that already exists, so each scan needs a name of its own: run `satz prowler` again for the next scan. satz never runs Prowler: the scan spends API quota in every project, and Prowler reads as whoever is logged in rather than as the estate's service account |
-| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`json` — `{"rows": […]}`, the value the MCP tool `satz_triage` returns), `--out <FILE>`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply to the report (markdown only, proposed, never written) |
+| `triage <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--format` (`markdown`\|`pdf`\|`json` — `{"rows": […]}`, the value the MCP tool `satz_triage` returns), `--out <FILE>`, `--fix` — every Prowler FAIL sorted into who-fixes-it buckets against the estate's claims, and the checks Prowler maps to no control of the framework counted in a section of their own; `--fix` adds the estate delta they imply to the report (markdown only, proposed, never written) |
 | `remediation-plan <FRAMEWORK> <INPUT>` | `--prowler <file>` (required), `--checkov`, `--out-dir <DIR>`, `--merge <authored.json>` — the remediation dossier: triage joined with Checkov per resource, counted, written as `dossier.json` + `findings.csv` + `findings.xlsx` (mechanical columns filled, `[Authored]` columns and who authored them, Review dropdown) + `meta.json` under `evidence/plan/<framework>-<UTC minute>/` (`cis-gcp-4.0-2026-09-13T08-30Z`, dashes for colons so the name is valid on every platform) unless `--out-dir` names another — a run in a minute that already has a folder takes the next free name (`…_002`), created by that run, so no run writes into another's; offline and deterministic (the dossier hash names the run). `--merge` fills the `[Authored]` columns from an `authored.json` written against this run's hash — every entry names `authored_by` and `authored_at` — and keeps it beside the run; `dossier.json` and its hash do not change |
 
 **Tool**
@@ -246,6 +246,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
 | `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `fmt <PATHS…>` | `--check`, `--stdin` — rewrite Satz files in their canonical layout (indentation, spacing, `=` alignment, list commas); `--check` names the files that are not and exits 1; `--stdin` formats one file from stdin to stdout, for editors |
+| `silence list [INPUT]` / `silence add <KIND[:SUBJECT]> --reason "…" [--machine]` / `silence remove <KIND[:SUBJECT]> [--machine]` | what an estate or this machine leaves out of the printed output, by a finding's kind and subject — [Silencing a finding](#silencing-a-finding-silence) |
 | `lsp` | the language server behind an editor's Satz support, on stdio, started by the editor: diagnostics from the parser on every change and from the pipeline on every save, completion and hover from the provider schema, go-to-definition for `use` paths and params, formatting |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
@@ -282,9 +283,9 @@ satz init \
 - `--infra-project-name <ID>`: Override for the infrastructure project ID.
 - `--infra-bucket-name <NAME>`: Override for the state bucket name.
 - `--workload-folder-name <NAME>`: the folder directly under the organisation that holds the customer's and the projects' folders. The estate declares it (`google_folder.workload_folder`) and publishes its `folders/<number>` as the core export `workload_folder`; without the flag the workload folder is the organisation and `workload_folder` is `organizations/<id>`. A folder of that name the customer already has is imported with `satz adopt <estate> --execute --import` before the first apply.
-- Values come from three places and no fourth: what you state on the command line, what the Application Default Credentials can answer, or empty. Derivation is automatic and needs no flag — the identity gives `first_admin` and `customer_domain`, `organizations:search` gives `customer_organization_id` and the `C0…` directory customer, `billingAccounts.list` gives the account when exactly one is open, and `infra_project_name` / `infra_bucket_name` follow from `customer_shortname`. Each derived value is printed with the source it came from. What nothing can answer is written `""` and named, and `satz bootstrap` refuses by param until it is set — a placeholder would look like an answer. `--from-live` is accepted and ignored; it is what init does now.
+- Values come from three places and no fourth: what you state on the command line, what the Application Default Credentials can answer, or empty. Derivation is automatic and needs no flag — the identity gives `first_admin` and `customer_domain`, `organizations:search` gives `customer_organization_id` and the `C0…` directory customer, `billingAccounts.list` gives the account when exactly one is open, and `infra_project_name` / `infra_bucket_name` follow from `customer_shortname`. Each derived value is printed with the source it came from. What nothing can answer is written `""` and named, and `satz bootstrap` refuses by param until it is set — a placeholder would look like an answer. `--from-live` is accepted and ignored.
 - `--interview`: a day-0 param is stated, derived or ASKED — there is no fourth state where the estate is simply born incomplete. With this flag init hands the estate it just wrote to `satz interview`, which asks for whatever is still unbound. It is a flag rather than the default because the interview is interactive and a scripted run must not block on it.
-- The pack menu — one commented `use … when` line per pack, under the phase it can be adopted in — is written from `pack-graph.json` in `presets_dir`, the pack graph that ships with the presets. With no graph there the estate is written without pack lines, and init says so: `satz get-presets`, then `satz merge-presets`, write them where the menu goes. A graph that places a pack in a block this binary's scaffold does not have is refused before anything is written; `satz self-update` is the way through.
+- The pack menu — one commented `use … when` line per pack, under the phase it can be adopted in — is written from `pack-graph.json` in `presets_dir`, the pack graph that ships with the presets. With no graph there the estate is written without pack lines, and init says so: `satz get-presets`, then `satz merge-presets`, write them where the menu goes. A graph a newer library wrote is read as data; `satz self-update` brings the binary that knows its packs.
 - Running `init` again on an estate that exists MERGES: the params this command line names are written in, every other line is left exactly as it is, and each one is reported as set, changed or kept. `--force` rewrites the file instead.
 
 **Under the Hood:**
@@ -294,12 +295,13 @@ satz init \
 - Fetches the latest provider schemas for the configured providers.
 
 **A project estate** (`--project <name> --interface <path>`): the estate of one project of a
-central estate, written from the four exports `satz add-project` published for it —
-`project_id`, `iac_account`, `state_bucket`, `default_region`. It runs in cloud mode as the
+central estate, written from the interface file `satz add-project` published for it —
+`project_id`, `iac_account`, `state_bucket`, and the core export `default_region` (from
+`estate-core.satz`; a central estate without it is refused). It runs in cloud mode as the
 project's own IaC service account, keeps its state in the project's bucket, and `use`s the
 interface file so its resources read the central estate as `${{interface.<export>}}`.
 Nothing is derived from the credentials; the interface answered it all
-([customer teams beside the estate](docs/workflows.md#onboarding-a-project-and-a-project-on-satz)).
+([Onboarding a project, and a project on satz](docs/workflows.md#onboarding-a-project-and-a-project-on-satz)).
 
 **Without the flags:** `satz interview satz/<name>.satz --create` writes an estate that
 asks for the same day-0 values one at a time and offers the derived ones as defaults;
@@ -533,8 +535,8 @@ satz transpile <INPUT> [options]
 
 **Parameters:**
 - `<INPUT>`: Name of the estate file. This is resolved relative to the `yaml_dir` defined in your config.
-- `--output, -o <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`. The interfaces go to `interfaces_dir` either way.
-- `--schema-dir, -s <DIR>`: Override the schema directory.
+- `--output <FILE>`: Optional output subdirectory or absolute path. By default, output goes to `hcl_dir`. The interfaces go to `interfaces_dir` either way.
+- `--schema-dir <DIR>`: Override the schema directory.
 - `--print-variables`: After transpilation, print the resolved variable table (`terraform.tfvars`) to stdout. Useful for debugging variable resolution across multiple include files.
 - `--scan`: after transpiling, run Checkov (terraform framework) over `hcl_dir` — `checkov` on PATH, else `uvx checkov` — and print every failed check under the resource it hit, with the Satz file and line that declared it (from the emission manifest) and Checkov's guideline link. Failed checks exit 1, so it gates like a test. `satz scan [<estate>]` does the same without transpiling first.
 - `--plan` / `--apply`: after transpiling, run `<tf_tool> plan` / `apply` in `hcl_dir` — one command from estate to plan. The dir is initialised first when it has no `.terraform`. The same as `satz transpile … && satz plan`; `satz plan`, `satz apply` and `satz hcl-init` remain for running the tool on its own (extra arguments pass through).
@@ -900,7 +902,7 @@ satz import organizations/123456789012 --generate-unmapped     # …and ask the 
 - `--import-config <FILE>`: the import configuration (default `presets/import-config.yaml`, or `import_config` in `config.toml`).
 - `--as <ESTATE>` (live shape): read the scope as that estate's IaC service account, writing a new file rather than into the estate. `roles/cloudasset.viewer` on an organization satz set up is that account's, so the sweep is refused on your own credentials; naming the estate binds the account `tofu` applies with. `--into` names an estate already and binds the same way, so the two are refused together. Without either, the sweep reads as your own Application Default Credentials. `--as` on a local-mode estate, or with `--no-impersonate`, is refused: there is no account to borrow. Either flag sweeps only the estate's own organisation or a folder or project inside it, and the run prints as whom it sweeps.
 - `--customer-shortname <NAME>` (state and live shapes): the customer's short name, which no platform fact carries; it wins over the inference from the leading token of the project and bucket names.
-- `--organization <N>` (state shape): the organization the state belongs to. A state names it in a resource (`organizations/<n>`, `org_id`) or in a top-level folder's parent; one that names it nowhere is refused, because `customer_organization_id` is what a folder's parent and an organization grant's `org_id` are written from. Where the state names one too and the two differ, the import is refused naming both. A live sweep reads the organization from its own root and from the assets' ancestors, so the flag is refused there.
+- `--organization <N>` (state and hcl shapes): the organization the state belongs to. A state names it in a resource (`organizations/<n>`, `org_id`) or in a top-level folder's parent; one that names it nowhere is refused, because `customer_organization_id` is what a folder's parent and an organization grant's `org_id` are written from. Where the state names one too and the two differ, the import is refused naming both. A live sweep reads the organization from its own root and from the assets' ancestors, so the flag is refused there.
 - `--on-collision error|counter` (state and live shapes): a grant one principal holds on two folders or two projects would emit one address, because the map form's label is member and role. `error` (the default) refuses the import and names them; `counter` keeps the first in the map form and writes the second and later as labelled resources with a running number (`folderAdmin_alice_2`), one line of output each.
 - `--generate-unmapped` (live shape): the resources the sweep reports as `unmapped` — a required attribute that is not in the asset data and cannot be derived, data that holds nothing the provider schema knows, a content type or scope no row covers — are handed to the provider instead of being left out. satz writes `<base>-generate/imports.tf` with one `import` block per resource, runs `tofu init` and `tofu plan -generate-config-out=generated.tf` there, and reads the result back through the hcl shape into `<base>-generated.satz`. The id is the asset's relative resource name for every type whose provider id is that name, and a per-type rule for the rest: `google_compute_instance_settings` without the `/InstanceSettings` Cloud Asset appends to a singleton, and `google_dns_managed_zone` and `google_dns_record_set` by the zone's NAME, read off the zone asset the same sweep holds — a record set whose zone the sweep did not read is refused with that reason rather than imported by the number. `<base>` is the file the run is named after: the estate a plain sweep writes (`discovered-generated.satz`), the scope's top-level pack with `--into` (`imported-organizations-123456789012-generated.satz`). With `--into`, what the estate already declares by that live id is named and left out. The child's provider blocks are the estate's own: the run's quota project as `project` and `billing_project` with `user_project_override`, and `impersonate_service_account` where the run is bound to an estate. The generated file is never `use`d from the estate: joining it is one line, and which of it belongs there is a reading decision. What satz cannot write a block for is listed with the reason. The provider reads the resources one at a time and writes what it could read, so a refused id costs that resource and not the run: every resource satz asked for ends with one of four verdicts read off what is on disk — **written** (a block in `generated.tf` no diagnostic names), **written incomplete** (a block the provider still reported, with its words), **refused** (no block, and a diagnostic), **unaccounted for** (neither) — and `imports.tf` stays for the refused ids to be corrected by hand. `init` failing, and a plan that generated no resource at all, end the run. Refused on the state and hcl shapes.
 - A `.yaml` source is the pre-Satz YAML dialect: it is refused by name, with the release that converts it (see [docs/language.md §12.3](docs/language.md#123-the-pre-satz-yaml-dialect)).
@@ -1026,9 +1028,9 @@ satz update-schema --providers google,google-beta
 ```
 
 **Parameters:**
-- `--providers, -p <LIST>`: Comma-separated list of providers to update.
-- `--version, -v <VERSION>`: Provider version to fetch (default: from config).
-- `--tf-tool, -t <TOOL>`: Terraform/OpenTofu binary to use.
+- `--providers <LIST>`: Comma-separated list of providers to update.
+- `--version <VERSION>`: Provider version to fetch (default: from config).
+- `--tf-tool <TOOL>`: Terraform/OpenTofu binary to use.
 
 **Under the Hood:**
 - runs `tofu init` in a temporary directory.
@@ -1690,8 +1692,8 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
   `adopt --execute`, a role or an API from `update-prerequisites`, a `use` line from `merge-presets`
   — keeps the author's layout, and keeps a formatted file formatted. A pristine pack from
   upstream and the `.local.satz` fork of an author's file are copied byte for byte.
-- In Zed, until the language server serves formatting, an external formatter does:
-  `"languages": { "Satz": { "formatter": { "external": { "command": "satz", "arguments": ["fmt", "--stdin"] } } } }`.
+- In Zed the language server formats on save. For another editor's external-formatter hook,
+  `satz fmt --stdin` formats one file from stdin to stdout.
 
 ### Language server (`lsp`)
 
@@ -2286,12 +2288,15 @@ interface under `interfaces/`, a relocatable module and an interface file a proj
 cloud knows is a `data` source keyed by what satz writes (`presets/interface-lookups.yaml`).
 A project estate's `${{interface.<export>}}` is replaced before emission, and its
 resources are held to the interface file's attach points (`src/consumer.rs`).
+`src/interface_report.rs` is the `satz interfaces` report, `src/interface_changes.rs` writes
+`CHANGES.md` from the previous interface file, and `src/project.rs` is `add-project` and
+`init --project`.
 - **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block. A project that writes one says its own parent — a reference to a folder the estate declares, or an id — and an empty value says nothing, so the enclosing block decides.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
 
 #### 2. Schema Registry (`src/schema.rs`)
 Manages Terraform provider schemas (loaded as JSON).
-- **Typing**: every resource key and block key is checked against the schema at parse time — an unknown key is an error naming the file, the line and the key, not a guess. The keys satz reads itself are the exception, and they are a closed list: `"import-id"`, `lifecycle`, `provider`, a project's `project_service` and `org`, a group's `member` / `manager` / `owner` / `email`.
+- **Typing**: every resource key and block key is checked against the schema at parse time — an unknown key is an error naming the file, the line and the key, not a guess. The keys satz reads itself are the exception, and they are a closed list: `"import-id"`, `lifecycle`, `provider`, `private`, a project's `project_service` and `org`, a group's `member` / `manager` / `owner` / `email`.
 
 #### 3. Template Generator (`src/template.rs`)
 Writes the day-0 estate for a new customer.
@@ -2347,6 +2352,7 @@ estate's service account.** Every exception is listed here with its reason.
 | `import --into <estate>`, `import --as <estate>` | the estate's service account | the sweep reads a customer's organization, and `roles/cloudasset.viewer` on it is that account's — `--generate-unmapped` writes the account into the provider block its `tofu` child reads with |
 | `import` given no estate | the human's ADC | the output is a new file; there is no estate to be — including the `tofu plan -generate-config-out` child of `--generate-unmapped`, which inherits it and impersonates nobody. The scope must be readable by the credentials themselves; `--as <estate>` is how it is read by the account that holds the role |
 | `bootstrap`, `init` | the human's ADC | day 0 — the service account does not exist yet |
+| `migrate` | the human's ADC | `--mode cloud` assigns Groups Admin, which the account cannot give itself |
 | `whoami` | the human's ADC | the question *is* who the human is |
 | `whoami <estate>` | the estate's service account in cloud mode; the human's ADC in local mode | a different question — who that estate acts as — so a different answer |
 | `map-types` | no credential at all | Discovery documents are public |

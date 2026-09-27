@@ -318,7 +318,6 @@ impl Server {
                             };
                             items.push(item(name, CompletionItemKind::STRUCT, Some(detail), b.block.description.clone(), "0"));
                         }
-                        items.push(item("use", CompletionItemKind::KEYWORD, Some("include a pack here".into()), None, "3"));
                     }
                     // A resource may nest a resource (a project under a folder).
                     push_types(&mut items, registry.as_deref(), "4");
@@ -809,6 +808,8 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("export", "a value published to the projects beside the estate, carried by every interface under interfaces/: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
     ("interface", "one project's exports, written to interfaces/<name>/ beside the core ones: `interface \"name\" [common] { export … use interface … }` — `common` puts it into the library every project's folder carries; `interface \"name\"` alone on its line heads an interface file satz generates, which a project estate `use`s and reads as `\"${{interface.<export>}}\"`"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
+    ("private", "keep one resource out of every export and every `all` map: `private TYPE.LABEL`"),
+    ("request", "a pack only — what a project may add to a list param, checked by `satz check-request`: `request PARAM { key fields description }`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, emitted as providers.tf"),
     ("providers", "the provider blocks, emitted as providers.tf"),
@@ -822,11 +823,19 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
             ("why", "what getting it wrong costs"),
             ("reversal", "edit | state_surgery | recreate"),
             ("blast", "none | low | high"),
-            ("recommend", "the default answer"),
+            ("recommend", "the answer the interview recommends; not a default"),
             ("ask_when", "only when this param is truthy"),
-            ("required", "true: no default is possible"),
+            ("required", "true: exactly one option must be chosen — no default"),
             ("empty", "what an empty answer means; \"\" is then an answer"),
             ("option", "`option PARAM { label = \"…\" why = \"…\" }` in a `question oneof`"),
+        ],
+    ),
+    (
+        "request",
+        &[
+            ("key", "the field whose value labels an entry, unique across the list"),
+            ("fields", "the closed list of fields an entry may carry"),
+            ("description", "what an entry is, for the interface README"),
         ],
     ),
     (

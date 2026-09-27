@@ -1,6 +1,6 @@
 # 0062 — the hcl import carries the provider, drops the ordering, and refuses a reference that crosses the boundary
 
-- **Status:** accepted
+- **Status:** accepted; the keys satz owns are ten (ADR-0070)
 - **Date:** 2026-09-23
 - **Shipped in:** the release that follows
 
@@ -35,7 +35,7 @@ leave this import and must resolve in the target module"*.
 **Judge each meta-argument by whether Satz can say it, and never write an estate
 `satz transpile` refuses.**
 
-1. **`provider` translates.** It is already one of the nine keys a Satz resource
+1. **`provider` translates.** It is already one of the keys a Satz resource
    body carries that no provider schema names (`satz_body_key`,
    `crates/satz-core/src/pipeline.rs`, ADR 0047), and `emit_shared.rs` renders the
    string back as the reference it was. The alias that is the estate's own —

@@ -6,7 +6,7 @@ Detailed technical diffs are in their own audit docs
 and the review log. Every audit adds a row, and its raw findings stay in the
 repository.
 
-## Landscape (as of 2026-08-22)
+## Landscape
 
 | Contender | What it is | CIS/OSCAL mapping | Brownfield | Multi-customer | Evidence plane |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@ repository.
 
 ## Differences
 
-1. **Deterministic derivation.** Interview → derive → folded-IR check can be
+1. **Deterministic derivation.** Interview → compile → folded-IR check can be
    re-run, so an auditor can replay the derivation. A Gemini transcript (GHT)
    cannot be replayed. satz calls no model; an agent uses it through MCP.
 2. **Multi-customer maintenance.** N customers on FAST are N diverged copies of

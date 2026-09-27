@@ -72,7 +72,9 @@ google_storage_bucket {
 - **First definition wins, outer beats inner.** The estate declares before its packs,
   so an estate param overrides a pack default. That is the customisation channel:
   reach for a param before forking a pack.
-- Overriding a list **replaces** it. There is no concatenation for an estate.
+- Overriding a list **replaces** it. There is no concatenation for an estate. Entries from
+  outside arrive one way: a project's request file, a pack of `contributes_<param>` the
+  estate `use`s (see *Interfaces* below).
 - A PACK adds to another file's list param with `contributes_<param> = [ … ]` in its
   own `params`. The entries go after whatever the list holds, each once, they leave
   when the pack is switched off, and they are no variable of their own.
@@ -175,7 +177,7 @@ use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
 ```
 
 `when` takes a **boolean param that must exist** — an unknown one is an error, never
-silently false. An exclusive choice is two booleans and two `use … when` lines; where a
+false by default. An exclusive choice is two booleans and two `use … when` lines; where a
 pack declares a `question oneof` over them, satz refuses two true branches by name.
 
 **Provenance by suffix**, and it is enforced:
@@ -248,7 +250,7 @@ A question must be declared in the same file as the param it answers.
 on — the CIS org-policy packs name `satz adopt <estate> --execute --import`:
 
 ```satz
-pack cis_baseline version "2.15"
+pack CIS_GCP_Foundation_4_0 version "2.17"
 
 params { cis_baseline_adopted = false }
 
@@ -299,6 +301,28 @@ witness, and it warns on every transpile unless you write `hcl trust "…"`. An 
 is inert until `satz run-actions`, which launches it by extension: a `.py` script runs
 through `uv run --script` on every platform, a `.sh` one does not run on Windows. Write a
 new action in Python. Both are last resorts; prefer a real resource.
+
+## Interfaces — what the projects beside an estate read, and what they may ask for
+
+An estate publishes values with `export "<name>" = <value> [attach ["<type>", …]]
+[description "…"]` — outside every block a core export, inside `interface "<project>"
+[common] { … }` one project's; `use interface "<other>"` composes; `export … = all <type>
+[under <type>.<label>]` publishes a map keyed by label; `private = true` in a body or
+`private <type>.<label>` keeps a resource out. `satz transpile` writes `interfaces/` beside
+`hcl/`: `common/` and one folder per project, each interface as an HCL module and as
+`satz/interface.satz`, which a project estate `use`s and reads as `"${{interface.<name>}}"`
+— in a resource body only; inside `hcl { }` it is refused (kind `interface-use`).
+`CHANGES.md` beside an interface's README says what the last transpile changed for it.
+
+`each <list param> by <field> { … }` inside a resource type map writes one labelled body per
+entry of the list; `request <list param> { key fields description }` declares what a project
+may add to that list, and a project's request file — a pack of `contributes_<param>` entries
+— is checked by `satz check-request` and vendored into the estate by pull request.
+
+Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
+`satz add-project`, `satz interfaces` and `satz check-request` have no tool: ask a human for
+them — a project is onboarded by a reviewed pull request, and a request file is checked in
+the project's pipeline.
 
 ## Working through the MCP server
 
@@ -354,7 +378,9 @@ estate's service account is missing for what it emits and the APIs its infrastru
 project does not enable — it writes both unless `report_only`),
 `satz_review_pack` (judge a pack somebody wrote against the library's bar, findings
 anchored to file and line — offline and read-only),
-`satz_triage` (sort a Prowler export against what the estate claims), `satz_whoami`
+`satz_triage` (sort a Prowler export against what the estate claims), `satz_fmt` (the
+canonical layout of a file), `satz_get_presets` (fetch the pack library), `satz_prowler`
+(the Prowler command line this estate needs), `satz_whoami`
 (both halves of the identity — the ADC account, and the estate's mode, declared service
 account and whether the calls impersonate it — with live checks that the one may become
 the other and that the quota project is reachable; check this first when a live call is
@@ -404,11 +430,14 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | the IaC service account … lacks roles, kind `prerequisites` | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
 | … API(s) this estate's resources need are not enabled on …, kind `prerequisites` | a resource type the estate emits is served by an API no `project_service` entry of the infrastructure project enables; add it to that list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
 | `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-pack` that switches the needed one on |
+| `"${{interface.x}}"` names no export, kind `interface-use` | the interface file the estate `use`s has no export `x`; the message lists what it has |
+| the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
+| `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the request point does not declare; the message lists its fields |
 | `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules
 
-1. Never edit `hcl/` — it is generated.
+1. Never edit `hcl/` or `interfaces/` — both are generated.
 2. Never invent an id, a project number, a directory customer id or a domain. Ask, or
    resolve it with `adopt`.
 3. Prefer a param to a fork; prefer a fork to editing a pristine pack.

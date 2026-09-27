@@ -12,7 +12,7 @@ There are three ways to start an estate, and they end at the same file:
 | `satz interview <estate> [--create]` | a person at a terminal | one question at a time, the default in brackets, Enter accepts it |
 | `satz_interview` over MCP | a customer, through an agent | the agent asks in its own words, the human decides, the agent writes the param or passes it as an `answer` |
 
-`init` takes eleven of the day-0 values as flags and writes the rest from its
+`init` takes ten of the day-0 values as flags and writes the rest from its
 defaults. The other two ask for every day-0 value, and also ask every question a pack
 adds, which `init` has no flag for.
 
@@ -74,7 +74,7 @@ changes the organisation.
 bootstrap refused: 3 question(s) unanswered — customer_id (needs a value),
 billing_account_infra (needs a value), default_region. Every question must be
 answered before the estate touches an organisation. `satz questions C0example.satz
---unanswered` lists them with their defaults; write the answer (or the default) into
+--unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into
 the estate's params.
 ```
 
@@ -114,7 +114,8 @@ order is a path:
    permissions, the essential contact. The rest are off: budget, SCC enablement and
    the packs that carry its findings, the security-audit account, Defender, Sentinel
    and its two log paths (which follow the Sentinel answer), the verification runner,
-   the exemption tag. The map declares the choices and offers each pack with an
+   the exemption tag, the billing export, the shared network, the project CIS alerts and
+   the interface change notice. The map declares the choices and offers each pack with an
    `offers` entry; the estate carries one `use … when` line per choice.
 3. **Every pack a choice switched on**, with its own questions: the CIS baseline's
    allowed resource locations and policy members and one switch per opt-in extension
@@ -174,8 +175,8 @@ satz interview satz/new-customer.satz --create
 `--create` writes the estate first when it does not exist: an empty `params {}`, the same
 day-0 resources `init` writes — the folder, the project, the state bucket, the IaC group and
 service account — and every pack's `use` line **commented out**, under the phase that has to
-be finished before that pack can go in. The audit logsink's and the central alerts' lines sit
-inside the infrastructure folder; Sentinel, its two log paths and the findings mail read their
+be finished before that pack can go in. Every line stands at the top level but the essential
+contact's, whose block is the infrastructure folder; Sentinel, its two log paths and the findings mail read their
 params, so their lines follow the folder: a param is known from the line that declares it on,
 and a line above the folder that reads one stops the compile with `unknown param` once it is
 uncommented.
@@ -198,7 +199,7 @@ its line and what it needs.
 Then the interview:
 
 ```
-16 open question(s): 7 have a default, 9 need a value.
+18 open question(s): 9 have a default, 9 need a value.
 Accept all defaults now and answer only those 9? [Y/n] — n goes through every question
 > y
   accepted 7 default(s).
@@ -264,8 +265,8 @@ Its arguments:
 The loop an agent runs:
 
 1. `satz_interview {create: true}` on a new name → every open question of the path —
-   the day-0 ones, the map's choices, the baseline's ten, the packs the
-   defaults switch on — sixteen of them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
+   the day-0 ones, the baseline's and the packs the defaults switch on — eighteen, nine of
+   them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the
    defaults as defaults — "the project will be called acme-infra-001 unless you say
@@ -289,7 +290,9 @@ satz questions C0example.satz --format markdown --out decisions.md
 
 One table per pack, opened by the pack's description: the question, the answer the
 estate carries (or the default it would accept, or **needs a value**), and what
-changing it later costs. ### The catalog a customer keeps
+changing it later costs.
+
+### The catalog a customer keeps
 
 `satz questions <estate> --format markdown --out <file>` is the decisions sheet (`--format pdf`
 typesets it), and it is also the

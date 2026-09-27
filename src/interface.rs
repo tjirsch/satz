@@ -646,7 +646,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                     for other in manifest.of_type(&central_type) {
                         if on_node(other, r) {
                             out.push(format!(
-                                "attach \"{}\": `{}` lets a project add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a team adds. Grant with `{}` in the estate instead",
+                                "attach \"{}\": `{}` lets a project add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a project adds. Grant with `{}` in the estate instead",
                                 t,
                                 t,
                                 address,

@@ -103,7 +103,7 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("params", "goes to the estate's parameter namespace", Used::Absorbed),
     ("private", "keeps a resource out of every export", Used::EstateOnly),
     ("question", "goes to the interview", Used::Absorbed),
-    ("request", "declares what a team may add to a list param", Used::Absorbed),
+    ("request", "declares what a project may add to a list param", Used::Absorbed),
     ("suppress", "removes a resource from the estate's fold", Used::EstateOnly),
     ("use", "pulls in another file", Used::Entry),
 ];
@@ -275,7 +275,7 @@ pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> 
             Position::NodeBody { .. } | Position::ResourceMap { grant: true, .. } => None,
             Position::File => Some(Misfit {
                 line: *line,
-                what: format!("`{:?}` is an attribute at the top level of the file — attributes live inside a resource block", key),
+                what: format!("`{}` is an attribute at the top level of the file — attributes live inside a resource block", key_text(key)),
                 fix: String::new(),
             }),
             Position::NodeMap { .. } | Position::ResourceMap { .. } => Some(Misfit {
@@ -424,7 +424,7 @@ fn advice(pos: Position, file: &satz::File, use_path: &str, types: &dyn TypeReso
     let typed = file.items.iter().any(|e| matches!(e, Entry::Map { key: Key::Ident(k), name: None, .. } if opens_a_map(k, types)));
     match pos {
         Position::NodeMap { .. } | Position::ResourceMap { .. } if typed => format!(
-            "This one declares its own resource types, so it is written bare, at the top level or in the body of a folder or a project: `use \"{}\"`",
+            "This one declares its own resource types, so it is written bare, at the top level: `use \"{}\"`",
             use_path
         ),
         Position::NodeMap { .. } | Position::ResourceMap { .. } => "Move the `use` to where the file's entries belong".to_string(),
@@ -651,7 +651,7 @@ question customer_shortname {
     }
 
     /// Rule 4, hand-written: a statement stands at the top level of a file. Anywhere else
-    /// it used to be read as whatever the position takes — a resource labelled `params`,
+    /// it would be read as whatever the position takes — a resource labelled `params`,
     /// a folder called `question`, an attribute block the provider does not have.
     #[test]
     fn a_statement_written_inside_a_block_is_refused_at_every_position() {

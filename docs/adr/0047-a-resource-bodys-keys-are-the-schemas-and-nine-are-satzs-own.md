@@ -1,6 +1,6 @@
 # 0047 — a resource body's keys are the schema's, and nine are satz's own
 
-- **Status:** accepted
+- **Status:** accepted; the list is ten with `private` (ADR-0070)
 - **Date:** 2026-09-21
 - **Shipped in:** the release that follows
 
@@ -63,7 +63,7 @@ main.satz:18: google_project: unknown key `parent` — the provider schema names
 argument or block here
 ```
 
-**Nine keys are satz's rather than the provider's**, and they are a closed list
+**Nine keys are satz's rather than the provider's** *(ten with `private`, ADR 0070)*, and they are a closed list
 (`satz_body_key`): `"import-id"`, `lifecycle` and `provider` in any body; a project's
 `project_service` and `org`; a group's `member`, `manager`, `owner` and `email`. Each is
 read by the emitter and turned into something — an `import` block, a

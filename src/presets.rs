@@ -1119,7 +1119,7 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
 /// (refreshed on every update, not an accumulating ledger — git is the history).
 /// Adoption = point the estate back at the pristine name and delete fork + diff.
 ///
-/// Semantic change = the compiled canonical YAML differs (comments/formatting
+/// Semantic change = the compiled canonical form differs (comments/formatting
 /// don't fork anything). Version fields cross-check: same version + different
 /// semantics warns (upstream release-hygiene bug).
 #[allow(clippy::too_many_lines)]
@@ -1141,8 +1141,7 @@ pub(crate) async fn run_merge_presets(
     // worse, roll a good repoint back). One run, one kind of operation.
     let adopting = !adopt.is_empty();
     let pristine = pristine_source(pristine_dir).await?;
-    // The pack lines come from the graph that arrived with these packs. One placing a pack
-    // in a block this binary's scaffold lacks is refused before anything changes.
+    // The pack lines come from the graph that arrived with these packs.
     let graph = crate::pack_graph::read(&pristine)?;
     if graph.is_none() && !report_only {
         events.push(MergeEvent::Note {

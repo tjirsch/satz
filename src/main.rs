@@ -280,7 +280,7 @@ pub(crate) enum Commands {
         project: Option<String>,
         /// With `--project`: the project's `interfaces/<project>/<project>/satz/interface.satz`,
         /// as the central estate wrote it after `satz add-project`
-        #[arg(long)]
+        #[arg(long, requires = "project")]
         interface: Option<PathBuf>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
         #[arg(long, hide = true)]
@@ -380,10 +380,13 @@ pub(crate) enum Commands {
     },
     /// Fetch schemas and update config
     UpdateSchema {
+        /// The providers to fetch, comma-separated (default: the config's)
         #[arg(long, value_delimiter = ',')]
         providers: Option<Vec<String>>,
+        /// The provider version to fetch (default: the config's)
         #[arg(long)]
         version: Option<String>,
+        /// The Terraform/OpenTofu binary that fetches them (default: the config's `tf_tool`)
         #[arg(long)]
         tf_tool: Option<String>,
     },
@@ -774,14 +777,14 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
-    /// A team's request file, checked offline against the estate's request points before it is vendored into the estate
+    /// A project's request file, checked offline against the estate's request points before it is vendored into the estate
     CheckRequest {
         /// The request file: `params { contributes_<param> = [ … ] }` for the estate's request points
         file: PathBuf,
         /// Estate file (.satz, inside yaml_dir if relative); the one estate in yaml_dir when left out
         estate: Option<String>,
     },
-    /// What the estate publishes to the projects beside it: every export, with the interface it stands in, how a project reads it and what may be attached to it, and every interface
+    /// What the estate publishes to the projects beside it: every export, with the interface it stands in, how a project reads it and what may be attached to it, every interface, and every request point
     Interfaces {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -834,7 +837,7 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
-    /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
+    /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
     ///
     /// A pack is a fragment, so satz folds it into an estate to see what it emits:
     /// a synthesised one — the documented example params, the pack's own declared
@@ -1391,9 +1394,9 @@ Thumbs.db
             }
 
             if let Some(project) = project.as_deref() {
-                // A project estate: written from the four exports `satz add-project`
-                // published for it, so nothing is derived from the credentials — the central
-                // estate answered it all.
+                // A project estate: written from the interface file — `project_id`, `iac_account`,
+                // `state_bucket` and the core export `default_region` — so nothing is derived from
+                // the credentials: the central estate answered it all.
                 let interface_path = interface.ok_or("init --project: `--interface <path>` names the project's interface file, `interfaces/<project>/<project>/satz/interface.satz` of the central estate")?;
                 let text = fsx::read_to_string(&interface_path).map_err(|e| format!("{}: {}", interface_path.display(), e))?;
                 let file = satz_core::satz::parse(&text)
@@ -5579,7 +5582,7 @@ mod command_groups {
             ),
         ),
         ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
-        ("init", Identity::Human("--from-live runs before the estate exists")),
+        ("init", Identity::Human("derives the estate's values from the ADC before an estate exists")),
         (
             "whoami",
             Identity::HumanOrEstate(

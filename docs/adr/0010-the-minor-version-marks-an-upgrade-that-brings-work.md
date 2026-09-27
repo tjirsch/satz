@@ -38,7 +38,11 @@ Before 1.0, semantic versioning puts breaking changes in the minor number.
 Option 2. The rule is in `CLAUDE.md` (release flow) and in the README's *Releasing*
 section. The categories that make a release a minor are:
 
-- a language change;
+- a language change that refuses or changes what compiled before — a new statement word
+  refuses a bare resource label of that name, a new question in a shipped pack refuses an
+  apply until the estate answers it; a pack change counts by the release that ships the
+  pack's new version in `presets/`, whether an estate picked it up earlier through
+  `get-presets`;
 - a removed or renamed command or flag;
 - an input format no longer read;
 - an emission change that moves a plan.

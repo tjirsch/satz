@@ -421,7 +421,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
-| `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the three below are asked only when it is on |
+| `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the four below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
 | `use_scc_findings_mail` | off | `scc/scc-findings-mail` — asked only when the topic is on: the subscription, mailbox and alert that tell somebody |
 | `use_scc_findings_siem` | off | `scc/scc-findings-siem` — asked with it: the connector's own subscription and the grant it reads with. Both may be on |
@@ -1742,8 +1742,9 @@ security's as much as the provider's.** It decides how a project changes it:
   with per-member resources (projects attach Google projects; the pack writes `lifecycle {
   ignore_changes = [status[0].resources] }` on it).
 - **Central-only:** the pack keeps the resource whole and takes the projects' entries as a
-  list param, which a project's contribution fills (`contributes_<param>`, ADR 0051); the
-  change is a pull request on the estate, reviewed like a rule change in a global firewall
+  list param, which a project's contribution fills (`contributes_<param>`, ADR 0051) and a
+  `request` point beside the list declares — what a project may add, checked by `satz
+  check-request`; the change is a pull request on the estate, reviewed like a rule change in a global firewall
   or a route in a network hub. Global firewall policy rules (the provider could attach
   them one by one as `google_compute_firewall_policy_rule`, and security keeps them
   central), hub routes, DNS forwarding.
@@ -1813,6 +1814,73 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.87.0
+
+**A `{param}` inside a claim's `reason`, `interpretation` or `duty_<id>` is refused.** These
+strings are literal, as every other statement string is; before, the interpolation was
+dropped and the text kept the words around it. Find it: `grep -nE '^ *(reason|interpretation|duty_[a-z_]+) *= *".*\{' satz/*.satz`.
+
+```
+error    front-end  satz/e.satz:12
+    claim: reason: no interpolation allowed
+```
+
+**The edit:** write the value out (`reason = "the customer's own SIEM"`), or drop the brace.
+The plan does not move: a claim emits nothing.
+
+**A bare `duty = "…"` in a claim is refused.** A duty carries its id in its key,
+`duty_<id> = "…"`; the bare key was read as a duty named `duty`.
+
+```
+error    front-end  satz/e.satz:13
+    duty: write it as an attribute, `duty_<id> = "text"`
+```
+
+**The edit:** name the duty, `duty_review = "…"`. The plan does not move.
+
+**`satz init --interface <path>` without `--project <name>` is refused** by the command
+line (the flag was accepted and ignored). **The edit:** name the project, or drop the flag.
+
+### v0.86.6
+
+**An estate that uses `estate-map.satz` and does not bind `use_shared_network` is refused by
+`transpile --apply` and `bootstrap`.** estate-map 2.6 asks a new question, and an apply needs
+every question answered, default or not. Find it: `satz questions <estate> --unanswered
+--format text --out -`.
+
+```
+apply refused: 1 question(s) unanswered — use_shared_network. Every question must be answered before the estate touches an organisation. `satz questions satz/<estate>.satz --unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into the estate's params.
+```
+
+**The edit:** `use_shared_network = false` in the estate's `params` (`true` asks the pack's own
+questions next). The plan does not move with `false`.
+
+### v0.86.5
+
+**A resource labelled `request`, written bare inside a resource type map, is refused.**
+`request` is a statement word. Find it: `grep -n '^ *request {' satz/*.satz`.
+
+```
+error    front-end  satz/e.satz:6
+    `request` is a Satz statement: it is written at the top level of a file, where it declares what a project may add to a list param. Directly inside `google_folder { … }` it is read as a folder named `request`. Move it to the top level of the file; one that really is called `request` is written quoted, `"request" { … }`
+```
+
+**The edit:** write the label quoted, `"request" { … }`. The plan does not move: the address
+is the same.
+
+### v0.86.2
+
+**A resource labelled `private`, written bare inside a resource type map, is refused.**
+`private` is a statement word. Find it: `grep -n '^ *private {' satz/*.satz`.
+
+```
+error    front-end  satz/e.satz:6
+    `private` is a Satz statement: it is written at the top level of a file, where it keeps a resource out of every export. Directly inside `google_folder { … }` it is read as a folder named `private`. Move it to the top level of the file; one that really is called `private` is written quoted, `"private" { … }`
+```
+
+**The edit:** write the label quoted, `"private" { … }`. The plan does not move: the address
+is the same.
+
 ### v0.86.0
 
 **A `${{interface.<export>}}` inside an `hcl { }` block is refused.** The passthrough is
@@ -1868,7 +1936,7 @@ or the estate that makes it, with its own entry here.
 ### v0.84.0
 
 **`use_interface_notice` is refused; the change notice is the choice `interface_notice`.**
-The map (`presets/estate-map.satz`) asks how the teams hear of a changed export as
+The map (`presets/estate-map.satz`) asks how the projects hear of a changed export as
 `question oneof interface_notice`, whose Pub/Sub option is `interface_notice_pubsub`.
 The old boolean is refused wherever it stands — bound in `params {}`, `true` or `false`,
 or named by the `use … when` line. Find it: `grep -n use_interface_notice <estate>.satz`.
@@ -2259,7 +2327,7 @@ A question is answered by the estate binding its param, so an estate that used t
 and answered everything now has one open question:
 
 ```
-apply refused: 1 question(s) unanswered — satz questions <estate> --unanswered
+apply refused: 1 question(s) unanswered — <question>. Every question must be answered before the estate touches an organisation. `satz questions <estate> --unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into the estate's params.
 ```
 
 **The edit:** add the param to the estate's `params { }` with the catalog ids the
@@ -2650,12 +2718,12 @@ the private history recorded them.
 | `cis_extensions.cloud_sql_dry_run` | 1.1 | 2026-09-13 | first version, GENERATED by `scripts/build_dry_run_fragments.py` from `cloud-sql.satz` — do not edit. The same constraint with `dry_run_spec` instead of `spec` and every claim dropped: Google evaluates each rule, logs every action it would have blocked, and blocks none, so the violation count sizes the control against a live organisation before it bites. It discharges nothing while it runs and carries no claim, so `require` reports the control unmet, which is the truth. Its version tracks the fragment it is derived from |
 | `cis_extensions.cloud_sql_iam_and_deletion_protection_dry_run` | 1.0 | 2026-09-13 | first version, GENERATED by `scripts/build_dry_run_fragments.py` from `cloud-sql-iam-and-deletion-protection.satz` — do not edit. The same constraint with `dry_run_spec` instead of `spec` and every claim dropped: Google evaluates each rule, logs every action it would have blocked, and blocks none, so the violation count sizes the control against a live organisation before it bites. It discharges nothing while it runs and carries no claim, so `require` reports the control unmet, which is the truth. Its version tracks the fragment it is derived from |
 | `cis_extensions.confidential_computing_dry_run` | 1.0 | 2026-09-13 | first version, GENERATED by `scripts/build_dry_run_fragments.py` from `confidential-computing.satz` — do not edit. The same constraint with `dry_run_spec` instead of `spec` and every claim dropped: Google evaluates each rule, logs every action it would have blocked, and blocks none, so the violation count sizes the control against a live organisation before it bites. It discharges nothing while it runs and carries no claim, so `require` reports the control unmet, which is the truth. Its version tracks the fragment it is derived from |
+| `integrations.microsoft_sentinel` | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
 | `integrations.microsoft_sentinel` | 1.0 | 2026-09-12 | first version: Sentinel's GCP federation — pool, the provider trusting Microsoft's commercial tenant with the `api://` audience, the connector's service account and `roles/iam.workloadIdentityUser` for the pool's principal set. Transcribed from Microsoft's own Terraform against the pinned provider: upstream pins google 3.73.0 and uses authoritative `google_project_iam_binding`, which removes grants an estate made |
 | `integrations.microsoft_sentinel_network_logs` | 1.0 | 2026-09-12 | first version: the four network streams — VPC flow logs, firewall rules logging, DNS queries, Cloud NAT — each with its own organisation sink, topic, subscription, publisher grant for the sink's writer identity and subscriber grant for the connector. On by default with Sentinel: each stream is empty until the feature is enabled per subnet, rule, policy or gateway, and routing costs nothing, so switching them off saves nothing and risks the day somebody enables flow logs. Filters select one stream each (`log_id` where Google publishes the log name, the documented `dns_query` resource type for DNS) rather than Microsoft's mix of stream plus the same service's audit records, which the audit fragment already carries. Grants are non-authoritative: upstream's `google_project_iam_binding` would have had the second stream applied remove the first's publisher grant, stopping delivery silently |
 | `integrations.microsoft_sentinel_auditlogs` | 1.0 | 2026-09-12 | first version: the first log source — an organisation sink with `include_children` for the four audit streams, its topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's writer identity and `roles/pubsub.subscriber` for the connector on that one subscription. Tighter than upstream, which grants a project-level custom role over every subscription in the project. The filter is asked: Data Access logs are most of the volume and Sentinel bills by the gigabyte |
 | `monitoring.organization_audit_logsink` | 1.4 | 2026-09-12 | `logsink_project_name` becomes **`logsink_project_id`**, because that is what it is — it feeds `project_id`, and a project id is immutable while a name is not. The project's display name is its own optional param, `logsink_project_display_name`, defaulting to the id exactly as Google does, so nothing changes in the emitted HCL. An estate still binding the old name is REFUSED by name with the new one: nothing refuses a param no pack reads, so leaving it would have silently taken this pack's default project instead — a second logging project and an orphaned archive |
 | `monitoring.organization_cis_log_alerts_central` | 1.6 | 2026-09-12 | follows the rename: the alert project defaults to `logsink_project_id` |
-| `integrations.microsoft_sentinel` | 1.1 | 2026-09-12 | follows the rename: the Sentinel project defaults to `logsink_project_id` |
 | `cis_extensions.internet_ssh_rdp` | 1.1 | 2026-09-12 | ON by default (CIS pack 2.10), with the corrections a default-on pack needs. The pass list gains the three RFC1918 blocks beside the IAP range, because the deny matches `0.0.0.0/0` — every address, private ones included — and a hierarchical policy is read before the VPC rules: with IAP alone, SSH between two instances in one subnet was denied. IPv6 gets its own pass rule (IAP's `2600:2d00:1:7::/64` and `fc00::/7`), since a rule's sources may not mix families. Every rule now carries the control's whole protocol set — SSH on TCP 22 and SCTP 22, RDP on TCP 3389 and UDP 3389 — a TCP-only deny left UDP 3389 open. And the two DENY rules log: Google forbids logging on `goto_next`, so an accepted IAP session leaves no firewall record and only refusals do |
 | `cis_extensions.dns_logging` | 1.0 | 2026-09-12 | first version: CIS 5.0 §2.13, the half an org policy can carry — a custom constraint on `dns.googleapis.com/Policy` requiring `enableLogging`. ON by default. `contributes`, not `implements`: no org policy can require that a network HAS a DNS policy, only that a policy which exists logs, so the missing half is named as a duty and verified live |
 | `CIS_GCP_Foundation_4_0` | 2.10 | 2026-09-12 | `cis_block_internet_ssh_rdp` defaults to TRUE, the second flag to do so. An estate taking this version emits an organisation firewall policy it did not have: ports 22 and 3389 are denied from public addresses, the private ranges and IAP pass to the VPC rules, and the denies log. Answering no is a deviation whose reason the compliance report carries (ADR 0012) |

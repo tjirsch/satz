@@ -44,7 +44,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   use ONLY the four example customers. If an example needs a value the table
   does not have, add it to the table in the same commit. Identifiers a VENDOR
   publishes and every customer shares — Microsoft's commercial tenant, an
-  application id — are allowed by name in `ALLOW_GUID` and listed in that same
+  application id — are allowed by name in the `guid` list of `scripts/check-names-allow.txt` and listed in that same
   table; a GUID the gate does not know is assumed to identify a customer.
   What the gate cannot see is a NAME: a display name or a company in prose has
   no shape. That is what the local, never-committed denylist
@@ -136,8 +136,9 @@ and in the maintainer's notes. Nothing in this file names a customer.
   survives is the PRINTER (`crates/satz-core/src/migrate.rs`): every import shape,
   the HCL importer and the org-policy export write Satz through `convert_value`,
   so nothing in that file may be cut without checking its callers.
-  `presets/import-config.yaml` and `presets/catalogs/*.yaml` are data, not
-  estates — they are YAML and stay YAML.
+  `presets/import-config.yaml`, `presets/catalogs/*.yaml`, `interface-lookups.yaml`,
+  `attach-points.yaml`, an estate's `attestations.yaml` and `type-map.yaml` are data,
+  not estates — they are YAML and stay YAML.
 - **`cargo test` does NOT rebuild the debug binary** — `cargo build` before a
   live test, or a stale binary shadows the fix. Same family: an edit to
   `crates/satz-core/` was once not picked up — `touch` the file and confirm

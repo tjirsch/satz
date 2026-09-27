@@ -1,6 +1,6 @@
 # 0031 — the map offers every pack, and the pack graph ships with the presets
 
-- **Status:** accepted; supersedes the part of ADR-0007 that has the map declare "the
+- **Status:** accepted; "after the scaffold" and the check against the scaffold's blocks are gone (ADR-0046) and the S1 same-gate edge is decided by ADR-0054; supersedes the part of ADR-0007 that has the map declare "the
   choices and nothing else"
 - **Date:** 2026-09-19
 - **Shipped in:** the release that follows

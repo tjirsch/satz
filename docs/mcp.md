@@ -117,8 +117,11 @@ org-policy tools the compliance plane answers for (`export-`, `diff-` and
 (`map-types`, `update-schema`, `doc-packs`, `pack-graph`), the `tofu`-workflow plumbing
 (`scan-plan`, `generate-migration`), what decides a human's own output (`silence` — an
 agent is handed every finding, the silenced ones included and marked), the client
-configuration that sets this server's own ceiling (`mcp-config`), and the terminal
-affordances (`completion`, `open-readme`, `self-update`). Every one of them except the
+configuration that sets this server's own ceiling (`mcp-config`), the interface plane's
+commands, which have no tools (`add-project` writes a section into the estate from a human's
+decision, `interfaces` is the report satz-studio reads through the CLI, `check-request` runs
+in a project's pipeline on the pull request that vendors the file), and the terminal
+affordances (`completion`, `open-readme`, `self-update`, `help`). Every one of them except the
 terminal affordances, `mcp` itself and `lsp` is named with its reason in the
 `instructions` the server returns at initialize, so an agent asks a human for it. The table in `src/mcp.rs`
 is the full list, with a reason per command. The tools
@@ -180,7 +183,7 @@ it may run without asking:
 | annotation | on |
 |---|---|
 | `readOnlyHint: true` | `satz_open`, `satz_estates`, `satz_require`, `satz_questions`, `satz_packs`, `satz_check_consumer`, `satz_triage`, `satz_prowler`, `satz_transpile_check`, `satz_check_presets`, `satz_review_pack`, `satz_fmt`, `satz_report_compliance`, `satz_whoami`, `satz_remediation_items` |
-| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and `out` writes the table, and both are refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_add_pack` and `satz_remove_pack` — they write the estate, and the same call twice leaves it as the first did; `satz_scan_checkov` — it runs an external program, and `uvx` downloads it first, so a client asks before running it, and `out` writes its report; `satz_restrict` — it lowers this session's level and nothing else |
+| `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true` | `satz_update_prerequisites` — `report_only` is free, the default writes the estate and is refused below `write`; `satz_transpile` — it writes, but re-running it converges; `satz_remediation_annotate` — the same values written twice leave the same run; `satz_adopt` — reading is free, `execute` writes the estate and `out` writes the table, and both are refused below `write`; `satz_interview` — reading is free, `create`/`answers`/`accept_defaults` write the estate and are refused below `write`; `satz_add_pack` and `satz_remove_pack` — they write the estate, and the same call twice leaves it as the first did; `satz_scan_checkov` — it runs an external program, and `uvx` downloads it first, so a client asks before running it, and `out` writes its report; `satz_merge_presets` — its report is free, and the write converges; `satz_restrict` — it lowers this session's level and nothing else |
 | `destructiveHint: true` | `satz_get_presets` — with `force` it overwrites packs the estate uses |
 | `openWorldHint: true` (also) | `satz_merge_presets` — without `pristine_dir` it fetches the upstream library |
 | `openWorldHint: true` | `satz_check_presets`, `satz_report_compliance`, `satz_whoami`, `satz_scan_checkov`, `satz_adopt`, `satz_get_presets`, `satz_merge_presets` — the ones that can reach the network (`uvx checkov` fetches Checkov) |
@@ -452,7 +455,8 @@ as the plain ADC.
   returns every row's status rather than an exit code.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.
-- **`satz add-project`, `satz interfaces` and `satz check-request` have no tool.** The
-  interface plane's tools are paused until it has settled; `add-project` edits the estate
-  file the way `satz_add_pack` does, `interfaces` reports what `satz_packs` does not,
-  `check-request` runs in a project's pipeline, and tools join then.
+- **`satz add-project`, `satz interfaces` and `satz check-request` have no tool.**
+  `add-project` writes a section into the estate from a human's decision, reviewed as a
+  pull request; `interfaces` is the report satz-studio reads through the CLI; `check-request`
+  runs in a project's pipeline on the pull request that vendors the file. `satz_check_consumer`
+  is the interface plane's one tool, and it reads.

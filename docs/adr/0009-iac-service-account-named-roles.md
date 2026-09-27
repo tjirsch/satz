@@ -1,6 +1,6 @@
 # 0009 — the IaC service account holds named roles, derived from the resource types
 
-- **Status:** accepted
+- **Status:** accepted; its command and files are superseded by ADR-0023 — `satz iac-roles`, `src/iac_roles.rs`, `iac_roles_gate` and `scripts/check_iac_roles.py` are `update-prerequisites`, `src/prerequisites.rs`, `prerequisites_gate` and `scripts/check_prerequisites.py`
 - **Date:** 2026-09-11
 - **Shipped in:** v0.46.110
 

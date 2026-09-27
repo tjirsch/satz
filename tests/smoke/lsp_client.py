@@ -105,8 +105,11 @@ n, l = line_of("uniform_bucket_level_access = true")
 r = response(send("textDocument/completion", {"textDocument": {"uri": uri}, "position": {"line": n, "character": len(l) - len(l.lstrip())}}))
 items = r if isinstance(r, list) else r["items"]
 labels = [i["label"] for i in items]
-for want in ("name", "location", "lifecycle_rule", "use"):
+for want in ("name", "location", "lifecycle_rule"):
     assert want in labels, f"completion in a bucket lacks {want}: {labels[:20]}"
+# a `use` inside a resource body is refused by the compile (a pack is used at the top level
+# or inside its type's map), so the editor does not offer it there
+assert "use" not in labels, f"completion in a bucket offers `use`, which the compile refuses there: {labels[:20]}"
 first = [i["label"] for i in sorted(items, key=lambda i: i.get("sortText", i["label"]))][:40]
 assert "location" in first, f"attributes are not offered first: {first}"
 
