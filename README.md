@@ -181,7 +181,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
-| `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked offline before it is vendored into the estate: request points only, each entry shaped, no key the list holds for another entry |
+| `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked before it is vendored into the estate: request points only, each entry shaped, no key the list holds for another entry, and the estate compiled with the file in place |
 | `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields and entries; the json form is what satz-studio reads |
 | `add-project <ESTATE>` | `--use-interface <name>` and `--export <interface>.<name>` (each repeated: what the project's interface also carries), `--interface-only` (the interface alone, no `--owner-group`), `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
@@ -323,8 +323,9 @@ The section is plain Satz at the end of the estate, the operator's to edit; the 
 request that carries it is the request's review. `satz transpile` then writes
 `interfaces/payments/`, and the project's own estate is `satz init --project payments
 --interface interfaces/payments/payments/satz/interface.satz` in its directory. Refused:
-a name that is no interface name, an estate that declares `interface "<name>"` already,
-and one that publishes no `workload_folder`, which says where a project goes.
+a name that is no interface name, an estate that declares `interface "<name>"` already —
+in its own text or through a pack it uses — and one that publishes no `workload_folder`,
+which says where a project goes; both are judged on the compiled estate.
 
 The interface takes more than the project's own four exports when the command says so:
 `--use-interface <name>` adds a `use interface` line, and `--export <interface>.<name>`

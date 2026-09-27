@@ -147,9 +147,9 @@ pub(crate) fn interface_block(name: &str, own: &[String], choices: &Choices) -> 
 /// The interface alone, for a workload that brings its own Google project: an interface
 /// is a module a team sources, and it may carry the core exports and what `choices` picks
 /// and nothing of its own.
-pub(crate) fn with_interface(src: &str, name: &str, choices: &Choices) -> Result<String, String> {
+pub(crate) fn with_interface(src: &str, name: &str, choices: &Choices, estate: &Declared) -> Result<String, String> {
     valid_name(name)?;
-    refuse_twice(src, name)?;
+    refuse_twice(src, name, estate)?;
     if choices.uses.is_empty() && choices.exports.is_empty() {
         return Err(format!(
             "interface \"{}\" would carry the core exports alone, which `interfaces/common/core/` already is — pick an interface to use (`--use-interface`) or an export to carry (`--export`)",
@@ -159,12 +159,42 @@ pub(crate) fn with_interface(src: &str, name: &str, choices: &Choices) -> Result
     Ok(appended(src, &format!("// ---- the interface \"{}\", written by `satz add-project --interface-only` ----\n{}", name, interface_block(name, &[], choices))))
 }
 
-fn refuse_twice(src: &str, name: &str) -> Result<(), String> {
-    let header = format!("interface \"{}\"", name);
-    match src.lines().enumerate().find(|(_, l)| l.trim_start().starts_with(&header)) {
-        Some((n, _)) => Err(format!("line {} declares `{}` already — one project is one interface", n + 1, header)),
-        None => Ok(()),
+/// What the compiled estate declares, read off `interface_report::report`: the interfaces
+/// — its own and its packs' — and the form of its `workload_folder` export. `add-project`
+/// judges these, not the estate file's text: a pack's interface is in no file of the
+/// estate, and the export may stand in a used file.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Declared {
+    pub interfaces: Vec<String>,
+    pub workload_folder: Option<WorkloadFolder>,
+}
+
+/// Where a project goes: a folder the estate declares, or the organisation itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkloadFolder {
+    Folder,
+    Organisation,
+}
+
+impl Declared {
+    /// Read off the report of the compiled estate.
+    pub(crate) fn of(report: &crate::interface_report::InterfacesReport) -> Self {
+        let workload_folder = report.exports.iter().find(|e| e.name == "workload_folder").map(|e| {
+            if e.targets.iter().any(|t| t.starts_with("google_folder.")) { WorkloadFolder::Folder } else { WorkloadFolder::Organisation }
+        });
+        Declared { interfaces: report.interfaces.iter().map(|i| i.name.clone()).collect(), workload_folder }
     }
+}
+
+fn refuse_twice(src: &str, name: &str, estate: &Declared) -> Result<(), String> {
+    let header = format!("interface \"{}\"", name);
+    if let Some((n, _)) = src.lines().enumerate().find(|(_, l)| l.trim_start().starts_with(&header)) {
+        return Err(format!("line {} declares `{}` already — one project is one interface", n + 1, header));
+    }
+    if estate.interfaces.iter().any(|i| i == name) {
+        return Err(format!("the estate declares `{}` already, through a pack it uses — one project is one interface, and a pack's interface is every project's", header));
+    }
+    Ok(())
 }
 
 fn appended(src: &str, section: &str) -> String {
@@ -177,18 +207,18 @@ fn appended(src: &str, section: &str) -> String {
     out
 }
 
-/// `src` with the project's section at its end. Refused, naming the line: an estate that
-/// declares `interface "<name>"` already, and one that publishes no `workload_folder`,
-/// which says where a project goes.
-pub(crate) fn with_project(src: &str, name: &str, owner_group: &str, choices: &Choices) -> Result<String, String> {
+/// `src` with the project's section at its end. Refused: an estate that declares
+/// `interface "<name>"` already — in its own text, naming the line, or through a pack —
+/// and one that publishes no `workload_folder`, which says where a project goes.
+pub(crate) fn with_project(src: &str, name: &str, owner_group: &str, choices: &Choices, estate: &Declared) -> Result<String, String> {
     valid_name(name)?;
     if !owner_group.contains('@') || owner_group.starts_with("group:") {
         return Err(format!("`--owner-group {}`: the group's address, `<name>@<domain>`", owner_group));
     }
-    refuse_twice(src, name)?;
-    let export = src.lines().find(|l| l.trim_start().starts_with("export \"workload_folder\""));
-    let folder = match export {
-        Some(l) => l.contains("google_folder.workload_folder."),
+    refuse_twice(src, name, estate)?;
+    let folder = match estate.workload_folder {
+        Some(WorkloadFolder::Folder) => true,
+        Some(WorkloadFolder::Organisation) => false,
         None => {
             return Err(
                 "the estate publishes no `workload_folder`, which is where a project goes — `satz init --workload-folder-name <name>` (a folder) or `satz interview` (`workload_folder_name`, `\"\"` for the organisation) writes the section".to_string(),
@@ -342,6 +372,29 @@ mod tests {
 
     const GROUP: &str = "payments-owners@example.com";
 
+    /// What the compiled estate declares, read off the source the way `Declared::of` reads
+    /// it off the report: the interface headers and the `workload_folder` export's form.
+    fn declared_of(src: &str) -> Declared {
+        let interfaces = src
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("interface \""))
+            .filter_map(|r| r.split('"').next())
+            .map(str::to_string)
+            .collect();
+        let workload_folder = src.lines().find(|l| l.trim_start().starts_with("export \"workload_folder\"")).map(|l| {
+            if l.contains("google_folder.workload_folder.") { WorkloadFolder::Folder } else { WorkloadFolder::Organisation }
+        });
+        Declared { interfaces, workload_folder }
+    }
+
+    fn with_project(src: &str, name: &str, owner_group: &str, choices: &Choices) -> Result<String, String> {
+        super::with_project(src, name, owner_group, choices, &declared_of(src))
+    }
+
+    fn with_interface(src: &str, name: &str, choices: &Choices) -> Result<String, String> {
+        super::with_interface(src, name, choices, &declared_of(src))
+    }
+
     /// The central estate `init` writes, with or without a workload folder. `tag` keeps two
     /// tests' scratch directories apart: the runner interleaves them.
     fn central(tag: &str, folder: Option<&str>) -> String {
@@ -403,10 +456,13 @@ mod tests {
     fn a_project_is_added_once_and_only_where_the_estate_says_where_projects_go() {
         let src = central("once", None);
         let none_chosen = Choices::default();
-        let with_project = |s: &str, n: &str, g: &str| super::with_project(s, n, g, &none_chosen);
+        let with_project = |s: &str, n: &str, g: &str| super::with_project(s, n, g, &none_chosen, &declared_of(s));
         let once = with_project(&src, "payments", GROUP).unwrap();
         let twice = with_project(&once, "payments", GROUP).unwrap_err();
         assert!(twice.contains("declares `interface \"payments\"` already"), "{}", twice);
+        // an interface a pack declares is in no line of the estate; the compiled estate knows it
+        let packed = Declared { interfaces: vec!["payments".into()], workload_folder: Some(WorkloadFolder::Organisation) };
+        assert!(super::with_project(&src, "payments", GROUP, &none_chosen, &packed).unwrap_err().contains("through a pack it uses"));
         let none = src.lines().filter(|l| !l.contains("export \"workload_folder\"")).collect::<Vec<_>>().join("\n");
         assert!(with_project(&none, "payments", GROUP).unwrap_err().contains("publishes no `workload_folder`"));
         assert!(with_project(&src, "Payments", GROUP).unwrap_err().contains("lowercase"));

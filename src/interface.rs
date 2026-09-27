@@ -69,7 +69,7 @@ pub(crate) fn lookups() -> BTreeMap<String, LookupRow> {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AttachRow {
     /// the attachment's argument that names the shared object; `None` for `*_iam_member`,
-    /// whose node is every argument but the grant's own
+    /// whose node is the argument that names a resource of the grant's own type
     #[serde(default)]
     pub target: Option<String>,
     pub central: Vec<Central>,

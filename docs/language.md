@@ -2288,7 +2288,9 @@ key twice. `satz check-request <file> [<estate>]` holds a project's file to it o
 before the file is vendored: the file holds a `pack` header and `params {
 contributes_<param> = [ … ] }` for request points alone, every entry shaped, no key the
 list already holds for another entry (the same entry again is the file already
-vendored). `satz interfaces` reports the request points, and every interface's
+vendored). With the estate named, the check then compiles the estate with the file in
+place, so what the compile would refuse once the file is vendored — an entry without a
+field the pack's `each` body reads — is refused before the pull request. `satz interfaces` reports the request points, and every interface's
 `README.md` says what may be requested and how.
 
 Refused: a request point on a param no file declares or that is no list, two request
@@ -2615,7 +2617,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `init [flags] [--interview]` / `init --project <n> --interface <file>` | Satz | write a new estate from the day-0 values, or a project's estate from its interface file (§6.17) |
 | `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and request point the estate publishes (§6.17) |
 | `add-project <estate>.satz --name <n> --owner-group <g> [--use-interface i] [--export i.x] [--interface-only]` | Satz | append the section that onboards one project — its Google project, IaC account, state bucket and `interface "<n>"` |
-| `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, before the pull request that vendors it |
+| `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, and the estate's compile with the file in place, before the pull request that vendors it |
 | `check-consumer <dir> [<estate>.satz]` | HCL | a project's HCL against the interface it reads: attach points, authoritative grants, duplicates |
 | `mcp [--allow read,write,exec] [--root d]` / `mcp-config <estate>.satz` | — | serve the estate over the Model Context Protocol (`docs/mcp.md`); write the client's configuration |
 | `merge-presets` | Satz | reconcile pack updates; forks + repoints on semantic change |

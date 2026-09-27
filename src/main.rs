@@ -2393,7 +2393,15 @@ Thumbs.db
                 eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
                 return Err(format!("check-request: {} finding(s) in {}", findings.len(), file.display()).into());
             }
-            eprintln!("check-request: {} fits the request points of {}", file.display(), input_path.display());
+            // the file fits the points; now the compile with it in place — what the estate
+            // would refuse once the file is vendored (an entry without a field the pack's
+            // `each` body reads) is refused here, before the pull request
+            let absolute = std::path::absolute(&file).map_err(|e| format!("{}: {}", file.display(), e))?;
+            let used = absolute.to_string_lossy().to_string();
+            if let Err(e) = pipeline_b_compile_using(&input_path, &[used.as_str()], &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent) {
+                return Err(format!("check-request: {} fits the request points of {}, and the estate refuses it once used — {}", file.display(), input_path.display(), e).into());
+            }
+            eprintln!("check-request: {} fits the request points of {}, and the estate compiles with it", file.display(), input_path.display());
             Ok(())
         }
         Commands::Interfaces { input, format, out } => {
@@ -2415,10 +2423,12 @@ Thumbs.db
             let src = fsx::read_to_string(&input_path).map_err(|e| format!("{}: {}", input_path.display(), e))?;
             let refused = |e: String| format!("add-project {}: nothing changed.\n\n{}", name, e);
             let mut choices = crate::project::Choices { uses: use_interface, exports: Vec::new() };
+            // what the estate declares now — its interfaces, a pack's included, and where a
+            // project goes — to judge the name against and to copy from
+            let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
+            let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces, &compiled.requests);
+            let declared = crate::project::Declared::of(&report);
             if !export.is_empty() || !choices.uses.is_empty() {
-                // what the estate declares now, to copy from and to check a name against
-                let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
-                let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces, &compiled.requests);
                 for u in &choices.uses {
                     if !report.interfaces.iter().any(|i| &i.name == u) {
                         return Err(refused(format!(
@@ -2444,9 +2454,9 @@ Thumbs.db
                 }
             }
             let out = if interface_only {
-                crate::project::with_interface(&src, &name, &choices)
+                crate::project::with_interface(&src, &name, &choices, &declared)
             } else {
-                crate::project::with_project(&src, &name, owner_group.as_deref().unwrap_or_default(), &choices)
+                crate::project::with_project(&src, &name, owner_group.as_deref().unwrap_or_default(), &choices, &declared)
             }
             .map_err(refused)?;
             let out = satz_core::fmt::format(&out).map_err(|e| format!("add-project {}: the section does not parse ({}:{}) — a generator defect", name, e.line, e.msg))?;
@@ -2845,6 +2855,19 @@ fn pipeline_b_compile(
     prerequisites: PrerequisiteFindings,
     output: FindingsOutput,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
+    pipeline_b_compile_using(input_path, &[], tool_config, runtime_config, prerequisites, output)
+}
+
+/// `pipeline_b_compile` with files the estate is read as if it `use`d them at its top
+/// level — `check-request`'s request file, absolute paths.
+fn pipeline_b_compile_using(
+    input_path: &Path,
+    extra_uses: &[&str],
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+    prerequisites: PrerequisiteFindings,
+    output: FindingsOutput,
+) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)?;
 
     let resolver = EstateResolver { registry: &registry };
@@ -2862,7 +2885,7 @@ fn pipeline_b_compile(
         Err(format!("use \"{}\": file not found", p))
     };
     let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
-    let fe = match satz_core::pipeline::compile_estate(&input_path.to_string_lossy(), &src, &resolver, &loader) {
+    let fe = match satz_core::pipeline::compile_estate_using(&input_path.to_string_lossy(), &src, extra_uses, &resolver, &loader) {
         Ok(fe) => fe,
         // An `unknown param` is most often a pack whose provider is off: the pack graph
         // names it beside the parser's error, inside the typed error so the location

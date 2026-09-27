@@ -386,9 +386,16 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
         let address = format!("{}.{}", tf_type, label);
 
         // an attachment: onto the central estate only at an attach point that allows its type
-        if let Some((row, _)) = interface::attach_row(&attach_table, tf_type) {
+        if let Some((row, node_type)) = interface::attach_row(&attach_table, tf_type) {
             for (arg, v) in node_args(b, row.target.as_deref()) {
                 for h in c.hits(v) {
+                    // a member grant's node is the argument that names a resource of the
+                    // grant's own type — `subnetwork` on a subnetwork grant; its `project`
+                    // or `region` say where the node is, and a literal equal to some static
+                    // export names no resource at all
+                    if !node_type.is_empty() && !h.resources.iter().any(|r| r.starts_with(&format!("{}.", node_type))) {
+                        continue;
+                    }
                     let allowed = match h.output {
                         Some(o) => o.attach.iter().any(|a| a == tf_type),
                         None => h.resources.iter().any(|r| !c.allowing(tf_type, r).is_empty()),
@@ -534,6 +541,9 @@ resource "google_project" "team" {
         assert!(f[0].starts_with("project.tf:4 ") && f[0].contains("module.satz.infra_folder") && f[0].contains("no attach point for `google_folder_iam_member`"), "{}", f[0]);
         // the project's own folder is the project's business
         assert!(findings("resource \"google_folder_iam_member\" \"c\" {\n  folder = google_folder.mine.name\n  role = \"r\"\n  member = \"m\"\n}\n").is_empty());
+        // an argument that names a resource of another type says where the node is, not what the grant joins
+        let beside = format!("{}resource \"google_folder_iam_member\" \"d\" {{\n  folder  = google_folder.mine.name\n  project = module.satz.project_id\n  role    = \"r\"\n  member  = \"m\"\n}}\n", MODULE);
+        assert!(findings(&beside).is_empty(), "{:?}", findings(&beside));
     }
 
     #[test]
