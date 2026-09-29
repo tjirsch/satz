@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.17"
+pack CIS_GCP_Foundation_4_0 version "2.18"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_baseline_adopted = false
@@ -96,8 +96,8 @@ params {
   // pass list carries — and CIS 3.6 and 3.7 ask for exactly that. Switching either off
   // is a decision, so the estate that does it writes a `deviates` claim, whose `reason`
   // is mandatory and reaches the compliance report. (VPC flow logs need no flag: the
-  // baseline already enforces `compute.requireVpcFlowLogs`, which applies a minimum
-  // logging level to every subnet rather than refusing it.)
+  // baseline enforces `compute.requireVpcFlowLogs`, which refuses a subnet without flow
+  // logs, so every subnet the estate or another pack declares carries a `log_config`.)
   cis_dns_logging            = true
   cis_block_internet_ssh_rdp = true
 

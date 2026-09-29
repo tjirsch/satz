@@ -1475,12 +1475,11 @@ The library does not argue; it records who decided and why.
 
 **VPC flow logs are not in this directory**, and do not need to be: the baseline pack
 enforces `compute.requireVpcFlowLogs` and claims CIS 4.0 §3.8 / 5.0 §3.10 with it. That
-constraint does not refuse a subnet without flow logs — it applies a minimum logging
-level to it, which is why it is safe in the baseline. Measured on a live organisation: a
-subnet created with no flow-log flags at all came back with `enable: true` and 0.1
-sampling. What it DOES refuse is a subnet whose flow-log settings are hand-tuned to
-something outside Google's three named levels (ESSENTIAL, LIGHT, COMPREHENSIVE) — so a
-customer who wants a custom sampling rate must pick one of the three or widen the policy.
+constraint refuses a subnet without flow logs: the apply fails with `Error 412: Constraint
+constraints/compute.requireVpcFlowLogs violated`. Every subnet an estate or a pack
+declares under the baseline therefore carries a `log_config` block; `shared-network`
+writes one on each subnet it declares, with `shared_subnet_flow_sampling` as its
+sampling rate.
 
 
 CIS coverage beyond the baseline, one fragment per control, all **opt-in**. The base
@@ -2684,6 +2683,7 @@ the private history recorded them.
 | `integrations.microsoft_defender_for_cloud` | 0.4 | 2026-09-21 | a question for `mdc_mgmt_project_folder`: the folder the Defender management project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation, which is where every estate that binds nothing has it today |
 | `monitoring.organization_audit_logsink` | 1.5 | 2026-09-21 | `logsink_project_folder`: the folder the audit-archive project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/monitoring/organization-audit-logsink.satz"` stands inside a folder's body writes `logsink_project_folder = "google_folder.<label>.name"` for that folder (`satz init` writes the line into `google_folder.infra_folder`, so `"google_folder.infra_folder.name"`) and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
 | `integrations.microsoft_defender_for_cloud` | 0.3 | 2026-09-21 | `mdc_mgmt_project_folder`: the folder the Defender management project is created in, said by the estate instead of read from the node the `use` line stands in. The default is empty, which says nothing — the enclosing node decides, exactly as before — so no estate's plan moves. An estate whose `use "presets/integrations/microsoft-defender-for-cloud.satz"` stands inside a folder's body writes `mdc_mgmt_project_folder = "google_folder.<label>.name"` for that folder and may then move the `use` line to the top level: the emitted HCL is byte-identical either way. A folder that already exists rather than being declared here is named by its id, `"123456789012"` |
+| `CIS_GCP_Foundation_4_0` | 2.18 | 2026-09-30 | the header comment on the extensions says what `compute.requireVpcFlowLogs` does: it refuses a subnet without flow logs, so every subnet the estate or another pack declares carries a `log_config`. Nothing emitted changes |
 | `CIS_GCP_Foundation_4_0` | 2.17 | 2026-09-22 | the `cis_access_approval` question states Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) as the manual prerequisite it is: an organisation administrator with `roles/axt.admin` switches it on in the Cloud console before the apply, there is no gcloud command, API or provider resource for it, and it needs a Standard, Enhanced or Premium support plan. The catalogs now carry that control as organizational, so `report-compliance` lists it. Nothing emitted changes |
 | `CIS_GCP_Foundation_4_0` | 2.16 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
 | `cis_extensions.block_project_ssh_keys` | 1.2 | 2026-09-20 | the notice's `before = apply` becomes `severity = error`: the same refusal, stated once by the pack instead of inside the two commands that read it — every command that writes to the organisation refuses while it is open. Nothing emitted changes, and the param that acknowledges it is unchanged |
