@@ -2151,6 +2151,10 @@ satz run-actions estate.satz --check      # run each action's own dry-run form
 satz run-actions estate.satz --execute    # run the form that writes (adds execute_args)
 ```
 
+The printed command line is the one that is spawned, quoted for the host's shell: an
+argument that needs quoting is single-quoted for sh, bash and zsh, and double-quoted on
+Windows, where `cmd.exe` and PowerShell both read it; a path's backslashes stay bare.
+
 `phase` says whether the step is a **prerequisite** (`before-apply`, as above —
 the services must be on before the resources that need them) or whether it needs
 **what the apply created** (`after-apply`, the default — a per-project setting

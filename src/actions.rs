@@ -271,13 +271,67 @@ fn windows_runnable(path: &Path) -> Result<(), String> {
     ))
 }
 
+/// The shell a printed command line is written for: the host's, so what satz prints
+/// is what the operator's terminal takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Shell {
+    /// sh, bash, zsh: single quotes, inside which nothing is special.
+    Posix,
+    /// cmd.exe and PowerShell: neither reads single quotes as quoting, both read double
+    /// quotes, and both read `""` inside them as one literal `"`. `%` (cmd) and `$` or
+    /// `` ` `` (PowerShell) still expand inside double quotes; no form escapes them for
+    /// both shells.
+    Windows,
+}
+
+impl Shell {
+    const HOST: Shell = if cfg!(windows) { Shell::Windows } else { Shell::Posix };
+}
+
 /// Render one argument for display so a printed command line can be pasted back into
-/// a shell unchanged.
+/// the host's shell unchanged.
 fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./:=@,+".contains(c)) {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', r"'\''"))
+    quote_for(s, Shell::HOST)
+}
+
+/// Render one argument for `shell`: a plain argument as it is, anything else quoted.
+/// A backslash is plain on Windows, where it separates path components; `,` and `@`
+/// are not, because PowerShell reads an unquoted one as an array or a splat.
+fn quote_for(s: &str, shell: Shell) -> String {
+    let plain = match shell {
+        Shell::Posix => "-_./:=@,+",
+        Shell::Windows => "-_./:=+\\",
+    };
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || plain.contains(c)) {
+        return s.to_string();
+    }
+    match shell {
+        Shell::Posix => format!("'{}'", s.replace('\'', r"'\''")),
+        Shell::Windows => {
+            // The program's argument parser reads backslashes literally except before a
+            // `"`, where 2n of them stand for n; so a run of backslashes that ends at a
+            // quote — an embedded one or the closing one — is doubled.
+            let mut out = String::from('"');
+            let mut backslashes = 0usize;
+            for c in s.chars() {
+                match c {
+                    '\\' => backslashes += 1,
+                    '"' => {
+                        out.push_str(&"\\".repeat(backslashes * 2));
+                        out.push_str("\"\"");
+                        backslashes = 0;
+                    }
+                    _ => {
+                        out.push_str(&"\\".repeat(backslashes));
+                        out.push(c);
+                        backslashes = 0;
+                    }
+                }
+            }
+            out.push_str(&"\\".repeat(backslashes * 2));
+            out.push('"');
+            out
+        }
     }
 }
 
@@ -482,12 +536,12 @@ mod tests {
         let sh = root.join("scripts").join("seed.sh");
         let args = vec!["--organization".to_string(), "123456789012".to_string()];
 
-        // The path is printed in the platform's own shape, and `shell_quote` wraps a
-        // Windows one because a backslash is not a plain character.
+        // The path is printed in the platform's own shape; on Windows a backslash is a
+        // plain character, so the path is printed bare, as cmd.exe and PowerShell take it.
         #[cfg(unix)]
         let (py_shown, sh_shown) = ("scripts/seed.py", "scripts/seed.sh");
         #[cfg(windows)]
-        let (py_shown, sh_shown) = (r"'scripts\seed.py'", r"'scripts\seed.sh'");
+        let (py_shown, sh_shown) = (r"scripts\seed.py", r"scripts\seed.sh");
 
         assert_eq!(
             command_line(&py, &args, &root),
@@ -576,11 +630,47 @@ mod tests {
 
     #[test]
     fn quoting_keeps_a_plain_argument_plain_and_wraps_the_rest() {
-        assert_eq!(shell_quote("--organization"), "--organization");
-        assert_eq!(shell_quote("organizations/123"), "organizations/123");
-        assert_eq!(shell_quote("two words"), "'two words'");
-        assert_eq!(shell_quote(""), "''");
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        let posix = |s| quote_for(s, Shell::Posix);
+        assert_eq!(posix("--organization"), "--organization");
+        assert_eq!(posix("organizations/123"), "organizations/123");
+        assert_eq!(posix(r"scripts\seed.py"), r"'scripts\seed.py'");
+        assert_eq!(posix("two words"), "'two words'");
+        assert_eq!(posix(""), "''");
+        assert_eq!(posix("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn on_windows_an_argument_is_printed_in_double_quotes_cmd_and_powershell_both_take() {
+        let windows = |s| quote_for(s, Shell::Windows);
+        assert_eq!(windows("--organization"), "--organization");
+        assert_eq!(windows(r"scripts\seed.py"), r"scripts\seed.py");
+        assert_eq!(windows(r"C:\my estate\seed.py"), r#""C:\my estate\seed.py""#);
+        assert_eq!(windows("two words"), r#""two words""#);
+        assert_eq!(windows(""), r#""""#);
+        // a single quote is an ordinary character in both shells' double quotes
+        assert_eq!(windows("it's"), r#""it's""#);
+        assert_eq!(windows("a,b"), r#""a,b""#);
+        assert_eq!(windows("group:admins@example.com"), r#""group:admins@example.com""#);
+        // an embedded quote is written twice; backslashes before a quote are doubled
+        assert_eq!(windows(r#"say "hi""#), r#""say ""hi""""#);
+        assert_eq!(windows(r"C:\my dir\"), r#""C:\my dir\\""#);
+        assert_eq!(windows(r#"a\"b"#), r#""a\\""b""#);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_the_printed_command_line_carries_no_single_quote() {
+        let root = absolutize(Path::new("my estate")).unwrap();
+        let py = root.join("scripts").join("seed.py");
+        let args = vec!["--display-name".to_string(), "two words".to_string()];
+        assert_eq!(
+            command_line(&py, &args, &root),
+            r#"uv run --script scripts\seed.py --display-name "two words""#
+        );
+        let outside = absolutize(Path::new("other dir")).unwrap().join("seed.py");
+        let line = command_line(&outside, &[], &root);
+        assert!(!line.contains('\''), "{line}");
+        assert!(line.ends_with(r#"\other dir\seed.py""#), "{line}");
     }
 
     #[test]

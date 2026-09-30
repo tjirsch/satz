@@ -441,6 +441,15 @@ def suite_main(s: Server, root: Path, checkov: bool) -> None:
         ("satz_update_prerequisites", "satz_update_prerequisites", {}, W),
     ):  # fmt: skip
         s.call(case, tool, args, needs=needs)
+    # the smoke matrix's project: one attachment at an attach point, one refused at its line
+    consumer = s.call("satz_check_consumer", "satz_check_consumer",
+                      {"dir": "tests/smoke/consumer", "estate": "showcase.satz"})  # fmt: skip
+    if consumer:
+        found = [(f.get("file") or "", f.get("line"), f.get("message", ""))
+                 for f in consumer.get("findings", [])]  # fmt: skip
+        run.check(s.label, "satz_check_consumer names the refused attachment at its line",
+                  len(found) == 1 and found[0][0].endswith("main.tf") and found[0][1] == 16
+                  and "google_folder_iam_member" in found[0][2], repr(found))  # fmt: skip
     if run.mode == "offline":
         s.call("satz_adopt without credentials, refused", "satz_adopt", {}, "error")
         # the file the table would go to is judged before the organisation is read:
