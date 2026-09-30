@@ -114,6 +114,7 @@ pub(crate) async fn import_org(
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
+    confirm_enabled_services(&mut found).await;
     // what the identity the sweep read as states, the way `init` reads it — the
     // sweep's organization is the hint, so an identity that sees many is no
     // ambiguity. Under `--as` that identity is the estate's IaC service account,
@@ -859,6 +860,7 @@ pub(crate) async fn import_delta(
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision, identity).await?;
     attach_billing_accounts(&mut found.config).await;
+    confirm_enabled_services(&mut found).await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
@@ -996,28 +998,6 @@ pub(crate) async fn import_delta(
 /// project plans `billing_account = null` — an unlink. Ask Cloud Billing per
 /// project; a project this cannot be read for is named, not guessed.
 pub(crate) async fn attach_billing_accounts(config: &mut Config) {
-    fn projects_mut(config: &mut Config) -> Vec<&mut crate::config::Project> {
-        fn walk<'a>(f: &'a mut crate::config::Folder, out: &mut Vec<&'a mut crate::config::Project>) {
-            if let Some(ps) = &mut f.project {
-                out.extend(ps.values_mut());
-            }
-            if let Some(fs) = &mut f.folder {
-                for sub in fs.values_mut() {
-                    walk(sub, out);
-                }
-            }
-        }
-        let mut out = Vec::new();
-        if let Some(ps) = &mut config.project {
-            out.extend(ps.values_mut());
-        }
-        if let Some(fs) = &mut config.folder {
-            for f in fs.values_mut() {
-                walk(f, &mut out);
-            }
-        }
-        out
-    }
     let projects = projects_mut(config);
     if projects.is_empty() {
         return;
@@ -1041,6 +1021,108 @@ pub(crate) async fn attach_billing_accounts(config: &mut Config) {
             ),
         }
     }
+}
+
+/// Every project of a discovered tree, at any depth.
+fn projects_mut(config: &mut Config) -> Vec<&mut crate::config::Project> {
+    fn walk<'a>(f: &'a mut crate::config::Folder, out: &mut Vec<&'a mut crate::config::Project>) {
+        if let Some(ps) = &mut f.project {
+            out.extend(ps.values_mut());
+        }
+        if let Some(fs) = &mut f.folder {
+            for sub in fs.values_mut() {
+                walk(sub, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(ps) = &mut config.project {
+        out.extend(ps.values_mut());
+    }
+    if let Some(fs) = &mut config.folder {
+        for f in fs.values_mut() {
+            walk(f, &mut out);
+        }
+    }
+    out
+}
+
+/// The service a discovered `project_service` entry names: the bare string, or
+/// the `service` of the object form.
+fn service_of(entry: &serde_yaml::Value) -> Option<&str> {
+    entry.as_str().or_else(|| entry.get("service").and_then(|s| s.as_str()))
+}
+
+/// Cloud Asset Inventory goes on listing a service as `ENABLED` after it was
+/// switched off, and the provider refuses to import a service that is not
+/// enabled ("Cannot import non-existent remote object"). Service Usage is asked
+/// per project which of the swept services are enabled; one it does not
+/// report enabled leaves the estate and is listed as skipped, with both
+/// sources' answers. A project whose services cannot be read is named, and its
+/// entries stay as the sweep found them.
+pub(crate) async fn confirm_enabled_services(found: &mut crate::discovery::Discovered) {
+    let projects = projects_mut(&mut found.config);
+    if projects.iter().all(|p| p.project_service.as_ref().is_none_or(|s| s.is_empty())) {
+        return;
+    }
+    let token = match crate::gcp::access_token().await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("warning: enabled services not confirmed with Service Usage ({}) — every service Cloud Asset lists is written", e);
+            return;
+        }
+    };
+    let http = reqwest::Client::new();
+    let mut skipped = Vec::new();
+    for p in projects {
+        let Some(entries) = p.project_service.as_mut() else { continue };
+        let services: Vec<String> = entries.iter().filter_map(service_of).map(str::to_string).collect();
+        if services.is_empty() {
+            continue;
+        }
+        let states = match crate::gcp::serviceusage::service_states(&http, &token, &p.project_id, &services).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!(
+                    "warning: the services of project {} not confirmed with Service Usage ({}) — they are written as Cloud Asset lists them",
+                    p.project_id,
+                    String::from(e).lines().next().unwrap_or("")
+                );
+                continue;
+            }
+        };
+        skipped.extend(keep_enabled(entries, &p.project_id, &states));
+        if entries.is_empty() {
+            p.project_service = None;
+        }
+    }
+    found.skipped.extend(skipped);
+}
+
+/// `entries` less every service Service Usage does not report enabled — a
+/// service it did not answer for included — and those services as skipped.
+fn keep_enabled(
+    entries: &mut Vec<serde_yaml::Value>,
+    project_id: &str,
+    states: &std::collections::BTreeMap<String, bool>,
+) -> Vec<crate::discovery::Skipped> {
+    let mut skipped = Vec::new();
+    entries.retain(|entry| {
+        let Some(service) = service_of(entry) else { return true };
+        if states.get(service) == Some(&true) {
+            return true;
+        }
+        skipped.push(crate::discovery::Skipped {
+            tf_type: "google_project_service".to_string(),
+            what: format!("//serviceusage.googleapis.com/projects/{}/services/{}", project_id, service),
+            reason: crate::discovery::SkipReason::NotLive(
+                "Cloud Asset lists the service as ENABLED and Service Usage reports it is not — the provider imports an enabled service only"
+                    .to_string(),
+            ),
+        });
+        false
+    });
+    skipped
 }
 
 /// The alphabetically first project id in the discovered tree, at any depth.
@@ -1409,6 +1491,35 @@ project:
             assert!(out.imports_tf.contains(&format!("id = \"{}\"", id)), "missing import {}:\n{}", id, out.imports_tf);
         }
         assert!(out.main_tf.contains("project_id = \"acme-logs-001\""), "{}", out.main_tf);
+    }
+
+    /// Cloud Asset went on listing a switched-off service as `ENABLED` on a live
+    /// organisation, and `tofu plan` refused its import ("Cannot import
+    /// non-existent remote object"). What Service Usage does not report enabled
+    /// leaves the estate and is listed as skipped; a service it did not answer
+    /// for is not enabled either.
+    #[test]
+    fn a_service_service_usage_does_not_report_enabled_is_skipped() {
+        let mut entries: Vec<serde_yaml::Value> = vec![
+            serde_yaml::from_str("{ service: iam.googleapis.com, import-id: acme-infra-001/iam.googleapis.com }").unwrap(),
+            serde_yaml::from_str("{ service: cloudkms.googleapis.com, import-id: acme-infra-001/cloudkms.googleapis.com }").unwrap(),
+            serde_yaml::Value::String("dns.googleapis.com".into()),
+        ];
+        let states = std::collections::BTreeMap::from([
+            ("iam.googleapis.com".to_string(), true),
+            ("cloudkms.googleapis.com".to_string(), false),
+        ]);
+        let skipped = keep_enabled(&mut entries, "acme-infra-001", &states);
+        assert_eq!(entries.iter().filter_map(service_of).collect::<Vec<_>>(), ["iam.googleapis.com"]);
+        let what: Vec<&str> = skipped.iter().map(|s| s.what.as_str()).collect();
+        assert_eq!(
+            what,
+            [
+                "//serviceusage.googleapis.com/projects/acme-infra-001/services/cloudkms.googleapis.com",
+                "//serviceusage.googleapis.com/projects/acme-infra-001/services/dns.googleapis.com"
+            ]
+        );
+        assert!(skipped.iter().all(|s| matches!(s.reason, crate::discovery::SkipReason::NotLive(_))));
     }
 
     #[test]

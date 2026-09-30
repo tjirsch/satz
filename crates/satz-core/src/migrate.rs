@@ -249,6 +249,12 @@ fn as_block(v: &serde_yaml::Value) -> Option<&serde_yaml::Mapping> {
 fn emit_entries(m: &serde_yaml::Mapping, out: &mut String, indent: usize) -> Result<(), MigrateError> {
     let pad = " ".repeat(indent);
     for (k, v) in m {
+        // a key holding null inside a body or an object is unset, the way HCL
+        // writes an argument it leaves out (`tofu plan -generate-config-out`
+        // writes `x = null` at any depth): absent, not a value
+        if v.is_null() {
+            continue;
+        }
         let (key, _) = key_expr(k)?;
         if let Some(maps) = repeated_grant_maps(k, v) {
             for child in maps {
@@ -509,6 +515,32 @@ mod tests {
         assert!(s.contains(r#"parent = "organizations/{customer_organization_id}""#), "{s}");
     }
 
+    /// `tofu plan -generate-config-out` writes `x = null` inside nested objects
+    /// and blocks too (an alert policy's `condition_threshold { … filter = null
+    /// … }`). A null below the top level is an unset key, left out like the
+    /// importer leaves out a top-level one, and the rest of the body prints.
+    #[test]
+    fn a_null_nested_in_a_body_or_an_object_is_left_out() {
+        let mut object = serde_yaml::Mapping::new();
+        object.insert("title".into(), "t".into());
+        object.insert("filter".into(), serde_yaml::Value::Null);
+        let mut nested = serde_yaml::Mapping::new();
+        nested.insert("duration".into(), "60s".into());
+        nested.insert("trigger".into(), serde_yaml::Value::Null);
+        object.insert("condition_threshold".into(), serde_yaml::Value::Mapping(nested));
+        let mut body = serde_yaml::Mapping::new();
+        body.insert("display_name".into(), "p".into());
+        body.insert("conditions".into(), serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(object)]));
+        let mut block = serde_yaml::Mapping::new();
+        block.insert("p".into(), serde_yaml::Value::Mapping(body));
+        let mut top = serde_yaml::Mapping::new();
+        top.insert("google_monitoring_alert_policy".into(), serde_yaml::Value::Mapping(block));
+        let s = convert_value(&top, "pack", "t", &[], &[]).expect("a nested null is not a refusal");
+        assert!(!s.contains("null") && !s.contains("filter") && !s.contains("trigger"), "{s}");
+        assert!(s.contains("duration = \"60s\"") && s.contains("title = \"t\""), "{s}");
+        crate::satz::parse(&s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+    }
+
     /// What the printer writes must parse as Satz. Every import shape rides on
     /// this.
     #[test]
@@ -540,12 +572,13 @@ mod tests {
         assert!(s.contains("m = \"${{a.b.c}}\""), "{s}");
     }
 
-    /// A null value has no Satz spelling, so the printer refuses rather than
+    /// A null in a list has no Satz spelling — a list cannot leave an element
+    /// out the way a body leaves out a key — so the printer refuses rather than
     /// inventing one.
     #[test]
-    fn a_null_value_is_refused() {
+    fn a_null_list_element_is_refused() {
         let mut body = serde_yaml::Mapping::new();
-        body.insert("k".into(), serde_yaml::Value::Null);
+        body.insert("k".into(), serde_yaml::Value::Sequence(vec!["a".into(), serde_yaml::Value::Null]));
         let mut block = serde_yaml::Mapping::new();
         block.insert("i".into(), serde_yaml::Value::Mapping(body));
         let mut top = serde_yaml::Mapping::new();

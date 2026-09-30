@@ -398,7 +398,7 @@ pub(crate) fn outcomes(
         let address = format!("{}.{}", c.tf_type, c.label);
         let mut reported: Vec<&str> = Vec::new();
         for (i, b) in blocks.iter().enumerate() {
-            if names_resource(b, &c.tf_type, &c.label) {
+            if names_resource(b, c) {
                 claimed[i] = true;
                 reported.push(b);
             }
@@ -510,12 +510,17 @@ fn error_blocks(said: &str) -> Vec<String> {
     blocks.into_iter().map(|b| b.trim_end().to_string()).filter(|b| !b.is_empty()).collect()
 }
 
-/// Whether a diagnostic names this resource. The tool writes it two ways: as
+/// Whether a diagnostic names this resource. The tool writes it three ways: as
 /// the address (`with google_dns_record_set.www,`) when it is about the import,
-/// and as the block header (`in resource "google_dns_record_set" "www":`) when
-/// it is about the configuration that was generated for it.
-fn names_resource(block: &str, tf_type: &str, label: &str) -> bool {
-    block.contains(&format!("\"{}\" \"{}\"", tf_type, label)) || names_address(block, &format!("{}.{}", tf_type, label))
+/// as the block header (`in resource "google_dns_record_set" "www":`) when it
+/// is about the configuration that was generated for it, and — when the
+/// provider fails to READ the resource — by its import id alone, quoted
+/// (`Error when reading or editing DataplexEntryGroup "projects/p/locations/eu/entryGroups/g": …`),
+/// with no address anywhere in the block.
+fn names_resource(block: &str, c: &Candidate) -> bool {
+    block.contains(&format!("\"{}\" \"{}\"", c.tf_type, c.label))
+        || names_address(block, &format!("{}.{}", c.tf_type, c.label))
+        || block.contains(&format!("\"{}\"", c.import_id))
 }
 
 /// Whether a diagnostic names exactly this address. `google_dns_record_set.www`
@@ -863,6 +868,24 @@ resource \"google_cloud_asset_organization_feed\" \"estate\" {\n  billing_projec
         assert_eq!(outcomes, vec![Outcome::Written, Outcome::Unaccounted]);
         assert_eq!(rest.len(), 1, "a block naming no candidate is kept whole: {rest:?}");
         assert!(rest[0].contains("something went wrong"));
+    }
+
+    /// A resource the provider fails to READ is reported by its import id alone,
+    /// with no address in the block — measured on a live organisation, where a
+    /// Dataplex entry group in a deleted project came out "unaccounted for"
+    /// beside the provider's own 403 about it. The id ties the block to it.
+    #[test]
+    fn a_read_error_that_names_only_the_import_id_is_the_candidates() {
+        let candidates = plan(
+            &[unmapped("google_pubsub_topic", "//pubsub.googleapis.com/projects/acme-net/topics/events")],
+            &|_| true,
+            &ids(zone_names()),
+        )
+        .candidates;
+        let said = "╷\n│ Error: Error when reading or editing PubsubTopic \"projects/acme-net/topics/events\": googleapi: Error 403: Permission denied\n╵";
+        let (outcomes, rest) = outcomes(&candidates, "resource \"google_pubsub_topic\" \"other\" {}\n", Some(said), &|_| vec![]);
+        assert!(matches!(&outcomes[0], Outcome::Refused(why) if why.contains("Error 403")), "{outcomes:?}");
+        assert!(rest.is_empty(), "{rest:?}");
     }
 
     /// A label that is another label's prefix is not confused with it: the

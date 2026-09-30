@@ -15,9 +15,11 @@
 # scripts/update_import_config.py; `cargo test` holds that version to the pin.
 #
 # Per resource type: `import` (taken or not), `asset_type` + `content_type` (how
-# Cloud Asset Inventory names it), attribute `include`/`exclude`, and the
-# adoption rules `satz adopt` reads (`import_id` template, `match_on`,
-# `activate: managed`). Keys are the Terraform provider type names.
+# Cloud Asset Inventory names it), attribute `include`/`exclude`, the API→provider
+# renames `map`, `importable: false` for a type the provider has no import for
+# (`--all` leaves it off), and the adoption rules `satz adopt` reads (`import_id`
+# template, `match_on`, `activate: managed`). Keys are the Terraform provider type
+# names.
 provider_version: 7.14.1
 resource_types:
   # ListAssets refuses accesscontextmanager.googleapis.com/AccessLevel (RESOURCE)
@@ -184,6 +186,10 @@ resource_types:
   google_compute_disk:
     description: Compute Engine persistent disk
     import: false
+    # the API's source image and size are the provider's image and size
+    map:
+      sourceImage: image
+      sizeGb: size
     asset_type: compute.googleapis.com/Disk
     content_type: RESOURCE
     derive_yaml_key_from: name
@@ -4726,6 +4732,8 @@ resource_types:
   google_service_account_key:
     description: Auto-generated entry for google_service_account_key
     import: false
+    # the provider: "resource google_service_account_key doesn't support import"
+    importable: false
     asset_type: iam.googleapis.com/ServiceAccountKey
     content_type: RESOURCE
     derive_yaml_key_from: name

@@ -572,6 +572,38 @@ pub(crate) struct LiveDefaults {
 /// is then that account's, and nothing is asked of it about who it is: an
 /// impersonated token carries the cloud-platform scope alone, which no
 /// tokeninfo e-mail answers. `None` asks the ADC who it is.
+/// Whose facts [`live_defaults`] derives, and which of them it may take from
+/// that identity.
+#[derive(Debug, PartialEq, Eq)]
+struct DerivedIdentity {
+    email: String,
+    source: &'static str,
+    /// A person's ADC names the first administrator and the customer's
+    /// domain; the service account a run is bound to names neither — it is
+    /// nobody's administrator and its domain is Google's.
+    person: bool,
+    local: String,
+    domain: String,
+}
+
+/// The identity a run derives its defaults from: the service account it is
+/// bound to (`import --as` / `--into`) when there is one — never asked of the
+/// token — else what the ADC says of itself, which must name an e-mail.
+fn derived_identity(principal: Option<&str>, adc_email: Option<String>) -> Result<DerivedIdentity, String> {
+    let (email, source) = match (principal, adc_email) {
+        (Some(p), _) => (p.to_string(), "the IaC service account the run is bound to"),
+        (None, Some(e)) => (e, "the ADC"),
+        (None, None) => {
+            return Err("could not determine the ADC identity — run `gcloud auth application-default login`".to_string())
+        }
+    };
+    let Some((local, domain)) = email.split_once('@') else {
+        return Err(format!("identity {:?} is not an email address", email));
+    };
+    let (local, domain) = (local.to_string(), domain.to_string());
+    Ok(DerivedIdentity { person: principal.is_none(), email, source, local, domain })
+}
+
 pub(crate) async fn live_defaults(
     need_org: bool,
     need_billing: bool,
@@ -579,24 +611,14 @@ pub(crate) async fn live_defaults(
     principal: Option<&str>,
 ) -> Result<LiveDefaults, String> {
     let token = crate::gcp::access_token().await?;
-    let (email, source) = match principal {
-        Some(p) => (p.to_string(), "the IaC service account the run is bound to"),
-        None => match credential_info(&token).await.email {
-            Some(e) => (e, "the ADC"),
-            None => {
-                return Err(
-                    "could not determine the ADC identity — run `gcloud auth application-default login`"
-                        .to_string(),
-                )
-            }
-        },
+    // the ADC is asked who it is only when the run is bound to nobody: under
+    // `--as` the token is the service account's, and an impersonated token
+    // names no e-mail of its own
+    let adc_email = match principal {
+        Some(_) => None,
+        None => credential_info(&token).await.email,
     };
-    let Some((local, domain)) = email.split_once('@') else {
-        return Err(format!("identity {:?} is not an email address", email));
-    };
-    // the account a run is bound to is a service account, nobody's administrator
-    // and not the customer's domain; what the ADC says of itself is taken as said
-    let person = principal.is_none();
+    let DerivedIdentity { email, source, person, local, domain } = derived_identity(principal, adc_email)?;
 
     let client = reqwest::Client::new();
     let (org_id, customer_id, org_display_name) = if !need_org {
@@ -681,8 +703,8 @@ pub(crate) async fn live_defaults(
         not_derived(need_billing, &billing_account, "(not settled)")
     );
     Ok(LiveDefaults {
-        first_admin: person.then(|| local.to_string()),
-        customer_domain: person.then(|| domain.to_string()),
+        first_admin: person.then_some(local),
+        customer_domain: person.then_some(domain),
         org_id,
         org_display_name,
         customer_id,
@@ -820,6 +842,34 @@ mod tests {
 
     fn jv(s: &str) -> serde_json::Value {
         serde_json::from_str(s).expect("valid test JSON")
+    }
+
+    // --- the identity a run derives its defaults from ---------------------
+
+    /// `import --as <estate>` binds the run to the estate's IaC service account.
+    /// Its token is impersonated and names no e-mail, so the identity is the
+    /// bound account itself — even when the ADC would name nobody — and a
+    /// service account derives no first administrator and no customer domain.
+    #[test]
+    fn a_bound_service_account_is_the_identity_and_derives_no_person() {
+        let sa = "svc-iac-001@acme-infra.iam.gserviceaccount.com";
+        let id = derived_identity(Some(sa), None).expect("a bound run needs nothing of the ADC");
+        assert_eq!(id.email, sa);
+        assert!(!id.person, "a service account is nobody's administrator");
+        assert_eq!(id.source, "the IaC service account the run is bound to");
+        // what the ADC would have said does not override the binding
+        let id = derived_identity(Some(sa), Some("admin@acme.example".into())).unwrap();
+        assert_eq!(id.email, sa);
+    }
+
+    #[test]
+    fn an_unbound_run_is_the_adc_and_needs_its_email() {
+        let id = derived_identity(None, Some("admin@acme.example".into())).unwrap();
+        assert!(id.person);
+        assert_eq!((id.local.as_str(), id.domain.as_str()), ("admin", "acme.example"));
+        let err = derived_identity(None, None).expect_err("an ADC that names nobody is refused");
+        assert!(err.contains("gcloud auth application-default login"), "{err}");
+        assert!(derived_identity(None, Some("not-an-address".into())).is_err());
     }
 
     // --- ADC identity extraction -------------------------------------------

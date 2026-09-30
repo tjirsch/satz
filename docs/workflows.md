@@ -603,6 +603,36 @@ attribute the estate says by where the resource STANDS — the enclosing project
 folder or organization, and an org policy's `parent` — is no hole: the asset data
 never carries it and the emitter writes it from the node the resource is written
 under.
+
+What is not there to import is left out and listed as `not live`: a folder or
+project that is no longer ACTIVE (Cloud Asset lists a deleted one for 30 days),
+everything inside one — its grants, its log buckets, a resource no row maps, which
+`--generate-unmapped` is not asked for either — and a service that is not enabled.
+Cloud Asset goes on listing a switched-off service as `ENABLED`, so every service
+the sweep found is confirmed with Service Usage per project; one it does not report
+enabled is left out, and a project whose services cannot be read is named with its
+services written as Cloud Asset lists them. A subnet's local route, which states a
+`nextHopNetwork` no argument of `google_compute_route` sets, is listed as
+`platform-managed`. A type the provider has no import for (`importable: false` on
+its row: a service account key) is not swept, and the run names it.
+
+The API's shape is written in the provider's: a wrapper `{ fingerprint, items }` is
+its items where the attribute is a set (an instance's `tags`) and a map where it is
+a map (`metadata`); a plural list whose singular is a block is that block
+(`networkInterfaces` → `network_interface`, `accessConfigs` → `access_config`); an
+instance's `disks` are its `boot_disk` and `attached_disk` blocks, each naming its
+disk by `source`; a disk's type self-link is the type's name and its source image and
+size are `image` and `size`; a DNS zone's `visibility` is lower case. A log bucket
+config names its parent the way the provider holds it — `projects/<id>`,
+`folders/<n>`, `organizations/<n>` — and a reference that names a project by its
+number (an alert policy's notification channels) names it by its id where the sweep
+read that project. A disk's `architecture` is left out and listed: the provider does
+not read it back on import, and written it forces a replacement. Where the asset's
+parent does not decide between two rows whose types name none, the provider schema
+does: a type with a `project` argument serves a project, one with a `parent` of its
+own an organisation or a folder — a project's network firewall policy and a
+hierarchical one share a Cloud Asset type.
+
 Import ids of live resources are the asset path, with the project named by id (the
 provider keeps a project NUMBER on import and the declared id would then force a
 replacement) and a DNS zone by its name, rendered through the import-config row's
@@ -623,10 +653,11 @@ services are the project's `project_service` list, an org policy is its bare
 constraint with a `spec { … }` block, and the organization is referenced as
 `customer_organization_id` wherever its number was written. What the platform owns —
 the built-in `_Default` and `_Required` log sinks on every container, the grants of
-Google's service agents, the legacy bucket grants, Google-created service accounts, a
-project that is no longer ACTIVE — is not in the file; the import lists each group
+Google's service agents, the legacy bucket grants, Google-created service accounts — is not in the file; the import lists each group
 under the `skip:` pattern of the import-config row that took it, and a copy of the
-table without that pattern imports it.
+table without that pattern imports it. A subnet's local route is listed as
+`platform-managed`, and what is not live — a deleted folder or project, what is
+inside one, a service that is not enabled — as `not live`.
 
 The `params` block is the day-0 vocabulary `init` writes, bound from what the
 platform states and what the sweep implies: the ADC gives `customer_id`,

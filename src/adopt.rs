@@ -1583,6 +1583,7 @@ mod tests {
                     activate: None,
                     map: None,
                     api_schema: None,
+                    importable: None,
                 },
             );
         }

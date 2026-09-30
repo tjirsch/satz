@@ -1,6 +1,6 @@
 # 0058 — the asset's own name picks its Terraform type, and several still fitting is reported
 
-- **Status:** accepted
+- **Status:** accepted; extended by ADR-0074 — where the asset's parent leaves several rows whose types name none, the provider schema's parent arguments decide
 - **Date:** 2026-09-23
 - **Shipped in:** the release that follows
 
