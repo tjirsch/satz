@@ -899,6 +899,7 @@ step "import-config: every derivable asset_type is filled (the CAI list is the s
 cp "$root/presets/import-config.yaml" tmp/import-config.yaml
 uv run --with ruamel.yaml "$root/scripts/update_import_config.py" --config-file tmp/import-config.yaml --cai-types "$root/presets/cai-asset-types.txt" | tee tmp/fill.txt
 grep -q '^asset_type filled: 0;' tmp/fill.txt || fail "presets/import-config.yaml is behind presets/cai-asset-types.txt — run the fill and commit it"
+grep -q '^import: true with an unresolved asset_type: 0$' tmp/fill.txt || fail "presets/import-config.yaml has a row satz import sweeps whose asset_type is unresolved — every live import is refused"
 
 step "a tag-conditional exemption keeps the verdict and is reported beside it"
 # The CIS baseline's OWN constraint, exempted by rebinding one param — no fork, and the

@@ -114,13 +114,15 @@ pub(crate) async fn import_org(
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    // what the ADC states, the way `init` reads it — the sweep's
-    // organization is the hint, so an identity that sees many is no ambiguity
-    let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref()).await?;
+    // what the identity the sweep read as states, the way `init` reads it — the
+    // sweep's organization is the hint, so an identity that sees many is no
+    // ambiguity. Under `--as` that identity is the estate's IaC service account,
+    // known already and never asked of the token.
+    let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref(), identity.account()).await?;
     let facts = crate::vocabulary::LiveFacts {
         customer_id: live.customer_id.clone(),
-        customer_domain: Some(live.org_display_name.clone().unwrap_or_else(|| live.customer_domain.clone())),
-        first_admin: Some(live.first_admin.clone()),
+        customer_domain: live.org_display_name.clone().or_else(|| live.customer_domain.clone()),
+        first_admin: live.first_admin.clone(),
         billing_account: live.billing_account.clone(),
     };
     let org = organization_of(&found.config, org_hint.as_deref());
@@ -223,14 +225,28 @@ fn generate_unmapped_config(
     let generated =
         generate_config::generate(&work_dir, &plan.candidates, &providers, child, &mut generate_config::Tofu { tool: &tool_config.tf_tool })
             .map_err(|e| format!("{}\n{}", e, by_hand()))?;
-    let (outcomes, unattributed) = generate_config::outcomes(&plan.candidates, &generated.text, generated.said.as_deref());
+    let required = |t: &str| satz_hcl::Schema::required_attrs(&RegistrySchema(Some(registry)), t);
+    let (outcomes, unattributed) = generate_config::outcomes(&plan.candidates, &generated.text, generated.said.as_deref(), &required);
     report_outcomes(&plan.candidates, &outcomes, &unattributed);
     if generated.said.is_some() {
         println!("\n{}", by_hand());
     }
+    // what the provider wrote, less the blocks refused for it: a refused block
+    // is not read back, whatever of it is in the file
+    let refused: std::collections::BTreeSet<String> = plan
+        .candidates
+        .iter()
+        .zip(&outcomes)
+        .filter(|(_, o)| matches!(o, generate_config::Outcome::Refused(_)))
+        .map(|(c, _)| format!("{}.{}", c.tf_type, c.label))
+        .collect();
     println!("\ngenerate-unmapped: {} — reading it back as Satz", generated.file.display());
-    let src = generated.file.to_str().ok_or_else(|| format!("{}: the generated path is not UTF-8", generated.file.display()))?;
-    import_hcl(src, out_file, false, organization, verbose, runtime_config)
+    let input = satz_hcl::Input {
+        path: generated.file.to_string_lossy().into_owned(),
+        text: generate_config::without_blocks(&generated.text, &refused),
+    };
+    let name = generated.file.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl").to_string();
+    import_hcl_inputs(&[input], &name, out_file, false, organization, verbose, runtime_config)
 }
 
 /// What the provider did with each resource it was asked for: one line per
@@ -696,10 +712,24 @@ pub(crate) fn import_hcl(
         .map(|f| Ok(satz_hcl::Input { path: f.to_string_lossy().into_owned(), text: fsx::read_to_string(f)? }))
         .collect::<Result<_, std::io::Error>>()?;
     let name = src_path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported_hcl");
+    import_hcl_inputs(&inputs, name, final_output, wrap_all, organization, verbose, runtime_config)
+}
+
+/// The HCL shape over texts already in hand: `name` is the module the Satz file
+/// is named after.
+fn import_hcl_inputs(
+    inputs: &[satz_hcl::Input],
+    name: &str,
+    final_output: PathBuf,
+    wrap_all: bool,
+    organization: Option<&str>,
+    verbose: bool,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir)
         .map_err(|e| format!("Failed to load resource registry from {}: {}", runtime_config.schema_dir, e))?;
     let organization = organization.map(|o| o.trim_start_matches("organizations/"));
-    let imported = satz_hcl::import(&inputs, name, wrap_all, organization, &RegistrySchema(Some(&registry)))?;
+    let imported = satz_hcl::import(inputs, name, wrap_all, organization, &RegistrySchema(Some(&registry)))?;
     if let Some(parent) = final_output.parent() {
         fsx::create_dir_all(parent)?;
     }
@@ -805,6 +835,15 @@ pub(crate) async fn import_delta(
             declared.no_rule.len(),
             declared.no_rule.join(", ")
         );
+    }
+    if !declared.unresolved_grants.is_empty() {
+        println!(
+            "import: {} declared grant(s) could not be resolved to a live id and are not subtracted — the imported packs may declare them again:",
+            declared.unresolved_grants.len()
+        );
+        for (a, why) in &declared.unresolved_grants {
+            println!("  {}: {}", a, why);
+        }
     }
     if !declared.blocked.is_empty() {
         let mut msg = format!("import --into: {} declared resource(s) could not be resolved to a live id; the sweep cannot be subtracted, nothing written:", declared.blocked.len());

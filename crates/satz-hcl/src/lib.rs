@@ -2082,7 +2082,8 @@ impl Cx<'_> {
             match s {
                 Structure::Attribute(a) => {
                     let k = a.key.to_string();
-                    if skip(&k) {
+                    // `null` is how HCL leaves an argument unset: absent, not a value
+                    if skip(&k) || matches!(a.value, Expression::Null(_)) {
                         continue;
                     }
                     let v = self.literal(&a.value)?;
@@ -2476,6 +2477,22 @@ module "vpc" {
 
     fn by_what(imported: &Imported) -> std::collections::BTreeMap<&str, &Action> {
         imported.rows.iter().map(|r| (r.what.as_str(), &r.action)).collect()
+    }
+
+    /// `x = null` is an unset argument: it is left out, and the block translates.
+    #[test]
+    fn a_null_argument_is_absent() {
+        let imported = import(
+            &one("resource \"google_storage_bucket\" \"logs\" {\n  name = \"acme-logs-001\"\n  location = \"EU\"\n  storage_class = null\n  versioning {\n    enabled = null\n  }\n}\n"),
+            "acme",
+            false,
+            Some("123456789012"),
+            &Known,
+        )
+        .unwrap();
+        let c = squash(&imported.satz);
+        assert!(c.contains("google_storage_bucket{logs{name=\"acme-logs-001\"location=\"EU\"versioning=[{},]}}"), "{}", imported.satz);
+        assert!(!c.contains("null") && !c.contains("storage_class"), "{}", imported.satz);
     }
 
     #[test]

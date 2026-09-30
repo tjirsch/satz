@@ -2053,13 +2053,11 @@ resource_types:
   google_compute_firewall_policy_association:
     description: Auto-generated entry for google_compute_firewall_policy_association
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_firewall_policy_rule:
     description: Auto-generated entry for google_compute_firewall_policy_rule
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_global_network_endpoint:
@@ -2164,14 +2162,12 @@ resource_types:
     import_id: "projects/{project}/global/firewallPolicies/{firewall_policy}/associations/{name}"
     description: Auto-generated entry for google_compute_network_firewall_policy_association
     import: true
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network_firewall_policy_rule:
     import_id: "projects/{project}/global/firewallPolicies/{firewall_policy}/rules/{priority}"
     description: Auto-generated entry for google_compute_network_firewall_policy_rule
     import: true
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_network_peering_routes_config:
@@ -2276,13 +2272,11 @@ resource_types:
   google_compute_region_network_firewall_policy_association:
     description: Auto-generated entry for google_compute_region_network_firewall_policy_association
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_region_network_firewall_policy_rule:
     description: Auto-generated entry for google_compute_region_network_firewall_policy_rule
     import: false
-    asset_type: TODO/UNKNOWN
     content_type: RESOURCE
     derive_yaml_key_from: name
   google_compute_region_per_instance_config:

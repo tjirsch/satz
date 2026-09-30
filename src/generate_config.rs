@@ -31,7 +31,7 @@
 //! configuration is in that file, whether the provider reported it, and in the
 //! provider's own words.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::discovery::{SkipReason, Skipped};
@@ -378,8 +378,19 @@ pub(crate) enum Outcome {
 /// alone, decide: a resource counts as written because a `resource` block for
 /// its address is in the file, and as refused because the child named that
 /// address.
-pub(crate) fn outcomes(candidates: &[Candidate], generated: &str, said: Option<&str>) -> (Vec<Outcome>, Vec<String>) {
+///
+/// A `null` is an absent value. A block that holds one for an attribute the
+/// provider schema requires (`required`, per type) is refused with that reason
+/// — [`without_blocks`] then leaves it out of the read-back — however the child
+/// exited.
+pub(crate) fn outcomes(
+    candidates: &[Candidate],
+    generated: &str,
+    said: Option<&str>,
+    required: &dyn Fn(&str) -> Vec<String>,
+) -> (Vec<Outcome>, Vec<String>) {
     let written = generated_addresses(generated);
+    let nulls = null_attributes(generated);
     let blocks = said.map(error_blocks).unwrap_or_default();
     let mut claimed = vec![false; blocks.len()];
     let mut out = Vec::with_capacity(candidates.len());
@@ -392,6 +403,23 @@ pub(crate) fn outcomes(candidates: &[Candidate], generated: &str, said: Option<&
                 reported.push(b);
             }
         }
+        let required = required(&c.tf_type);
+        let missing: Vec<&String> =
+            nulls.get(&address).into_iter().flatten().filter(|a| required.contains(a)).collect();
+        if written.contains(&address) && !missing.is_empty() {
+            let names = missing.iter().map(|a| format!("`{}`", a)).collect::<Vec<_>>().join(", ");
+            let mut why = format!(
+                "the provider wrote {} as null, and the provider schema requires {} — the block is left out of the read-back",
+                names,
+                if missing.len() == 1 { "it" } else { "them" }
+            );
+            for b in &reported {
+                why.push('\n');
+                why.push_str(b);
+            }
+            out.push(Outcome::Refused(why));
+            continue;
+        }
         out.push(match (written.contains(&address), reported.is_empty()) {
             (true, true) => Outcome::Written,
             (true, false) => Outcome::Incomplete(reported.join("\n")),
@@ -403,18 +431,63 @@ pub(crate) fn outcomes(candidates: &[Candidate], generated: &str, said: Option<&
     (out, rest)
 }
 
+/// Per address, the top-level attributes the provider wrote as `null`. Generated
+/// configuration puts each block's header and closing brace at column zero and
+/// its own attributes two spaces in.
+fn null_attributes(generated: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut current: Option<String> = None;
+    for line in generated.lines() {
+        if let Some(address) = block_address(line) {
+            current = Some(address);
+            continue;
+        }
+        if line.starts_with('}') {
+            current = None;
+            continue;
+        }
+        let Some(address) = &current else { continue };
+        let Some(own) = line.strip_prefix("  ").filter(|l| !l.starts_with(' ')) else { continue };
+        if let Some((key, value)) = own.split_once('=') {
+            if value.trim() == "null" {
+                out.entry(address.clone()).or_default().push(key.trim().to_string());
+            }
+        }
+    }
+    out
+}
+
+/// `generated` without the `resource` blocks of `addresses`, header to closing
+/// brace — what is read back once refused blocks are left out.
+pub(crate) fn without_blocks(generated: &str, addresses: &BTreeSet<String>) -> String {
+    let mut out = String::with_capacity(generated.len());
+    let mut dropping = false;
+    for line in generated.split_inclusive('\n') {
+        if let Some(address) = block_address(line.trim_end_matches(['\n', '\r'])) {
+            dropping = addresses.contains(&address);
+        }
+        if !dropping {
+            out.push_str(line);
+        } else if line.starts_with('}') {
+            dropping = false;
+        }
+    }
+    out
+}
+
+/// `resource "T" "L" {` at column zero → `T.L`.
+fn block_address(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("resource \"")?;
+    let (tf_type, rest) = rest.split_once('"')?;
+    let (_, rest) = rest.split_once('"')?;
+    let (label, _) = rest.split_once('"')?;
+    Some(format!("{}.{}", tf_type, label))
+}
+
 /// The addresses the provider wrote a `resource` block for. Generated
 /// configuration puts each block's header at column zero, one per line.
 fn generated_addresses(generated: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for line in generated.lines() {
-        let Some(rest) = line.strip_prefix("resource \"") else { continue };
-        let Some((tf_type, rest)) = rest.split_once('"') else { continue };
-        let Some((_, rest)) = rest.split_once('"') else { continue };
-        let Some((label, _)) = rest.split_once('"') else { continue };
-        out.insert(format!("{}.{}", tf_type, label));
-    }
-    out
+    generated.lines().filter_map(block_address).collect()
 }
 
 /// The child's output cut into the blocks it prints one per problem: a block
@@ -729,7 +802,7 @@ mod tests {
         );
         let out = generate(&dir, &plan_.candidates, &google(), ChildProvider::default(), &mut fake).expect("the generated file comes back");
         assert_eq!(out.file, dir.join(GENERATED_TF));
-        let (outcomes, rest) = outcomes(&plan_.candidates, &out.text, out.said.as_deref());
+        let (outcomes, rest) = outcomes(&plan_.candidates, &out.text, out.said.as_deref(), &|_| vec![]);
         assert_eq!(outcomes[0], Outcome::Written, "the zone was read and written");
         let Outcome::Refused(why) = &outcomes[1] else { panic!("{:?}", outcomes[1]) };
         assert!(why.contains("Cannot import non-existent remote object"), "{why}");
@@ -739,6 +812,36 @@ mod tests {
         // the import blocks stay on disk: they are what the operator edits
         assert!(dir.join(IMPORTS_TF).exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `null` the provider writes is an absent value: a block holding one for a
+    /// required attribute is refused with that reason and left out of what is
+    /// read back, and every other block survives — the child exited 0.
+    #[test]
+    fn a_null_required_attribute_refuses_its_block_and_no_other() {
+        let candidates = plan(
+            &[
+                unmapped("google_dns_managed_zone", "//dns.googleapis.com/projects/acme-net/managedZones/1234567890"),
+                unmapped("google_cloud_asset_organization_feed", "//cloudasset.googleapis.com/organizations/123456789012/feeds/estate"),
+            ],
+            &|_| true,
+            &ids(zone_names()),
+        )
+        .candidates;
+        let generated = "# __generated__ by OpenTofu\n\
+resource \"google_dns_managed_zone\" \"corp\" {\n  description = null\n  dns_name    = \"example.com.\"\n  name        = \"corp\"\n}\n\n\
+resource \"google_cloud_asset_organization_feed\" \"estate\" {\n  billing_project = null\n  content_type    = \"RESOURCE\"\n  feed_id         = null\n  org_id          = null\n  condition {\n    title = null\n  }\n}\n";
+        let required = |t: &str| match t {
+            "google_cloud_asset_organization_feed" => vec!["billing_project".to_string(), "feed_id".to_string(), "org_id".to_string()],
+            _ => vec!["dns_name".to_string(), "name".to_string()],
+        };
+        let (outcomes, _) = outcomes(&candidates, generated, None, &required);
+        assert_eq!(outcomes[0], Outcome::Written, "a null that is not required is only absent");
+        let Outcome::Refused(why) = &outcomes[1] else { panic!("{:?}", outcomes[1]) };
+        assert!(why.contains("`billing_project`, `feed_id`, `org_id` as null"), "{why}");
+        let kept = without_blocks(generated, &BTreeSet::from(["google_cloud_asset_organization_feed.estate".to_string()]));
+        assert!(kept.contains("resource \"google_dns_managed_zone\" \"corp\" {") && kept.contains("dns_name"), "{kept}");
+        assert!(!kept.contains("organization_feed") && !kept.contains("title"), "{kept}");
     }
 
     /// A candidate the child neither generated for nor mentioned is said to be
@@ -756,7 +859,7 @@ mod tests {
         )
         .candidates;
         let (outcomes, rest) =
-            outcomes(&candidates, "resource \"google_dns_managed_zone\" \"corp\" {}\n", Some("╷\n│ Error: something went wrong\n╵"));
+            outcomes(&candidates, "resource \"google_dns_managed_zone\" \"corp\" {}\n", Some("╷\n│ Error: something went wrong\n╵"), &|_| vec![]);
         assert_eq!(outcomes, vec![Outcome::Written, Outcome::Unaccounted]);
         assert_eq!(rest.len(), 1, "a block naming no candidate is kept whole: {rest:?}");
         assert!(rest[0].contains("something went wrong"));
@@ -776,7 +879,7 @@ mod tests {
         )
         .candidates;
         let said = "╷\n│ Error: Cannot import non-existent remote object\n│ \n│   with google_dns_policy.corp_2,\n╵";
-        let (outcomes, _) = outcomes(&candidates, "", Some(said));
+        let (outcomes, _) = outcomes(&candidates, "", Some(said), &|_| vec![]);
         assert_eq!(outcomes[0], Outcome::Unaccounted, "corp is not what the diagnostic names");
         assert!(matches!(outcomes[1], Outcome::Refused(_)), "{:?}", outcomes[1]);
     }

@@ -712,6 +712,23 @@ RESOLVED_BY_OWN_API = {
     "google_billing_budget": "no CAI shape (resolved through the Billing API)",
 }
 
+# Terraform types that are PART of another type's asset. Cloud Asset Inventory
+# carries a firewall policy's rules and associations inside the policy's own
+# compute.googleapis.com/FirewallPolicy asset, never as assets of their own, so
+# the sweep cannot list them; `satz adopt` and `import --into` still resolve them
+# through the row's import_id.
+PART_OF_ANOTHER_ASSET = {
+    t: "no CAI shape (part of its compute.googleapis.com/FirewallPolicy asset)"
+    for t in (
+        "google_compute_firewall_policy_rule",
+        "google_compute_firewall_policy_association",
+        "google_compute_network_firewall_policy_rule",
+        "google_compute_network_firewall_policy_association",
+        "google_compute_region_network_firewall_policy_rule",
+        "google_compute_region_network_firewall_policy_association",
+    )
+}
+
 NOT_A_CAI_RESOURCE = re.compile(
     r"_(iam_(member|binding|policy|audit_config)|organization_policy|service_identity|default_service_accounts|usage_export_bucket)$"
 )
@@ -737,6 +754,8 @@ def derive(tf_type: str, cai: set[str]) -> tuple[str | None, str]:
     """(asset_type, reason). Exact hits only; the reason names why not."""
     if tf_type in RESOLVED_BY_OWN_API:
         return None, RESOLVED_BY_OWN_API[tf_type]
+    if tf_type in PART_OF_ANOTHER_ASSET:
+        return None, PART_OF_ANOTHER_ASSET[tf_type]
     if NOT_A_CAI_RESOURCE.search(tf_type):
         return None, "no CAI shape (policy or provider construct)"
     kind = KIND_OVERRIDES.get(tf_type, "?")
@@ -903,6 +922,14 @@ def main() -> None:
         print(f"asset_type filled: {filled}; no CAI shape: {len(no_shape)}; unresolved: {len(missing)}")
         for t, r in missing:
             print(f"  {t}: {r}")
+        # a row `satz import` sweeps must name an asset type it can list: one left
+        # at the placeholder refuses every live import (src/discovery.rs, sweep_plan)
+        swept_unresolved = sorted(
+            t for t, row in config["resource_types"].items() if row.get("import") and row.get("asset_type") == TODO
+        )
+        print(f"import: true with an unresolved asset_type: {len(swept_unresolved)}")
+        for t in swept_unresolved:
+            print(f"  {t}: set import: false, or add it to the maps above with the reason it has no CAI shape")
         # a no-shape row lost its TODO placeholder: that is a change to write too
         changed |= filled > 0 or bool(no_shape)
 
