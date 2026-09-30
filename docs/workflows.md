@@ -345,17 +345,22 @@ The estate's `google` provider carries `user_project_override = true` with
 `billing_project = <infrastructure project>`, so Google bills every call it makes to
 that project and wants the API enabled there; a project's own alias bills to that
 project. `tofu apply` refreshes every resource in state before it creates
-anything, and an API the estate declares as a `google_project_service` but the project
-has off stops that refresh — before the declaration that would enable it is created.
+anything, and an API the estate declares as a `google_project_service` but the billed
+project has off stops that refresh — before the declaration that would enable it is
+created.
 
 `satz plan` and `satz apply` enable them first. They read the emitted `providers.tf`
-for the project the default provider bills to and the service account it impersonates,
-read `main.tf` for the services declared on that project, ask Service Usage which are
-off and switch those on, as the estate's IaC service account — the identity the estate
-grants `roles/serviceusage.serviceUsageAdmin`. `satz transpile --plan` and `--apply` do
-the same. Nothing to do reads as one line:
+for every project a provider bills to and the service account the default provider
+impersonates, read `main.tf` for the services declared on each of those projects, ask
+Service Usage which are off and switch those on, as the estate's IaC service account —
+the identity the estate grants `roles/serviceusage.serviceUsageAdmin`. `satz transpile
+--plan` and `--apply` do the same. A project node's project is checked when the state
+holds its `google_project` or an `import` block adopts it; otherwise the run creates it,
+its services come after it, and the preflight says so and goes on. The default
+provider's project is always checked. One line per project:
 
 ```
+APIs on corp-data-001: not checked — google_project.data is neither in the state nor adopted by an import block, so this run creates it and its 2 declared API(s) after it
 APIs on corp-infra-001: 14 declared, all enabled
 ```
 
@@ -385,8 +390,11 @@ enable them and run this again:
 
 `satz --no-api-preflight plan` skips it: satz asks Service Usage nothing and enables
 nothing. `update-prerequisites` writes the declaration into the estate and enables
-nothing either; it prints the same `gcloud services enable` line for the APIs it adds.
-The reasoning is in [ADR 0036](adr/0036-plan-and-apply-enable-the-apis-the-estate-declares.md).
+nothing either; it prints the same `gcloud services enable` line, one per project, for
+the APIs it adds.
+The reasoning is in [ADR 0036](adr/0036-plan-and-apply-enable-the-apis-the-estate-declares.md)
+and, for the projects beside the infrastructure project,
+[ADR 0072](adr/0072-an-api-is-judged-on-the-project-its-provider-bills-to.md).
 
 ### Switch to the service account, and deploy as it
 

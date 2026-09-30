@@ -723,7 +723,7 @@ pub(crate) struct PrerequisitesArgs {
 }
 
 /// What the estate's resource types oblige it to declare — the IaC service
-/// account's roles and the infra project's APIs — and what was written into it.
+/// account's roles and, per billed project, the APIs — and what was written into it.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PrerequisitesResult {
     pub report: crate::PrerequisitesReport,
@@ -2202,8 +2202,9 @@ impl SatzMcp {
         output_schema = rmcp::handler::server::tool::schema_for_output::<PrerequisitesResult>(),
         description = "What the estate's own resource types oblige it to declare and it does not: the roles \
                        its IaC service account is missing (`missing`, with `write` the fewest roles that close \
-                       it) and the APIs its infrastructure project does not enable (`missing_apis`, each with \
-                       the types that need it). `unknown_types` are emitted types the table has no row for. \
+                       it) and the APIs not enabled on the project their resources' calls are billed to \
+                       (`missing_apis`, each with its `project` and the types that need it; `enable_missing_apis` \
+                       one `gcloud services enable` line per project). `unknown_types` are emitted types the table has no row for. \
                        Offline. It WRITES both into the estate file by default and re-checks — a gap that \
                        survives the write restores the file — so the default needs 'write'; pass `report_only` \
                        to list the gap instead, which needs only 'read'.",
