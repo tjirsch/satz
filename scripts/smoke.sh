@@ -1401,8 +1401,8 @@ cp tmp/prereq-gap.satz tmp/prereq-gap-before.satz
 "$satz" --config . transpile tmp/prereq-gap.satz --check > tmp/prereq-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/prereq-warn.txt)"
 grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/prereq-warn.txt \
   || fail "the warning does not name the role and the type:\n$(cat tmp/prereq-warn.txt)"
-grep -q 'monitoring.googleapis.com — needed by google_monitoring_alert_policy' tmp/prereq-warn.txt \
-  || fail "the warning does not name the API and the type:\n$(cat tmp/prereq-warn.txt)"
+grep -q 'monitoring.googleapis.com on corp-infra-001 — needed by google_monitoring_alert_policy' tmp/prereq-warn.txt \
+  || fail "the warning does not name the API, the project it is billed to and the type:\n$(cat tmp/prereq-warn.txt)"
 if "$satz" --config . --validation error transpile tmp/prereq-gap.satz --check > tmp/prereq-err.txt 2>&1; then
   fail "--validation error compiled an estate with a role gap"
 fi

@@ -879,9 +879,12 @@ infra_project_name`, so Google requires the service enabled on the infra project
 whatever the resource's own scope is — a budget hangs off the billing account and an
 org policy off the organisation, and both still need their API there. A resource
 written inside a `google_project { … }` is served by that project's alias, which is
-billed to the project itself, so its API has to be on that project. The compile
-checks the first half: the APIs the estate's emitted types need, against the
-`project_service` list of the infra project.
+billed to the project itself, so its API has to be on that project. The project's own
+`project_service` entries are served by the provider around the project, so
+`serviceusage.googleapis.com` for them belongs on the infra project. The compile checks
+each API on the project the resource's provider bills to, read from the emitted
+`providers.tf`, against that project's `project_service` list; a provider that names no
+`billing_project` is named in a note and its resources are not checked.
 
 **Every `*_iam_member` type takes the member map.** The organisation's scope
 comes from `customer_organization_id`, a project's or folder's from the node the
@@ -2607,7 +2610,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `packs <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |
 | `add-pack <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-pack <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
-| `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs the infrastructure project must enable against what it declares. Writes both into the estate; `--report-only` lists them instead |
+| `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs each billed project must enable against what it declares there. Writes both into the estate; `--report-only` lists them instead |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, what that estate runs as — its service account, impersonated by the credential, in cloud mode; the credential itself in local mode — with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
 | `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out-dir d] [--merge f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, written as JSON, CSV and XLSX; `--merge` fills the authored columns from an `authored.json` written against the run's dossier |

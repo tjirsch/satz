@@ -188,7 +188,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
-| `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs its infrastructure project does not enable. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
+| `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 | `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `add-pack <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-pack <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
@@ -420,8 +420,8 @@ before the estate, so the same roles reach them.
 A resource type obliges the estate to declare two things, and `update-prerequisites`
 derives both from the types the estate emits: the ROLES that account needs, against the
 roles the estate grants it, and the APIs that serve those types, against the
-`project_service` list of the infrastructure project. It writes what is missing into
-the estate file, because it has to be there either way.
+`project_service` list of the project each resource's calls are billed to. It writes
+what is missing into the estate file, because it has to be there either way.
 
 ```bash
 satz update-prerequisites <INPUT>                # writes the missing roles and APIs, then re-checks
@@ -467,8 +467,17 @@ every call it makes to the infrastructure project and requires the API enabled T
 whatever the resource's own scope is — a budget hangs off the billing account and an
 org policy off the organization, and both still need their API on that project. A
 resource written inside a `google_project { … }` is served by that project's provider
-alias, which is billed to the project itself and needs the API on it. The APIs are
-judged against the infrastructure project's `project_service` list.
+alias, which is billed to the project itself and needs the API on it; the project's own
+`project_service` entries are served by the provider around the project. Each API is
+judged against the `project_service` list of the project the resource's provider bills
+to, read from the emitted `providers.tf`:
+
+```
+project corp-data-001: 1 of 2 API(s) the resources billed there need are enabled
+default provider's project corp-infra-001: 11 of 11 API(s) the resources billed there need are enabled
+missing APIs:
+  storage.googleapis.com on corp-data-001 — for google_storage_bucket
+```
 
 **The emitted HCL carries the ordering.** A resource waits for the
 `google_project_service` that enables its API — `depends_on`, added by the compiler for
@@ -479,18 +488,21 @@ edge is added into a service block's own dependencies, so the project a service 
 declared on and the folder above it never wait for it.
 
 **Declaring an API does not switch it on.** `tofu apply` refreshes every resource in
-state before it creates anything, and that refresh is billed to the infrastructure
-project too, so an API the estate declares and the project has off stops the run before
+state before it creates anything, and that refresh is billed the same way, so an API the
+estate declares and the billed project has off stops the run before
 the `google_project_service` that would enable it is created. `satz plan` and `satz
 apply` enable what is off first — see [The API preflight](docs/workflows.md#the-api-preflight).
-`update-prerequisites` writes the declaration and enables nothing; it prints the line
-that does, for an apply run with `tofu` directly:
+`update-prerequisites` writes the declaration and enables nothing; it prints one line
+per project that does, for an apply run with `tofu` directly:
 
 ```
+gcloud services enable storage.googleapis.com --project corp-data-001
 gcloud services enable monitoring.googleapis.com --project corp-infra-001
 ```
 
-The same line is `enable_missing_apis` in `--format json`.
+The same lines are `enable_missing_apis` in `--format json`, where each entry of `apis`
+and `missing_apis` names its `project` and `default_billing_project` is the default
+provider's.
 
 **The write** adds each missing role to the account's existing grant list — the list
 whose key names the account once `{param}`s are interpolated — or appends a new block
@@ -498,23 +510,24 @@ when the estate has none. It writes the fewest roles: a need only one role meets
 that role, and a need with alternatives takes a role already chosen. A new
 billing-account block is itself a `google_billing_account_iam_member` and needs
 `roles/billing.admin`, which also carries the billing link, so that is the role written
-there. Each missing API is spliced into the infrastructure project's `project_service`
-list, or a list is created under its `project_id`; the list is only ever added to,
+there. Each missing API is spliced into the `project_service` list of the project it is
+missing on, or a list is created under its `project_id`; the list is only ever added to,
 because the emitter derives `google_project_service.<project label>_<service>` from it
 and the CIS pack claims 5.0 §2.14 against one of those addresses. The command then
 compiles the estate again and restores the file when anything is still missing — both
 halves are written before either is verified, so the estate is never left half-edited.
-An infrastructure project declared outside the estate file (in a pack, which the next
-`merge-presets` would overwrite) is named and nothing is written.
+A project declared outside the estate file (in a pack, which the next `merge-presets`
+would overwrite) is named with the APIs to add to it by hand, and nothing is written.
 
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`
 (the default) prints the missing roles and APIs with the `update-prerequisites` command
 that writes them, `error` refuses the compile, `none` skips the check. The two commands
 that write the gap, `update-prerequisites` and `merge-presets`, report it as what they
 write, so neither refuses on it. An estate that
-names no IaC service account is not role-checked; one that binds no
-`infra_project_name` is not API-checked. A resource type the table has no row for is
-named in a note.
+names no IaC service account is not role-checked. A resource whose provider names no
+`billing_project` — the default provider of an estate that binds no
+`infra_project_name` — is not API-checked, and a note names the provider and its types.
+A resource type the table has no row for is named in a note.
 
 **`satz whoami <estate>`** tests the same needs live — the permissions themselves, with
 the credential the estate's live commands run as, on the organization, the infra

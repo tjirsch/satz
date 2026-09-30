@@ -1513,7 +1513,7 @@ pub(crate) async fn run_merge_presets(
             Ok(report) => {
                 let missing: Vec<String> = crate::prerequisites::describe(&report.write)
                     .into_iter()
-                    .chain(report.missing_apis.iter().map(|a| format!("{} on {}", a.api, report.infra_project)))
+                    .chain(report.missing_apis.iter().map(|a| format!("{} on {}", a.api, a.project)))
                     .collect();
                 if missing.is_empty() {
                     // nothing to say: the estate already declares what its packs need

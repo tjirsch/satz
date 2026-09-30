@@ -83,6 +83,7 @@ provider needs. What it does not do is name the resource's own project for a res
 inside a project node — the finding says so in words, and making that check per-project
 is its own piece of work (`ApiNeed`, `missing_apis`, `write_apis`, the report's
 `infra_project` and `infra_services`, and `bootstrap` all assume one project today).
+[ADR 0072](0072-an-api-is-judged-on-the-project-its-provider-bills-to.md) is that work.
 
 ## Consequences
 

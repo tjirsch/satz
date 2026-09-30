@@ -1813,6 +1813,33 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.88.0
+
+**An API a resource inside a `google_project` node needs is judged on THAT project.** The
+node's provider alias bills its calls to the project itself, so Google tests the API
+there; the compile, `bootstrap` and `transpile --apply` judged every API against the
+infrastructure project's `project_service` list instead. A resource inside a project
+node whose API is missing from that project's list is now a `prerequisites` finding at
+every compile, a warning on `transpile --plan`, and a refusal on `bootstrap` and
+`transpile --apply`:
+
+```
+apply refused: 1 API(s) this estate's resources need are not enabled on the project their calls are billed to — storage.googleapis.com on corp-data-001. `satz update-prerequisites e.satz` writes them into the estate.
+```
+
+Find it: `satz update-prerequisites <estate> --report-only` lists each missing API with
+its project. **The edit:** add the API to that project's `project_service = [ … ]` list
+— `satz update-prerequisites <estate>` writes it when the project is declared in the
+estate file, and names it for a project declared in a pack. An API that only the
+infrastructure project enabled for a project node's resources may stay there; nothing is
+removed. The plan moves by the `google_project_service` each added entry emits.
+
+`update-prerequisites --format json` and `satz_update_prerequisites` carry `project` on
+every entry of `apis` and `missing_apis`, `enable_missing_apis` is a list with one
+`gcloud services enable` line per project, and `default_billing_project` and `unbilled`
+are new; `infra_project` and `infra_services` are what `bootstrap` creates and enables. A
+script that read `enable_missing_apis` as a string reads the list.
+
 ### v0.87.0
 
 **`satz check-request <file> <estate>` refuses a request file the estate's compile would
