@@ -12,7 +12,7 @@
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
-pack monitoring.organization_cis_log_alerts_central version "1.6"
+pack monitoring.organization_cis_log_alerts_central version "1.7"
 
 params {
   // The logsink pack's project, BY REFERENCE — not a repeated literal. One
@@ -434,6 +434,17 @@ claim "cis-gcp" "4.0" "2.4" contributes {
     "google_monitoring_notification_channel.cis_central_alerts",
   ]
   interpretation = "Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on."
+  gcloud = [
+    "gcloud logging buckets create ALERT_BUCKET_ID --project=LOG_PROJECT_ID --location=REGION --retention-days=30",
+    "gcloud logging sinks create cis-central-metrics-sink logging.googleapis.com/projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",
+    "gcloud projects add-iam-policy-binding LOG_PROJECT_ID --member=\"$(gcloud logging sinks describe cis-central-metrics-sink --organization=ORGANIZATION_ID --format='value(writerIdentity)')\" --role=roles/logging.bucketWriter",
+    "gcloud beta monitoring channels create --project=LOG_PROJECT_ID --type=email --display-name=\"CIS Security Alerts (org)\" --channel-labels=email_address=EMAIL",
+  ]
+  gcloud_check = [
+    "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
+    "gcloud beta monitoring channels list --project=LOG_PROJECT_ID --format='table(name,displayName,type,labels.email_address)'",
+  ]
+  risk = "Without an organisation-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
 }
 claim "cis-gcp" "5.0" "2.5" contributes {
   resources = [
@@ -441,53 +452,208 @@ claim "cis-gcp" "5.0" "2.5" contributes {
     "google_monitoring_notification_channel.cis_central_alerts",
   ]
   interpretation = "As for 4.0 §2.4 (5.0 §2.5): the substrate every alert stands on."
+  gcloud = [
+    "gcloud logging buckets create ALERT_BUCKET_ID --project=LOG_PROJECT_ID --location=REGION --retention-days=30",
+    "gcloud logging sinks create cis-central-metrics-sink logging.googleapis.com/projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",
+    "gcloud projects add-iam-policy-binding LOG_PROJECT_ID --member=\"$(gcloud logging sinks describe cis-central-metrics-sink --organization=ORGANIZATION_ID --format='value(writerIdentity)')\" --role=roles/logging.bucketWriter",
+    "gcloud beta monitoring channels create --project=LOG_PROJECT_ID --type=email --display-name=\"CIS Security Alerts (org)\" --channel-labels=email_address=EMAIL",
+  ]
+  gcloud_check = [
+    "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
+    "gcloud beta monitoring channels list --project=LOG_PROJECT_ID --format='table(name,displayName,type,labels.email_address)'",
+  ]
+  risk = "Without an organisation-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
 }
 
 claim "cis-gcp" "4.0" "2.4" implements {
   resources = ["google_logging_metric.cis_central_2_5_project_ownership", "google_monitoring_alert_policy.cis_central_2_5_project_ownership"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-5-project-ownership-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.5 — project ownership assignments changed (org-wide)\" --log-filter='(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.5 — Project ownership changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Project ownership assignment changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-5-project-ownership-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-5-project-ownership-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A change of a project's owners goes unnoticed until someone reads the audit log."
 }
 claim "cis-gcp" "5.0" "2.5" implements {
   resources = ["google_logging_metric.cis_central_2_5_project_ownership", "google_monitoring_alert_policy.cis_central_2_5_project_ownership"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-5-project-ownership-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.5 — project ownership assignments changed (org-wide)\" --log-filter='(protoPayload.serviceName=\"cloudresourcemanager.googleapis.com\") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"REMOVE\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action=\"ADD\" AND protoPayload.serviceData.policyDelta.bindingDeltas.role=\"roles/owner\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.5 — Project ownership changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Project ownership assignment changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-5-project-ownership-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-5-project-ownership-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A change of a project's owners goes unnoticed until someone reads the audit log."
 }
 claim "cis-gcp" "4.0" "2.5" implements {
   resources = ["google_logging_metric.cis_central_2_6_audit_config", "google_monitoring_alert_policy.cis_central_2_6_audit_config"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-6-audit-config-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.6 — audit configuration changed (org-wide)\" --log-filter='protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.6 — Audit configuration changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Audit configuration changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-6-audit-config-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-6-audit-config-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "An audit logging configuration switched off or narrowed goes unnoticed, and so does everything it then stops recording."
 }
 claim "cis-gcp" "5.0" "2.6" implements {
   resources = ["google_logging_metric.cis_central_2_6_audit_config", "google_monitoring_alert_policy.cis_central_2_6_audit_config"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-6-audit-config-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.6 — audit configuration changed (org-wide)\" --log-filter='protoPayload.methodName=\"SetIamPolicy\" AND protoPayload.serviceData.policyDelta.auditConfigDeltas:*'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.6 — Audit configuration changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Audit configuration changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-6-audit-config-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-6-audit-config-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "An audit logging configuration switched off or narrowed goes unnoticed, and so does everything it then stops recording."
 }
 claim "cis-gcp" "4.0" "2.6" implements {
   resources = ["google_logging_metric.cis_central_2_7_custom_role", "google_monitoring_alert_policy.cis_central_2_7_custom_role"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-7-custom-role-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.7 — custom role created, updated or deleted (org-wide)\" --log-filter='resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.7 — Custom role changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Custom role created, updated or deleted\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-7-custom-role-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-7-custom-role-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A custom role widened with more permissions goes unnoticed while every holder gains them."
 }
 claim "cis-gcp" "5.0" "2.7" implements {
   resources = ["google_logging_metric.cis_central_2_7_custom_role", "google_monitoring_alert_policy.cis_central_2_7_custom_role"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-7-custom-role-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.7 — custom role created, updated or deleted (org-wide)\" --log-filter='resource.type=\"iam_role\" AND (protoPayload.methodName=\"google.iam.admin.v1.CreateRole\" OR protoPayload.methodName=\"google.iam.admin.v1.DeleteRole\" OR protoPayload.methodName=\"google.iam.admin.v1.UpdateRole\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.7 — Custom role changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Custom role created, updated or deleted\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-7-custom-role-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-7-custom-role-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A custom role widened with more permissions goes unnoticed while every holder gains them."
 }
 claim "cis-gcp" "4.0" "2.7" implements {
   resources = ["google_logging_metric.cis_central_2_8_firewall_rule", "google_monitoring_alert_policy.cis_central_2_8_firewall_rule"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-8-firewall-rule-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.8 — VPC firewall rule changed (org-wide)\" --log-filter='resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.8 — VPC firewall rule changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Firewall rule changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-8-firewall-rule-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-8-firewall-rule-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A firewall rule opened to the internet goes unnoticed until a review finds it or an attacker uses it."
 }
 claim "cis-gcp" "5.0" "2.8" implements {
   resources = ["google_logging_metric.cis_central_2_8_firewall_rule", "google_monitoring_alert_policy.cis_central_2_8_firewall_rule"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-8-firewall-rule-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.8 — VPC firewall rule changed (org-wide)\" --log-filter='resource.type=\"gce_firewall_rule\" AND (protoPayload.methodName:\"compute.firewalls.patch\" OR protoPayload.methodName:\"compute.firewalls.insert\" OR protoPayload.methodName:\"compute.firewalls.delete\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.8 — VPC firewall rule changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Firewall rule changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-8-firewall-rule-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-8-firewall-rule-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A firewall rule opened to the internet goes unnoticed until a review finds it or an attacker uses it."
 }
 claim "cis-gcp" "4.0" "2.8" implements {
   resources = ["google_logging_metric.cis_central_2_9_network_route", "google_monitoring_alert_policy.cis_central_2_9_network_route"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-9-network-route-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.9 — VPC network route changed (org-wide)\" --log-filter='resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.9 — VPC network route changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Network route changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-9-network-route-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-9-network-route-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A route that sends traffic through another host goes unnoticed."
 }
 claim "cis-gcp" "5.0" "2.9" implements {
   resources = ["google_logging_metric.cis_central_2_9_network_route", "google_monitoring_alert_policy.cis_central_2_9_network_route"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-9-network-route-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.9 — VPC network route changed (org-wide)\" --log-filter='resource.type=\"gce_route\" AND (protoPayload.methodName:\"compute.routes.delete\" OR protoPayload.methodName:\"compute.routes.insert\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.9 — VPC network route changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Network route changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-9-network-route-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-9-network-route-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A route that sends traffic through another host goes unnoticed."
 }
 claim "cis-gcp" "4.0" "2.9" implements {
   resources = ["google_logging_metric.cis_central_2_10_network", "google_monitoring_alert_policy.cis_central_2_10_network"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-10-network-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.10 — VPC network changed (org-wide)\" --log-filter='resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.10 — VPC network changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"VPC network changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-10-network-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-10-network-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A new network or peering that bypasses the designed topology goes unnoticed."
 }
 claim "cis-gcp" "5.0" "2.10" implements {
   resources = ["google_logging_metric.cis_central_2_10_network", "google_monitoring_alert_policy.cis_central_2_10_network"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-10-network-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.10 — VPC network changed (org-wide)\" --log-filter='resource.type=\"gce_network\" AND (protoPayload.methodName:\"compute.networks.insert\" OR protoPayload.methodName:\"compute.networks.patch\" OR protoPayload.methodName:\"compute.networks.delete\" OR protoPayload.methodName:\"compute.networks.removePeering\" OR protoPayload.methodName:\"compute.networks.addPeering\")'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.10 — VPC network changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"VPC network changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-10-network-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-10-network-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A new network or peering that bypasses the designed topology goes unnoticed."
 }
 claim "cis-gcp" "4.0" "2.10" implements {
   resources = ["google_logging_metric.cis_central_2_11_bucket_permission", "google_monitoring_alert_policy.cis_central_2_11_bucket_permission"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-11-bucket-permission-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.11 — Cloud Storage IAM permissions changed (org-wide)\" --log-filter='resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\"'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.11 — Cloud Storage IAM permission changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Bucket IAM permissions changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-11-bucket-permission-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-11-bucket-permission-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A bucket's permissions opened to more principals go unnoticed."
 }
 claim "cis-gcp" "5.0" "2.11" implements {
   resources = ["google_logging_metric.cis_central_2_11_bucket_permission", "google_monitoring_alert_policy.cis_central_2_11_bucket_permission"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-11-bucket-permission-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.11 — Cloud Storage IAM permissions changed (org-wide)\" --log-filter='resource.type=\"gcs_bucket\" AND protoPayload.methodName=\"storage.setIamPermissions\"'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.11 — Cloud Storage IAM permission changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Bucket IAM permissions changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-11-bucket-permission-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-11-bucket-permission-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A bucket's permissions opened to more principals go unnoticed."
 }
 claim "cis-gcp" "4.0" "2.11" implements {
   resources = ["google_logging_metric.cis_central_2_12_sql_instance", "google_monitoring_alert_policy.cis_central_2_12_sql_instance"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-12-sql-instance-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.12 — Cloud SQL instance configuration changed (org-wide)\" --log-filter='protoPayload.methodName=\"cloudsql.instances.update\"'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.12 — Cloud SQL instance configuration changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Cloud SQL instance configuration changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-12-sql-instance-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-12-sql-instance-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A Cloud SQL configuration change, such as a public IP address or a removed flag, goes unnoticed."
 }
 claim "cis-gcp" "5.0" "2.12" implements {
   resources = ["google_logging_metric.cis_central_2_12_sql_instance", "google_monitoring_alert_policy.cis_central_2_12_sql_instance"]
+  gcloud = [
+    "gcloud logging metrics create cis-central-2-12-sql-instance-changes --project=LOG_PROJECT_ID --bucket-name=projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --description=\"CIS 2.12 — Cloud SQL instance configuration changed (org-wide)\" --log-filter='protoPayload.methodName=\"cloudsql.instances.update\"'",
+    "gcloud monitoring policies create --project=LOG_PROJECT_ID --display-name=\"CIS 2.12 — Cloud SQL instance configuration changes (org-wide)\" --combiner=OR --notification-channels=CHANNEL_ID --condition-display-name=\"Cloud SQL instance configuration changed\" --condition-filter='metric.type=\"logging.googleapis.com/user/cis-central-2-12-sql-instance-changes\" AND resource.type=\"logging_bucket\"' --if='> 0' --duration=0s --aggregation='{{\"alignmentPeriod\": \"300s\", \"perSeriesAligner\": \"ALIGN_COUNT\", \"crossSeriesReducer\": \"REDUCE_SUM\"}}'",
+  ]
+  gcloud_check = [
+    "gcloud logging metrics describe cis-central-2-12-sql-instance-changes --project=LOG_PROJECT_ID",
+    "gcloud monitoring policies list --project=LOG_PROJECT_ID --format='table(displayName,enabled,notificationChannels.list())'",
+  ]
+  risk = "A Cloud SQL configuration change, such as a public IP address or a removed flag, goes unnoticed."
 }

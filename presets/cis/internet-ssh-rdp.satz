@@ -54,7 +54,7 @@
 // 22 still fails there, and report-compliance shows the row CONTESTED. Such a rule has
 // no effect while the policy is attached; deleting it settles the row.
 
-pack cis_extensions.internet_ssh_rdp version "1.1"
+pack cis_extensions.internet_ssh_rdp version "1.2"
 
 params {
   // Ranges whose SSH and RDP traffic passes to the VPC firewall rules, which then
@@ -178,6 +178,20 @@ claim "cis-gcp" "4.0" "3.6" implements {
   ]
   interpretation     = "A firewall policy attached to the organisation denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+  gcloud = [
+    "gcloud compute firewall-policies create --organization=ORGANIZATION_ID --short-name=cis-internet-admin-ports --description=\"SSH and RDP from the internet denied\"",
+    "gcloud compute firewall-policies rules create 1000 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=35.235.240.0/20,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1001 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=2600:2d00:1:7::/64,fc00::/7 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1002 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=0.0.0.0/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies rules create 1003 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=::/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies associations create --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --name=cis-internet-admin-ports",
+  ]
+  gcloud_check = [
+    "gcloud compute firewall-policies list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-policies associations list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-rules list --project=PROJECT_ID --filter='direction=INGRESS AND sourceRanges.list():0.0.0.0/0' --format='table(name,network,sourceRanges.list(),allowed[].map().firewall_rule().list())'",
+  ]
+  risk = "SSH from the internet reaches every instance whose VPC firewall admits port 22, and each such rule is one project owner's decision."
 }
 claim "cis-gcp" "4.0" "3.7" implements {
   resources = [
@@ -187,6 +201,20 @@ claim "cis-gcp" "4.0" "3.7" implements {
   ]
   interpretation     = "As for §3.6, for TCP 3389."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+  gcloud = [
+    "gcloud compute firewall-policies create --organization=ORGANIZATION_ID --short-name=cis-internet-admin-ports --description=\"SSH and RDP from the internet denied\"",
+    "gcloud compute firewall-policies rules create 1000 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=35.235.240.0/20,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1001 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=2600:2d00:1:7::/64,fc00::/7 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1002 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=0.0.0.0/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies rules create 1003 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=::/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies associations create --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --name=cis-internet-admin-ports",
+  ]
+  gcloud_check = [
+    "gcloud compute firewall-policies list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-policies associations list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-rules list --project=PROJECT_ID --filter='direction=INGRESS AND sourceRanges.list():0.0.0.0/0' --format='table(name,network,sourceRanges.list(),allowed[].map().firewall_rule().list())'",
+  ]
+  risk = "RDP from the internet reaches every instance whose VPC firewall admits port 3389, and each such rule is one project owner's decision."
 }
 claim "cis-gcp" "5.0" "3.6" implements {
   resources = [
@@ -196,6 +224,20 @@ claim "cis-gcp" "5.0" "3.6" implements {
   ]
   interpretation     = "As for 4.0 §3.6 (5.0 §3.6, unchanged)."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+  gcloud = [
+    "gcloud compute firewall-policies create --organization=ORGANIZATION_ID --short-name=cis-internet-admin-ports --description=\"SSH and RDP from the internet denied\"",
+    "gcloud compute firewall-policies rules create 1000 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=35.235.240.0/20,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1001 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=2600:2d00:1:7::/64,fc00::/7 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1002 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=0.0.0.0/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies rules create 1003 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=::/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies associations create --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --name=cis-internet-admin-ports",
+  ]
+  gcloud_check = [
+    "gcloud compute firewall-policies list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-policies associations list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-rules list --project=PROJECT_ID --filter='direction=INGRESS AND sourceRanges.list():0.0.0.0/0' --format='table(name,network,sourceRanges.list(),allowed[].map().firewall_rule().list())'",
+  ]
+  risk = "SSH from the internet reaches every instance whose VPC firewall admits port 22, and each such rule is one project owner's decision."
 }
 claim "cis-gcp" "5.0" "3.7" implements {
   resources = [
@@ -205,4 +247,18 @@ claim "cis-gcp" "5.0" "3.7" implements {
   ]
   interpretation     = "As for 4.0 §3.7 (5.0 §3.7, unchanged)."
   duty_review_ranges = "The listed ranges are the exception to the control: re-read them when a bastion or partner range changes."
+  gcloud = [
+    "gcloud compute firewall-policies create --organization=ORGANIZATION_ID --short-name=cis-internet-admin-ports --description=\"SSH and RDP from the internet denied\"",
+    "gcloud compute firewall-policies rules create 1000 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=35.235.240.0/20,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1001 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=goto_next --src-ip-ranges=2600:2d00:1:7::/64,fc00::/7 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389",
+    "gcloud compute firewall-policies rules create 1002 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=0.0.0.0/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies rules create 1003 --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --direction=INGRESS --action=deny --src-ip-ranges=::/0 --layer4-configs=tcp:22,tcp:3389,sctp:22,udp:3389 --enable-logging",
+    "gcloud compute firewall-policies associations create --firewall-policy=cis-internet-admin-ports --organization=ORGANIZATION_ID --name=cis-internet-admin-ports",
+  ]
+  gcloud_check = [
+    "gcloud compute firewall-policies list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-policies associations list --organization=ORGANIZATION_ID",
+    "gcloud compute firewall-rules list --project=PROJECT_ID --filter='direction=INGRESS AND sourceRanges.list():0.0.0.0/0' --format='table(name,network,sourceRanges.list(),allowed[].map().firewall_rule().list())'",
+  ]
+  risk = "RDP from the internet reaches every instance whose VPC firewall admits port 3389, and each such rule is one project owner's decision."
 }

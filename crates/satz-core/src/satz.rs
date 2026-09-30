@@ -640,6 +640,13 @@ pub struct ClaimDecl {
     pub reason: Option<String>,
     pub interpretation: Option<String>,
     pub duties: Vec<(String, String)>,
+    /// The measure without satz: gcloud commands that meet the control the way this
+    /// claim's resources do, one command per entry. Empty when the pack states none.
+    pub gcloud: Vec<String>,
+    /// gcloud commands that show whether the control is met, one command per entry.
+    pub gcloud_check: Vec<String>,
+    /// What goes wrong without this measure, in one sentence.
+    pub risk: Option<String>,
     pub line: usize,
 }
 
@@ -1285,7 +1292,8 @@ impl P {
         let body = self.entries()?;
         let mut decl = ClaimDecl {
             framework, version, control, coverage,
-            resources: Vec::new(), reason: None, interpretation: None, duties: Vec::new(), line,
+            resources: Vec::new(), reason: None, interpretation: None, duties: Vec::new(),
+            gcloud: Vec::new(), gcloud_check: Vec::new(), risk: None, line,
         };
         for e in body {
             match e {
@@ -1305,6 +1313,25 @@ impl P {
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l, .. } if k == "interpretation" => {
                     decl.interpretation = Some(lit_str(&parts, l, "claim: interpretation")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l, .. } if k == "risk" => {
+                    decl.risk = Some(lit_str(&parts, l, "claim: risk")?);
+                }
+                Entry::Attr { key: Key::Ident(k), value, line: l, .. } if k == "gcloud" || k == "gcloud_check" => {
+                    let Value::List(items) = value else {
+                        return err(l, format!("claim: {k} = [\"…\"] is a list of commands, one per entry"));
+                    };
+                    if items.is_empty() {
+                        return err(l, format!("claim: {k} = [] states nothing; leave it out when the pack has no command to name"));
+                    }
+                    let mut cmds = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it {
+                            Value::Str(parts) => cmds.push(lit_str(&parts, l, &format!("claim: {k}"))?),
+                            _ => return err(l, format!("claim: {k}: expected strings")),
+                        }
+                    }
+                    if k == "gcloud" { decl.gcloud = cmds } else { decl.gcloud_check = cmds }
                 }
                 Entry::Map { key: Key::Ident(k), name: Some(Key::Str(_)), .. } if k == "duty" => {
                     // the block form `duty "id" { text = "..." }` is refused in favour of the attribute
@@ -2885,6 +2912,30 @@ pub fn canonical_notices(file: &File) -> String {
     ns.iter().map(|n| format!("notice({}|{}|{}|{})\n", n.param, n.text, n.run, n.severity)).collect()
 }
 
+/// The measure texts of a file's claims — `gcloud`, `gcloud_check` and `risk` —
+/// canonically, in file order. A SIXTH product, for the reason the notices are one: they
+/// tell a reader how the control is met without satz and what its absence costs, they
+/// emit nothing and decide no verdict, so a changed command is reported and never forks
+/// an estate that uses the pack. `canonical_parts` leaves them out for the same reason.
+pub fn canonical_measures(file: &File) -> String {
+    file.claims
+        .iter()
+        .filter(|c| !c.gcloud.is_empty() || !c.gcloud_check.is_empty() || c.risk.is_some())
+        .map(|c| {
+            format!(
+                "measure({}|{}|{}|{}|[{}]|[{}]|{})\n",
+                c.framework,
+                c.version,
+                c.control,
+                c.coverage,
+                c.gcloud.join("\u{1f}"),
+                c.gcloud_check.join("\u{1f}"),
+                c.risk.as_deref().unwrap_or("")
+            )
+        })
+        .collect()
+}
+
 pub fn canonical_parts(file: &File) -> Canonical {
     // A notice's param is an acknowledgement and never emitted, so it belongs to the
     // notice's canonical form: a pack gaining a notice does not change what it emits.
@@ -3601,6 +3652,29 @@ action "scc-services" {
         let e = parse("claim \"cis-gcp\" \"4.0\" \"2.2\" implements { interpretation = \"x\" }")
             .unwrap_err();
         assert!(e.msg.contains("witnesses"), "{e}");
+    }
+
+    #[test]
+    fn a_claim_carries_its_measure_without_satz_and_emits_nothing_by_it() {
+        let src = "pack p version \"1.0\"\n\nclaim \"cis-gcp\" \"5.0\" \"1.5\" implements {\n  resources    = [\"google_org_policy_policy.x\"]\n  gcloud       = [\"gcloud org-policies set-policy policy.yaml\", \"echo '{{}}'\"]\n  gcloud_check = [\"gcloud org-policies describe iam.x --organization=ORGANIZATION_ID\"]\n  risk         = \"A key leaves the platform.\"\n}\n";
+        let f = parse(src).unwrap();
+        let c = &f.claims[0];
+        assert_eq!(c.gcloud, vec!["gcloud org-policies set-policy policy.yaml".to_string(), "echo '{}'".to_string()]);
+        assert_eq!(c.gcloud_check.len(), 1);
+        assert_eq!(c.risk.as_deref(), Some("A key leaves the platform."));
+        // the measure texts are their own canonical product: a changed command never forks
+        let bare = parse(&src.replace("  risk         = \"A key leaves the platform.\"\n", "")).unwrap();
+        assert_eq!(canonical(&f), canonical(&bare));
+        assert_ne!(canonical_measures(&f), canonical_measures(&bare));
+        for (bad, says) in [
+            ("gcloud = \"one\"", "a list of commands"),
+            ("gcloud = []", "states nothing"),
+            ("gcloud_check = [1]", "expected strings"),
+            ("risk = \"{x}\"", "no interpolation"),
+        ] {
+            let e = parse(&format!("claim \"cis-gcp\" \"5.0\" \"1.5\" implements {{\n  resources = [\"a.b\"]\n  {bad}\n}}\n")).unwrap_err();
+            assert!(e.msg.contains(says), "{bad}: {}", e.msg);
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@
 // The constraint name and its shape were verified against a live
 // organisation's OrgPolicy `ListConstraints`, not transcribed.
 
-pack cis_extensions.cloud_sql version "1.3"
+pack cis_extensions.cloud_sql version "1.4"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_cloud_sql_hardening_adopted = false
@@ -81,12 +81,42 @@ claim "cis-gcp" "4.0" "6.5" implements {
     "google_org_policy_policy.sql_managed_restrictAuthorizedNetworks",
   ]
   interpretation = "No Cloud SQL instance may carry an authorized network that whitelists every public address."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/sql.managed.restrictAuthorizedNetworks
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset sql.restrictAuthorizedNetworks --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe sql.managed.restrictAuthorizedNetworks --organization=ORGANIZATION_ID --effective",
+    "gcloud sql instances list --project=PROJECT_ID --format='table(name,settings.ipConfiguration.authorizedNetworks[].value.list())'",
+  ]
+  risk = "An authorized network of 0.0.0.0/0 admits connection attempts to the database from every address on the internet."
 }
 claim "cis-gcp" "5.0" "6.5" implements {
   resources = [
     "google_org_policy_policy.sql_managed_restrictAuthorizedNetworks",
   ]
   interpretation = "As for 4.0 §6.5 (5.0 §6.5, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/sql.managed.restrictAuthorizedNetworks
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset sql.restrictAuthorizedNetworks --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe sql.managed.restrictAuthorizedNetworks --organization=ORGANIZATION_ID --effective",
+    "gcloud sql instances list --project=PROJECT_ID --format='table(name,settings.ipConfiguration.authorizedNetworks[].value.list())'",
+  ]
+  risk = "An authorized network of 0.0.0.0/0 admits connection attempts to the database from every address on the internet."
 }
 
 claim "cis-gcp" "4.0" "6.6" implements {
@@ -94,10 +124,40 @@ claim "cis-gcp" "4.0" "6.6" implements {
     "google_org_policy_policy.sql_managed_restrictPublicIp",
   ]
   interpretation = "Cloud SQL instances may not be given public IP addresses."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/sql.managed.restrictPublicIp
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset sql.restrictPublicIp --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe sql.managed.restrictPublicIp --organization=ORGANIZATION_ID --effective",
+    "gcloud sql instances list --project=PROJECT_ID --format='table(name,databaseVersion,settings.ipConfiguration.ipv4Enabled)'",
+  ]
+  risk = "A Cloud SQL instance with a public IP address is reachable from the internet and exposed to password guessing and to every flaw in its engine."
 }
 claim "cis-gcp" "5.0" "6.7" implements {
   resources = [
     "google_org_policy_policy.sql_managed_restrictPublicIp",
   ]
   interpretation = "As for 4.0 §6.6 — 5.0 §6.7 (5.0 inserted 6.6 IAM database authentication)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/sql.managed.restrictPublicIp
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset sql.restrictPublicIp --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe sql.managed.restrictPublicIp --organization=ORGANIZATION_ID --effective",
+    "gcloud sql instances list --project=PROJECT_ID --format='table(name,databaseVersion,settings.ipConfiguration.ipv4Enabled)'",
+  ]
+  risk = "A Cloud SQL instance with a public IP address is reachable from the internet and exposed to password guessing and to every flaw in its engine."
 }
