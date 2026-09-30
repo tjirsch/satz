@@ -1038,20 +1038,25 @@ every customer and not a param.
 **No claim.** Defender for Cloud is an external CSPM that reads the estate. It implements
 no CIS control and contributes to none, so the pack asserts nothing.
 
-**Two prerequisites before the first apply.** The Defender agentless-scanning service
-account lives in a Microsoft project, and the pack CONTRIBUTES it to `allowed_policy_member_subjects`
-BEFORE any grant to it is applied — the constraints AND together and an incomplete list
-refuses the grant. And a deny-all on `iam.workloadIdentityPoolProviders` blocks the
-providers: the estate must allow the `sts.windows.net/<microsoft tenant>` issuer or
-document the exception.
+**One prerequisite before the first apply.** A deny-all on
+`iam.workloadIdentityPoolProviders` blocks the providers: the estate must allow the
+`sts.windows.net/<microsoft tenant>` issuer or document the exception. The pack adds
+nothing to `allowed_policy_member_subjects`, because the service accounts it grants roles
+to are created in the management project. The agentless-scanning plan grants roles to
+`serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com`,
+which lives in a Microsoft-owned project; an estate that onboards that plan outside the
+library adds the account to `allowed_policy_member_subjects` itself, or the managed §1.1
+constraint refuses the grant.
 
-**Coverage.** The pack ships the two plans whose resources were read from a
-Microsoft-generated onboarding script: auto-provisioner (always created, in the
-foundation) and CSPM. The other plan ids Microsoft issues — `ciem-discovery`,
+**Coverage.** The pack ships two plans: auto-provisioner (always created, in the
+foundation) and CSPM. The other plans Microsoft's generator writes — `ciem-discovery`,
 `containers`, `containers-streams`, `data-security-posture-storage`,
-`defender-for-databases-arc-ap`, `defender-for-servers` — each need their own `api://`
-audience, service account and role set, which only that customer's script contains,
-so they are not shipped.
+`defender-for-databases-arc-ap`, `defender-for-servers` and agentless scanning — are not
+in the library. Each has its own `api://` audience, service account and role set, and
+these are Microsoft's constants, not the customer's: public copies of the generated
+script for different tenants carry the same values for every plan they both contain.
+The plan set and a plan's accounts differ between versions of the generator, so a plan
+is transcribed from a current generated script.
 
 **Questions.** `mdc_workload_pool_id` and `mdc_mgmt_project_id` block until typed —
 only Microsoft's generated script knows them; `mdc_plan_cspm` asks whether the plan is
@@ -1814,6 +1819,23 @@ estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
 ### v0.88.0
+
+**An estate that uses both the CIS baseline and the Defender foundation plans one subject
+fewer.** `presets/integrations/microsoft-defender-for-cloud.satz` no longer contributes
+`serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com`
+to `allowed_policy_member_subjects`: the pack grants that account nothing, and the grant it
+needs belongs to Defender's agentless-scanning plan, which the library does not ship. The
+next plan updates `google_org_policy_policy.iam_managed_allowedPolicyMembers` with that
+entry removed from `allowedMemberSubjects` — one list entry, nothing else.
+
+Find it: an estate is affected when it uses the Defender foundation pack and the CIS
+baseline, and its own `allowed_policy_member_subjects` does not name the account. **The
+edit:** none when the estate does not use agentless scanning — the entry admitted a
+principal nothing in the estate grants a role to. An estate that DOES use agentless
+scanning, onboarded outside the library, adds the account to its own
+`allowed_policy_member_subjects` and its plan does not move; without it the managed §1.1
+constraint refuses the scanner's grants. An estate that already names the account keeps
+it and its plan does not move.
 
 **An API a resource inside a `google_project` node needs is judged on THAT project.** The
 node's provider alias bills its calls to the project itself, so Google tests the API
@@ -2704,6 +2726,7 @@ the private history recorded them.
 | `estate_map` | 2.2 | 2026-09-22 | the S1 model is offered as one entry, `security-group-models/s1-security-groups.satz`, at the top level: the two `by_hand` entries for `s1-group-definitions.satz` and `s1-group-permissions.satz` are gone with the packs, and the billing grants require one of the two models rather than one of three files |
 | `billing_export` | 1.0 | 2026-09-22 | Cloud Billing usage and cost data exported to BigQuery: a project of its own, the BigQuery API on it, the dataset, and Google's export account's dataEditor on it — with that account contributed to `allowed_policy_member_subjects`, and a notice for the console step Cloud Billing has no API for |
 | `estate_map` | 2.1 | 2026-09-22 | offers `billing-export` on `use_billing_export`, off by default |
+| `integrations.microsoft_defender_for_cloud` | 0.6 | 2026-09-30 | contributes nothing to `allowed_policy_member_subjects`: the agentless disk-scanning account it contributed is granted nothing by this pack — the grant belongs to the agentless-scanning plan, which the library does not ship. The header and the plan note say the per-plan audiences, service accounts and role sets are Microsoft's constants, identical in generated scripts for different tenants |
 | `integrations.microsoft_defender_for_cloud` | 0.5 | 2026-09-22 | contributes the agentless disk-scanning account to `allowed_policy_member_subjects` instead of naming it as a manual prerequisite in the header |
 | `estate_core` | 2.1 | 2026-09-21 | `compliance_frameworks`, the catalogs this customer is HELD TO — a contract, an auditor, a regulator — as a list of catalog ids, with the question that asks for them. What an estate CLAIMS comes from its packs and is a different fact: an estate can claim CIS controls while its customer is audited against ISO 27001. The default is `["cis-gcp-5.0"]`; the values are the ids of the catalogs in `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) and a value that names no catalog is refused by the compile, with the list. `satz report-compliance <estate>` reports one section per framework named here, `satz prowler` scans for them beside the frameworks the packs claim, and a pack reads the param like any other. An estate that binds nothing keeps working: `report-compliance <framework> <estate>` is unchanged |
 | `monitoring.organization_audit_logsink` | 1.6 | 2026-09-21 | a question for `logsink_project_folder`: the folder the audit-archive project is created in. The param is now the only thing that decides — a `use` line no longer stands in a folder's body — so the interview asks for it. Answering it empty creates the project under the organisation; an estate `satz init` wrote answers `"google_folder.infra_folder.name"`, which init binds itself. Nothing emitted changes for an estate that already binds the param |

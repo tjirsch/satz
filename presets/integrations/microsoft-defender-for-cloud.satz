@@ -32,22 +32,17 @@
 // `iam.workloadIdentityPoolProviders` blocks the providers below. The estate must allow
 // the `sts.windows.net/<microsoft tenant>` issuer, or document the exception.
 //
-// Domain-restricted sharing is the pack's own: the agentless-scanning account lives in a
-// Microsoft-owned project, outside the customer's organisation, so the managed §1.1
-// constraint refuses every grant to it while it is not named. The pack CONTRIBUTES it to
-// `allowed_policy_member_subjects` below, and it leaves with the pack.
+// The pack adds nothing to `allowed_policy_member_subjects`: the service accounts it
+// grants roles to are created in the management project. The agentless-scanning plan
+// grants roles to
+// `serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com`,
+// which lives in a Microsoft-owned project; that plan is not in the library, and an estate
+// that onboards it another way adds that account to `allowed_policy_member_subjects`
+// itself, or the managed §1.1 constraint refuses the grant.
 
-pack integrations.microsoft_defender_for_cloud version "0.5"
+pack integrations.microsoft_defender_for_cloud version "0.6"
 
 params {
-  // Microsoft publishes the agentless disk-scanning account, and it is the same for
-  // every customer. It is in a Microsoft-owned project, so the customer's organisation
-  // principal set does not cover it and the managed §1.1 constraint has to name it
-  // before any role granted to it can apply.
-  contributes_allowed_policy_member_subjects = [
-    "serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com",
-  ]
-
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
   // workload identity pool id Microsoft's wizard generates. Take it from the
   // generated script; there is no default because it is per customer.
@@ -64,9 +59,9 @@ params {
   // this pack emit the same project wherever it is used.
   mdc_mgmt_project_folder = ""
 
-  // Which plans are licensed. Each `true` pulls in that plan's fragment; a
-  // fragment for a plan not listed here has to be written from that customer's
-  // generated script (see the note at the bottom of this file).
+  // Which plans are licensed. Each `true` pulls in that plan's fragment; a plan
+  // not listed here has no fragment in the library (see the note at the bottom of
+  // this file).
   mdc_plan_cspm = false
 
   // CSPM access mode — exactly ONE of these, and only when mdc_plan_cspm is on.
@@ -221,10 +216,15 @@ google_iam_workload_identity_pool_provider {
   }
 }
 
-// ADDING A PLAN: copy the cspm fragment. Each plan needs, from THAT customer's
-// generated script: its provider id (`ciem-discovery`, `containers`,
-// `containers-streams`, `data-security-posture-storage`,
-// `defender-for-databases-arc-ap`, `defender-for-servers`), its `api://`
-// audience — a different Microsoft application id per plan — its service
-// account, and its role set. None of those can be guessed, and this pack
-// carries only what a real generated script has been read from.
+// ADDING A PLAN: copy the cspm fragment. Each plan has its provider id
+// (`ciem-discovery`, `containers`, `containers-streams`,
+// `data-security-posture-storage`, `defender-for-databases-arc-ap`,
+// `defender-for-servers`, and agentless scanning), its `api://` audience — a
+// different Microsoft application id per plan — its service account, and its role
+// set. These are Microsoft's constants, not the customer's: public copies of the
+// generated script for different tenants carry the same audiences, service account
+// ids and custom-role permissions for every plan they both contain. The plan set
+// and a plan's accounts differ between versions of Microsoft's generator, so a plan
+// is transcribed from a current generated script, and the customer's values in it
+// are the Entra tenant (the pool id) and the management project, which are params
+// here already.
