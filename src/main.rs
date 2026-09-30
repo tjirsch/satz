@@ -1451,19 +1451,19 @@ Thumbs.db
                 let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
                     let need_org = customer_organization_id.is_none() || customer_id.is_none();
                     let need_billing = billing_account_infra.is_none();
-                    match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
+                    match crate::gcp::identity::live_defaults(need_org, need_billing, None, None).await {
                         Ok(live) => {
                             let mut note = crate::init_params::Derivations::default();
                             let customer_domain = note.fill(
                                 "customer_domain",
                                 customer_domain,
-                                Some(live.customer_domain.clone()),
+                                live.customer_domain.clone(),
                                 "the ADC identity",
                             );
                             let iac_user = note.fill(
                                 "first_admin",
                                 iac_user,
-                                Some(format!("{}@{}", live.first_admin, live.customer_domain)),
+                                live.first_admin.as_ref().zip(live.customer_domain.as_ref()).map(|(a, d)| format!("{}@{}", a, d)),
                                 "the ADC identity",
                             );
                             let customer_id =
@@ -6617,9 +6617,12 @@ mod manifest_gate {
                     }
                     assert_eq!(got.get(k), Some(v), "{}: {} {}", name, addr, k);
                 }
+                // The other extras: numbers and bools, which the scanner never
+                // read and an import id fills in (`{priority}`).
                 for (k, v) in got {
                     if !legacy.contains_key(k) {
-                        assert!(v.contains('"'), "{}: {} {} is new and not a quote-bearing value: {}", name, addr, k, v);
+                        let scalar = v == "true" || v == "false" || v.parse::<f64>().is_ok();
+                        assert!(v.contains('"') || scalar, "{}: {} {} is new and neither a quote-bearing value nor a number or bool: {}", name, addr, k, v);
                     }
                 }
             }

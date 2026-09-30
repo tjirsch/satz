@@ -675,9 +675,13 @@ comments and row order survive (`ruamel.yaml`):
   list, dated in its header. Rows that are not Cloud Asset resources at all
   (IAM members/bindings, org-policy v1 shapes, provider constructs, and
   `google_billing_budget`, which `adopt` resolves through the Billing API) lose
-  the `asset_type` key: known, not unknown. What stays `TODO/UNKNOWN` is printed
-  with what was tried. The smoke matrix runs this pass and fails when the
-  table is behind the list.
+  the `asset_type` key: known, not unknown, and so do the firewall-policy rules
+  and associations, which Cloud Asset carries inside their policy's
+  `compute.googleapis.com/FirewallPolicy` asset. What stays `TODO/UNKNOWN` is
+  printed with what was tried, and a row with `import: true` among them is
+  counted on its own line. The smoke matrix runs this pass and fails when the
+  table is behind the list or when that count is not zero; `cargo test` plans a
+  sweep over the shipped table, by default and under `--all`.
 - `--probe <parent>` asks Cloud Asset Inventory for one page of every named
   row's asset type under `<parent>` (`organizations/<n>`, `folders/<n>`,
   `projects/<id>`), with the Application Default Credentials through gcloud and

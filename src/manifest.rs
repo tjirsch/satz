@@ -18,8 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct EmittedResource {
     pub tf_type: String,
     pub label: String,
-    /// Top-level attributes whose value is a plain or template string — the
-    /// identifiers witnesses are matched on (`name`, `display_name`, `parent`).
+    /// Top-level attributes whose value is a plain or template string, a number
+    /// or a bool, each as its canonical text — the identifiers witnesses are
+    /// matched on (`name`, `display_name`, `parent`) and the values an import-id
+    /// template fills in (a firewall-policy rule's `{priority}`).
     /// Nested blocks are deliberately not flattened in: an alert policy's
     /// `conditions { display_name }` must not shadow the resource's own.
     pub attrs: BTreeMap<String, String>,
@@ -255,7 +257,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         // against live state, which never matches (R9).
         if let Some(t) = whole_value_ref(a.expr()) {
             refs.insert(a.key().to_string(), t);
-        } else if let Some(v) = string_value(a.expr()) {
+        } else if let Some(v) = scalar_text(a.expr()) {
             attrs.insert(a.key().to_string(), v);
         } else if let hcl::Expression::Traversal(_) = a.expr() {
             if let Ok(t) = hcl::format::to_string(a.expr()) {
@@ -346,6 +348,16 @@ fn whole_value_ref(expr: &hcl::Expression) -> Option<String> {
 /// A plain string, or a template string rendered back to its `${…}` text —
 /// the two shapes an identifier attribute takes (an org policy under a folder
 /// emits `name = "${google_folder.x.name}/policies/…"`).
+/// A string, number or bool as the text an import id spells it with: `1000`,
+/// `true`. Anything else is not a scalar and has no such text.
+fn scalar_text(expr: &hcl::Expression) -> Option<String> {
+    match expr {
+        hcl::Expression::Number(n) => Some(n.to_string()),
+        hcl::Expression::Bool(b) => Some(b.to_string()),
+        other => string_value(other),
+    }
+}
+
 fn string_value(expr: &hcl::Expression) -> Option<String> {
     match expr {
         hcl::Expression::String(s) => Some(s.clone()),

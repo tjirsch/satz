@@ -212,6 +212,55 @@ fn row_for_asset<'a>(
     }
 }
 
+/// What one sweep asks Cloud Asset Inventory for, read off the enabled rows.
+pub(crate) struct SweepPlan<'a> {
+    /// content type (1 RESOURCE, 2 IAM_POLICY) → the asset types to list
+    pub(crate) type_map: BTreeMap<u32, std::collections::BTreeSet<String>>,
+    /// which enabled rows asked for each Cloud Asset type: a type the API
+    /// refuses is reported with the Terraform types that wanted it, which are
+    /// the rows to correct or to leave out
+    pub(crate) askers: BTreeMap<String, Vec<String>>,
+    /// enabled rows with no asset type: Cloud Asset Inventory does not carry
+    /// them, so they come from the state shape only
+    pub(crate) not_inventoried: Vec<&'a str>,
+}
+
+/// The enabled rows decide what is swept. A row that cannot be swept — an
+/// asset type still `TODO/UNKNOWN`, an unknown content type — refuses the run;
+/// a row with no asset type is a type Cloud Asset Inventory does not carry, and
+/// is reported once.
+pub(crate) fn sweep_plan(config: Option<&ImportConfig>) -> Result<SweepPlan<'_>, String> {
+    let mut plan = SweepPlan { type_map: BTreeMap::new(), askers: BTreeMap::new(), not_inventoried: Vec::new() };
+    let Some(config) = config else { return Ok(plan) };
+    for (tf_type, resource_config) in &config.resource_types {
+        if !resource_config.import {
+            continue;
+        }
+        let Some(cat) = resource_config.asset_type.as_deref() else {
+            plan.not_inventoried.push(tf_type);
+            continue;
+        };
+        if cat.starts_with("TODO") {
+            return Err(format!(
+                "import-config: `{}` has import: true but its asset_type is still {} — \
+                 run `scripts/update_import_config.py --cai-types presets/cai-asset-types.txt` or fill it by hand",
+                tf_type, cat
+            ));
+        }
+        let idx = match resource_config.content_type.as_deref().map(|c| c.to_uppercase()).as_deref() {
+            Some("RESOURCE") => 1,
+            Some("IAM_POLICY") => 2,
+            other => {
+                return Err(format!("import-config: `{}` has content_type {:?}; expected RESOURCE or IAM_POLICY", tf_type, other))
+            }
+        };
+        plan.type_map.entry(idx).or_default().insert(cat.to_string());
+        plan.askers.entry(cat.to_string()).or_default().push(tf_type.clone());
+    }
+    plan.not_inventoried.sort_unstable();
+    Ok(plan)
+}
+
 /// As whom a live sweep reads the scope, and why — printed when the sweep starts
 /// and repeated by every refusal, because "as whom" is the first thing either
 /// answer needs and the gRPC client names no identity of its own.
@@ -227,6 +276,16 @@ pub enum SweepIdentity {
     /// `--into` names a cloud-mode estate and `--no-impersonate` keeps the run on
     /// the caller's Application Default Credentials.
     NoImpersonate { estate: String },
+}
+
+impl SweepIdentity {
+    /// The service account the sweep reads as, when it reads as one.
+    pub fn account(&self) -> Option<&str> {
+        match self {
+            SweepIdentity::Estate { account, .. } => Some(account),
+            SweepIdentity::Caller | SweepIdentity::LocalMode { .. } | SweepIdentity::NoImpersonate { .. } => None,
+        }
+    }
 }
 
 impl std::fmt::Display for SweepIdentity {
@@ -1701,44 +1760,7 @@ impl Discoverer {
             .map_err(|e| format!("the Cloud Asset Inventory client cannot be built with the credentials of {}: {}", identity, e))?;
         let quota_project = crate::org_policy::resolve_quota_project();
 
-        let mut type_map: BTreeMap<u32, std::collections::BTreeSet<String>> = BTreeMap::new();
-        // Which enabled rows asked for each Cloud Asset type: a type the API
-        // refuses is reported with the Terraform types that wanted it, which are
-        // the rows to correct or to leave out.
-        let mut askers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-
-        // the enabled rows decide what is swept; a row that cannot be swept
-        // is an error (TODO asset type, unknown content type) or, for types
-        // Cloud Asset Inventory does not carry at all, reported once
-        let mut not_inventoried: Vec<&str> = Vec::new();
-        if let Some(config) = &discovery_config {
-            for (tf_type, resource_config) in &config.resource_types {
-                if !resource_config.import { continue; }
-                let Some(cat) = resource_config.asset_type.as_deref() else {
-                    not_inventoried.push(tf_type);
-                    continue;
-                };
-                if cat.starts_with("TODO") {
-                    return Err(format!(
-                        "import-config: `{}` has import: true but its asset_type is still {} — \
-                         run `scripts/update_import_config.py --cai-types presets/cai-asset-types.txt` or fill it by hand",
-                        tf_type, cat
-                    ).into());
-                }
-                let idx = match resource_config.content_type.as_deref().map(|c| c.to_uppercase()).as_deref() {
-                    Some("RESOURCE") => 1,
-                    Some("IAM_POLICY") => 2,
-                    other => {
-                        return Err(format!(
-                            "import-config: `{}` has content_type {:?}; expected RESOURCE or IAM_POLICY",
-                            tf_type, other
-                        ).into())
-                    }
-                };
-                type_map.entry(idx).or_default().insert(cat.to_string());
-                askers.entry(cat.to_string()).or_default().push(tf_type.clone());
-            }
-        }
+        let SweepPlan { type_map, askers, not_inventoried } = sweep_plan(discovery_config.as_ref())?;
         if !not_inventoried.is_empty() {
             println!(
                 "import: {} enabled type(s) are not Cloud Asset Inventory resources and cannot come from the live shape (state shape only): {}",
@@ -3894,6 +3916,33 @@ mod row_selection_tests {
             cfg.apply_all(true);
         }
         cfg
+    }
+
+    /// The shipped table plans a sweep, by default and under `--all`: no row
+    /// `satz import` reads carries an asset type the sweep refuses. Two rows
+    /// with `import: true` and `TODO/UNKNOWN` once refused every live import.
+    #[test]
+    fn the_shipped_table_plans_a_sweep() {
+        for all in [false, true] {
+            let cfg = shipped(all);
+            let plan = sweep_plan(Some(&cfg)).unwrap_or_else(|e| panic!("--all {}: {}", all, e));
+            assert!(!plan.type_map.is_empty(), "--all {}: nothing to sweep", all);
+        }
+    }
+
+    /// A row that asks to be swept with an unresolved asset type refuses the run
+    /// and names itself; a row with no asset type is reported, not swept.
+    #[test]
+    fn a_row_with_an_unresolved_asset_type_refuses_the_sweep() {
+        let mut cfg = shipped(false);
+        let row = cfg.resource_types.get_mut("google_compute_network_firewall_policy_rule").expect("the row");
+        assert!(row.import && row.asset_type.is_none(), "a rule is part of its policy's asset: {:?}", row.asset_type);
+        let plan = sweep_plan(Some(&cfg)).expect("plans");
+        assert!(plan.not_inventoried.contains(&"google_compute_network_firewall_policy_rule"));
+        let mut cfg = shipped(false);
+        cfg.resource_types.get_mut("google_compute_network_firewall_policy_rule").unwrap().asset_type = Some("TODO/UNKNOWN".into());
+        let err = sweep_plan(Some(&cfg)).err().expect("refused");
+        assert!(err.contains("google_compute_network_firewall_policy_rule") && err.contains("TODO/UNKNOWN"), "{err}");
     }
 
     fn asset(asset_type: &str, name: &str) -> Asset {
