@@ -1,4 +1,4 @@
-# 0073 — a live import writes what the provider reads back, and leaves out what is not live
+# 0074 — a live import writes what the provider reads back, and leaves out what is not live
 
 - **Status:** accepted; extends ADR-0058 (the asset name picks the Terraform type)
 - **Date:** 2026-09-30

@@ -25,17 +25,32 @@
 //! its `folder_id` references (or sits at the top when its `org_id` is the
 //! organisation); a project's services, IAM grants and project-scoped
 //! resources that reference it by `project` move inside it; folder and
-//! organisation grants likewise. A resource that named no project of its own
-//! and relied on a dropped `provider` block's default lands in that project
-//! when the default resolves to one of the imported projects.
+//! organisation grants likewise. A variable used as the organisation (`org_id
+//! = var.x`, `parent = "organizations/${var.x}"`) is bound to
+//! `customer_organization_id` — to the organisation `--organization` names
+//! when it has no default. A `count = length(<promoted list>)` whose entry is
+//! read as `<list>[count.index]` or `element(<list>, count.index)` expands into
+//! one resource per distinct entry.
+//!
+//! **The default provider.** A translated resource that names no provider is
+//! emitted with the estate's own, so what it took from the source's default
+//! `google` provider is carried: the default project as placement (into the
+//! imported project of that id, the id folded through params and templates) or
+//! as the resource's own `project`, the region and zone into the estate's
+//! `providers` block. A default satz cannot write wraps each resource that
+//! relied on it, naming it.
 //!
 //! **Wrap**: everything else is carried verbatim as
 //! `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly as
 //! written, the compliance plane cannot see into it, the fold cannot compose
 //! it — and the report says why. A block whose parent is wrapped is wrapped
-//! too (closure by dependency), and a promoted declaration a wrapped block
-//! still reads is carried verbatim beside it. `terraform` and `provider`
-//! blocks are dropped with a note: the emitter owns `providers.tf`.
+//! too (closure by dependency), its reason naming the block that started the
+//! chain, and a promoted declaration a wrapped block still reads is carried
+//! verbatim beside it. The `terraform` block is dropped: the emitter owns
+//! `providers.tf`. A `provider` block is carried verbatim when a block that
+//! stays verbatim, or a resource naming it, uses its configuration — the
+//! emitter's own providers are all aliased — and dropped otherwise, with what
+//! was carried from it in its row.
 //!
 //! An import may be partial, never silent. Note that *translated* is not
 //! *proven*: a `${…}` reference is opaque to the compliance plane.
@@ -167,6 +182,13 @@ const UNEXPRESSIBLE_META_ATTRS: &[&str] = &["count", "for_each"];
 /// still translate. `base_estate_declares_the_default_provider` proves the two
 /// agree.
 const DEFAULT_PROVIDER: &str = "google.google";
+/// The param an estate names its organisation by.
+const ORGANIZATION_PARAM: &str = "customer_organization_id";
+/// Why a `terraform` block, or a `provider` block nothing still uses, is dropped.
+const TERRAFORM_DROPPED: &str = "the emitter writes providers.tf from the estate's `terraform` and `providers` blocks";
+/// The reason `classify` gives a block that still carries a `count`; the
+/// expansion replaces it with why that `count` did not expand.
+const COUNT_REASON: &str = "uses `count`";
 
 /// Where a translated resource lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +220,9 @@ struct Res {
     /// one copy of an expanded `count`: the block already has its own row, so
     /// this resource does not add a second
     expanded: bool,
+    /// the provider configuration the source block uses (`google`,
+    /// `google-beta`, `google.<alias>`): its `provider`, or its type's own
+    provider_ref: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +249,14 @@ struct Const {
     decl: usize,
     /// set when the name is unusable; every reader wraps with THIS text
     conflict: Option<String>,
+    /// the expression as written — a `variable`'s default, a local's value —
+    /// which [`Consts::eval`] folds to a plain string where it can
+    expr: Option<Expression>,
+    /// the organisation this name stands for: a variable used as an `org_id`
+    /// or an `organizations/…` parent ([`bind_organization_variables`]). Its
+    /// param is written as `customer_organization_id`, and a placement reads
+    /// it as this number.
+    organization: Option<String>,
 }
 
 /// ONE namespace, keyed by the HCL name as written: `var.x` and `local.x`
@@ -247,19 +280,63 @@ impl Consts {
         }
     }
 
-    /// The constant's value as a plain literal string, when it is one — the
-    /// only form a placement decision can be made from.
-    fn literal_string(&self, kind: &str, name: &str) -> Option<String> {
+    /// The constant's value as a plain string, when it folds to one — a
+    /// literal, or a template over other constants that do (`"${var.prefix}${var.org_id}"`).
+    /// The only form a placement decision can be made from.
+    fn literal_string(&self, name: &str) -> Option<String> {
+        self.eval_name(name, 0)
+    }
+
+    fn eval_name(&self, name: &str, depth: usize) -> Option<String> {
         let c = self.by_name.get(name)?;
-        if c.conflict.is_some() || (kind != "var" && c.origin == Origin::VarDefault) {
-            // `local.x` naming a variable is a mistake, not a resolution
+        if let Some(org) = &c.organization {
+            return Some(org.clone());
         }
-        match c.value.as_ref()? {
-            serde_yaml::Value::String(s) => Some(s.clone()),
-            serde_yaml::Value::Number(n) => Some(n.to_string()),
+        self.eval(c.expr.as_ref()?, depth + 1)
+    }
+
+    /// An expression folded to a plain string: a string or number literal, a
+    /// `var.`/`local.` naming a constant that folds, or a template of those.
+    /// `None` for anything else — the caller keeps its own reason.
+    fn eval(&self, e: &Expression, depth: usize) -> Option<String> {
+        // a local that names itself through others is not a value
+        if depth > 16 {
+            return None;
+        }
+        match e {
+            Expression::String(s) => Some(s.value().to_string()),
+            Expression::Number(n) => Some(n.value().to_string()),
+            Expression::Parenthesis(p) => self.eval(p.inner(), depth),
+            Expression::Traversal(t) => {
+                let (_, name) = const_name(t)?;
+                self.eval_name(&name, depth)
+            }
+            Expression::StringTemplate(t) => {
+                let mut out = String::new();
+                for el in t.iter() {
+                    match el {
+                        Element::Literal(l) => out.push_str(l.value()),
+                        Element::Interpolation(i) => out.push_str(&self.eval(&i.expr, depth)?),
+                        Element::Directive(_) => return None,
+                    }
+                }
+                Some(out)
+            }
             _ => None,
         }
     }
+}
+
+/// `var.x` / `local.x` as its kind and name.
+fn const_name(t: &Traversal) -> Option<(String, String)> {
+    let Expression::Variable(v) = &t.expr else { return None };
+    let kind = v.as_str();
+    if kind != "var" && kind != "local" {
+        return None;
+    }
+    let [op] = t.operators.as_slice() else { return None };
+    let TraversalOperator::GetAttr(k) = op.value() else { return None };
+    Some((kind.to_string(), k.as_str().to_string()))
 }
 
 /// One `variable` / `locals` block and what became of it.
@@ -352,10 +429,9 @@ fn one_pass(
     forced: &BTreeSet<String>,
     reasons: &mut Reasons,
 ) -> Result<Pass, String> {
-    let (consts, mut decls) = collect_consts(parsed, forced)?;
+    let (mut consts, mut decls) = collect_consts(parsed, forced)?;
+    let mut org_ids: BTreeSet<String> = bind_organization_variables(parsed, &mut consts, organization);
 
-    // the provider default project, when the dropped `provider` blocks agree
-    let provider_project = provider_default_project(parsed, &consts);
     // the projects of this input by id: a literal `project = "<id>"` places
     // under one of them the way a reference does
     let projects = project_ids(parsed, &consts);
@@ -363,9 +439,14 @@ fn one_pass(
     let mut rows: Vec<Row> = Vec::new();
     let mut verbatim: Vec<(String, usize, String)> = Vec::new();
     let mut resources: Vec<Res> = Vec::new();
-    let mut org_ids: BTreeSet<String> = BTreeSet::new();
     // every `<type>.<label>` this input declares, whatever becomes of it
     let mut declared: BTreeSet<String> = BTreeSet::new();
+    // the input's `provider` blocks, judged once every block's fate is known
+    let mut providers: Vec<SourceProvider> = Vec::new();
+    // the provider configurations the always-verbatim blocks (`data`,
+    // `module`, …) use; `*` for a module, which inherits every default one
+    let mut verbatim_providers: BTreeSet<String> = BTreeSet::new();
+    let mut notes: Vec<String> = Vec::new();
 
     for (input, body) in parsed {
         for s in body.iter() {
@@ -387,15 +468,12 @@ fn one_pass(
                 continue;
             };
             let ident = block.ident.to_string();
-            if ident == "terraform" || ident == "provider" {
-                let mut why =
-                    "the emitter writes providers.tf from the estate's `terraform` and `providers` blocks".to_string();
-                if ident == "provider" {
-                    if let Some(p) = attr_string(block, "project", &consts) {
-                        why.push_str(&format!(" — its default project {:?} is carried as placement", p));
-                    }
-                }
-                rows.push(Row { file: input.path.clone(), line, what, action: Action::Dropped(why) });
+            if ident == "terraform" {
+                rows.push(Row { file: input.path.clone(), line, what, action: Action::Dropped(TERRAFORM_DROPPED.into()) });
+                continue;
+            }
+            if ident == "provider" {
+                providers.push(SourceProvider::new(input.path.clone(), line, what, text, block));
                 continue;
             }
             if ident == "variable" || ident == "locals" {
@@ -403,6 +481,17 @@ fn one_pass(
                 continue;
             }
             if ident != "resource" {
+                match ident.as_str() {
+                    "data" => {
+                        if let Some(t) = block.labels.first() {
+                            verbatim_providers.insert(provider_of(block, t.as_str()));
+                        }
+                    }
+                    "module" => {
+                        verbatim_providers.insert("*".into());
+                    }
+                    _ => {}
+                }
                 verbatim.push((input.path.clone(), line, text));
                 rows.push(Row {
                     file: input.path.clone(),
@@ -415,6 +504,9 @@ fn one_pass(
             let (tf_type, label) = match block.labels.as_slice() {
                 [t, l] => (t.as_str().to_string(), l.as_str().to_string()),
                 _ => {
+                    if let Some(t) = block.labels.first() {
+                        verbatim_providers.insert(provider_of(block, t.as_str()));
+                    }
                     verbatim.push((input.path.clone(), line, text));
                     rows.push(Row {
                         file: input.path.clone(),
@@ -425,6 +517,7 @@ fn one_pass(
                     continue;
                 }
             };
+            let provider_ref = provider_of(block, &tf_type);
             declared.insert(format!("{}.{}", tf_type, label));
             let project_id = if tf_type == "google_project" {
                 attr_string(block, "project_id", &consts)
@@ -433,28 +526,79 @@ fn one_pass(
             };
             // `count = length(<promoted list>)` is one resource per entry, which
             // is what Satz writes; expand it rather than carrying the block.
-            let expansion = count_expansion(block, &consts).and_then(|(list, elements)| {
-                // the copy is classified from the block WITHOUT its `count`: the
-                // meta-argument is what expanded, and every gate downstream is
-                // right to refuse one it still sees
-                let mut without_count = block.clone();
-                without_count.body.remove_attribute("count");
-                let mut copies = Vec::new();
-                for (i, element) in elements.iter().enumerate() {
-                    let mut cx = Cx {
-                        consts: &consts,
-                        schema,
-                        uses: Uses::default(),
-                        index: Some((list.clone(), element.clone())),
-                    };
-                    let c = classify(&tf_type, &label, &without_count, &mut cx, &mut org_ids, &projects);
-                    // one copy that cannot be written leaves the whole block
-                    // wrapped: half an expansion is worse than none
-                    c.body.as_ref()?;
-                    copies.push((expanded_label(&label, element, i), c, cx.uses));
+            let mut count_why: Option<String> = None;
+            let expansion = match count_expansion(block, &consts) {
+                None => None,
+                Some(Err(why)) => {
+                    count_why = Some(why);
+                    None
                 }
-                Some(copies)
-            });
+                Some(Ok((list, elements))) => {
+                    // a list naming one entry twice is one resource: Terraform
+                    // creates two that manage the same thing, and Satz cannot
+                    // write two resources under one address
+                    let mut distinct: Vec<serde_yaml::Value> = Vec::new();
+                    let mut repeated: Vec<String> = Vec::new();
+                    for e in elements {
+                        if distinct.contains(&e) {
+                            repeated.push(scalar_text(&e));
+                        } else {
+                            distinct.push(e);
+                        }
+                    }
+                    // the copy is classified from the block WITHOUT its `count`: the
+                    // meta-argument is what expanded, and every gate downstream is
+                    // right to refuse one it still sees
+                    let mut without_count = block.clone();
+                    without_count.body.remove_attribute("count");
+                    let mut copies = Vec::new();
+                    let mut labels: BTreeSet<String> = BTreeSet::new();
+                    for (i, element) in distinct.iter().enumerate() {
+                        let mut cx = Cx {
+                            consts: &consts,
+                            schema,
+                            uses: Uses::default(),
+                            index: Some((list.clone(), element.clone())),
+                        };
+                        let c = classify(&tf_type, &label, &without_count, &mut cx, &mut org_ids, &projects);
+                        // one copy that cannot be written leaves the whole block
+                        // wrapped: half an expansion is worse than none
+                        if let Some(why) = &c.reason {
+                            count_why = Some(format!(
+                                "`count` over `{}` does not expand: its entry `{}` cannot be written — {}",
+                                list,
+                                scalar_text(element),
+                                why
+                            ));
+                            break;
+                        }
+                        // two entries that shorten to the same label take their index
+                        let mut copy_label = expanded_label(&label, element, i);
+                        if !labels.insert(copy_label.clone()) {
+                            copy_label = format!("{}_{}", label, i);
+                            labels.insert(copy_label.clone());
+                        }
+                        copies.push((copy_label, c, cx.uses));
+                    }
+                    if count_why.is_some() {
+                        None
+                    } else {
+                        if !repeated.is_empty() {
+                            notes.push(format!(
+                                "{}:{} {}: `{}` names {} more than once, and each entry is one resource — the repeat is folded, {} resource(s) for {} entries",
+                                input.path,
+                                line,
+                                what,
+                                list,
+                                repeated.iter().map(|r| format!("`{}`", r)).collect::<Vec<_>>().join(", "),
+                                copies.len(),
+                                copies.len() + repeated.len()
+                            ));
+                        }
+                        Some(copies)
+                    }
+                }
+            };
             if let Some(copies) = expansion {
                 rows.push(Row {
                     file: input.path.clone(),
@@ -476,12 +620,19 @@ fn one_pass(
                         uses,
                         project_id: project_id.clone(),
                         expanded: true,
+                        provider_ref: provider_ref.clone(),
                     });
                 }
                 continue;
             }
             let mut cx = Cx { consts: &consts, schema, uses: Uses::default(), index: None };
-            let classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids, &projects);
+            let mut classified = classify(&tf_type, &label, block, &mut cx, &mut org_ids, &projects);
+            // a `count` that did not expand says why, not only that it is there
+            if let (Some(why), Some(r)) = (count_why, classified.reason.as_mut()) {
+                if r == COUNT_REASON {
+                    *r = why;
+                }
+            }
             resources.push(Res {
                 tf_type,
                 label,
@@ -495,31 +646,18 @@ fn one_pass(
                 uses: cx.uses,
                 project_id,
                 expanded: false,
+                provider_ref,
             });
         }
     }
 
-    // a resource that named no project and relied on the dropped provider's
-    // default belongs in that project — the value the source resolved to
-    if let Some(default) = &provider_project {
-        if let Some(host) = resources
-            .iter()
-            .position(|r| r.tf_type == "google_project" && r.reason.is_none() && r.project_id.as_deref() == Some(default.as_str()))
-        {
-            let host_label = resources[host].label.clone();
-            for r in resources.iter_mut() {
-                if r.reason.is_none()
-                    && r.place == Place::Top
-                    && r.tf_type != "google_project"
-                    && r.tf_type != "google_folder"
-                    && schema.has_attr(&r.tf_type, "project")
-                    && !r.body.as_ref().is_some_and(|b| b.contains_key(serde_yaml::Value::String("project".into())))
-                {
-                    r.place = Place::Project(host_label.clone());
-                }
-            }
-        }
-    }
+    // what a translated resource that names no provider relied on: the default
+    // `google` provider's project, region and zone
+    let mut estate_provider = serde_yaml::Mapping::new();
+    let carried = match providers.iter().find(|p| p.name == "google" && p.alias.is_none()) {
+        Some(sp) => carry_provider_defaults(sp, &consts, schema, &mut resources, &mut estate_provider),
+        None => Vec::new(),
+    };
 
     // `depends_on` is dropped, so the edge has to be one the emitter can put
     // back from the estate — which it can only do for a block that is IN the
@@ -586,34 +724,88 @@ fn one_pass(
         }
     }
 
+    // A `provider` block stays in the estate, verbatim, when something the
+    // estate emits still uses it: a block that stays verbatim and names no
+    // provider (or names this one), or a translated resource naming it. The
+    // emitter's own providers are all aliased, so without it those blocks would
+    // deploy with an unconfigured default provider.
+    let mut used: BTreeSet<String> = verbatim_providers;
+    for (i, r) in resources.iter().enumerate() {
+        let names_one = r.body.as_ref().is_some_and(|b| b.contains_key(serde_yaml::Value::String("provider".into())));
+        if wrapped_idx.contains(&i) || names_one {
+            used.insert(r.provider_ref.clone());
+        }
+    }
+    let mut provider_texts: Vec<String> = Vec::new();
+    for sp in &providers {
+        let action = if sp.collides() {
+            Action::Dropped(sp.collision_note())
+        } else {
+            // what the translated resources took from it, on either path
+            let took = if sp.name == "google" && sp.alias.is_none() && !carried.is_empty() {
+                format!(" — {}", carried.join("; "))
+            } else {
+                String::new()
+            };
+            if used.contains(&sp.reference()) || (used.contains("*") && sp.alias.is_none()) {
+                verbatim.push((sp.file.clone(), sp.line, sp.text.clone()));
+                provider_texts.push(sp.text.clone());
+                Action::Wrapped(format!(
+                    "carried verbatim: a block that stays verbatim, or a resource naming `{}`, uses its configuration, and the emitter's own providers are aliased{}",
+                    sp.reference(),
+                    took
+                ))
+            } else {
+                Action::Dropped(format!("{}{}", TERRAFORM_DROPPED, took))
+            }
+        };
+        rows.push(Row { file: sp.file.clone(), line: sp.line, what: sp.what.clone(), action });
+    }
+
     // which declarations must be carried verbatim beside the blocks that read
     // them, and which names have to leave the table because carrying them would
     // declare the same `variable` twice
     let mut read_by_verbatim = verbatim_reads(parsed);
-    for (i, r) in resources.iter().enumerate() {
-        if wrapped_idx.contains(&i) {
-            let mut rd = Reads::default();
-            rd.scan_text(&r.text);
-            read_by_verbatim.merge(rd);
-        }
+    for text in resources.iter().enumerate().filter(|(i, _)| wrapped_idx.contains(i)).map(|(_, r)| &r.text).chain(&provider_texts) {
+        let mut rd = Reads::default();
+        rd.scan_text(text);
+        read_by_verbatim.merge(rd);
     }
     for d in decls.iter_mut() {
         d.carry = !d.unresolved.is_empty();
     }
-    for read in read_by_verbatim.names(&consts) {
-        let Some(c) = consts.by_name.get(&read) else { continue };
-        if c.conflict.is_some() {
-            // already not a param; its declaration is carried below on its own
+    // a carried declaration reads what it reads too — a carried `locals`
+    // interpolating a variable needs that variable carried — so this runs
+    // until no newly carried declaration reads anything new
+    let mut scanned: BTreeSet<usize> = BTreeSet::new();
+    loop {
+        for read in read_by_verbatim.names(&consts) {
+            let Some(c) = consts.by_name.get(&read) else { continue };
+            if c.conflict.is_some() {
+                // already not a param; its declaration is carried below on its own
+                decls[c.decl].carry = true;
+                continue;
+            }
+            // `emit_variables` writes a param as `variable "<name, _ → ->"`. A name
+            // that survives that rewrite unchanged would collide with the carried
+            // `variable` block of the same name, so it cannot be both.
+            if c.origin != Origin::Local && !read.contains('_') {
+                return Ok(Pass::Retry(read));
+            }
             decls[c.decl].carry = true;
-            continue;
         }
-        // `emit_variables` writes a param as `variable "<name, _ → ->"`. A name
-        // that survives that rewrite unchanged would collide with the carried
-        // `variable` block of the same name, so it cannot be both.
-        if c.origin != Origin::Local && !read.contains('_') {
-            return Ok(Pass::Retry(read));
+        let mut more = false;
+        for (i, d) in decls.iter().enumerate() {
+            if (d.carry || d.reason.is_some() || d.promoted.is_empty()) && scanned.insert(i) {
+                let mut rd = Reads::default();
+                rd.scan_text(&d.text);
+                read_by_verbatim.merge(rd);
+                more = true;
+            }
         }
-        decls[c.decl].carry = true;
+        if !more {
+            break;
+        }
     }
 
     // rows for the declarations
@@ -624,7 +816,17 @@ fn one_pass(
             (None, false) => Action::Promoted(describe_promotion(d, &consts)),
         };
         if d.carry || d.reason.is_some() || d.promoted.is_empty() {
-            verbatim.push((d.file.clone(), d.line, d.text.clone()));
+            // a variable bound to the organisation, carried because a verbatim
+            // block reads it, is carried with that organisation as its default:
+            // the source asked for it, and the estate knows it
+            let org = d.promoted.iter().find_map(|n| {
+                consts.by_name.get(n).filter(|c| c.origin == Origin::VarRequired).and_then(|c| c.organization.clone())
+            });
+            let text = match org {
+                Some(org) => with_default(&d.text, &org),
+                None => d.text.clone(),
+            };
+            verbatim.push((d.file.clone(), d.line, text));
         }
         rows.push(Row { file: d.file.clone(), line: d.line, what: d.what.clone(), action });
     }
@@ -654,6 +856,13 @@ fn one_pass(
     // the tree
     let translated: Vec<&Res> = resources.iter().enumerate().filter(|(i, _)| !wrapped_idx.contains(i)).map(|(_, r)| r).collect();
     let mut top = base_estate()?;
+    if let Some(google) = top
+        .get_mut("providers")
+        .and_then(|p| p.get_mut("google"))
+        .and_then(|g| g.as_mapping_mut())
+    {
+        google.extend(estate_provider);
+    }
     for r in &translated {
         if r.place == Place::Top {
             place_into(&mut top, r, &translated, schema);
@@ -686,7 +895,6 @@ fn one_pass(
         "the source's state must show no changes; `satz adopt` resolves the import ids after.".to_string(),
         "A `${…}` reference is opaque to the compliance plane: translated is not proven.".to_string(),
     ];
-    let mut notes: Vec<String> = Vec::new();
     if !required.is_empty() {
         header.push(String::new());
         header.push("Bind these before transpiling — the source declared them without a default,".to_string());
@@ -826,6 +1034,8 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
     )];
     let mut rows = Vec::new();
     let mut verbatim = Vec::new();
+    // what the estate deploys differently from the source
+    let mut changed: Vec<String> = Vec::new();
     for (input, body) in parsed {
         for s in body.iter() {
             let Some(span) = s.span() else {
@@ -836,14 +1046,26 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
             let what = describe(s);
             if let Some(b) = s.as_block() {
                 let ident = b.ident.to_string();
-                if ident == "terraform" || ident == "provider" {
+                if ident == "terraform" {
+                    rows.push(Row { file: input.path.clone(), line, what, action: Action::Dropped(TERRAFORM_DROPPED.into()) });
+                    continue;
+                }
+                // every block is verbatim, so every provider configuration is
+                // still used — except one the estate declares itself
+                if ident == "provider" {
+                    let sp = SourceProvider::new(input.path.clone(), line, what, text, b);
+                    if sp.collides() {
+                        let note = sp.collision_note();
+                        changed.push(format!("{}:{} {}: {}", sp.file, sp.line, sp.what, note));
+                        rows.push(Row { file: sp.file, line: sp.line, what: sp.what, action: Action::Dropped(note) });
+                        continue;
+                    }
+                    verbatim.push((sp.file.clone(), sp.line, sp.text));
                     rows.push(Row {
-                        file: input.path.clone(),
-                        line,
-                        what,
-                        action: Action::Dropped(
-                            "the emitter writes providers.tf from the estate's `terraform` and `providers` blocks".into(),
-                        ),
+                        file: sp.file,
+                        line: sp.line,
+                        what: sp.what,
+                        action: Action::Wrapped("--wrap-all: carried verbatim, the verbatim blocks use its configuration".into()),
                     });
                     continue;
                 }
@@ -853,14 +1075,21 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
         }
     }
     rows.sort_by(|a, b| (&a.file, a.line).cmp(&(&b.file, b.line)));
-    let header = vec![
+    let mut header = vec![
         "Imported from existing Terraform with --wrap-all: every block is carried verbatim".to_string(),
-        "inside `hcl trust`, nothing is translated and no params are promoted beyond the".to_string(),
-        "organisation `--organization` names. It deploys exactly as written; `tofu plan`".to_string(),
-        "against the source's state must show no changes.".to_string(),
+        "inside `hcl trust`, its `provider` blocks included, nothing is translated and no".to_string(),
+        "params are promoted beyond the organisation `--organization` names. The emitter".to_string(),
+        "writes the `terraform` block.".to_string(),
     ];
+    if changed.is_empty() {
+        header.push("It deploys as written; `tofu plan` against the source's state must show no changes.".to_string());
+    } else {
+        header.push("It deploys as written except where a `provider` block is not carried:".to_string());
+        header.extend(changed.iter().map(|c| format!("  {}", c)));
+    }
     let satz = render(&base_estate()?, name, &params, &header, &verbatim)?;
-    Ok(Imported { satz, rows, notes: Vec::new(), ordering_dropped: Vec::new() })
+    let notes = changed.into_iter().map(|c| format!("not carried: {}", c)).collect();
+    Ok(Imported { satz, rows, notes, ordering_dropped: Vec::new() })
 }
 
 /// Closure by dependency, recomputed from the current reasons.
@@ -887,7 +1116,14 @@ fn closure(resources: &mut [Res]) -> BTreeSet<usize> {
                     changed = true;
                 }
                 (_, Some(p)) if wrapped.contains(&p) => {
-                    resources[i].reason = Some(format!("its parent {} is wrapped", resources[p].what));
+                    // the reason that STARTED the chain: "its parent is wrapped"
+                    // sends the reviewer one hop, and the hop repeats the sentence
+                    let (root_what, root_why) = root_cause(resources, p);
+                    resources[i].reason = Some(if root_what == resources[p].what {
+                        format!("its parent {} is wrapped: {}", root_what, root_why)
+                    } else {
+                        format!("its parent {} is wrapped, because {} is: {}", resources[p].what, root_what, root_why)
+                    });
                     wrapped.insert(i);
                     changed = true;
                 }
@@ -898,6 +1134,22 @@ fn closure(resources: &mut [Res]) -> BTreeSet<usize> {
             return wrapped;
         }
     }
+}
+
+/// The block at the start of a chain of wrapped parents, and its own reason.
+fn root_cause(resources: &[Res], mut i: usize) -> (String, String) {
+    for _ in 0..resources.len() {
+        let parent = match &resources[i].place {
+            Place::Top => None,
+            Place::Folder(l) => resources.iter().position(|r| r.tf_type == "google_folder" && &r.label == l),
+            Place::Project(l) => resources.iter().position(|r| r.tf_type == "google_project" && &r.label == l),
+        };
+        match parent {
+            Some(p) if resources[p].reason.is_some() && resources[i].reason.as_deref().is_some_and(|r| r.starts_with("its parent ")) => i = p,
+            _ => break,
+        }
+    }
+    (resources[i].what.clone(), resources[i].reason.clone().unwrap_or_default())
 }
 
 /// Types whose translated form does not keep the source label: a project's
@@ -933,14 +1185,18 @@ fn describe_promotion(d: &Decl, consts: &Consts) -> String {
     let mut out = if d.promoted.len() == 1 {
         let n = &d.promoted[0];
         match consts.by_name.get(n) {
-            Some(Const { value: Some(v), origin, .. }) => format!(
+            Some(Const { value: Some(v), origin, organization, .. }) => format!(
                 "param {} = {} ({})",
                 migrate::param_name(n),
                 migrate::param_value(v).unwrap_or_else(|_| "…".into()),
-                match origin {
-                    Origin::VarDefault => "variable default",
-                    Origin::Local => "locals",
-                    Origin::VarRequired => "variable",
+                match (origin, organization) {
+                    (Origin::VarRequired, Some(_)) => {
+                        "variable without a default, used as the organisation: bound to the one `--organization` names"
+                    }
+                    (_, Some(_)) => "used as the organisation, which its value names",
+                    (Origin::VarDefault, None) => "variable default",
+                    (Origin::Local, None) => "locals",
+                    (Origin::VarRequired, None) => "variable",
                 }
             ),
             _ => format!("param {} (variable without a default — bind it before deploying)", migrate::param_name(n)),
@@ -957,7 +1213,16 @@ fn describe_promotion(d: &Decl, consts: &Consts) -> String {
             d.unresolved.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ")
         ));
     } else if d.carry {
-        out.push_str(" — carried verbatim too, a wrapped block still reads it");
+        let bound = d.promoted.iter().find_map(|n| {
+            consts.by_name.get(n).filter(|c| c.origin == Origin::VarRequired).and_then(|c| c.organization.as_deref())
+        });
+        match bound {
+            Some(org) => out.push_str(&format!(
+                " — carried verbatim too, with `default = \"{}\"`, a wrapped block still reads it",
+                org
+            )),
+            None => out.push_str(" — carried verbatim too, a wrapped block still reads it"),
+        }
     }
     out
 }
@@ -1052,6 +1317,8 @@ fn collect_consts(
             } else {
                 None
             },
+            expr: p.expr.clone(),
+            organization: None,
         };
         match consts.by_name.get_mut(&p.name) {
             Some(existing) => {
@@ -1137,53 +1404,283 @@ impl Schema for Everything {
     }
 }
 
-/// One attribute of a block as a literal string, resolving `var.`/`local.`.
+/// One attribute of a block as a plain string, folding `var.`/`local.` and
+/// templates over them ([`Consts::eval`]).
 fn attr_string(block: &Block, key: &str, consts: &Consts) -> Option<String> {
-    for s in block.body.iter() {
-        let Structure::Attribute(a) = s else { continue };
-        if a.key.to_string() != key {
-            continue;
-        }
-        return match &a.value {
-            Expression::String(s) => Some(s.value().to_string()),
-            Expression::Traversal(t) => const_string(t, consts),
-            _ => None,
-        };
-    }
-    None
+    consts.eval(attr_expr(block, key)?, 0)
 }
 
-/// `var.x` / `local.x` resolved to a literal string.
+/// One attribute's expression, as written.
+fn attr_expr<'b>(block: &'b Block, key: &str) -> Option<&'b Expression> {
+    block.body.iter().find_map(|s| match s {
+        Structure::Attribute(a) if a.key.to_string() == key => Some(&a.value),
+        _ => None,
+    })
+}
+
+/// `var.x` / `local.x` folded to a plain string.
 fn const_string(t: &Traversal, consts: &Consts) -> Option<String> {
-    let Expression::Variable(v) = &t.expr else { return None };
-    let kind = v.as_str();
-    if kind != "var" && kind != "local" {
-        return None;
-    }
-    let [op] = t.operators.as_slice() else { return None };
-    let TraversalOperator::GetAttr(k) = op.value() else { return None };
-    consts.literal_string(kind, k.as_str())
+    let (_, name) = const_name(t)?;
+    consts.literal_string(&name)
 }
 
-/// The default project the dropped `provider` blocks agree on.
-fn provider_default_project(parsed: &[(&Input, Body)], consts: &Consts) -> Option<String> {
-    let mut found: BTreeSet<String> = BTreeSet::new();
+/// A `provider` block of the input: which configuration it is, and its text.
+struct SourceProvider {
+    file: String,
+    line: usize,
+    what: String,
+    text: String,
+    /// `google`, `google-beta`
+    name: String,
+    alias: Option<String>,
+    block: Block,
+}
+
+impl SourceProvider {
+    fn new(file: String, line: usize, what: String, text: String, block: &Block) -> Self {
+        let name = block.labels.first().map(|l| l.as_str().to_string()).unwrap_or_default();
+        let alias = attr_expr(block, "alias").and_then(|e| match e {
+            Expression::String(s) => Some(s.value().to_string()),
+            _ => None,
+        });
+        SourceProvider { file, line, what, text, name, alias, block: block.clone() }
+    }
+
+    /// How a resource names this configuration: `google`, `google.<alias>`.
+    fn reference(&self) -> String {
+        match &self.alias {
+            Some(a) => format!("{}.{}", self.name, a),
+            None => self.name.clone(),
+        }
+    }
+
+    /// The estate declares this configuration itself (`base_estate`), so a
+    /// second block of the same name and alias cannot stand beside it.
+    fn collides(&self) -> bool {
+        matches!(self.name.as_str(), "google" | "google-beta") && self.alias.as_deref() == Some(self.name.as_str())
+    }
+
+    /// What a colliding block takes with it: the resources naming it get the
+    /// estate's provider, which does not carry the source's settings.
+    fn collision_note(&self) -> String {
+        let settings: Vec<String> = self
+            .block
+            .body
+            .iter()
+            .filter_map(|s| s.as_attribute().map(|a| a.key.to_string()))
+            .filter(|k| k != "alias")
+            .collect();
+        let mut why = format!(
+            "the estate declares `{}` itself and the emitter writes it; a resource naming it gets the estate's provider",
+            self.reference()
+        );
+        if !settings.is_empty() {
+            why.push_str(&format!(
+                ", which does not set this block's {} — set them in the estate's `providers` block",
+                settings.iter().map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        why
+    }
+}
+
+/// The provider configuration a `resource` or `data` block uses: the one its
+/// `provider` names, else the default configuration of its type's provider
+/// (`google_storage_bucket` → `google`).
+fn provider_of(block: &Block, tf_type: &str) -> String {
+    match attr_expr(block, "provider") {
+        Some(Expression::String(s)) => s.value().to_string(),
+        Some(e) => provider_reference(e).unwrap_or_else(|_| e.to_string().trim().to_string()),
+        None => tf_type.split('_').next().unwrap_or(tf_type).to_string(),
+    }
+}
+
+/// The source's default `google` provider set a project, region or zone that a
+/// translated resource naming no provider relied on. The emitter writes such a
+/// resource with the estate's own aliased provider, so each setting is carried
+/// where the estate can say it: the project as placement (the resource moves
+/// into the imported project of that id) or, when no imported project has it,
+/// as the resource's own `project`; the region and zone into the estate's
+/// `providers` block, which the per-project aliases take theirs from. A setting
+/// satz cannot write wraps each resource that relied on it, naming it. Returns
+/// what was carried, for the provider's row.
+fn carry_provider_defaults(
+    sp: &SourceProvider,
+    consts: &Consts,
+    schema: &dyn Schema,
+    resources: &mut [Res],
+    estate_provider: &mut serde_yaml::Mapping,
+) -> Vec<String> {
+    let key = |s: &str| serde_yaml::Value::String(s.to_string());
+    let relies = |r: &Res, attr: &str| {
+        r.reason.is_none()
+            && !r.body.as_ref().is_some_and(|b| b.contains_key(key("provider")) || b.contains_key(key(attr)))
+            && schema.has_attr(&r.tf_type, attr)
+    };
+    let writable = |e: &Expression| -> Result<serde_yaml::Value, String> {
+        let mut cx = Cx { consts, schema, uses: Uses::default(), index: None };
+        let v = cx.literal(e)?;
+        if !cx.uses.refs.is_empty() {
+            return Err("a reference to a resource".into());
+        }
+        Ok(v)
+    };
+    let mut carried = Vec::new();
+    if let Some(expr) = attr_expr(&sp.block, "project") {
+        let shown = expr.to_string().trim().to_string();
+        let default = consts.eval(expr, 0);
+        let host = default.as_ref().and_then(|d| {
+            resources
+                .iter()
+                .find(|r| r.tf_type == "google_project" && r.reason.is_none() && r.project_id.as_ref() == Some(d))
+                .map(|r| r.label.clone())
+        });
+        let value = writable(expr);
+        let (mut placed, mut given) = (0, 0);
+        for r in resources.iter_mut() {
+            if r.place != Place::Top || matches!(r.tf_type.as_str(), "google_project" | "google_folder") || !relies(r, "project") {
+                continue;
+            }
+            match (&host, &value) {
+                (Some(h), _) => {
+                    r.place = Place::Project(h.clone());
+                    placed += 1;
+                }
+                (None, Ok(v)) => {
+                    if let Some(b) = r.body.as_mut() {
+                        b.insert(key("project"), v.clone());
+                    }
+                    given += 1;
+                }
+                (None, Err(why)) => {
+                    r.reason = Some(format!(
+                        "it names no `project` and relies on the provider's default project `{}`, which satz cannot write: {}",
+                        shown, why
+                    ))
+                }
+            }
+        }
+        if placed > 0 {
+            carried.push(format!(
+                "its default project {} is carried as placement: {} resource(s) moved into google_project.{}",
+                shown,
+                placed,
+                host.as_deref().unwrap_or_default()
+            ));
+        }
+        if given > 0 {
+            carried.push(format!("its default project {} is carried as the `project` of {} resource(s)", shown, given));
+        }
+    }
+    for attr in ["region", "zone"] {
+        let Some(expr) = attr_expr(&sp.block, attr) else { continue };
+        let shown = expr.to_string().trim().to_string();
+        match writable(expr) {
+            Ok(v) => {
+                estate_provider.insert(key(attr), v);
+                carried.push(format!("its {} {} is carried into the estate's `providers` block", attr, shown));
+            }
+            Err(why) => {
+                for r in resources.iter_mut().filter(|r| relies(r, attr)) {
+                    r.reason = Some(format!(
+                        "it names no `{}` and relies on the provider's default `{}`, which satz cannot write: {}",
+                        attr, shown, why
+                    ));
+                }
+            }
+        }
+    }
+    carried
+}
+
+/// Bind every constant the configuration uses as the organisation — `org_id =
+/// var.x` on any resource, `parent = "organizations/${var.x}"` — to the
+/// organisation the estate is bound to: a variable declared without a default
+/// to the one `--organization` names, any other constant to the number it
+/// folds to. Its param is then written as `customer_organization_id`, so the
+/// estate names the organisation once, and a placement reads the number.
+/// Returns the organisations a constant's own value names, which bind the
+/// estate the way a literal `org_id` does.
+fn bind_organization_variables(
+    parsed: &[(&Input, Body)],
+    consts: &mut Consts,
+    organization: Option<&str>,
+) -> BTreeSet<String> {
+    let mut used: BTreeSet<String> = BTreeSet::new();
     for (_, body) in parsed {
         for s in body.iter() {
             let Some(b) = s.as_block() else { continue };
-            if b.ident.to_string() != "provider" {
+            if b.ident.to_string() != "resource" {
                 continue;
             }
-            if let Some(p) = attr_string(b, "project", consts) {
-                found.insert(p);
+            for st in b.body.iter() {
+                let Structure::Attribute(a) = st else { continue };
+                let name = match (a.key.to_string().as_str(), &a.value) {
+                    ("org_id", Expression::Traversal(t)) => const_name(t),
+                    ("parent", e) => organizations_parent(e),
+                    _ => None,
+                };
+                if let Some((_, n)) = name {
+                    used.insert(n);
+                }
             }
         }
     }
-    // disagreeing defaults are not a default
-    if found.len() == 1 {
-        found.into_iter().next()
-    } else {
-        None
+    let mut named = BTreeSet::new();
+    for n in used {
+        let org = match consts.by_name.get(&n) {
+            None => continue,
+            Some(c) if c.origin == Origin::VarRequired => match organization {
+                Some(flag) => flag.to_string(),
+                None => continue,
+            },
+            Some(_) => {
+                let Some(v) = consts.literal_string(&n) else { continue };
+                let digits = v.strip_prefix("organizations/").unwrap_or(&v).to_string();
+                if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                named.insert(digits.clone());
+                digits
+            }
+        };
+        if let Some(c) = consts.by_name.get_mut(&n) {
+            c.value = Some(migrate::param_ref(ORGANIZATION_PARAM));
+            c.organization = Some(org);
+        }
+    }
+    named
+}
+
+/// `"organizations/${var.x}"`: the constant a parent written that way names.
+fn organizations_parent(e: &Expression) -> Option<(String, String)> {
+    let Expression::StringTemplate(t) = e else { return None };
+    match t.iter().collect::<Vec<_>>().as_slice() {
+        [Element::Literal(l), Element::Interpolation(i)] if l.value() == "organizations/" => match &i.expr {
+            Expression::Traversal(t) => const_name(t),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A carried `variable` block with a `default` added before its closing brace.
+fn with_default(text: &str, value: &str) -> String {
+    let (Some(open), Some(close)) = (text.find('{'), text.rfind('}')) else { return text.to_string() };
+    let inner = text[open + 1..close].trim();
+    if inner.contains('\n') {
+        return format!("{}\n  default = {:?}\n}}", text[..close].trim_end(), value);
+    }
+    // a one-line block opens up, so the added line stands on its own
+    let body = if inner.is_empty() { String::new() } else { format!("  {}\n", inner) };
+    format!("{}{{\n{}  default = {:?}\n}}", &text[..open], body, value)
+}
+
+/// A list entry as the report shows it.
+fn scalar_text(v: &serde_yaml::Value) -> String {
+    match v {
+        serde_yaml::Value::String(s) => s.clone(),
+        other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
     }
 }
 
@@ -1403,53 +1900,51 @@ struct Classified {
     reason: Option<String>,
 }
 
+/// The forms of `count` that expand, as the report names them.
+const COUNT_FORMS: &str = "only `count = length(<list>)` over a promoted list of scalars expands, each entry read as `<list>[count.index]` or `element(<list>, count.index)`";
+
 /// `count = length(var.admins)` over a list this import promoted: the list's
 /// name and its elements. Terraform's own idiom for "one of these per entry",
 /// and in Satz it IS one resource per entry — so the block expands instead of
 /// being carried verbatim. Only this shape: the count must be the length of one
 /// promoted list of scalars, and every `count.index` in the block must index
-/// THAT list (`expand_block` checks the uses; a count.index anywhere else leaves
-/// the block wrapped rather than half-translated).
-fn count_expansion(block: &Block, consts: &Consts) -> Option<(String, Vec<serde_yaml::Value>)> {
-    let count = block.body.iter().find_map(|st| match st {
-        Structure::Attribute(a) if a.key.to_string() == "count" => Some(a.value.clone()),
-        _ => None,
-    })?;
-    let Expression::FuncCall(call) = &count else { return None };
+/// THAT list, as `<list>[count.index]` or `element(<list>, count.index)` (a
+/// `count.index` anywhere else leaves the block wrapped rather than
+/// half-translated). `None` when the block has no `count`; the `Err` is why the
+/// one it has does not expand.
+fn count_expansion(block: &Block, consts: &Consts) -> Option<Result<(String, Vec<serde_yaml::Value>), String>> {
+    let count = attr_expr(block, "count")?;
+    let shown = count.to_string().trim().to_string();
+    let not_this = || Err(format!("uses `count = {}`, which does not expand — {}", shown, COUNT_FORMS));
+    let Expression::FuncCall(call) = count else { return Some(not_this()) };
     // `length(...)`, not a namespaced function of the same name
     if !call.name.namespace.is_empty() || call.name.name.as_str() != "length" {
-        return None;
+        return Some(not_this());
     }
-    let [arg] = call.args.iter().collect::<Vec<_>>()[..] else { return None };
-    let Expression::Traversal(t) = arg else { return None };
-    let Expression::Variable(root) = &t.expr else { return None };
-    if !matches!(root.as_str(), "var" | "local") {
-        return None;
+    let [Expression::Traversal(t)] = call.args.iter().collect::<Vec<_>>()[..] else { return Some(not_this()) };
+    let Some((_, name)) = const_name(t) else { return Some(not_this()) };
+    let Some(c) = consts.by_name.get(&name) else {
+        return Some(Err(format!("uses `count = {}`, and this import does not declare `{}`", shown, name)));
+    };
+    if let Some(why) = &c.conflict {
+        return Some(Err(format!("uses `count = {}`, and {}", shown, why)));
     }
-    let mut segs = Vec::new();
-    for op in t.operators.iter() {
-        match op.value() {
-            TraversalOperator::GetAttr(k) => segs.push(k.as_str().to_string()),
-            _ => return None,
-        }
-    }
-    let [name] = segs.as_slice() else { return None };
-    let c = consts.by_name.get(name)?;
-    if c.conflict.is_some() {
-        return None;
-    }
-    match c.value.as_ref()? {
-        serde_yaml::Value::Sequence(items) if !items.is_empty() => {
+    Some(match c.value.as_ref() {
+        None => Err(format!(
+            "uses `count = {}` over `{}`, a variable declared without a default — the entries are not in the input",
+            shown, name
+        )),
+        Some(serde_yaml::Value::Sequence(items)) if !items.is_empty() => {
             // a list of scalars: an element that is itself a list or a map has no
             // single value to substitute into an attribute
             if items.iter().all(|i| i.is_string() || i.is_number() || i.is_bool()) {
-                Some((name.clone(), items.clone()))
+                Ok((name, items.clone()))
             } else {
-                None
+                Err(format!("uses `count = {}` over `{}`, whose entries are not all scalars", shown, name))
             }
         }
-        _ => None,
-    }
+        Some(_) => Err(format!("uses `count = {}` over `{}`, which is not a non-empty list", shown, name)),
+    })
 }
 
 /// The label one expanded copy takes: the element when it can be a Satz
@@ -1589,6 +2084,9 @@ fn classify(
         match s {
             Structure::Attribute(a) => {
                 let k = a.key.to_string();
+                if k == "count" {
+                    return wrapped(COUNT_REASON.into());
+                }
                 if UNEXPRESSIBLE_META_ATTRS.contains(&k.as_str()) {
                     return wrapped(format!("uses `{}`", k));
                 }
@@ -1733,6 +2231,16 @@ fn classify(
 
     // the scope attribute decides the place
     let scope = scope_attr_value(tf_type, block, cx.consts);
+    if let Some(ScopeRef::Unbound(attr, name)) = &scope {
+        return wrapped(if attr == "org_id" || (attr == "parent" && tf_type == "google_folder") {
+            format!(
+                "`{}` = {}, a variable declared without a default — name the organisation with `--organization <n>` and it binds to `{}`",
+                attr, name, ORGANIZATION_PARAM
+            )
+        } else {
+            format!("`{}` = {}, a variable declared without a default, which satz cannot place", attr, name)
+        });
+    }
     let place = match tf_type {
         "google_folder" => match scope {
             Some(ScopeRef::Org(o)) => {
@@ -1750,11 +2258,14 @@ fn classify(
             }
             Some(ScopeRef::Folder(f)) => Place::Folder(f),
             None => Place::Top,
-            Some(other) => {
+            Some(other @ ScopeRef::Folderish(_)) => {
                 return wrapped(format!(
-                    "`folder_id`/`org_id` = {} cannot be placed (a folder number is not a folder in this input)",
+                    "`folder_id` = {} cannot be placed: a folder number is not a folder in this input",
                     other.describe()
                 ))
+            }
+            Some(other) => {
+                return wrapped(format!("`folder_id`/`org_id` = {} cannot be placed", other.describe()))
             }
         },
         "google_organization_iam_member" => match scope {
@@ -1803,6 +2314,10 @@ enum ScopeRef {
     Folder(String),
     Project(String),
     Literal(String),
+    /// a folder written by its number (`folders/<n>`), not by a reference
+    Folderish(String),
+    /// the attribute, and the `var.x` declared without a default it names
+    Unbound(String, String),
     Other(String),
 }
 
@@ -1812,7 +2327,8 @@ impl ScopeRef {
             ScopeRef::Org(o) => format!("organizations/{}", o),
             ScopeRef::Folder(f) => format!("google_folder.{}", f),
             ScopeRef::Project(p) => format!("google_project.{}", p),
-            ScopeRef::Literal(v) | ScopeRef::Other(v) => v.clone(),
+            ScopeRef::Literal(v) | ScopeRef::Folderish(v) | ScopeRef::Other(v) => v.clone(),
+            ScopeRef::Unbound(_, name) => name.clone(),
         }
     }
 }
@@ -1838,7 +2354,7 @@ fn scope_from_string(key: &str, v: &str) -> ScopeRef {
     } else if key == "org_id" && !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) {
         ScopeRef::Org(v.to_string())
     } else if v.starts_with("folders/") || (key == "folder_id" && v.chars().all(|c| c.is_ascii_digit())) {
-        ScopeRef::Other(v.to_string())
+        ScopeRef::Folderish(v.to_string())
     } else {
         ScopeRef::Literal(v.to_string())
     }
@@ -1855,9 +2371,22 @@ fn scope_attr_value(tf_type: &str, block: &Block, consts: &Consts) -> Option<Sco
         }
         return Some(match &a.value {
             Expression::String(s) => scope_from_string(&k, s.value()),
+            e @ Expression::StringTemplate(_) => match (consts.eval(e, 0), organizations_parent(e)) {
+                (Some(v), _) => scope_from_string(&k, &v),
+                (None, Some((kind, name)))
+                    if consts.by_name.get(&name).is_some_and(|c| c.origin == Origin::VarRequired && c.organization.is_none()) =>
+                {
+                    ScopeRef::Unbound(k.clone(), format!("{}.{}", kind, name))
+                }
+                (None, _) => ScopeRef::Other(e.to_string().trim().to_string()),
+            },
             Expression::Traversal(t) => {
                 if let Some(v) = const_string(t, consts) {
                     scope_from_string(&k, &v)
+                } else if let Some((kind, name)) = const_name(t).filter(|(_, n)| {
+                    consts.by_name.get(n).is_some_and(|c| c.origin == Origin::VarRequired && c.organization.is_none())
+                }) {
+                    ScopeRef::Unbound(k.clone(), format!("{}.{}", kind, name))
                 } else {
                     let text = a.value.to_string().trim().to_string();
                     let parts: Vec<&str> = text.split('.').collect();
@@ -1971,11 +2500,27 @@ impl Cx<'_> {
             }
             Expression::HeredocTemplate(_) => return Err("a heredoc template".into()),
             Expression::Conditional(_) => return Err("a conditional expression (`? :`)".into()),
-            Expression::FuncCall(f) => return Err(format!("a call to `{}()`", f.name.name.as_str())),
+            Expression::FuncCall(f) => return self.call(f),
             Expression::BinaryOp(_) => return Err("an arithmetic or comparison expression".into()),
             Expression::UnaryOp(_) => return Err("a unary expression".into()),
             Expression::ForExpr(_) => return Err("a `for` expression".into()),
         })
+    }
+
+    /// A function call: only `element(<list>, count.index)` inside an expanded
+    /// copy, which IS that copy's entry — the form Terraform writes beside
+    /// `<list>[count.index]`.
+    fn call(&mut self, f: &hcl::edit::expr::FuncCall) -> Result<serde_yaml::Value, String> {
+        let fname = f.name.name.as_str();
+        if f.name.namespace.is_empty() && fname == "element" {
+            let args: Vec<&Expression> = f.args.iter().collect();
+            if let (Some((list, element)), [Expression::Traversal(t), ix]) = (&self.index, args.as_slice()) {
+                if const_name(t).is_some_and(|(_, n)| &n == list) && is_count_index(ix) {
+                    return Ok(serde_yaml::Value::String(scalar_text(element)));
+                }
+            }
+        }
+        Err(format!("a call to `{}()`", fname))
     }
 
     /// A traversal: a promoted param, or a managed resource reference carried
@@ -1995,11 +2540,7 @@ impl Cx<'_> {
                     // copy's element; any other index is still unresolvable
                     match (&self.index, segs.as_slice()) {
                         (Some((list, element)), [name]) if name == list && is_count_index(ix) => {
-                            let v = match element {
-                                serde_yaml::Value::String(s) => s.clone(),
-                                other => serde_yaml::to_string(other).unwrap_or_default().trim().to_string(),
-                            };
-                            return Ok(vec![Part::Text(v)]);
+                            return Ok(vec![Part::Text(scalar_text(element))]);
                         }
                         _ => return Err(format!("an indexed lookup into `{}`", root)),
                     }
@@ -2443,13 +2984,19 @@ module "vpc" {
                     | "google_service_account"
                     | "google_service_account_iam_member"
                     | "google_org_policy_policy"
+                    | "google_iam_workload_identity_pool"
+                    | "google_organization_iam_custom_role"
             )
         }
         fn has_attr(&self, t: &str, a: &str) -> bool {
             match a {
                 "project" => matches!(
                     t,
-                    "google_storage_bucket" | "google_project_service" | "google_project_iam_member" | "google_service_account"
+                    "google_storage_bucket"
+                        | "google_project_service"
+                        | "google_project_iam_member"
+                        | "google_service_account"
+                        | "google_iam_workload_identity_pool"
                 ),
                 _ => false,
             }
@@ -2519,7 +3066,11 @@ module "vpc" {
             "bucket inside the project:\n{}",
             s
         );
-        assert!(!c.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
+        let satz_part = squash(&s[..s.find("hcl trust").unwrap_or(s.len())]);
+        assert!(!satz_part.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
+        // the verbatim blocks deploy with the source's default provider, which
+        // the emitter's aliased providers are not
+        assert!(c.contains("hcltrust\"importedfrommain.tf:7\"{provider\"google\"{project=\"acme-infra-001\"}}"), "{}", s);
         assert!(
             c.contains("google_storage_bucket{elsewhere{name=\"acme-elsewhere\"location=\"EU\"project=\"acme-other-project\"}}"),
             "a literal id of a project not in this input stays explicit at the top:\n{}",
@@ -2554,7 +3105,11 @@ module "vpc" {
         let imported = import(&one(TF), "acme", true, Some("123456789012"), &Known).unwrap();
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 0);
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Promoted(_))).count(), 0);
-        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 14);
+        // the provider block too: every resource is verbatim and uses it
+        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 15);
+        assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Dropped(_))).count(), 1, "the terraform block");
+        assert!(imported.satz.contains("provider \"google\" {\n    project = \"acme-infra-001\""), "{}", imported.satz);
+        assert!(imported.satz.contains("It deploys as written;"), "{}", imported.satz);
         satz_core::satz::parse(&imported.satz).unwrap();
     }
 
@@ -2906,17 +3461,18 @@ resource "google_project" "p" {
   org_id     = "123456789012"
 }
 resource "google_project_service" "s" {
-  count   = length(var.svc_list)
+  count   = 2
   project = google_project.p.project_id
-  service = element(var.svc_list, count.index)
+  service = var.svc_list[count.index]
 }
 "#;
         let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         let by = by_what(&imported);
-        // the count block wraps, naming count — not a later attribute
+        // the count block wraps, naming count — not a later attribute — and the
+        // forms that do expand
         assert!(
-            matches!(by["resource \"google_project_service\" \"s\""], Action::Wrapped(r) if r == "uses `count`"),
+            matches!(by["resource \"google_project_service\" \"s\""], Action::Wrapped(r) if r.starts_with("uses `count = 2`, which does not expand") && r.contains("element(<list>, count.index)")),
             "{:?}",
             by["resource \"google_project_service\" \"s\""]
         );
@@ -3176,6 +3732,321 @@ resource "google_service_account" "sa" {
             "{:?}",
             by["resource \"google_organization_iam_member\" \"sink_writer\""]
         );
+    }
+
+    /// Vendor-generated onboarding asks for the organisation as a variable with no
+    /// default and uses it as the project's `org_id`. `--organization` names that
+    /// organisation, so the variable is bound to `customer_organization_id` —
+    /// rather than wrapping the project and, through the reference closure,
+    /// refusing the whole input.
+    #[test]
+    fn an_unbound_organisation_variable_binds_to_the_organisation_the_flag_names() {
+        let tf = r#"
+variable "org_id" { type = string }
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = var.org_id
+}
+resource "google_iam_workload_identity_pool" "pool" {
+  project                   = google_project.p.project_id
+  workload_identity_pool_id = "pool"
+}
+resource "google_organization_iam_custom_role" "reader" {
+  org_id  = var.org_id
+  role_id = "acmeReader"
+  title   = "Reader"
+}
+resource "google_organization_iam_binding" "viewer" {
+  org_id  = var.org_id
+  role    = "roles/viewer"
+  members = ["group:auditors@example.com"]
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        let s = &imported.satz;
+        let by = by_what(&imported);
+        assert_eq!(by["resource \"google_project\" \"p\""], &Action::Translated, "{:?}", imported.rows);
+        assert!(squash(s).contains("org_id=customer_organization_id"), "the variable names the organisation param:\n{}", s);
+        assert!(!s.contains("Bind these"), "a bound variable is not asked for:\n{}", s);
+        assert!(
+            matches!(by["variable \"org_id\""], Action::Promoted(d) if d.contains("bound to the one `--organization` names")),
+            "{:?}",
+            by["variable \"org_id\""]
+        );
+        // the verbatim grant still reads `var.org_id`, so the declaration is
+        // carried — with the organisation as its default
+        assert!(s.contains("variable \"org_id\" {\n    type = string\n    default = \"123456789012\"\n  }"), "{}", s);
+        satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+
+        // a default that is the organisation binds the same way; one that is
+        // another organisation is refused like a literal
+        let with_default = tf.replace("variable \"org_id\" { type = string }", "variable \"org_id\" { default = \"123456789012\" }");
+        let s = import(&one(&with_default), "acme", false, Some("123456789012"), &Known).unwrap().satz;
+        assert!(squash(&s).contains("org_id=customer_organization_id"), "{}", s);
+        let e = import(&one(&with_default), "acme", false, Some("222222222222"), &Known).unwrap_err();
+        assert!(e.contains("names organization 123456789012"), "{e}");
+        // bound by its default, the variable still binds the estate when only
+        // an attribute that places nothing reads it
+        let role_only = "variable \"org_number\" { default = \"123456789012\" }\nresource \"google_organization_iam_custom_role\" \"r\" {\n  org_id  = var.org_number\n  role_id = \"acmeReader\"\n  title   = \"Reader\"\n}\n";
+        let e = import(&one(role_only), "acme", false, Some("222222222222"), &Known).unwrap_err();
+        assert!(e.contains("names organization 123456789012"), "{e}");
+    }
+
+    /// Without `--organization` the project cannot be placed, and the reason says
+    /// what to do — not that "a folder number is not a folder in this input". A
+    /// block the closure wraps names the block that STARTED the chain, and so
+    /// does the refusal a crossing reference ends in.
+    #[test]
+    fn a_wrap_and_a_refusal_name_the_root_reason() {
+        let tf = r#"
+variable "org_id" { type = string }
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = var.org_id
+}
+resource "google_iam_workload_identity_pool" "pool" {
+  project                   = google_project.p.project_id
+  workload_identity_pool_id = "pool"
+}
+resource "google_storage_bucket" "b" {
+  name     = "acme-b"
+  location = "EU"
+  project  = "acme-log-001"
+  labels   = { pool = "${google_iam_workload_identity_pool.pool.name}" }
+}
+"#;
+        let e = import(&one(tf), "acme", false, None, &Known).unwrap_err();
+        let root = "`org_id` = var.org_id, a variable declared without a default — name the organisation with `--organization <n>`";
+        assert!(e.contains(&format!("its parent resource \"google_project\" \"p\" is wrapped: {}", root)), "{e}");
+        assert!(!e.contains("folder number"), "{e}");
+
+        // two hops: the folder wraps, the project under it, the bucket under that
+        let chain = r#"
+resource "google_folder" "f" {
+  display_name = "F"
+  parent       = "organizations/123456789012"
+  for_each     = var.nothing
+}
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  folder_id  = google_folder.f.name
+}
+resource "google_storage_bucket" "b" {
+  name     = "acme-b"
+  location = "EU"
+  project  = google_project.p.project_id
+}
+"#;
+        let imported = import(&one(chain), "acme", false, Some("123456789012"), &Known).unwrap();
+        let by = by_what(&imported);
+        assert!(
+            matches!(by["resource \"google_storage_bucket\" \"b\""], Action::Wrapped(r) if r == "its parent resource \"google_project\" \"p\" is wrapped, because resource \"google_folder\" \"f\" is: uses `for_each`"),
+            "{:?}",
+            by["resource \"google_storage_bucket\" \"b\""]
+        );
+    }
+
+    /// The provider's default project is a local built by interpolation over
+    /// other constants. It folds to the id of an imported project, so the
+    /// resources that name no project move into that one.
+    #[test]
+    fn an_interpolated_provider_default_places_the_resources_that_relied_on_it() {
+        let tf = r#"
+variable "org_id" { type = string }
+variable "prefix" { default = "acme-infra-" }
+locals {
+  pid = "${var.prefix}${var.org_id}"
+}
+provider "google" {
+  project = local.pid
+  region  = "europe-west3"
+}
+resource "google_project" "p" {
+  name       = "p"
+  project_id = local.pid
+  org_id     = var.org_id
+}
+resource "google_service_account" "sa" {
+  account_id = "svc-iac"
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        let s = &imported.satz;
+        let i_p = s.find("google_project {").expect("project");
+        let i_sa = s.find("google_service_account {").expect("sa");
+        assert!(i_p < i_sa && s[i_p..i_sa].contains("  p {"), "the service account must sit inside the project:\n{}", s);
+        // the region travels into the estate's provider, which the project's
+        // alias takes its own from
+        assert!(squash(s).contains("providers{google{alias=\"google\"region=\"europe-west3\"}"), "{}", s);
+        let row = imported.rows.iter().find(|r| r.what == "provider \"google\"").unwrap();
+        assert!(
+            matches!(&row.action, Action::Dropped(d) if d.contains("carried as placement: 1 resource(s) moved into google_project.p") && d.contains("region \"europe-west3\"")),
+            "{:?}",
+            row.action
+        );
+        satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
+    }
+
+    /// No imported project has the default's id: each resource that relied on
+    /// it is given it as its own `project`. A default satz cannot write wraps
+    /// each of them, naming it — never a resource emitted without a project.
+    #[test]
+    fn a_provider_default_is_written_on_the_resource_or_wraps_it() {
+        let tf = r#"
+variable "pid" { default = "acme-log-001" }
+provider "google" {
+  project = "${var.pid}"
+}
+resource "google_service_account" "sa" {
+  account_id = "svc-iac"
+}
+resource "google_storage_bucket" "b" {
+  name     = "acme-b"
+  location = "EU"
+  project  = "acme-infra-001"
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        let c = squash(&imported.satz);
+        assert!(c.contains("google_service_account{sa{account_id=\"svc-iac\"project=pid}}"), "{}", imported.satz);
+        assert!(c.contains("project=\"acme-infra-001\""), "a resource naming its own project keeps it: {}", imported.satz);
+
+        let unwritable = r#"
+provider "google" {
+  project = data.google_project.current.project_id
+}
+resource "google_service_account" "sa" {
+  account_id = "svc-iac"
+}
+"#;
+        let imported = import(&one(unwritable), "acme", false, Some("123456789012"), &Known).unwrap();
+        let by = by_what(&imported);
+        assert!(
+            matches!(by["resource \"google_service_account\" \"sa\""], Action::Wrapped(r) if r.starts_with("it names no `project` and relies on the provider's default project `data.google_project.current.project_id`")),
+            "{:?}",
+            by["resource \"google_service_account\" \"sa\""]
+        );
+        // it deploys as written: with the provider it relied on
+        assert!(matches!(by["provider \"google\""], Action::Wrapped(r) if r.starts_with("carried verbatim")), "{:?}", by["provider \"google\""]);
+        assert!(imported.satz.contains("provider \"google\" {\n    project = data.google_project.current.project_id"), "{}", imported.satz);
+    }
+
+    /// `--wrap-all` carries the provider blocks with the rest, so the verbatim
+    /// resources keep their default project and region; the one the estate
+    /// declares itself cannot be carried, and the header says so.
+    #[test]
+    fn wrap_all_keeps_the_provider_defaults_or_names_what_it_does_not_carry() {
+        let tf = r#"
+provider "google" {
+  project = "acme-infra-001"
+  region  = "europe-west3"
+}
+provider "google-beta" {
+  alias   = "google-beta"
+  project = "acme-infra-001"
+}
+resource "google_service_account" "sa" {
+  account_id = "svc-iac"
+}
+"#;
+        let imported = import(&one(tf), "acme", true, Some("123456789012"), &Known).unwrap();
+        let s = &imported.satz;
+        assert!(s.contains("provider \"google\" {\n    project = \"acme-infra-001\"\n    region  = \"europe-west3\""), "{}", s);
+        assert!(!s.contains("It deploys as written;"), "{}", s);
+        assert!(s.contains("except where a `provider` block is not carried"), "{}", s);
+        assert!(s.contains("`google-beta.google-beta`") && s.contains("`project`"), "the header names the block and its setting:\n{}", s);
+        assert!(imported.notes.iter().any(|n| n.starts_with("not carried: ")), "{:?}", imported.notes);
+        satz_core::satz::parse(s).unwrap();
+    }
+
+    /// Microsoft's generated scripts write the entry as `element(list,
+    /// count.index)`; it is the same entry as `list[count.index]`.
+    #[test]
+    fn element_over_count_index_expands_like_an_index() {
+        let tf = r#"
+variable "apis" { default = ["iam.googleapis.com", "sts.googleapis.com"] }
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_project_service" "s" {
+  count   = length(var.apis)
+  project = google_project.p.project_id
+  service = element(var.apis, count.index)
+}
+resource "google_storage_bucket" "b" {
+  count    = length(var.apis)
+  name     = "acme-${element(var.apis, count.index)}"
+  location = "EU"
+  project  = google_project.p.project_id
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        let by = by_what(&imported);
+        assert_eq!(by["resource \"google_project_service\" \"s\""], &Action::Expanded(2), "{:?}", imported.rows);
+        assert_eq!(by["resource \"google_storage_bucket\" \"b\""], &Action::Expanded(2), "{:?}", imported.rows);
+        let c = squash(&imported.satz);
+        assert!(c.contains("project_service=[\"iam.googleapis.com\",\"sts.googleapis.com\",]"), "{}", imported.satz);
+        assert!(c.contains("name=\"acme-sts.googleapis.com\""), "{}", imported.satz);
+        assert!(!imported.satz.contains("element("), "{}", imported.satz);
+    }
+
+    /// A list naming one entry twice would expand into two resources under one
+    /// address, which `satz transpile` refuses. The repeat folds, and the note
+    /// says which entry and how many resources the list became.
+    #[test]
+    fn a_repeated_list_entry_folds_into_one_resource_with_a_note() {
+        let tf = r#"
+variable "apis" { default = ["iam.googleapis.com", "logging.googleapis.com", "logging.googleapis.com"] }
+variable "regions" { default = ["europe-west3", "europe-west3"] }
+resource "google_project" "p" {
+  name       = "p"
+  project_id = "acme-infra-001"
+  org_id     = "123456789012"
+}
+resource "google_project_service" "s" {
+  count   = length(var.apis)
+  project = google_project.p.project_id
+  service = element(var.apis, count.index)
+}
+resource "google_storage_bucket" "b" {
+  count    = length(var.regions)
+  name     = "acme-${var.regions[count.index]}"
+  location = var.regions[count.index]
+  project  = google_project.p.project_id
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        let by = by_what(&imported);
+        assert_eq!(by["resource \"google_project_service\" \"s\""], &Action::Expanded(2));
+        assert_eq!(by["resource \"google_storage_bucket\" \"b\""], &Action::Expanded(1));
+        assert_eq!(imported.satz.matches("\"logging.googleapis.com\",").count(), 3, "the param keeps both, the list one:\n{}", imported.satz);
+        assert!(
+            imported.notes.iter().any(|n| n.contains("`apis` names `logging.googleapis.com` more than once") && n.contains("2 resource(s) for 3 entries")),
+            "{:?}",
+            imported.notes
+        );
+        assert_eq!(imported.satz.matches("b_europe_west3 {").count(), 1, "{}", imported.satz);
+    }
+
+    /// Two different entries that shorten to one label keep distinct labels.
+    #[test]
+    fn two_entries_with_one_short_label_keep_their_own_addresses() {
+        let tf = r#"
+variable "roles" { default = ["roles/viewer", "organizations/123456789012/roles/viewer"] }
+resource "google_storage_bucket" "b" {
+  count    = length(var.roles)
+  name     = "acme-b"
+  location = var.roles[count.index]
+  project  = "acme-infra-001"
+}
+"#;
+        let imported = import(&one(tf), "acme", false, Some("123456789012"), &Known).unwrap();
+        assert!(imported.satz.contains("b_viewer {") && imported.satz.contains("b_1 {"), "{}", imported.satz);
     }
 
     /// `DEFAULT_PROVIDER` is what the emitter writes for the estate this import

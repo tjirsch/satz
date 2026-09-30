@@ -14,7 +14,7 @@
 // configured USING BUCKET LOCK, and no org policy locks a bucket. The
 // audit-logsink pack carries the same duty.
 
-pack cis_extensions.bucket_retention version "1.4"
+pack cis_extensions.bucket_retention version "1.5"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_bucket_retention_adopted = false
@@ -74,9 +74,45 @@ claim "cis-gcp" "4.0" "2.3" contributes {
   resources               = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
   interpretation          = "A bucket may only carry a retention policy of an approved duration, so the log-export bucket's retention cannot be quietly shortened. The LOCK remains a human decision."
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.managed.retentionPolicySeconds
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedRetentionPeriods:
+      - '34560000'
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset storage.retentionPolicySeconds --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.managed.retentionPolicySeconds --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe storage.retentionPolicySeconds --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A log bucket's retention can be shortened or removed, so exported audit logs can be deleted before the period an audit relies on."
 }
 claim "cis-gcp" "5.0" "2.4" contributes {
   resources               = ["google_org_policy_policy.storage_managed_retentionPolicySeconds"]
   interpretation          = "As for 4.0 §2.3 — 5.0 §2.4 (5.0 inserted a new 2.2 for Workspace data sharing)."
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.managed.retentionPolicySeconds
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedRetentionPeriods:
+      - '34560000'
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset storage.retentionPolicySeconds --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.managed.retentionPolicySeconds --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe storage.retentionPolicySeconds --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A log bucket's retention can be shortened or removed, so exported audit logs can be deleted before the period an audit relies on."
 }

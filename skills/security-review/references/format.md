@@ -82,8 +82,9 @@ Styles: Calibri 10.5, Heading 0/1/2, Table Grid 9.5 pt, code Consolas 8.5 indent
 
 Measure catalogue (`assets/measures.yaml`): 25 measures over all 93 controls; fields `id, title,
 phase (sofort|kurzfristig|nach_freigabe|laufend|review), kind (satz-apply|satz-pack|gcloud|decision|
-review), controls, packs, aufwand, risiko, why, satz, gcloud, terraform, prereq, nachweis,
-open_point`; `always: true` (always emitted), `fleet_only: true` (only with a fleet; controls =
+review), controls, aufwand, risiko, why, satz, gcloud, terraform, prereq, nachweis,
+open_point`; the pack, its `use` line, the gcloud route and check of a control a pack claims, and
+the risk without the measure come from satz's `measures` per control, not from the catalogue; `always: true` (always emitted), `fleet_only: true` (only with a fleet; controls =
 whatever fails in fleet projects). Placeholders `{org_id} {domain} {kunde} {shortcode} {estate_repo}
 {estate_file} {iac_sa} {infra_project} {n_own} {n_fleet} {n_projects} {fleet_label} {fleet_regex}
 {projects} {resources} {log_project} {default_region} {retention} {controls_line}`; literal braces

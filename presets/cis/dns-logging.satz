@@ -31,7 +31,7 @@
 // is deciding not to see name resolution, and that decision belongs in a `deviates`
 // claim whose `reason` the compliance report carries.
 
-pack cis_extensions.dns_logging version "1.2"
+pack cis_extensions.dns_logging version "1.3"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_dns_logging_adopted = false
@@ -77,4 +77,32 @@ claim "cis-gcp" "5.0" "2.13" contributes {
   ]
   interpretation     = "A Cloud DNS policy cannot be created or updated with query logging off."
   duty_attach_policy = "The control also asks that every VPC network HAS such a policy, which no org policy can require: the estate declares one per network it owns, and report-compliance names the networks that have none."
+  gcloud = [
+    """cat > constraint.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/customConstraints/custom.cisDnsPolicyLogging
+resourceTypes:
+- dns.googleapis.com/Policy
+methodTypes:
+- CREATE
+- UPDATE
+condition: "resource.enableLogging == true"
+actionType: ALLOW
+displayName: "Cloud DNS: a policy that exists logs queries"
+EOF""",
+    "gcloud org-policies set-custom-constraint constraint.yaml",
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/custom.cisDnsPolicyLogging
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud dns policies create dns-logging --description=\"DNS query logging\" --networks=NETWORK --enable-logging --project=PROJECT_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe-custom-constraint custom.cisDnsPolicyLogging --organization=ORGANIZATION_ID",
+    "gcloud org-policies describe custom.cisDnsPolicyLogging --organization=ORGANIZATION_ID --effective",
+    "gcloud dns policies list --project=PROJECT_ID --format='table(name,enableLogging,networks[].networkUrl.list())'",
+  ]
+  risk = "DNS queries from a network leave no log, so a host resolving a command-and-control domain goes unseen."
 }

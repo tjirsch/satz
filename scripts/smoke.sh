@@ -1317,6 +1317,30 @@ grep -q 'provider *= *google-beta.google-beta' tmp/imported-hcl2-hcl/main.tf || 
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi
+# the shape vendors generate for a customer to apply: the organisation asked for
+# with no default, the provider's project built from it, `element(list,
+# count.index)`, one API listed twice, an authoritative grant that stays verbatim
+"$satz" --config . import tf-handwritten --organization 123456789012 -o imported-handwritten.satz --verbose | tee tmp/import-handwritten.txt
+grep -q '6 block(s) translated' tmp/import-handwritten.txt || fail "the project, three services, the service account and the role should translate:\n$(cat tmp/import-handwritten.txt)"
+grep -q 'the repeat is folded, 3 resource(s) for 4 entries' tmp/import-handwritten.txt || fail "the repeated API was not folded with a note:\n$(cat tmp/import-handwritten.txt)"
+grep -q 'org_id *= *customer_organization_id' yaml/imported-handwritten.satz || fail "the organisation variable was not bound to the organisation"
+"$satz" fmt --check yaml/imported-handwritten.satz || fail "the hcl import wrote a file that is not in the canonical layout"
+"$satz" --config . transpile imported-handwritten.satz --output "$PWD/tmp/imported-handwritten-hcl" >tmp/transpile-handwritten.txt 2>&1 \
+  || fail "the imported estate must transpile:\n$(cat tmp/transpile-handwritten.txt)"
+grep -A3 'resource "google_service_account" "onboarding"' tmp/imported-handwritten-hcl/main.tf | grep -q 'google.project_infra' \
+  || fail "the service account that named no project did not land in the provider's default project"
+grep -q 'region *= *"europe-west3"' tmp/imported-handwritten-hcl/providers.tf || fail "the provider's default region was not carried"
+grep -q 'project = local.infra_project_id' tmp/imported-handwritten-hcl/main.tf || fail "the provider the verbatim grant uses was not carried"
+"$satz" --config . import tf-handwritten --wrap-all --organization 123456789012 -o imported-handwritten-all.satz >tmp/import-handwritten-all.txt 2>&1 \
+  || fail "--wrap-all must carry the same input:\n$(cat tmp/import-handwritten-all.txt)"
+grep -q 'It deploys as written;' yaml/imported-handwritten-all.satz || fail "--wrap-all dropped a provider block it could carry"
+"$satz" --config . transpile imported-handwritten-all.satz --output "$PWD/tmp/imported-handwritten-all-hcl" >/dev/null 2>&1 \
+  || fail "the --wrap-all estate must transpile"
+if command -v tofu >/dev/null 2>&1; then
+  for d in imported-handwritten-hcl imported-handwritten-all-hcl; do
+    (cd "tmp/$d" && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
+  done
+fi
 
 step "import, hcl shape: a reference across the translated/verbatim boundary refuses and writes nothing"
 if "$satz" --config . import tf-crossing -o imported-crossing.satz >tmp/import-crossing.txt 2>&1; then

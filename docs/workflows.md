@@ -557,9 +557,12 @@ the sweep.
 
 From a directory of `.tf` files the organisation is the one the configuration
 names — a literal `organizations/<n>` parent, an `org_id`, an org policy's
-parent. A configuration that names none, and every `--wrap-all` import, which
-translates nothing, is refused with nothing written until `--organization <n>`
-names it:
+parent. A variable the configuration uses as the organisation and declares with
+no default — `org_id = var.org_id`, the form vendor-generated onboarding scripts
+ask for — binds to the organisation `--organization <n>` names, and its param is
+written as `customer_organization_id`. A configuration that names none, and every
+`--wrap-all` import, which translates nothing, is refused with nothing written
+until `--organization <n>` names it:
 
 ```bash
 satz import ./terraform --wrap-all --organization 123456789012 -o migration-discovery.satz
@@ -1340,9 +1343,14 @@ Checkov, `triage` and `require` for the central estate, and per workload the int
 phase changes the organisation. Phase 2 builds the two documents offline from `scope.yaml` and the
 evidence (`scripts/build_audit.py`, then `scripts/verify_outputs.py`): the checklist of every
 control with its status, and the remediation plan of satz packs and `gcloud` steps, with a
-section per workload. The documents are reproducible from scope and evidence and carry no local
-path; a change of wording goes into `scope.yaml` or `assets/measures.yaml`, never into the
-document. The skill's `SKILL.md` carries the whole procedure and its rules.
+section per workload. The pack, its `use` line, the gcloud commands that meet and check a control
+and the risk of leaving it open come from the `measures` of each control in satz's report and
+`require` output — the packs' own claims (ADR 0073); `assets/measures.yaml` holds what the skill
+authors: the German prose, the phases, the grouping of controls into plan sections, and the
+gcloud steps of the controls no pack claims. The documents are reproducible from scope and
+evidence and carry no local path; a change of wording goes into `scope.yaml` or
+`assets/measures.yaml`, a changed command for a pack's control into that pack's claim, never
+into the document. The skill's `SKILL.md` carries the whole procedure and its rules.
 
 ### Building the documentation package
 

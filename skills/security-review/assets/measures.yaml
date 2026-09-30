@@ -9,9 +9,15 @@
 #              {infra_project} {n_own} {n_fleet} {fleet_label} {projects} {resources}
 #              {log_project} {default_region}
 # Felder: id, title, phase, kind (satz-apply | satz-pack | gcloud | decision | review),
-#         controls, packs (satz-Pack-IDs, wie `satz require` sie in "Provides" nennt),
-#         aufwand, risiko, why, satz (Code), gcloud (Code), terraform (Code),
-#         prereq (Liste), nachweis, open_point (Text für "Offene Punkte")
+#         controls, aufwand, risiko (Risiko der Umsetzung), why, satz (Code neben den
+#         `use`-Zeilen), gcloud (Code), terraform (Code), prereq (Liste), nachweis,
+#         open_point (Text für "Offene Punkte")
+#
+# Was satz selbst weiß, steht NICHT hier: Pack, `use`-Pfad, die gcloud-Kommandos, die eine
+# vom Pack beanspruchte Kontrolle ohne satz umsetzen und prüfen, und das Risiko ohne die
+# Maßnahme kommen aus den `measures` jeder Kontrolle in satz' report-compliance- bzw.
+# require-JSON (ADR 0073). `gcloud` hier nur für Kontrollen, die kein Pack beansprucht,
+# und für den Bestand, den eine Org-Policy nicht erreicht.
 measures:
 
 - id: estate-apply
@@ -19,7 +25,6 @@ measures:
   phase: sofort
   kind: satz-apply
   controls: ["1.1.4", "1.2", "1.5", "1.6", "3.1", "4.4", "4.5", "4.6", "4.9", "5.1", "5.2"]
-  packs: [CIS_GCP_Foundation_4_0]
   aufwand: "ca. 30 Minuten (Plan lesen, Apply, Nachweis)"
   risiko: "gering — Org-Policies wirken präventiv und additiv; bestehende Ressourcen werden nicht verändert, nur neue Verstöße verhindert"
   why: >-
@@ -39,15 +44,6 @@ measures:
     cd hcl && tofu init -reconfigure && tofu plan               # erwartete Adds/Changes lesen
     tofu apply                                                  # Legacy→reset braucht ggf. -replace=<adresse>
     satz --config .. report-compliance cis-gcp-5.0 {estate_file}
-  gcloud: |
-    # Beispiel ohne satz: eine managed Constraint auf Org-Ebene setzen (je Policy eine Datei)
-    cat > policy.yaml <<'Y'
-    name: organizations/{org_id}/policies/compute.managed.requireOsLogin
-    spec:
-      rules:
-      - enforce: true
-    Y
-    gcloud org-policies set-policy policy.yaml
   prereq:
     - "Legacy-Policies, die auf »reset« wechseln, lassen sich nicht in-place ändern (»Cannot set PolicyRules if reset is true«) — die betroffenen Adressen mit `tofu apply -replace=<adresse>` ersetzen."
     - Bereits live gesetzte Policies vor dem Apply importieren (adopt --import), sonst »already exists«.
@@ -58,7 +54,6 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["2.1", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11", "2.12"]
-  packs: [monitoring.organization_audit_logsink, monitoring.organization_cis_log_alerts_central]
   aufwand: "halber Tag (Projekt, Bucket, Sink, 8 Metriken + Alerts; Entscheidung zur Alert-Adresse)"
   risiko: "gering — nur neue Ressourcen in einem eigenen Logging-Projekt; Kosten für Log-Speicher (Audit-Logs, Retention {retention} Tage)"
   why: >-
@@ -69,26 +64,13 @@ measures:
     Alert-Policies einmal auf Org-Ebene an (2.5–2.12). Prowler rechnet org-weites Alerting den
     Kindprojekten an — eine Maßnahme, alle Projekte.
   satz: |
-    # im Estate ({estate_file}): das Logging-Projekt landet in dem Ordner, in dem `use` steht
+    # im Estate ({estate_file}), neben den `use`-Zeilen der beiden Packs (oben, aus satz)
     params {{
-      logsink_project_name = "{log_project}"          # unveränderlich nach Anlage
-      cis_central_email    = "gcp-security@{domain}"  # mail-fähige Gruppe, VORHER in Cloud Identity anlegen
-    }}
-    folder infra_folder {{
-      use "presets/monitoring/organization-audit-logsink.satz"
-      use "presets/monitoring/organization-cis-log-alerts-central.satz"
+      logsink_project_id = "{log_project}"          # unveränderlich nach Anlage
+      cis_central_email  = "gcp-security@{domain}"  # mail-fähige Gruppe, VORHER in Cloud Identity anlegen
     }}
     # dann
     satz --config . transpile {estate_file} && cd hcl && tofu plan && tofu apply   # ein zweites Apply, falls das neue Projekt/API noch propagiert
-  gcloud: |
-    gcloud logging sinks create {shortcode}-organization-audit-gcs \
-      storage.googleapis.com/{shortcode}-organization-audit-logs --organization={org_id} --include-children \
-      --log-filter='log_id("cloudaudit.googleapis.com/activity") OR log_id("cloudaudit.googleapis.com/data_access") OR log_id("cloudaudit.googleapis.com/system_event") OR log_id("cloudaudit.googleapis.com/policy")'
-    # Metrik + Alert je Kontrolle (Beispiel 2.5, Projektbesitz):
-    gcloud logging metrics create cis-project-ownership-changes --project={log_project} \
-      --description="CIS 2.5" --log-filter='(protoPayload.serviceName="cloudresourcemanager.googleapis.com") AND (ProjectOwnership OR projectOwnerInvitee) OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="REMOVE" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner") OR (protoPayload.serviceData.policyDelta.bindingDeltas.action="ADD" AND protoPayload.serviceData.policyDelta.bindingDeltas.role="roles/owner")'
-    gcloud alpha monitoring policies create --project={log_project} --notification-channels=<channel> --display-name="CIS 2.5" \
-      --condition-filter='metric.type="logging.googleapis.com/user/cis-project-ownership-changes"' --condition-threshold-value=0 --condition-threshold-duration=300s
   prereq:
     - Mail-fähige Gruppe für die Alerts (cis_central_email) in Cloud Identity anlegen — Voraussetzung, nicht Folge.
     - Logging-API im Infra-Projekt aktiviert (sonst 403 beim Org-Sink).
@@ -99,16 +81,13 @@ measures:
 - id: dns-logging
   title: Cloud DNS Logging für alle VPC-Netze
   phase: kurzfristig
-  kind: gcloud
+  kind: satz-pack
   controls: ["2.13"]
   aufwand: "15 Minuten je VPC"
   risiko: "gering — zusätzliche Log-Einträge (Kosten), keine Verhaltensänderung"
   why: >-
     DNS-Anfragen aus einer VPC werden nur mit einer DNS-Server-Policy protokolliert. Ohne Logging
     fehlt die Spur für Exfiltration über DNS und für die Aufklärung von Vorfällen.
-  gcloud: |
-    gcloud dns policies create dns-logging --networks=<vpc> --enable-logging --project=<projekt>
-    # bestehende Policy: gcloud dns policies update <policy> --enable-logging --project=<projekt>
   terraform: |
     resource "google_dns_policy" "logging" {{
       name           = "dns-logging"
@@ -134,8 +113,6 @@ measures:
     google_project_service {{
       cai {{ project = "<projekt>"  service = "cloudasset.googleapis.com" }}
     }}
-  gcloud: |
-    for P in {projects}; do gcloud services enable cloudasset.googleapis.com --project=$P; done
   nachweis: "`gcloud services list --enabled --project=<projekt> | grep cloudasset`; Prowler-Nachscan 2.14 → PASS."
 
 - id: access-transparency-approval
@@ -149,8 +126,6 @@ measures:
     Access Transparency protokolliert Zugriffe von Google-Personal auf Kundendaten, Access Approval
     macht sie genehmigungspflichtig. Beides setzt eine Support-Stufe (Enhanced/Premium) voraus; ohne
     sie ist die Kontrolle nicht erfüllbar — das ist eine Vertrags-, keine Konfigurationsfrage.
-  gcloud: |
-    gcloud access-approval settings update --organization={org_id} --enrolled_services=all --notification_emails=<security-mail>
   nachweis: "`gcloud access-approval settings get --organization={org_id}`; Access Transparency in der Konsole unter IAM & Admin → Settings."
   open_point: "Support-Stufe klären — Access Transparency / Access Approval sind ohne Enhanced/Premium Support nicht aktivierbar."
 
@@ -202,7 +177,6 @@ measures:
   phase: kurzfristig
   kind: gcloud
   controls: ["1.10", "1.11"]
-  packs: [cis_extensions.cmek]
   aufwand: "Minuten je Schlüssel"
   risiko: "gering — Rotation erzeugt neue Versionen, alte bleiben zum Entschlüsseln"
   why: >-
@@ -217,15 +191,12 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["1.13", "1.14", "1.15", "1.16"]
-  packs: [cis_extensions.api_key_services]
   aufwand: "Stunden (Inventar, Ersatz durch OAuth/SA wo möglich)"
   risiko: "mittel — ein eingeschränkter oder gelöschter Schlüssel bricht die App, die ihn nutzt"
   why: >-
     API-Schlüssel sind Bearer-Credentials ohne Identität. Wo sie unvermeidbar sind, müssen sie auf
     Hosts/Apps (1.14) und APIs (1.15) beschränkt und rotiert werden (1.16); ungenutzte weg (1.13).
     Das Pack api-key-services setzt die Org-Policy für erlaubte API-Ziele.
-  satz: |
-    use "presets/cis-extensions/api-key-services.satz"
   gcloud: |
     gcloud services api-keys list --project=<projekt>
     gcloud services api-keys update <key> --api-target=service=<api> --allowed-referrers=<host>
@@ -237,7 +208,6 @@ measures:
   phase: sofort
   kind: satz-pack
   controls: ["1.17"]
-  packs: [essential_contacts_organization]
   aufwand: "15 Minuten"
   risiko: "keins"
   why: >-
@@ -309,7 +279,6 @@ measures:
   phase: kurzfristig
   kind: gcloud
   controls: ["3.1", "3.2", "3.6", "3.7"]
-  packs: [CIS_GCP_Foundation_4_0]
   aufwand: "Stunden (Firewall-Review je Projekt)"
   risiko: "mittel — eine entfernte Regel kann Admin-Zugang kappen; IAP-TCP-Forwarding vorher einrichten"
   why: >-
@@ -345,7 +314,6 @@ measures:
   phase: kurzfristig
   kind: gcloud
   controls: ["3.10"]
-  packs: [CIS_GCP_Foundation_4_0]
   aufwand: "Minuten je Subnetz"
   risiko: "gering — Log-Volumen (Sampling 0.5, Aggregation 5 s als Kompromiss)"
   why: >-
@@ -380,7 +348,6 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["4.1", "4.2", "4.3", "4.7", "4.8", "4.11"]
-  packs: [cis_extensions.block_project_ssh_keys, cis_extensions.shielded_vm, cis_extensions.confidential_computing]
   aufwand: "Stunden (VM-Neustart nötig für Shielded/Confidential, SA-Wechsel)"
   risiko: "mittel — SA-Wechsel und Neustart betreffen laufende Workloads; im Wartungsfenster"
   why: >-
@@ -388,10 +355,6 @@ measures:
     (4.3); Shielded VM (4.8) und Confidential Computing (4.11) sind Boot- bzw.
     Speicher-Integrität; CSEK (4.7) ist nur für ausgewählte kritische VMs sinnvoll (Schlüsselverlust =
     Datenverlust). Die drei Erweiterungs-Packs setzen Org-Policies für neue VMs; Bestand von Hand.
-  satz: |
-    use "presets/cis-extensions/block-project-ssh-keys.satz"
-    use "presets/cis-extensions/shielded-vm.satz"
-    use "presets/cis-extensions/confidential-computing.satz"   # nur, wenn alle VM-Typen es unterstützen
   gcloud: |
     gcloud compute instances set-service-account <vm> --zone=<zone> --service-account=<dedizierter-sa> --scopes=cloud-platform
     gcloud compute instances add-metadata <vm> --zone=<zone> --metadata=block-project-ssh-keys=true
@@ -419,18 +382,12 @@ measures:
   phase: nach_freigabe
   kind: decision
   controls: ["2.3", "2.4"]
-  packs: [cis_extensions.bucket_retention]
   aufwand: "Minuten — nach verbindlicher Entscheidung zur Aufbewahrungsdauer"
   risiko: "hoch im Sinne von unumkehrbar — eine gesperrte Retention kann nur verlängert, nie verkürzt werden; Bucket nicht löschbar vor Ablauf"
   why: >-
     Erst der Lock macht das Log-Archiv manipulationssicher (2.4). Er ist eine Einbahnstraße und
     deshalb eine Entscheidung des Kunden, nicht des Betriebs. Das Pack bucket-retention setzt die
     Retention; der Lock selbst ist ein bewusster Handgriff.
-  satz: |
-    use "presets/cis-extensions/bucket-retention.satz"   # Retention (Default 400 Tage) auf dem Archiv-Bucket
-  gcloud: |
-    gcloud storage buckets update gs://{shortcode}-organization-audit-logs --retention-period=400d
-    gcloud storage buckets update gs://{shortcode}-organization-audit-logs --lock-retention-period   # unwiderruflich
   prereq:
     - Logging-Fundament (Org-Sink + Bucket) vorhanden.
     - Aufbewahrungsdauer schriftlich freigegeben.
@@ -442,7 +399,6 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["6.1.1", "6.1.2", "6.1.3", "6.2.1", "6.2.2", "6.2.3", "6.2.4", "6.2.5", "6.2.6", "6.2.7", "6.2.8", "6.3.1", "6.3.2", "6.3.3", "6.3.4", "6.3.5", "6.3.6", "6.3.7", "6.4", "6.5", "6.6", "6.7", "6.8", "6.9"]
-  packs: [cis_extensions.cloud_sql]
   aufwand: "Stunden je Instanz (Flags erfordern Neustart)"
   risiko: "mittel — Flag-Änderungen und TLS-Pflicht betreffen Verbindungen der Anwendung; im Wartungsfenster"
   why: >-
@@ -450,8 +406,6 @@ measures:
     (6.4), Backups (6.8), Löschschutz (6.9), IAM-Authentifizierung (6.6) und die engine-spezifischen
     Logging-/Härtungs-Flags (6.1.x MySQL, 6.2.x PostgreSQL, 6.3.x SQL Server) folgen. Das Pack
     cloud-sql setzt die Org-Policies gegen öffentliche IPs und für CMEK-freie Defaults.
-  satz: |
-    use "presets/cis-extensions/cloud-sql.satz"
   gcloud: |
     gcloud sql instances patch <instanz> --no-assign-ip --require-ssl --backup-start-time=02:00 --deletion-protection --project=<projekt>
     gcloud sql instances patch <instanz> --database-flags=log_connections=on,log_disconnections=on,log_min_messages=warning,log_min_error_statement=error,cloudsql.enable_pgaudit=on   # PostgreSQL
@@ -464,15 +418,12 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["7.1", "7.2", "7.3", "7.4"]
-  packs: [cis_extensions.cmek]
   aufwand: "Stunden (CMEK-Umzug = Tabellen kopieren)"
   risiko: "mittel — CMEK auf bestehenden Tabellen erfordert Kopie; Schlüsselverlust = Datenverlust"
   why: >-
     Öffentliche Datasets (7.1) sind Datenabfluss; CMEK (7.2/7.3) ist Schlüsselhoheit; die
     Klassifizierung (7.4, Data Catalog / Sensitive Data Protection) ist Voraussetzung, um
     Schutzbedarf überhaupt zuzuordnen.
-  satz: |
-    use "presets/cis-extensions/cmek.satz"   # Org-Policy: CMEK-Pflicht für BigQuery/Dataproc
   gcloud: |
     bq show --format=prettyjson <projekt>:<dataset> | grep -A3 allAuthenticatedUsers
     bq update --default_kms_key=projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k> <projekt>:<dataset>
@@ -483,14 +434,11 @@ measures:
   phase: kurzfristig
   kind: satz-pack
   controls: ["8.1"]
-  packs: [cis_extensions.cmek]
   aufwand: "Cluster-Neuanlage (CMEK nur bei Erstellung)"
   risiko: "mittel — Neuanlage der Cluster"
   why: >-
     Dataproc-Cluster-Disks lassen sich nur bei der Anlage mit CMEK verschlüsseln; die Org-Policy des
     cmek-Packs erzwingt es für künftige Cluster.
-  satz: |
-    use "presets/cis-extensions/cmek.satz"
   gcloud: |
     gcloud dataproc clusters create <cluster> --region=<region> --gce-pd-kms-key=projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
   nachweis: "Prowler-Nachscan 8.1 → PASS (Dataproc-Scan je Projekt, nicht org-weit — Werkzeuggrenze)."
@@ -522,7 +470,6 @@ measures:
   kind: satz-pack
   controls: []
   always: true
-  packs: [sa_security_audit]
   aufwand: "15 Minuten"
   risiko: "keins — read-only Service-Account"
   why: >-

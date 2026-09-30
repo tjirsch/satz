@@ -293,6 +293,7 @@ mod tests {
                 reason: String::new(),
                 manual_duties: Vec::new(),
                 interpretation: String::new(),
+                ..Default::default()
             },
         )
     }

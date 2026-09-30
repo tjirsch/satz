@@ -336,6 +336,13 @@ claim "cis-gcp" "4.0" "5.1" implements {
   resources         = ["google_storage_bucket.audit_logs"]
   interpretation    = "Uniform bucket-level access on the audit bucket; no ACL-granted public access is possible."
   duty_public_check = "Confirm public_access_prevention is enforced at the org level."
+  gcloud = [
+    "gcloud storage buckets update gs://BUCKET_NAME --uniform-bucket-level-access",
+  ]
+  gcloud_check = [
+    "gcloud storage buckets describe gs://BUCKET_NAME --format='value(uniform_bucket_level_access)'",
+  ]
+  risk = "Object ACLs grant access beside IAM, so the bucket's IAM policy does not show who can read the audit logs."
 }
 
 claim "cis-gcp" "4.0" "5.2" contributes {
