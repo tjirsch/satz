@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_yaml = "0.9"
+# a request point's per-field patterns (`request … { patterns = { … } }`)
+regex = "1.13"
 
 [dev-dependencies]
 proptest = "1"

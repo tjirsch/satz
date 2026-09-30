@@ -172,6 +172,24 @@ mod tests {
 
     const PROJECTS: &str = "{ name = \"payments\" owner_group = \"payments-owners@example.com\" }, { name = \"data-lake\" owner_group = \"lake-owners@example.com\" }";
 
+    /// An owner group that is no address, and a name that is no interface name, are
+    /// refused at compile — naming the entry and the value — rather than at apply.
+    #[test]
+    fn a_malformed_entry_is_refused_at_compile() {
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        for (entry, says) in [
+            ("{ name = \"payments\" owner_group = \"payments-owners\" }", "entry `payments` has `owner_group` = \"payments-owners\""),
+            ("{ name = \"payments\" owner_group = \"group:payments-owners@example.com\" }", "entry `payments` has `owner_group` = \"group:payments-owners@example.com\""),
+            ("{ name = \"payments\" owner_group = \"payments-owners@example.com \" }", "entry `payments` has `owner_group`"),
+            ("{ name = \"Payments\" owner_group = \"payments-owners@example.com\" }", "\"Payments\""),
+        ] {
+            let src = central(&format!("bad-{}", says.len()), None, entry);
+            let e = satz_core::pipeline::compile_estate("e.satz", &src, &resolver, &presets).err().unwrap_or_else(|| panic!("{} compiled", entry));
+            assert!(e.msg.contains(says), "{}: {}", entry, e.msg);
+        }
+    }
+
     /// One entry is one project: its Google project under the organisation or the workload
     /// folder, its grants, and its own interface — not a common one, though a pack writes
     /// it — with the four exports the project's estate is written from. A name with `-` is

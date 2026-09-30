@@ -70,9 +70,41 @@ the form of an export; the question asks for it.
 
 - `satz add-project` is gone (a `## Breaking changes` entry under v0.90.0). A section it
   wrote is plain Satz and stays; a new project is an entry.
-- The owner group's address is no longer checked for `@` before the compile; a malformed
-  one fails at apply, as any other member does.
+- The owner group's address and the project's name are checked at compile by the request
+  point's `patterns` (amendment below), where `add-project` checked them before it wrote.
 - The grammar (`satz-tree-sitter`) learns the top-level form; the canonical form carries
   `each_interface(name|list|key)`, so pack drift sees it.
 - An onboarded project's labels are the entry's name: renaming an entry moves the
   project's resources, as renaming a written label does, and renames its interface.
+
+## Amendment (2026-09-30) — a request point checks the shape of a field
+
+**The problem.** `add-project` refused an owner group without `@`, and a name that is no
+interface name, before it wrote anything. The pack took any string, so `owner_group =
+"payments-owners"` compiled and failed at apply, as `group:payments-owners` in an IAM
+member. A project's name is judged once its interface is written, but nothing checked the
+owner group.
+
+**Decision.** `request <list> { … patterns = { <field> = "<regex>" } }`: a field a pattern
+names holds a string or number the whole of which the regular expression matches, at every
+compile and in `satz check-request`, refused naming the entry, the field, the value and the
+pattern. `presets/project-onboarding.satz` 1.1 sets `name = "[a-z][a-z0-9-]*"` and
+`owner_group = "[^@: ]+@[^@: ]+"`, which refuses `payments-owners` and
+`group:payments-owners@example.com` as `add-project` did.
+
+**Options.**
+
+- **A pattern on the `question`.** *Rejected:* a question asks for one param's answer, and
+  `projects` is filled by entries and contributions nobody is asked for; the request point
+  already holds every entry of the list to its shape, a contributed one included, so the
+  pattern belongs beside `fields`.
+- **A check in Rust for this pack.** *Rejected:* a pack's rules would live outside the
+  pack, and every other request point (`shared_vpc_subnets`, a CIDR) would need its own.
+- **A field type (`email`, `cidr`).** *Rejected for now:* a closed list of kinds each with
+  its own parser; a regular expression covers these and costs one dependency the workspace
+  already carries (`regex`, now in `satz-core` too).
+
+**Costs.** A regular expression in a pack is read by operators in a refusal: the pattern is
+quoted as written, so a pack writes the simplest one that says what it means. A pattern
+checks form, not existence — a group address that is well formed and does not exist still
+fails at apply.
