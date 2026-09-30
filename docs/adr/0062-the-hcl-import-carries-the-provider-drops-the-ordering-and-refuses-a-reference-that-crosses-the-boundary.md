@@ -1,6 +1,6 @@
 # 0062 — the hcl import carries the provider, drops the ordering, and refuses a reference that crosses the boundary
 
-- **Status:** accepted; the keys satz owns are ten (ADR-0070)
+- **Status:** accepted; the keys satz owns are ten (ADR-0070); amended 2026-09-30 (a hand-written configuration, below)
 - **Date:** 2026-09-23
 - **Shipped in:** the release that follows
 
@@ -128,3 +128,97 @@ APIs are not yet on, which an adopted estate's are.
 A `.tf` directory that imported before and has a reference across the boundary now
 refuses (`presets/README.md`, `## Breaking changes`). This is a minor release by
 ADR 0010: the same input is refused.
+
+## Amendment 2026-09-30 — a hand-written configuration
+
+### Context
+
+Two public copies of the Terraform script Microsoft's portal generates for onboarding a
+GCP organisation to Defender for Cloud (one of 59 resources, one of 39) were both refused
+outright. Nothing in them is unusual for hand-written Terraform:
+
+- The organisation is `variable "org_id"` with no default, used as the project's `org_id`.
+  The project wrapped ("a folder number is not a folder in this input", which was wrong),
+  every resource placed in it wrapped by the closure, and the first translated reference
+  into one of them refused the import. The refusal named only the last hop: "its parent
+  resource google_project is wrapped".
+- The provider's default project is `local.mgmt_project_id = "${var.prefix}${var.org_id}"`.
+  The import matched a provider default against the projects only when it was a literal,
+  so the resources relying on it were emitted with no project.
+- The services are `count = length(var.apis)` with `element(var.apis, count.index)`, and
+  the list names `logging.googleapis.com` twice.
+
+And `--wrap-all`, the documented way out of every refusal, dropped the `provider` blocks
+with their default project and region while its header said the estate "deploys exactly
+as written": the emitter's providers are all aliased, so a verbatim resource that names no
+provider ran with an unconfigured default one.
+
+### Decision
+
+1. **A variable used as the organisation is bound to it.** `org_id = var.x` on any resource,
+   or `parent = "organizations/${var.x}"`, makes `x` the organisation: its param is written
+   `x = customer_organization_id`. With no default it binds to the organisation
+   `--organization` names; without the flag it still wraps, and the reason says to pass it.
+   A default that is an organisation number binds the estate like a literal `org_id`.
+   Carried verbatim for a wrapped block that reads it, a declaration with no default is
+   given the organisation as its `default`.
+
+2. **What a translated resource took from the default provider is carried.** The default
+   project is folded through params and templates. It becomes placement when an imported
+   project has that id, and the resource's own `project` otherwise. The region and zone go
+   into the estate's `providers { google { … } }`. A default satz cannot write, such as a
+   `data.` reference, wraps each resource that relied on it and names it.
+
+3. **A `provider` block is carried verbatim when something that stays verbatim uses it**:
+   a verbatim `resource` or `data` block that names it or names no provider, a `module`,
+   or a translated resource naming it. `--wrap-all` carries every one. The exception is a
+   block whose alias the estate declares itself (`google.google`); the header and the
+   report name it and the settings it held, and the header no longer says the estate
+   deploys as written.
+
+4. **`element(<list>, count.index)` is the same entry as `<list>[count.index]`**, and a
+   `count` that does not expand says why and names the forms that do.
+
+5. **A list naming one entry twice expands into one resource**, with a note naming the
+   entry. Rule 3 of the decision above says the import never writes an estate
+   `satz transpile` refuses, and two copies of one entry are two resources under one address.
+
+6. **A wrap caused by a wrapped parent names the block that started the chain** and that
+   block's own reason, and so does a refusal whose other side is such a block.
+
+### Options considered
+
+**The provider's project in the estate's `providers` block, or on the resource?** Putting
+it in the block would carry it once for every translated resource. It was rejected because
+the emitter makes a provider that names a project its own quota project
+(`billing_project` plus `user_project_override`). That bills every call, the
+organisation-level ones included, to a project that may not exist before the first apply.
+The source did not do that. The region and zone have no such side effect, so they go in
+the block.
+
+**Carry every `provider` block, or only the ones something uses?** Carrying every block is
+simpler. It was rejected because a block that nothing verbatim uses still reads its
+variables. Each variable would then be carried as a verbatim declaration beside its param,
+giving two sources of truth for no deployment.
+
+**A repeated entry: refuse, keep both under index labels, or fold?** Refusing turns away
+the vendor's own script. Keeping both writes two resources that manage one object: a
+project's service list cannot hold an entry twice, and two buckets of one name cannot both
+be created. The source's state does hold two instances, so `satz adopt` imports one of them
+and the other leaves Terraform's management. The note says so.
+
+**Bind the organisation variable, or ask for a default?** Asking pushes an edit of the
+customer's own file onto the operator, although the operator already names the
+organisation with `--organization`. That flag is the answer to the variable's question, so
+the flag binds it.
+
+### Consequences
+
+Measured on the two public copies, imported as published with `--organization`: both
+import, transpile and pass `tofu validate`. 40 and 27 blocks translate, where both were
+refused before. `--wrap-all` carries their `provider` blocks. A carried declaration can
+hold a value that the estate also holds as a param, as it could before: the organisation's
+number, or a `locals` entry. A re-import of a configuration whose default provider sets a
+project, region or zone writes a different estate, and that estate plans differently. It
+matches the source where the earlier one did not, so the release is a minor
+(`presets/README.md`, `## Breaking changes`).

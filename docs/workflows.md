@@ -549,9 +549,12 @@ the sweep.
 
 From a directory of `.tf` files the organisation is the one the configuration
 names — a literal `organizations/<n>` parent, an `org_id`, an org policy's
-parent. A configuration that names none, and every `--wrap-all` import, which
-translates nothing, is refused with nothing written until `--organization <n>`
-names it:
+parent. A variable the configuration uses as the organisation and declares with
+no default — `org_id = var.org_id`, the form vendor-generated onboarding scripts
+ask for — binds to the organisation `--organization <n>` names, and its param is
+written as `customer_organization_id`. A configuration that names none, and every
+`--wrap-all` import, which translates nothing, is refused with nothing written
+until `--organization <n>` names it:
 
 ```bash
 satz import ./terraform --wrap-all --organization 123456789012 -o migration-discovery.satz
