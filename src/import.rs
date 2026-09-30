@@ -114,7 +114,8 @@ pub(crate) async fn import_org(
     // A folder/project root names no organization; the assets' ancestors do.
     let org_hint = org_hint.or(found.organization.clone());
     attach_billing_accounts(&mut found.config).await;
-    confirm_enabled_services(&mut found).await;
+    // a new file declares nothing
+    let added = confirm_enabled_services(&mut found, &|_, _| false).await;
     // what the identity the sweep read as states, the way `init` reads it — the
     // sweep's organization is the hint, so an identity that sees many is no
     // ambiguity. Under `--as` that identity is the estate's IaC service account,
@@ -131,6 +132,7 @@ pub(crate) async fn import_org(
     vocab.apply_billing(&mut found.config);
     let written = write_imported(&found.config, final_output, org_hint.as_deref(), &registry, &vocab)?;
     crate::discovery::report_skipped(&found, &filtered, verbose);
+    report_added_apis(&added);
     if generate_unmapped {
         // Nothing declared to subtract — a new file declares nothing — so the
         // whole skipped list, read as whoever the sweep above it read as, billed
@@ -860,7 +862,11 @@ pub(crate) async fn import_delta(
     let type_names: std::collections::HashSet<String> = registry.resources.keys().cloned().collect();
     let mut found = crate::discovery::Discoverer::discover_from_org(parent, verbose, Some(cfg), Some(&registry), on_collision, identity).await?;
     attach_billing_accounts(&mut found.config).await;
-    confirm_enabled_services(&mut found).await;
+    // an API the estate declares on the project already is the estate's
+    let added = confirm_enabled_services(&mut found, &|project, api| {
+        crate::prerequisites::declared_apis(&out.manifest, project).iter().any(|a| a == api)
+    })
+    .await;
     let top = match serde_yaml::to_value(&found.config)? {
         serde_yaml::Value::Mapping(m) => m,
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
@@ -979,6 +985,7 @@ pub(crate) async fn import_delta(
         println!("  {} declared id(s) not among the swept assets (types the sweep did not cover, or derived ids)", unseen.len());
     }
     crate::discovery::report_skipped(&found, &filtered, verbose);
+    report_added_apis(&added);
     if written.is_empty() {
         println!("import: nothing to add — the estate already declares everything the sweep found.");
     }
@@ -1010,8 +1017,9 @@ pub(crate) async fn attach_billing_accounts(config: &mut Config) {
         }
     };
     let http = reqwest::Client::new();
+    let quota = crate::org_policy::resolve_quota_project();
     for p in projects {
-        match crate::gcp::billing::project_billing_account(&http, &token, &p.project_id).await.map_err(String::from) {
+        match crate::gcp::billing::project_billing_account(&http, &token, &p.project_id, quota.as_deref()).await.map_err(String::from) {
             Ok(Some(acct)) => p.billing_account = Some(acct),
             Ok(None) => {}
             Err(e) => eprintln!(
@@ -1060,43 +1068,215 @@ fn service_of(entry: &serde_yaml::Value) -> Option<&str> {
 /// report enabled leaves the estate and is listed as skipped, with both
 /// sources' answers. A project whose services cannot be read is named, and its
 /// entries stay as the sweep found them.
-pub(crate) async fn confirm_enabled_services(found: &mut crate::discovery::Discovered) {
+///
+/// The same request asks about every API the resources written inside the project
+/// need ([`needed_apis`]): they are served by the project's own provider, which
+/// bills to that project (ADR 0059), so an API that is off there refuses their
+/// refresh. Each one that is off is added to the project's `project_service` list
+/// with the import id it has once it is on — `satz plan` and `satz apply` switch it
+/// on through the infrastructure project before `tofu` starts (ADR 0072) — and is
+/// returned, so the run names it. `declared(project, api)` is whether the estate
+/// the import writes into declares that API on that project already; such an API is
+/// left to the estate.
+///
+/// The calls are billed to the project the process bills its reads to.
+pub(crate) async fn confirm_enabled_services(
+    found: &mut crate::discovery::Discovered,
+    declared: &dyn Fn(&str, &str) -> bool,
+) -> Vec<ApiAdded> {
     let projects = projects_mut(&mut found.config);
-    if projects.iter().all(|p| p.project_service.as_ref().is_none_or(|s| s.is_empty())) {
-        return;
+    let asks: Vec<(usize, Vec<String>, NeededApis)> = projects
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let listed: Vec<String> = p.project_service.iter().flatten().filter_map(service_of).map(str::to_string).collect();
+            let needed: std::collections::BTreeMap<String, Vec<String>> =
+                needed_apis(p).into_iter().filter(|(api, _)| !declared(&p.project_id, api)).collect();
+            (i, listed, needed)
+        })
+        .filter(|(_, listed, needed)| !listed.is_empty() || !needed.is_empty())
+        .collect();
+    if asks.is_empty() {
+        return Vec::new();
     }
     let token = match crate::gcp::access_token().await {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("warning: enabled services not confirmed with Service Usage ({}) — every service Cloud Asset lists is written", e);
-            return;
+            eprintln!(
+                "warning: enabled services not confirmed with Service Usage ({}) — every service Cloud Asset lists is written, and no API the imported resources need is added",
+                e
+            );
+            return Vec::new();
         }
     };
     let http = reqwest::Client::new();
+    let quota = crate::org_policy::resolve_quota_project();
+    let mut projects = projects;
     let mut skipped = Vec::new();
-    for p in projects {
-        let Some(entries) = p.project_service.as_mut() else { continue };
-        let services: Vec<String> = entries.iter().filter_map(service_of).map(str::to_string).collect();
-        if services.is_empty() {
-            continue;
-        }
-        let states = match crate::gcp::serviceusage::service_states(&http, &token, &p.project_id, &services).await {
+    let mut added = Vec::new();
+    for (i, listed, needed) in asks {
+        let p = &mut projects[i];
+        let mut ask: std::collections::BTreeSet<String> = listed.iter().cloned().collect();
+        ask.extend(needed.keys().cloned());
+        let ask: Vec<String> = ask.into_iter().collect();
+        let states = match crate::gcp::serviceusage::service_states(&http, &token, &p.project_id, &ask, quota.as_deref()).await {
             Ok(s) => s,
             Err(e) => {
                 eprintln!(
-                    "warning: the services of project {} not confirmed with Service Usage ({}) — they are written as Cloud Asset lists them",
+                    "warning: the services of project {} not confirmed with Service Usage ({}) — they are written as Cloud Asset lists them{}",
                     p.project_id,
-                    String::from(e).lines().next().unwrap_or("")
+                    String::from(e).lines().next().unwrap_or(""),
+                    if needed.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", and whether {} is on there is not known", needed.keys().cloned().collect::<Vec<_>>().join(", "))
+                    }
                 );
                 continue;
             }
         };
+        let entries = p.project_service.get_or_insert_with(Vec::new);
         skipped.extend(keep_enabled(entries, &p.project_id, &states));
+        for a in add_needed(entries, &p.project_id, &needed, &states) {
+            match a {
+                Ok(a) => added.push(a),
+                Err(api) => eprintln!(
+                    "warning: Service Usage said nothing about {} on project {}, which {} need — it is not added to the project's `project_service`",
+                    api,
+                    p.project_id,
+                    needed.get(&api).map(|t| t.join(", ")).unwrap_or_default()
+                ),
+            }
+        }
         if entries.is_empty() {
             p.project_service = None;
         }
     }
+    // an API added back is not skipped: it is written, and named below
+    skipped.retain(|s: &crate::discovery::Skipped| !added.iter().any(|a| s.what == a.asset_name()));
     found.skipped.extend(skipped);
+    added
+}
+
+/// API → the resource types that need it, sorted.
+type NeededApis = std::collections::BTreeMap<String, Vec<String>>;
+
+/// One API a project's imported resources need and the project has off: added to its
+/// `project_service` list by the import.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApiAdded {
+    pub project: String,
+    pub api: String,
+    /// the resource types inside the project that need it, sorted
+    pub types: Vec<String>,
+}
+
+impl ApiAdded {
+    /// The service's Cloud Asset name, as a skipped service is listed under.
+    fn asset_name(&self) -> String {
+        format!("//serviceusage.googleapis.com/projects/{}/services/{}", self.project, self.api)
+    }
+}
+
+/// What the run says about the APIs it added, one line each.
+pub(crate) fn report_added_apis(added: &[ApiAdded]) {
+    if added.is_empty() {
+        return;
+    }
+    println!(
+        "\nimport: {} API(s) added to a project's `project_service` list — the project has it off and resources imported into it need it; \
+         `satz plan` and `satz apply` switch it on through the infrastructure project before `tofu` starts:",
+        added.len()
+    );
+    for a in added {
+        println!("  {} on {} — needed by {}", a.api, a.project, a.types.join(", "));
+    }
+}
+
+/// The APIs the resources written inside `project`'s node need, each with the types
+/// that need it (`prerequisites::apis_for`). Its own `project_service` entries are
+/// not among them: the emitter serves those with the provider around the project.
+fn needed_apis(project: &crate::config::Project) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = Default::default();
+    for tf_type in project.extra.keys() {
+        if tf_type == "google_project_service" {
+            continue;
+        }
+        for api in crate::prerequisites::apis_for(tf_type).unwrap_or(&[]) {
+            out.entry(api.to_string()).or_default().insert(tf_type.clone());
+        }
+    }
+    out.into_iter().map(|(api, types)| (api, types.into_iter().collect())).collect()
+}
+
+/// Every API in `needed` that Service Usage reports off, appended to `entries` with
+/// the import id it has once it is on. An API it did not answer for is `Err`, one
+/// already in the list or on is left alone.
+fn add_needed(
+    entries: &mut Vec<serde_yaml::Value>,
+    project_id: &str,
+    needed: &std::collections::BTreeMap<String, Vec<String>>,
+    states: &std::collections::BTreeMap<String, bool>,
+) -> Vec<Result<ApiAdded, String>> {
+    let mut out = Vec::new();
+    for (api, types) in needed {
+        match states.get(api) {
+            Some(true) => {}
+            None => out.push(Err(api.clone())),
+            Some(false) => {
+                if entries.iter().any(|e| service_of(e) == Some(api.as_str())) {
+                    continue;
+                }
+                let mut entry = serde_yaml::Mapping::new();
+                entry.insert("service".into(), serde_yaml::Value::String(api.clone()));
+                entry.insert("import-id".into(), serde_yaml::Value::String(format!("{}/{}", project_id, api)));
+                entries.push(serde_yaml::Value::Mapping(entry));
+                out.push(Ok(ApiAdded { project: project_id.to_string(), api: api.clone(), types: types.clone() }));
+            }
+        }
+    }
+    out
+}
+
+/// The APIs a live import's own reads call, billed to the infrastructure project of
+/// the estate it is given: the sweep (Cloud Asset), the enabled services (Service
+/// Usage), the billing links (Cloud Billing), the scope's organisation and the
+/// projects (Resource Manager), and the lookups `--into` resolves the estate's
+/// declarations with (Org Policy, Cloud Identity).
+pub(crate) const READ_APIS: [&str; 6] = [
+    "cloudasset.googleapis.com",
+    "cloudbilling.googleapis.com",
+    "cloudidentity.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "orgpolicy.googleapis.com",
+    "serviceusage.googleapis.com",
+];
+
+/// Switch on every one of [`READ_APIS`] that is off on `infra`, before the import
+/// reads anything, and say so. The infrastructure project is satz's own; a
+/// workload project is never touched here. Refused, with the `gcloud` line that
+/// does it by hand, when they cannot be read or switched on.
+pub(crate) async fn enable_read_apis(infra: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let apis: Vec<String> = READ_APIS.iter().map(|a| a.to_string()).collect();
+    match crate::prerequisites::enable_declared_apis(infra, apis, Some(infra)).await {
+        Ok(done) if done.enabled.is_empty() => {
+            println!("import: reads are billed to {}; the {} APIs they call are on there", infra, done.declared.len());
+            Ok(())
+        }
+        Ok(done) => {
+            println!("import: reads are billed to {}; {} of the APIs they call were off there — switched on:", infra, done.enabled.len());
+            for api in &done.enabled {
+                println!("  enabled {}", api);
+            }
+            Ok(())
+        }
+        Err(refusal) => Err(format!(
+            "import: the APIs the import's reads call are not on {}, the project they are billed to, and satz could not switch them on — nothing was swept\n{}",
+            infra,
+            refusal.render().trim_end()
+        )
+        .into()),
+    }
 }
 
 /// `entries` less every service Service Usage does not report enabled — a
@@ -1520,6 +1700,68 @@ project:
             ]
         );
         assert!(skipped.iter().all(|s| matches!(s.reason, crate::discovery::SkipReason::NotLive(_))));
+    }
+
+    /// A whole-organisation import planned four 403s: the `_Default`/`_Required` log
+    /// bucket configs of two projects whose Logging API is off, read through each
+    /// project's own provider. The resources inside a project node need their APIs on
+    /// that project; its own services do not count, since the provider around the
+    /// project serves them.
+    #[test]
+    fn a_project_needs_the_apis_of_the_resources_inside_it() {
+        let project: crate::config::Project = serde_yaml::from_str(
+            r#"
+project_id: acme-log-001
+project_service:
+  - { service: storage.googleapis.com, import-id: acme-log-001/storage.googleapis.com }
+google_logging_project_bucket_config:
+  default: { bucket_id: _Default }
+  required: { bucket_id: _Required }
+google_logging_project_sink:
+  audit: { name: audit }
+google_storage_bucket:
+  logs: { name: acme-logs }
+"#,
+        )
+        .unwrap();
+        let needed = needed_apis(&project);
+        assert_eq!(
+            needed.get("logging.googleapis.com").map(Vec::as_slice),
+            Some(["google_logging_project_bucket_config".to_string(), "google_logging_project_sink".to_string()].as_slice())
+        );
+        assert!(needed.contains_key("storage.googleapis.com"));
+        assert!(!needed.contains_key("serviceusage.googleapis.com"), "{needed:?}");
+    }
+
+    /// What Service Usage reports off is added with the import id it has once the
+    /// preflight switched it on; what is on, or listed already, is left alone; what it
+    /// did not answer for is named, never guessed.
+    #[test]
+    fn an_api_the_project_has_off_is_added_to_its_services() {
+        let mut entries: Vec<serde_yaml::Value> =
+            vec![serde_yaml::from_str("{ service: storage.googleapis.com, import-id: acme-log-001/storage.googleapis.com }").unwrap()];
+        let needed = std::collections::BTreeMap::from([
+            ("logging.googleapis.com".to_string(), vec!["google_logging_project_bucket_config".to_string()]),
+            ("storage.googleapis.com".to_string(), vec!["google_storage_bucket".to_string()]),
+            ("pubsub.googleapis.com".to_string(), vec!["google_pubsub_topic".to_string()]),
+        ]);
+        let states = std::collections::BTreeMap::from([
+            ("logging.googleapis.com".to_string(), false),
+            ("storage.googleapis.com".to_string(), true),
+        ]);
+        let out = add_needed(&mut entries, "acme-log-001", &needed, &states);
+        let added = ApiAdded {
+            project: "acme-log-001".to_string(),
+            api: "logging.googleapis.com".to_string(),
+            types: vec!["google_logging_project_bucket_config".to_string()],
+        };
+        assert_eq!(out, [Ok(added.clone()), Err("pubsub.googleapis.com".to_string())]);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].get("import-id").and_then(|v| v.as_str()), Some("acme-log-001/logging.googleapis.com"));
+        // the name a service Cloud Asset listed and Service Usage reported off is
+        // skipped under, which the run takes back for an API it adds
+        let skipped = keep_enabled(&mut vec![serde_yaml::Value::String("logging.googleapis.com".into())], "acme-log-001", &states);
+        assert_eq!(skipped[0].what, added.asset_name());
     }
 
     #[test]

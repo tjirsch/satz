@@ -175,3 +175,20 @@ never left half-edited, as before.
 ### 4b · Keep the old fields beside a map
 
 - **Bad:** two answers, one of them about a project the check no longer judges on.
+
+## Amendment — the preflight switches APIs on through the infrastructure project
+
+- **Date:** 2026-09-30
+
+The preflight's Service Usage calls — which APIs are on, and switching the off ones on —
+are billed to the default provider's project, the infrastructure project, for every
+billed project: `x-goog-user-project` names it. Before, they carried no quota project, and
+Google billed them to whatever project it took for the credential, so the answer
+depended on the credential. A workload project
+whose own `serviceusage.googleapis.com` is off has its APIs switched on all the same.
+An estate whose default provider names no `billing_project` sends none, as before.
+
+This is what [ADR 0074](0074-a-live-import-writes-what-the-provider-reads-back-and-leaves-out-what-is-not-live.md)'s
+amendment relies on: a live import adds to an adopted project's `project_service` every
+API its imported resources need and the project has off, and the preflight — which
+checks a project an `import` block adopts (2a) — switches it on before the plan.

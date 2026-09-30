@@ -5,14 +5,15 @@
 use super::ApiError;
 
 /// `projects.getBillingInfo`: the billing account id (`XXXXXX-XXXXXX-XXXXXX`)
-/// or `None` when the project has none.
+/// or `None` when the project has none. `quota` is the project the call is billed
+/// to (`x-goog-user-project`), when the caller has one to name.
 pub(crate) async fn project_billing_account(
     client: &reqwest::Client,
     token: &str,
     project_id: &str,
+    quota: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    let res = client
-        .get(format!("https://cloudbilling.googleapis.com/v1/projects/{}/billingInfo", project_id))
+    let res = super::billed_to(client.get(format!("https://cloudbilling.googleapis.com/v1/projects/{}/billingInfo", project_id)), quota)
         .bearer_auth(token)
         .send()
         .await

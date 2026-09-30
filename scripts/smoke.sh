@@ -1219,15 +1219,16 @@ if "$satz" --config . import tf --generate-unmapped >tmp/gen-hcl.txt 2>&1; then
   fail "--generate-unmapped must be refused on the hcl shape"
 fi
 grep -q -- '-generate-config-out' tmp/gen-hcl.txt || fail "the hcl refusal did not say that this shape already reads that output:\n$(cat tmp/gen-hcl.txt)"
-# The delta import takes the flag: offline the run gets as far as the live sweep
-# and stops there for want of credentials, which is what this can assert. The
-# generated file itself needs a live object to read (§12.2).
+# The delta import takes the flag: offline the run gets as far as its first live
+# call — switching on the APIs its reads call in the estate's infrastructure
+# project — and stops there for want of credentials, which is what this can
+# assert. The generated file itself needs a live object to read (§12.2).
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" --config . import organizations/123456789012 --into smoke.satz --generate-unmapped >tmp/gen-into.txt 2>&1; then
   fail "a delta import must not succeed without credentials:\n$(cat tmp/gen-into.txt)"
 fi
 grep -q 'do not go together' tmp/gen-into.txt && fail "--generate-unmapped and --into are refused together again:\n$(cat tmp/gen-into.txt)"
-grep -q 'import: root organizations/123456789012 . into' tmp/gen-into.txt \
+grep -q "the APIs the import's reads call are not on corp-infra-001" tmp/gen-into.txt \
   || fail "the delta import did not start with --generate-unmapped:\n$(cat tmp/gen-into.txt)"
 grep -qi 'credential\|token\|auth\|ADC' tmp/gen-into.txt \
   || fail "the delta import stopped for a reason other than credentials:\n$(cat tmp/gen-into.txt)"
@@ -1244,7 +1245,8 @@ fi
 grep -q 'runs in local mode' tmp/import-as-local.txt \
   || fail "the --as refusal did not say the estate runs in local mode:\n$(cat tmp/import-as-local.txt)"
 # The same estate in cloud mode names an account. Offline the run gets as far as
-# the live sweep and stops there for want of credentials, which is what this can
+# its first live call — the APIs its reads call, in the estate's infrastructure
+# project — and stops there for want of credentials, which is what this can
 # assert; the binding itself is unit-tested against a fixture estate
 # (`import_identity`, src/main.rs).
 sed 's/deployment_mode *= *"local"/deployment_mode = "cloud"/' yaml/smoke.satz > yaml/smoke-cloud.satz
@@ -1252,7 +1254,7 @@ if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" --config . import organizations/123456789012 --as smoke-cloud.satz >tmp/import-as.txt 2>&1; then
   fail "a sweep must not succeed without credentials:\n$(cat tmp/import-as.txt)"
 fi
-grep -q 'import: root organizations/123456789012' tmp/import-as.txt \
+grep -q "the APIs the import's reads call are not on" tmp/import-as.txt \
   || fail "--as did not reach the live sweep:\n$(cat tmp/import-as.txt)"
 grep -qi 'credential\|token\|auth\|ADC' tmp/import-as.txt \
   || fail "the sweep stopped for a reason other than credentials:\n$(cat tmp/import-as.txt)"

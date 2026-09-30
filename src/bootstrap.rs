@@ -824,7 +824,7 @@ pub async fn bootstrap(
         // so read first — otherwise every re-run reports the link as newly created.
         // An unreadable current state is not evidence of anything; fall through to
         // the write rather than reporting a state we did not confirm.
-        let current = crate::gcp::billing::project_billing_account(&client, &token, &project_id)
+        let current = crate::gcp::billing::project_billing_account(&client, &token, &project_id, None)
             .await
             .ok()
             .flatten();

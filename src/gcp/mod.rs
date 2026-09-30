@@ -58,6 +58,37 @@ pub(crate) async fn with_identity<T>(sa: Option<String>, f: impl std::future::Fu
     CALL_IDENTITY.scope(sa, f).await
 }
 
+/// The project a live import's own reads are billed to, when the import is given an
+/// estate: that estate's infrastructure project (ADR 0074). Unset, the quota project
+/// is the caller's ([`crate::org_policy::resolve_quota_project`]).
+///
+/// A process binding like [`IMPERSONATE`], and for the same reason: `import` is a
+/// CLI command that serves one estate, and `satz mcp` does not run it.
+static READS_BILLED_TO: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Bill every read of this process to `project`, or confirm it already is.
+pub(crate) fn bill_reads_to(project: &str) -> Result<(), String> {
+    let bound = READS_BILLED_TO.get_or_init(|| project.to_string());
+    if bound == project {
+        return Ok(());
+    }
+    Err(format!("this process already bills its reads to {}, and this estate's infrastructure project is {} — one process serves one estate", bound, project))
+}
+
+/// The project [`bill_reads_to`] bound, if any.
+pub(crate) fn reads_billed_to() -> Option<String> {
+    READS_BILLED_TO.get().cloned()
+}
+
+/// `rb` with `quota` as its `x-goog-user-project`, the project Google tests the
+/// API's enablement and quota on; unchanged without one.
+pub(crate) fn billed_to(rb: reqwest::RequestBuilder, quota: Option<&str>) -> reqwest::RequestBuilder {
+    match quota {
+        Some(q) => rb.header("x-goog-user-project", q),
+        None => rb,
+    }
+}
+
 /// Bind the identity, or confirm it is already what the caller wants.
 ///
 /// Rebinding to the same target is fine (a command builds several clients).
@@ -867,6 +898,21 @@ mod tests {
         let mut policy = serde_json::json!({ "etag": "BwX1234=" });
         assert!(add_binding(&mut policy, "roles/viewer", "user:a@example.com"));
         assert_eq!(policy["bindings"][0]["members"][0], "user:a@example.com");
+    }
+}
+
+#[cfg(test)]
+mod billed_to_tests {
+    /// The preflight and the import name the infrastructure project as the quota
+    /// project of their Service Usage calls, so an API is switched on in a workload
+    /// project whatever that project has on itself.
+    #[test]
+    fn a_named_project_is_the_quota_project_of_the_call() {
+        let client = reqwest::Client::new();
+        let billed = super::billed_to(client.get("https://serviceusage.googleapis.com/v1/x"), Some("acme-infra-001")).build().unwrap();
+        assert_eq!(billed.headers().get("x-goog-user-project").and_then(|v| v.to_str().ok()), Some("acme-infra-001"));
+        let plain = super::billed_to(client.get("https://serviceusage.googleapis.com/v1/x"), None).build().unwrap();
+        assert!(plain.headers().get("x-goog-user-project").is_none());
     }
 }
 
