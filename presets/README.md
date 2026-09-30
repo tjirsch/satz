@@ -1818,7 +1818,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### v0.88.0
+### v0.89.0
 
 **An estate that uses both the CIS baseline and the Defender foundation plans one subject
 fewer.** `presets/integrations/microsoft-defender-for-cloud.satz` no longer contributes
@@ -1836,6 +1836,8 @@ scanning, onboarded outside the library, adds the account to its own
 `allowed_policy_member_subjects` and its plan does not move; without it the managed §1.1
 constraint refuses the scanner's grants. An estate that already names the account keeps
 it and its plan does not move.
+
+### v0.88.0
 
 **An API a resource inside a `google_project` node needs is judged on THAT project.** The
 node's provider alias bills its calls to the project itself, so Google tests the API
