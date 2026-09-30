@@ -66,7 +66,8 @@ pub(crate) const READ: &[Entry] = &[
     org("resourcemanager.folders.list", &["roles/browser"]),
     org("resourcemanager.organizations.getIamPolicy", &["roles/iam.securityReviewer"]),
     org("cloudasset.assets.searchAllResources", &["roles/cloudasset.viewer"]),
-    // API calls are billed to the infra project (user_project_override)
+    // every provider bills its calls to a project (user_project_override), which
+    // needs this there: the infra project, and each project node's own
     project("serviceusage.services.use", &["roles/serviceusage.serviceUsageConsumer"]),
 ];
 
@@ -230,15 +231,6 @@ pub(crate) fn entries_for(tf_type: &str) -> Option<&'static [Entry]> {
     TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, e, _)| *e)
 }
 
-/// The APIs one resource type is served by. Every call the provider makes for it
-/// is billed to the infra project (`user_project_override`), so these have to be
-/// enabled THERE whatever the resource's own scope is — a budget hangs off the
-/// billing account and an org policy off the organisation, and both still need
-/// their API on the project being billed for the call.
-pub(crate) fn apis_for(tf_type: &str) -> Option<&'static [&'static str]> {
-    TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, _, a)| *a)
-}
-
 /// The whole table as data — what `--format json` prints and
 /// `scripts/check_prerequisites.py` reads.
 pub(crate) fn table_json() -> serde_json::Value {
@@ -283,62 +275,198 @@ pub(crate) struct Need {
     pub scope: Scope,
 }
 
-/// One API an estate's emitted resources are served by, and the types that put it
-/// there. `declared` is whether a `google_project_service` in the estate enables it.
+/// The APIs one resource type is served by. Every provider block satz emits sets
+/// `user_project_override` with a `billing_project`, so Google tests each of these
+/// on the project the resource's provider bills its calls to — whatever the
+/// resource's own scope is: a budget hangs off the billing account and an org
+/// policy off the organisation, and both still need their API on the billed
+/// project. [`Billing`] says which project that is.
+pub(crate) fn apis_for(tf_type: &str) -> Option<&'static [&'static str]> {
+    TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, _, a)| *a)
+}
+
+/// The project each provider configuration bills its calls to, read from an
+/// emitted `providers.tf` — the file `tofu` itself reads. The default `google`
+/// provider (`alias = "google"`) bills to the infrastructure project, and each
+/// per-project alias (`project_<label>`, ADR 0059) to its own project, so a
+/// resource written inside a `google_project` node needs its APIs on THAT
+/// project and every other resource on the default provider's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Billing {
+    /// `<name>.<alias>` (or `<name>` for a block without an alias) → the literal
+    /// `billing_project` it names; `None` when it names none, or not as a literal
+    by_provider: BTreeMap<String, Option<String>>,
+}
+
+/// The provider reference that serves a resource: its `provider` attribute, else
+/// the unaliased configuration of the provider its type belongs to.
+fn provider_of(r: &crate::manifest::EmittedResource) -> String {
+    r.refs
+        .get("provider")
+        .or_else(|| r.attrs.get("provider"))
+        .cloned()
+        .unwrap_or_else(|| r.tf_type.split('_').next().unwrap_or_default().to_string())
+}
+
+impl Billing {
+    /// From the blocks of an emitted `providers.tf`.
+    pub(crate) fn from_blocks<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>) -> Self {
+        let literal = |b: &hcl::Block, key: &str| -> Option<String> {
+            b.body.attributes().find(|a| a.key() == key).and_then(|a| match &a.expr {
+                hcl::Expression::String(s) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            })
+        };
+        let mut by_provider = BTreeMap::new();
+        for b in blocks {
+            if b.identifier() != "provider" {
+                continue;
+            }
+            let Some(name) = b.labels().first().map(|l| l.as_str().to_string()) else { continue };
+            let key = match literal(b, "alias") {
+                Some(alias) => format!("{}.{}", name, alias),
+                None => name,
+            };
+            by_provider.insert(key, literal(b, "billing_project"));
+        }
+        Billing { by_provider }
+    }
+
+    /// From the text of an emitted `providers.tf`.
+    pub(crate) fn parse(providers_tf: &str) -> Result<Self, String> {
+        let body = hcl::parse(providers_tf).map_err(|e| format!("the emitted providers.tf: {}", e))?;
+        Ok(Self::from_blocks(body.blocks()))
+    }
+
+    /// The project the default `google` provider bills to — the infrastructure
+    /// project wherever the estate binds one.
+    pub(crate) fn default_project(&self) -> Option<&str> {
+        self.by_provider.get("google.google").and_then(|p| p.as_deref())
+    }
+
+    /// Every project some provider bills its calls to.
+    pub(crate) fn projects(&self) -> BTreeSet<&str> {
+        self.by_provider.values().filter_map(|p| p.as_deref()).collect()
+    }
+
+    /// The project `r`'s calls are billed to, or the provider reference that
+    /// names no billing project.
+    pub(crate) fn of(&self, r: &crate::manifest::EmittedResource) -> Result<&str, String> {
+        let provider = provider_of(r);
+        match self.by_provider.get(&provider) {
+            Some(Some(project)) => Ok(project),
+            _ => Err(provider),
+        }
+    }
+}
+
+/// One API an estate's emitted resources are served by, on the project their
+/// calls are billed to, and the types that put it there. `declared` is whether a
+/// `google_project_service` in the estate enables it on that project.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ApiNeed {
     pub api: String,
+    /// the project the provider serving these types bills its calls to
+    pub project: String,
     /// the resource types that need it, sorted
     pub reason: Vec<String>,
     pub declared: bool,
 }
 
-/// The APIs the estate's emitted types need, each marked with whether the INFRA
-/// project enables it. That project is the one that counts whatever the resource's
-/// own scope is: every provider block carries `user_project_override` with
-/// `billing_project = infra_project_name`, so Google bills the call there and wants
-/// the API enabled there. A pack that enables an API on a project of its own has
-/// not satisfied this — that project needs it for its own calls, which is the
-/// pack's business; the billed project is the estate's.
-pub(crate) fn apis(manifest: &Manifest, infra_project: &str) -> Vec<ApiNeed> {
-    let declared: BTreeSet<&str> = manifest
-        .of_type("google_project_service")
-        .filter(|r| manifest.project_of(r).as_deref() == Some(infra_project))
-        .filter_map(|r| r.attrs.get("service").map(String::as_str))
-        .collect();
-    let mut by_api: BTreeMap<&'static str, BTreeSet<String>> = BTreeMap::new();
-    for t in manifest.resources.values().map(|r| r.tf_type.as_str()).collect::<BTreeSet<_>>() {
-        for api in apis_for(t).unwrap_or(&[]) {
-            by_api.entry(api).or_default().insert(t.to_string());
-        }
-    }
-    by_api
-        .into_iter()
-        .map(|(api, reason)| ApiNeed {
-            declared: declared.contains(api),
-            api: api.to_string(),
-            reason: reason.into_iter().collect(),
-        })
-        .collect()
+/// Resource types whose APIs could not be judged: the provider that serves them
+/// names no billing project, so there is no project to judge them on.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct Unbilled {
+    /// the provider reference, `google.google` for the default provider
+    pub provider: String,
+    /// whether `providers.tf` configures that provider at all: `false` is a
+    /// reference to a provider nothing declares, `true` one that names no
+    /// `billing_project`
+    pub configured: bool,
+    /// the resource types it serves that need an API, sorted
+    pub reason: Vec<String>,
 }
 
-/// Every service the infra project declares, in the estate and in the packs it
-/// uses. This is what `bootstrap` enables imperatively before `tofu` runs: the
-/// race it dodges is the same one the emitter's ordering pass handles inside an
-/// apply, and on day 0 there is no apply yet.
-pub(crate) fn declared_apis(manifest: &Manifest, infra_project: &str) -> Vec<String> {
+/// What the API half of the prerequisite check found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ApiCheck {
+    /// per project and API, sorted by project then API
+    pub needs: Vec<ApiNeed>,
+    pub unbilled: Vec<Unbilled>,
+}
+
+impl ApiCheck {
+    /// The needs no `google_project_service` on their project enables.
+    pub(crate) fn missing(&self) -> Vec<ApiNeed> {
+        self.needs.iter().filter(|a| !a.declared).cloned().collect()
+    }
+}
+
+/// The APIs the estate's emitted types need, each on the project the resource's
+/// provider bills to and marked with whether the estate enables it there. A pack
+/// that enables an API on some other project has not satisfied the need — the
+/// project that counts is the one Google tests the call against.
+pub(crate) fn apis(manifest: &Manifest, billing: &Billing) -> ApiCheck {
+    let mut by_need: BTreeMap<(String, &'static str), BTreeSet<String>> = BTreeMap::new();
+    let mut unbilled: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for r in manifest.resources.values() {
+        let needed = apis_for(&r.tf_type).unwrap_or(&[]);
+        if needed.is_empty() {
+            continue;
+        }
+        match billing.of(r) {
+            Ok(project) => {
+                for api in needed {
+                    by_need.entry((project.to_string(), api)).or_default().insert(r.tf_type.clone());
+                }
+            }
+            Err(provider) => {
+                unbilled.entry(provider).or_default().insert(r.tf_type.clone());
+            }
+        }
+    }
+    let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    ApiCheck {
+        needs: by_need
+            .into_iter()
+            .map(|((project, api), reason)| {
+                let on = declared.entry(project.clone()).or_insert_with(|| declared_apis(manifest, &project).into_iter().collect());
+                ApiNeed { declared: on.contains(api), api: api.to_string(), project, reason: reason.into_iter().collect() }
+            })
+            .collect(),
+        unbilled: unbilled
+            .into_iter()
+            .map(|(provider, reason)| Unbilled {
+                configured: billing.by_provider.contains_key(&provider),
+                provider,
+                reason: reason.into_iter().collect(),
+            })
+            .collect(),
+    }
+}
+
+/// Every service the estate declares on `project`, in the estate and in the
+/// packs it uses. `bootstrap` enables the infrastructure project's imperatively
+/// before `tofu` runs — the race it dodges is the same one the emitter's
+/// ordering pass handles inside an apply, and on day 0 there is no apply yet —
+/// and the `plan`/`apply` preflight enables each billed project's.
+pub(crate) fn declared_apis(manifest: &Manifest, project: &str) -> Vec<String> {
     manifest
         .of_type("google_project_service")
-        .filter(|r| manifest.project_of(r).as_deref() == Some(infra_project))
+        .filter(|r| manifest.project_of(r).as_deref() == Some(project))
         .filter_map(|r| r.attrs.get("service").cloned())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
 }
 
-/// The APIs the infra project does not enable.
-pub(crate) fn missing_apis(manifest: &Manifest, infra_project: &str) -> Vec<ApiNeed> {
-    apis(manifest, infra_project).into_iter().filter(|a| !a.declared).collect()
+/// The missing APIs by project, for [`write_apis`] and the `gcloud` lines.
+pub(crate) fn by_project(missing: &[ApiNeed]) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for a in missing {
+        out.entry(a.project.clone()).or_default().insert(a.api.clone());
+    }
+    out
 }
 
 /// What an estate's emitted resources need — `read` first, then one `Need` per
@@ -779,46 +907,53 @@ pub(crate) fn write_grants(
     Ok(written)
 }
 
-/// Write the APIs into the estate's own `google_project` block for the infra
-/// project: into its `project_service` list when it has one, else a list created
-/// right after `project_id`. The list is the estate's record of what is switched
-/// on, and it is where the emitter derives `google_project_service.<label>_<service>`
-/// from — the address the CIS pack claims 5.0 §2.14 against — so this only ever
-/// ADDS, in the list's own order.
+/// Write the APIs into the estate's own `google_project` block for each project
+/// they are missing on: into its `project_service` list when it has one, else a
+/// list created right after `project_id`. The list is the estate's record of what
+/// is switched on, and it is where the emitter derives
+/// `google_project_service.<label>_<service>` from — the address the CIS pack
+/// claims 5.0 §2.14 against — so this only ever ADDS, in the list's own order.
 ///
-/// It refuses rather than guesses: an estate that binds no `infra_project_name`,
-/// or whose infra project is declared somewhere other than this file (a pack, most
-/// likely), is named and nothing is written. A splice into a pristine pack would be
-/// overwritten by the next `merge-presets`.
+/// It refuses rather than guesses: a project declared somewhere other than this
+/// file (a pack, most likely) is named with the APIs to add by hand, and nothing
+/// is written. A splice into a pristine pack would be overwritten by the next
+/// `merge-presets`.
 pub(crate) fn write_apis(
     estate: &Path,
     params: &HashMap<String, String>,
-    apis: &BTreeSet<String>,
+    apis: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<Vec<String>, String> {
-    if apis.is_empty() {
+    if apis.values().all(BTreeSet::is_empty) {
         return Ok(Vec::new());
     }
-    let infra = params.get("infra_project_name").filter(|v| !v.is_empty()).ok_or_else(|| {
-        format!(
-            "{}: the estate binds no infra_project_name, so there is no project to enable {} on — \
-             nothing was written",
-            estate.display(),
-            apis.iter().cloned().collect::<Vec<_>>().join(", ")
-        )
-    })?;
     let text = std::fs::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
-    let out = add_to_service_list(&text, infra, params, apis).ok_or_else(|| {
-        format!(
-            "{}: no `google_project` block in this file declares project_id {} — the infra project \
-             is declared elsewhere (a pack is never edited: the next merge-presets would overwrite \
-             it). Add these to its project_service list by hand: {}",
+    let mut out = text.clone();
+    let mut elsewhere = Vec::new();
+    let mut written = Vec::new();
+    for (project, list) in apis {
+        if list.is_empty() {
+            continue;
+        }
+        match add_to_service_list(&out, project, params, list) {
+            Some(edited) => {
+                out = edited;
+                written.extend(list.iter().map(|a| format!("{} on {}", a, project)));
+            }
+            None => elsewhere.push(format!("{}: {}", project, list.iter().cloned().collect::<Vec<_>>().join(", "))),
+        }
+    }
+    if !elsewhere.is_empty() {
+        return Err(format!(
+            "{}: no `google_project` block in this file declares {} — the project is declared \
+             elsewhere (a pack is never edited: the next merge-presets would overwrite it), and \
+             nothing was written. Add these to its project_service list by hand:\n  {}",
             estate.display(),
-            infra,
-            apis.iter().cloned().collect::<Vec<_>>().join(", ")
-        )
-    })?;
+            if elsewhere.len() == 1 { "this project" } else { "these projects" },
+            elsewhere.join("\n  ")
+        ));
+    }
     crate::fsx::write_edited_satz(estate, &text, &out).map_err(|e| e.to_string())?;
-    Ok(apis.iter().map(|a| format!("{} on {}", a, infra)).collect())
+    Ok(written)
 }
 
 /// Splice the services into the `project_service` list of the `google_project`
@@ -1262,21 +1397,103 @@ mod tests {
         assert!(add_to_service_list(other, "corp-infra-001", &params(), &apis(&["monitoring.googleapis.com"])).is_none());
     }
 
+    fn per_project(list: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        list.iter().map(|(p, a)| (p.to_string(), apis(a))).collect()
+    }
+
+    /// Each project's APIs land in that project's own list, and a project this file
+    /// does not declare refuses the whole write — the other project's list included.
     #[test]
-    fn write_apis_refuses_an_estate_with_no_infra_project_and_writes_nothing() {
+    fn write_apis_edits_each_project_and_refuses_one_declared_elsewhere() {
         let dir = std::env::temp_dir().join(format!("satz-apis-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let estate = dir.join("e.satz");
-        let src = "estate e\n\ngoogle_project {\n  other {\n    project_id = \"corp-other-001\"\n  }\n}\n";
+        let src = "estate e\n\ngoogle_project {\n  infra {\n    project_id      = infra_project_name\n    project_service = [\n      \"iam.googleapis.com\",\n    ]\n  }\n  data {\n    project_id = \"corp-data-001\"\n  }\n}\n";
         std::fs::write(&estate, src).unwrap();
-        // the param is bound, but no block in this file declares that project
-        let err = write_apis(&estate, &params(), &apis(&["monitoring.googleapis.com"])).unwrap_err();
-        assert!(err.contains("corp-infra-001") && err.contains("monitoring.googleapis.com"), "{}", err);
+        let written = write_apis(
+            &estate,
+            &params(),
+            &per_project(&[("corp-infra-001", &["storage.googleapis.com"]), ("corp-data-001", &["bigquery.googleapis.com"])]),
+        )
+        .unwrap();
+        assert_eq!(written, ["bigquery.googleapis.com on corp-data-001", "storage.googleapis.com on corp-infra-001"]);
+        let edited = std::fs::read_to_string(&estate).unwrap();
+        assert!(edited.contains("      \"iam.googleapis.com\",\n      \"storage.googleapis.com\",\n    ]"), "{}", edited);
+        assert!(edited.contains("project_id = \"corp-data-001\"\n    project_service = [\n      \"bigquery.googleapis.com\",\n    ]"), "{}", edited);
+
+        // a project no block in this file declares: named, and nothing written
+        std::fs::write(&estate, src).unwrap();
+        let err = write_apis(
+            &estate,
+            &params(),
+            &per_project(&[("corp-infra-001", &["storage.googleapis.com"]), ("corp-logs-001", &["logging.googleapis.com"])]),
+        )
+        .unwrap_err();
+        assert!(err.contains("corp-logs-001: logging.googleapis.com") && !err.contains("corp-infra-001:"), "{}", err);
         assert_eq!(std::fs::read_to_string(&estate).unwrap(), src, "nothing may be written");
-        // and with no infra project bound at all, it says that instead
-        let err = write_apis(&estate, &HashMap::new(), &apis(&["monitoring.googleapis.com"])).unwrap_err();
-        assert!(err.contains("infra_project_name"), "{}", err);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const PROVIDERS: &str = "provider \"google\" {\n  alias = \"google\"\n  billing_project = \"corp-infra-001\"\n  user_project_override = true\n}\n\
+        provider \"google\" {\n  alias = \"project_data\"\n  project = \"corp-data-001\"\n  billing_project = \"corp-data-001\"\n  user_project_override = true\n}\n\
+        provider \"google-beta\" {\n  alias = \"google-beta\"\n}\n";
+
+    /// The project a resource's calls are billed to is its provider's: the default
+    /// provider's for a resource at the top, the project's own for one inside a
+    /// project node — whatever project the resource itself names.
+    #[test]
+    fn each_api_is_judged_on_the_project_its_provider_bills_to() {
+        let billing = Billing::parse(PROVIDERS).unwrap();
+        assert_eq!(billing.default_project(), Some("corp-infra-001"));
+        assert_eq!(billing.projects().into_iter().collect::<Vec<_>>(), ["corp-data-001", "corp-infra-001"]);
+        let m = manifest(
+            "resource \"google_project\" \"data\" {\n  project_id = \"corp-data-001\"\n  provider = google.google\n}\n\
+             resource \"google_project_service\" \"data_bigquery\" {\n  project = google_project.data.project_id\n  service = \"bigquery.googleapis.com\"\n  provider = google.google\n}\n\
+             resource \"google_project_service\" \"infra_storage\" {\n  project = \"corp-infra-001\"\n  service = \"storage.googleapis.com\"\n  provider = google.google\n}\n\
+             resource \"google_bigquery_dataset\" \"d\" {\n  project = google_project.data.project_id\n  dataset_id = \"d\"\n  provider = google.project_data\n}\n\
+             resource \"google_storage_bucket\" \"top\" {\n  project = \"corp-data-001\"\n  name = \"b\"\n  provider = google.google\n}\n\
+             resource \"google_storage_bucket\" \"inner\" {\n  project = google_project.data.project_id\n  name = \"c\"\n  provider = google.project_data\n}\n\
+             resource \"google_pubsub_topic\" \"beta\" {\n  name = \"t\"\n  provider = google-beta.google-beta\n}\n",
+        );
+        let check = super::apis(&m, &billing);
+        let got: Vec<(&str, &str, bool)> =
+            check.needs.iter().map(|a| (a.project.as_str(), a.api.as_str(), a.declared)).collect();
+        assert_eq!(
+            got,
+            [
+                ("corp-data-001", "bigquery.googleapis.com", true),
+                ("corp-data-001", "storage.googleapis.com", false),
+                ("corp-infra-001", "cloudbilling.googleapis.com", false),
+                ("corp-infra-001", "cloudresourcemanager.googleapis.com", false),
+                // a project's services are served by the provider around the project
+                ("corp-infra-001", "serviceusage.googleapis.com", false),
+                // the top-level bucket names the data project and is billed to infra
+                ("corp-infra-001", "storage.googleapis.com", true),
+            ]
+        );
+        // a provider that names no billing project is named, never judged somewhere
+        assert_eq!(
+            check.unbilled,
+            [Unbilled {
+                provider: "google-beta.google-beta".to_string(),
+                configured: true,
+                reason: vec!["google_pubsub_topic".to_string()]
+            }]
+        );
+        assert_eq!(
+            by_project(&check.missing()).into_iter().map(|(p, a)| (p, a.into_iter().collect::<Vec<_>>())).collect::<Vec<_>>(),
+            [
+                ("corp-data-001".to_string(), vec!["storage.googleapis.com".to_string()]),
+                (
+                    "corp-infra-001".to_string(),
+                    vec![
+                        "cloudbilling.googleapis.com".to_string(),
+                        "cloudresourcemanager.googleapis.com".to_string(),
+                        "serviceusage.googleapis.com".to_string()
+                    ]
+                ),
+            ]
+        );
     }
 
     #[test]

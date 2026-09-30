@@ -28,6 +28,11 @@ pub(crate) struct Declared {
     /// ambiguous, unresolvable): the sweep cannot subtract these, so a delta
     /// import must not proceed — it would re-declare what the estate owns
     pub blocked: Vec<(String, String)>,
+    /// declared IAM grants whose import id satz cannot compose (a member it
+    /// cannot read): each is reported for itself and the run goes on. One grant
+    /// edge is all it stands for, so the import may declare that edge again —
+    /// never a whole resource the estate owns
+    pub unresolved_grants: Vec<(String, String)>,
     /// declared with no adoption rule: not subtractable either, reported
     pub no_rule: Vec<String>,
 }
@@ -39,6 +44,10 @@ pub(crate) fn declared_from(resolutions: &[Resolution]) -> Declared {
             Outcome::AlreadyAdopted(id) | Outcome::Resolved { id, .. } | Outcome::NeedsActivation { id, .. } => id.clone(),
             Outcome::OnApply | Outcome::ParentOnApply(_) => {
                 d.not_live.push(r.address.clone());
+                continue;
+            }
+            Outcome::Unresolvable(why) if crate::adopt::is_grant(&r.tf_type) => {
+                d.unresolved_grants.push((r.address.clone(), why.clone()));
                 continue;
             }
             Outcome::Failed(why) | Outcome::Unresolvable(why) | Outcome::NeedsLookup(why) => {
@@ -568,5 +577,21 @@ folder:
         assert_eq!(d.ids.len(), 1);
         assert_eq!(d.blocked.len(), 2, "{:?}", d.blocked);
         assert_eq!(d.no_rule, vec!["google_storage_bucket.d"]);
+    }
+
+    /// A grant whose import id cannot be composed is reported for itself; it
+    /// does not stop the delta the way an unresolvable resource does.
+    #[test]
+    fn an_unresolvable_grant_is_reported_and_blocks_nothing() {
+        use crate::adopt::{Outcome, Resolution};
+        let mk = |a: &str, t: &str, o: Outcome| Resolution {
+            address: a.into(), tf_type: t.into(), natural_key: String::new(), outcome: o, origin: None, org_policy: None, note: None,
+        };
+        let d = declared_from(&[
+            mk("google_project_iam_member.w", "google_project_iam_member", Outcome::Unresolvable("member is computed".into())),
+            mk("google_storage_bucket.b", "google_storage_bucket", Outcome::Unresolvable("name is computed".into())),
+        ]);
+        assert_eq!(d.unresolved_grants, vec![("google_project_iam_member.w".to_string(), "member is computed".to_string())]);
+        assert_eq!(d.blocked, vec![("google_storage_bucket.b".to_string(), "name is computed".to_string())]);
     }
 }

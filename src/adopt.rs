@@ -163,6 +163,9 @@ pub(crate) fn render_rule(rules: &ImportConfig, r: &EmittedResource, manifest: &
 struct Known {
     ids: BTreeMap<String, String>,
     verdicts: BTreeMap<String, Outcome>,
+    /// Values Google issues and the estate never states, read live, by
+    /// traversal (`google_logging_organization_sink.s.writer_identity`).
+    issued: BTreeMap<String, String>,
 }
 
 impl Known {
@@ -194,6 +197,16 @@ impl Missing {
             Missing::NotLive(why) => Outcome::ParentOnApply(why),
             Missing::Failed(why) => Outcome::Failed(why),
             Missing::Unresolvable(why) => Outcome::Unresolvable(why),
+        }
+    }
+}
+
+impl Missing {
+    /// The same finding, said about the resource it concerns.
+    fn with_subject(self, subject: &str) -> Missing {
+        match self {
+            Missing::Failed(why) => Missing::Failed(format!("{}: {}", subject, why)),
+            other => other,
         }
     }
 }
@@ -258,6 +271,15 @@ pub(crate) async fn resolve<L: Live>(
                 "google_org_policy_policy" => resolve_org_policy(r, manifest, &known, opts, live, &mut res).await,
                 "google_billing_budget" => resolve_budget(r, live).await,
                 _ => match rule_for(rules, &r.tf_type) {
+                    Rule::Template(t) if grant_parent(&r.tf_type, "").is_some() => match read_issued(r, manifest, &mut known, live).await {
+                        Err(missing) => (t.clone(), missing.outcome()),
+                        Ok(()) => match render_template(&t, r, manifest, &known) {
+                            (_, Outcome::Resolved { id, verified: false }) => {
+                                resolve_grant(r, &id, manifest, &known, &mut iam_policies, live).await
+                            }
+                            other => other,
+                        },
+                    },
                     Rule::Template(t) => match render_template(&t, r, manifest, &known) {
                         (_, Outcome::Resolved { id, verified: false }) if grant_parent(&r.tf_type, "").is_some() => {
                             resolve_grant(r, &id, manifest, &known, &mut iam_policies, live).await
@@ -438,6 +460,9 @@ fn value_of(r: &EmittedResource, key: &str, manifest: &Manifest, known: &Known) 
             _ => Missing::Unresolvable(format!("{} is not resolved yet ({} on it must be adopted or pinned first)", target, key)),
         });
     }
+    if let Some(v) = known.issued.get(traversal) {
+        return Ok(v.clone());
+    }
     match t.attrs.get(&attr) {
         Some(v) if crate::manifest::has_interpolation(v) => Err(Missing::Unresolvable(format!(
             "{}: `{}` references {}.{}, which is itself a reference known only after apply",
@@ -454,6 +479,83 @@ fn value_of(r: &EmittedResource, key: &str, manifest: &Manifest, known: &Known) 
             target,
             attr
         ))),
+    }
+}
+
+/// Whether `attr` of a resource of `tf_type` is a value Google issues when the
+/// resource is created, which the estate cannot state and a grant can name as
+/// its member: a log sink's writer identity.
+fn is_issued(tf_type: &str, attr: &str) -> bool {
+    attr == "writer_identity"
+        && matches!(
+            tf_type,
+            "google_logging_organization_sink"
+                | "google_logging_folder_sink"
+                | "google_logging_project_sink"
+                | "google_logging_billing_account_sink"
+        )
+}
+
+/// Read, live, every issued value `r` references (`member = <sink>.writer_identity`)
+/// into `known.issued`, so the grant's import id renders with the value Google
+/// gave the sink. The sink's own verdict decides first: a sink that is not live
+/// takes the grant with it, one that could not be resolved leaves the grant
+/// unresolved for the same reason. Only this grant's verdict depends on it.
+async fn read_issued<L: Live>(r: &EmittedResource, manifest: &Manifest, known: &mut Known, live: &mut L) -> Result<(), Missing> {
+    for traversal in r.refs.values() {
+        let Some((target, attr)) = ref_target(traversal) else { continue };
+        let Some(t) = manifest.resources.get(&target) else { continue };
+        if !is_issued(&t.tf_type, &attr) || known.issued.contains_key(traversal) {
+            continue;
+        }
+        let Some(id) = known.ids.get(&target).cloned() else {
+            return Err(match known.verdicts.get(&target) {
+                Some(Outcome::OnApply) | Some(Outcome::ParentOnApply(_)) => {
+                    Missing::NotLive(format!("{} is not live — its {} is issued when apply creates it", target, attr))
+                }
+                Some(Outcome::Failed(e)) => Missing::Failed(format!("{}: {}", target, e)),
+                Some(other) => Missing::Unresolvable(format!(
+                    "{}: `{}` is issued by Google, and {} has no live id in this run ({:?})",
+                    r.address(),
+                    traversal,
+                    target,
+                    other
+                )),
+                None => Missing::Unresolvable(format!("{}: `{}` is issued by Google, and {} is not resolved in this run", r.address(), traversal, target)),
+            });
+        };
+        let issued = sink_writer_identity(&id, live).await.map_err(|e| e.with_subject(&target))?;
+        known.issued.insert(traversal.clone(), issued);
+    }
+    Ok(())
+}
+
+/// The writer identity of the live sink `id` (`organizations/<n>/sinks/<name>`,
+/// `folders/<n>/…`, `projects/<id>/…`, `billingAccounts/<id>/…`), read from its
+/// Cloud Asset Inventory asset under the sink's own parent. Cloud Asset names a
+/// project by its number, so under a project the sink is matched by its name.
+async fn sink_writer_identity<L: Live>(id: &str, live: &mut L) -> Result<String, Missing> {
+    let Some((scope, name)) = id.split_once("/sinks/") else {
+        return Err(Missing::Unresolvable(format!("`{}` is not a sink id", id)));
+    };
+    let assets = live.search(scope, "logging.googleapis.com/LogSink").await.map_err(Missing::Failed)?;
+    let hits: Vec<&serde_json::Value> = assets
+        .iter()
+        .filter(|(path, _)| {
+            path == id
+                || (scope.starts_with("projects/")
+                    && path.strip_prefix("projects/").and_then(|p| p.split_once('/')).is_some_and(|(_, rest)| rest == format!("sinks/{}", name)))
+        })
+        .map(|(_, data)| data)
+        .collect();
+    match hits.as_slice() {
+        [] => Err(Missing::NotLive(format!("{} is not live — its writer identity is issued when apply creates it", id))),
+        [one] => one
+            .get("writerIdentity")
+            .and_then(|w| w.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| Missing::Unresolvable(format!("the live sink {} carries no writerIdentity", id))),
+        many => Err(Missing::Unresolvable(format!("{} live sinks answer to {}", many.len(), id))),
     }
 }
 
@@ -728,6 +830,12 @@ fn grant_parent(tf_type: &str, parent: &str) -> Option<(PolicyApi, String)> {
         "google_bigquery_dataset_iam_member" => (BigQueryDataset, parent.to_string()),
         _ => return None,
     })
+}
+
+/// Whether `tf_type` is an IAM grant adoption decides against its parent's
+/// live policy.
+pub(crate) fn is_grant(tf_type: &str) -> bool {
+    grant_parent(tf_type, "").is_some()
 }
 
 /// The condition a grant declares, as far as it can be compared with a live one.
@@ -1634,6 +1742,102 @@ import {
         );
         assert!(live.calls.contains(&"search projects/acme-infra-001 test.googleapis.com/google_monitoring_alert_policy".to_string()), "{:?}", live.calls);
         assert_eq!(outcome(&rs, "google_widget.w"), &Outcome::NoRule);
+    }
+
+    /// A number fills an import id as its text (a firewall-policy rule's
+    /// `{priority}`), and a grant to a sink's writer identity is decided with the
+    /// identity the live sink carries — which the estate cannot state.
+    #[tokio::test]
+    async fn a_number_fills_an_import_id_and_a_writer_identity_is_read_live() {
+        let m = crate::manifest::Manifest::parse(
+            r#"
+resource "google_compute_network_firewall_policy" "shared" {
+  name = "net-policy"
+  project = "acme-net"
+}
+resource "google_compute_network_firewall_policy_rule" "allow" {
+  firewall_policy = google_compute_network_firewall_policy.shared.name
+  project = "acme-net"
+  priority = 1000
+  disabled = false
+}
+resource "google_logging_organization_sink" "audit" {
+  name = "audit"
+  org_id = "123456789012"
+}
+resource "google_storage_bucket_iam_member" "writer" {
+  bucket = "acme-audit"
+  role = "roles/storage.objectCreator"
+  member = google_logging_organization_sink.audit.writer_identity
+}
+resource "google_logging_project_sink" "metrics" {
+  name = "metrics"
+  project = "acme-infra-001"
+}
+resource "google_project_iam_member" "metrics_writer" {
+  project = "acme-infra-001"
+  role = "roles/logging.bucketWriter"
+  member = google_logging_project_sink.metrics.writer_identity
+}
+resource "google_logging_organization_sink" "fresh" {
+  name = "fresh"
+  org_id = "123456789012"
+}
+resource "google_project_iam_member" "fresh_writer" {
+  project = "acme-infra-001"
+  role = "roles/logging.bucketWriter"
+  member = google_logging_organization_sink.fresh.writer_identity
+}
+"#,
+        );
+        let rules = rules(&[
+            ("google_compute_network_firewall_policy_rule", Some("projects/{project}/global/firewallPolicies/{firewall_policy}/rules/{priority}"), None),
+            ("google_logging_organization_sink", Some("organizations/{org_id}/sinks/{name}"), None),
+            ("google_logging_project_sink", Some("projects/{project}/sinks/{name}"), None),
+            ("google_storage_bucket_iam_member", Some("b/{bucket} {role} {member}"), None),
+            ("google_project_iam_member", Some("{project} {role} {member}"), None),
+        ]);
+        let org_writer = "serviceAccount:o-sink@example.iam.gserviceaccount.com";
+        let project_writer = "serviceAccount:p-sink@example.iam.gserviceaccount.com";
+        let mut live = fake();
+        live.searches.insert(
+            ("organizations/123456789012".into(), "logging.googleapis.com/LogSink".into()),
+            vec![
+                // a project's sink of the same name, listed under the organisation too
+                ("projects/100000000001/sinks/audit".into(), serde_json::json!({"writerIdentity": project_writer})),
+                ("organizations/123456789012/sinks/audit".into(), serde_json::json!({"writerIdentity": org_writer})),
+            ],
+        );
+        live.searches.insert(
+            ("projects/acme-infra-001".into(), "logging.googleapis.com/LogSink".into()),
+            vec![("projects/100000000001/sinks/metrics".into(), serde_json::json!({"writerIdentity": project_writer}))],
+        );
+        live.iam.insert(
+            "b/acme-audit".into(),
+            Ok(Some(serde_json::json!({ "bindings": [{ "role": "roles/storage.objectCreator", "members": [org_writer] }] }))),
+        );
+        live.iam.insert(
+            "projects/acme-infra-001".into(),
+            Ok(Some(serde_json::json!({ "bindings": [{ "role": "roles/logging.bucketWriter", "members": [project_writer] }] }))),
+        );
+        let rs = resolve(&m, &rules, &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
+
+        assert_eq!(
+            outcome(&rs, "google_compute_network_firewall_policy_rule.allow"),
+            &Outcome::Resolved { id: "projects/acme-net/global/firewallPolicies/net-policy/rules/1000".into(), verified: false }
+        );
+        assert_eq!(
+            outcome(&rs, "google_storage_bucket_iam_member.writer"),
+            &Outcome::Resolved { id: format!("b/acme-audit roles/storage.objectCreator {}", org_writer), verified: true }
+        );
+        assert_eq!(
+            outcome(&rs, "google_project_iam_member.metrics_writer"),
+            &Outcome::Resolved { id: format!("acme-infra-001 roles/logging.bucketWriter {}", project_writer), verified: true }
+        );
+        // a sink that is not live: its writer identity does not exist yet, and the
+        // grant is created with it
+        let fresh = outcome(&rs, "google_project_iam_member.fresh_writer");
+        assert!(matches!(fresh, Outcome::ParentOnApply(why) if why.contains("fresh")), "{:?}", fresh);
     }
 
     #[tokio::test]

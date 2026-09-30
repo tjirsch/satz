@@ -541,9 +541,12 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
 
 /// Everything `init --from-live` can derive from the ADC alone.
 pub(crate) struct LiveDefaults {
-    /// Local part of the ADC identity.
-    pub(crate) first_admin: String,
-    pub(crate) customer_domain: String,
+    /// Local part of the ADC identity — `None` when the run is bound to a
+    /// service account, which is nobody's administrator.
+    pub(crate) first_admin: Option<String>,
+    /// Domain of the ADC identity — `None` when the run is bound to a service
+    /// account, whose domain is Google's.
+    pub(crate) customer_domain: Option<String>,
     /// Bare organization number — `None` on a greenfield tenant.
     pub(crate) org_id: Option<String>,
     /// The organization's display name — its primary domain, which is the
@@ -563,22 +566,37 @@ pub(crate) struct LiveDefaults {
 /// so explicit flags keep working on accounts that see many organizations.
 /// `org_hint` names the organization the caller already knows (an import's
 /// sweep root): among many visible ones, that one is taken.
+///
+/// `principal` is the identity the run is bound to when satz already knows it —
+/// the IaC service account an `import --as` or `--into` impersonates. The token
+/// is then that account's, and nothing is asked of it about who it is: an
+/// impersonated token carries the cloud-platform scope alone, which no
+/// tokeninfo e-mail answers. `None` asks the ADC who it is.
 pub(crate) async fn live_defaults(
     need_org: bool,
     need_billing: bool,
     org_hint: Option<&str>,
+    principal: Option<&str>,
 ) -> Result<LiveDefaults, String> {
     let token = crate::gcp::access_token().await?;
-    let info = credential_info(&token).await;
-    let Some(email) = info.email else {
-        return Err(
-            "could not determine the ADC identity — run `gcloud auth application-default login`"
-                .to_string(),
-        );
+    let (email, source) = match principal {
+        Some(p) => (p.to_string(), "the IaC service account the run is bound to"),
+        None => match credential_info(&token).await.email {
+            Some(e) => (e, "the ADC"),
+            None => {
+                return Err(
+                    "could not determine the ADC identity — run `gcloud auth application-default login`"
+                        .to_string(),
+                )
+            }
+        },
     };
     let Some((local, domain)) = email.split_once('@') else {
-        return Err(format!("ADC identity {:?} is not an email address", email));
+        return Err(format!("identity {:?} is not an email address", email));
     };
+    // the account a run is bound to is a service account, nobody's administrator
+    // and not the customer's domain; what the ADC says of itself is taken as said
+    let person = principal.is_none();
 
     let client = reqwest::Client::new();
     let (org_id, customer_id, org_display_name) = if !need_org {
@@ -655,16 +673,16 @@ pub(crate) async fn live_defaults(
         }
     };
     println!(
-        "derived from the ADC: first_admin {}@{}, organization {}, customer id {}, billing account {}",
-        local,
-        domain,
+        "derived from {}: first_admin {}, organization {}, customer id {}, billing account {}",
+        source,
+        if person { email.clone() } else { format!("(not derived: {} is a service account)", email) },
         not_derived(need_org, &org_id, "(none visible)"),
         not_derived(need_org, &customer_id, "(unknown)"),
         not_derived(need_billing, &billing_account, "(not settled)")
     );
     Ok(LiveDefaults {
-        first_admin: local.to_string(),
-        customer_domain: domain.to_string(),
+        first_admin: person.then(|| local.to_string()),
+        customer_domain: person.then(|| domain.to_string()),
         org_id,
         org_display_name,
         customer_id,

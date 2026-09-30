@@ -613,7 +613,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         activate: bool,
     },
-    /// What the estate's resource types oblige it to declare and does not — the roles its IaC service account is missing, and the APIs its infrastructure project does not enable — written into the estate file
+    /// What the estate's resource types oblige it to declare and does not — the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to — written into the estate file
     ///
     /// Writing is the point: the declarations have to be there either way. The
     /// estate must compile and come out complete afterwards, or the file is
@@ -1451,19 +1451,19 @@ Thumbs.db
                 let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
                     let need_org = customer_organization_id.is_none() || customer_id.is_none();
                     let need_billing = billing_account_infra.is_none();
-                    match crate::gcp::identity::live_defaults(need_org, need_billing, None).await {
+                    match crate::gcp::identity::live_defaults(need_org, need_billing, None, None).await {
                         Ok(live) => {
                             let mut note = crate::init_params::Derivations::default();
                             let customer_domain = note.fill(
                                 "customer_domain",
                                 customer_domain,
-                                Some(live.customer_domain.clone()),
+                                live.customer_domain.clone(),
                                 "the ADC identity",
                             );
                             let iac_user = note.fill(
                                 "first_admin",
                                 iac_user,
-                                Some(format!("{}@{}", live.first_admin, live.customer_domain)),
+                                live.first_admin.as_ref().zip(live.customer_domain.as_ref()).map(|(a, d)| format!("{}@{}", a, d)),
                                 "the ADC identity",
                             );
                             let customer_id =
@@ -3135,7 +3135,21 @@ pub(crate) fn compile_tail(
     missing_required_findings(&out.missing_required, level, &mut f);
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
-    prerequisite_findings(&out.manifest, &fe.env, estate, estate_arg, estate_src, level, &mut f);
+    // a mode with no backend is already the finding at its line; the providers are not
+    // emitted without one. The prerequisite check reads them: they name the project
+    // each provider bills its calls to.
+    let providers_tf = if !mode_ok {
+        None
+    } else {
+        match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
+                None
+            }
+        }
+    };
+    prerequisite_findings(&out.manifest, providers_tf.as_deref(), &fe.env, estate, estate_arg, estate_src, level, &mut f);
     f.extend(pack_findings);
     f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_arg, estate_src, crate::notices::Doing::Reading));
     match graph {
@@ -3150,19 +3164,6 @@ pub(crate) fn compile_tail(
             f.push(Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{} — no pack line is checked against its answer", why)))
         }
     }
-    // a mode with no backend is already the finding at its line; the providers are not
-    // emitted without one
-    let providers_tf = if !mode_ok {
-        None
-    } else {
-        match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
-            Ok(t) => Some(t),
-            Err(e) => {
-                f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
-                None
-            }
-        }
-    };
     action_findings(&fe.actions, &mut f);
     hcl_findings(&fe.hcl, &mut f);
     Tail { folded, out: Some(out), providers_tf, interface, findings: f }
@@ -3509,13 +3510,17 @@ fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
 /// note, never an error: satz cannot say what it needs. The role line is the
 /// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
 ///
-/// Each half needs a param to judge against — the project the default provider
-/// bills to for the APIs, the IaC service account for the roles. An estate that
-/// binds neither gets a note per half naming the param it is missing: a check
-/// that says nothing reads as a check that passed, and this one used to say
-/// nothing for both halves whenever the service account was unbound.
+/// The API half judges each API on the project the resource's provider bills its
+/// calls to, read from the emitted `providers.tf`: a resource inside a
+/// `google_project` node on that project, every other one on the default
+/// provider's `billing_project`. The role half is judged on the IaC service
+/// account. What either half cannot judge — a provider that names no billing
+/// project, an unbound service account — is a note naming what is missing: a
+/// check that says nothing reads as a check that passed.
+#[allow(clippy::too_many_arguments)]
 fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
+    providers_tf: Option<&str>,
     env: &satz_core::pipeline::Env,
     estate: &Path,
     estate_arg: &str,
@@ -3527,43 +3532,76 @@ fn prerequisite_findings(
     let Some(sev) = crate::findings::at_level(level) else { return };
     let get = |k: &str| env.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let update = "satz update-prerequisites <estate>";
-    // The API half is judged on the project the default provider bills every
-    // call to. Without it there is nothing to judge against, and saying so is
-    // the finding.
-    let Some(infra) = get("infra_project_name") else {
+    match providers_tf.map(crate::prerequisites::Billing::parse) {
+        // the finding that stopped the emission is already there
+        None => f.push(Finding::new(
+            Severity::Info,
+            Kind::Prerequisites,
+            "the APIs this estate's resources need were not checked: `providers.tf` was not emitted, \
+             and it is what names the project each provider bills its calls to",
+        )),
+        Some(Err(e)) => f.push(Finding::new(Severity::Error, Kind::Prerequisites, e)),
+        Some(Ok(billing)) => api_findings(manifest, &billing, sev, update, estate_arg, f),
+    }
+    prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
+}
+
+/// The API half of [`prerequisite_findings`].
+fn api_findings(
+    manifest: &crate::manifest::Manifest,
+    billing: &crate::prerequisites::Billing,
+    sev: crate::findings::Severity,
+    update: &str,
+    estate_arg: &str,
+    f: &mut Vec<crate::findings::Finding>,
+) {
+    use crate::findings::{Finding, Kind, Severity};
+    let check = crate::prerequisites::apis(manifest, billing);
+    let missing = check.missing();
+    if !missing.is_empty() {
+        f.push(
+            Finding::new(
+                sev,
+                Kind::Prerequisites,
+                format!(
+                    "{} API(s) this estate's resources need are not enabled on the project their calls \
+                     are billed to, and each is a `project_service` entry on that project: a resource \
+                     inside a `google_project` node is billed to that project, every other resource to \
+                     {}:\n  {}",
+                    missing.len(),
+                    billing
+                        .default_project()
+                        .map(|p| format!("{} (the default provider's `billing_project`)", p))
+                        .unwrap_or_else(|| "the default provider's `billing_project`".to_string()),
+                    missing
+                        .iter()
+                        .map(|a| format!("{} on {} — needed by {}", a.api, a.project, a.reason.join(", ")))
+                        .collect::<Vec<_>>()
+                        .join("\n  ")
+                ),
+            )
+            .fix_in(update, estate_arg),
+        );
+    }
+    for u in &check.unbilled {
         f.push(Finding::new(
             Severity::Info,
             Kind::Prerequisites,
-            "the APIs this estate's resources need were not checked: the estate binds no \
-             `infra_project_name`, and that is the project the default provider bills its calls \
-             to and the project the check reads `project_service` entries on. Bind it in \
-             `params { }` to have them checked.",
-        ));
-        prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
-        return;
-    };
-    let missing_apis = crate::prerequisites::missing_apis(manifest, &infra);
-    if !missing_apis.is_empty() {
-        f.push(Finding::new(
-            sev,
-            Kind::Prerequisites,
             format!(
-                "{} API(s) this estate's resources need are not enabled on {} — the default \
-                 provider bills its calls to the infra project, so each has to be a \
-                 `project_service` entry on it. A resource written inside a `google_project` \
-                 node is served by that project's provider alias and billed there, and needs \
-                 the same entry on its own project:\n  {}",
-                missing_apis.len(),
-                infra,
-                missing_apis
-                    .iter()
-                    .map(|a| format!("{} — needed by {}", a.api, a.reason.join(", ")))
-                    .collect::<Vec<_>>()
-                    .join("\n  ")
+                "the APIs this estate's resources need were not checked for the ones `{}` serves ({}): \
+                 {}, so there is no project their calls are billed to to judge them on. The default \
+                 `google` provider bills to `infra_project_name`; bind it in `params {{ }}` and \
+                 declare the provider in `providers {{ }}` to have them checked.",
+                u.provider,
+                u.reason.join(", "),
+                if u.configured {
+                    "that provider names no `billing_project`"
+                } else {
+                    "`providers.tf` configures no such provider"
+                }
             ),
-        ).fix_in(update, estate_arg));
+        ));
     }
-    prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
 }
 
 /// The role half of [`prerequisite_findings`]: what the IaC service account is
@@ -3754,12 +3792,11 @@ fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(
         return Ok(());
     }
     Err(format!(
-        "{} refused: {} API(s) this estate's resources need are not enabled on {} — {}. \
-         `satz update-prerequisites {}` writes them into the estate.",
+        "{} refused: {} API(s) this estate's resources need are not enabled on the project their \
+         calls are billed to — {}. `satz update-prerequisites {}` writes them into the estate.",
         action,
         report.missing_apis.len(),
-        report.infra_project,
-        report.missing_apis.iter().map(|a| a.api.as_str()).collect::<Vec<_>>().join(", "),
+        report.missing_apis.iter().map(|a| format!("{} on {}", a.api, a.project)).collect::<Vec<_>>().join(", "),
         Path::new(&report.estate).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
     ))
 }
@@ -3770,21 +3807,28 @@ fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(
 pub(crate) struct PrerequisitesReport {
     pub estate: String,
     pub service_account: String,
-    /// the project every provider call is billed to, so the project the APIs are
-    /// judged on; empty when the estate binds none
-    pub infra_project: String,
-    /// every API the emitted types need, each marked declared or not
+    /// the project the default provider bills its calls to — the infrastructure
+    /// project; empty when the providers name none
+    pub default_billing_project: String,
+    /// every API the emitted types need, per project their provider bills the
+    /// calls to, each marked declared there or not
     pub apis: Vec<crate::prerequisites::ApiNeed>,
-    /// the APIs the infra project does not enable — what the write adds
+    /// the APIs a billed project does not enable — what the write adds
     pub missing_apis: Vec<crate::prerequisites::ApiNeed>,
-    /// every service the infra project declares, whatever needs it: what
-    /// `bootstrap` enables before `tofu` runs
+    /// the types whose APIs were not judged, by the provider that serves them:
+    /// it names no billing project
+    pub unbilled: Vec<crate::prerequisites::Unbilled>,
+    /// the estate's `infra_project_name`: the project `bootstrap` creates;
+    /// empty when the estate binds none
+    pub infra_project: String,
+    /// every service the estate declares on `infra_project`, whatever needs it:
+    /// what `bootstrap` enables before `tofu` runs
     pub infra_services: Vec<String>,
-    /// the `gcloud services enable` line for `missing_apis` — what an operator
-    /// who applies with `tofu` directly runs, since writing the declaration into
-    /// the estate does not switch anything on. Empty when nothing is missing.
-    /// `satz plan` and `satz apply` do it themselves.
-    pub enable_missing_apis: String,
+    /// one `gcloud services enable` line per project in `missing_apis` — what an
+    /// operator who applies with `tofu` directly runs, since writing the
+    /// declaration into the estate does not switch anything on. Empty when
+    /// nothing is missing. `satz plan` and `satz apply` do it themselves.
+    pub enable_missing_apis: Vec<String>,
     pub granted: crate::prerequisites::Granted,
     pub needs: Vec<crate::prerequisites::Need>,
     pub missing: Vec<crate::prerequisites::Need>,
@@ -3823,21 +3867,20 @@ pub(crate) fn prerequisites_report(
     let granted = crate::prerequisites::granted(&out.manifest, &sa);
     let missing = crate::prerequisites::missing(&needs, &granted);
     let infra = params.get("infra_project_name").cloned().unwrap_or_default();
-    let apis =
-        if infra.is_empty() { Vec::new() } else { crate::prerequisites::apis(&out.manifest, &infra) };
-    let missing_apis: Vec<crate::prerequisites::ApiNeed> =
-        apis.iter().filter(|a| !a.declared).cloned().collect();
+    let billing = crate::prerequisites::Billing::parse(&out.providers_tf)?;
+    let check = crate::prerequisites::apis(&out.manifest, &billing);
+    let missing_apis = check.missing();
     Ok(PrerequisitesReport {
         estate: path.display().to_string(),
         service_account: sa,
-        enable_missing_apis: if missing_apis.is_empty() {
-            String::new()
-        } else {
-            let ids: Vec<String> = missing_apis.iter().map(|a| a.api.clone()).collect();
-            crate::prerequisites::enable_command(&infra, &ids)
-        },
+        default_billing_project: billing.default_project().unwrap_or_default().to_string(),
+        enable_missing_apis: crate::prerequisites::by_project(&missing_apis)
+            .into_iter()
+            .map(|(project, apis)| crate::prerequisites::enable_command(&project, &apis.into_iter().collect::<Vec<_>>()))
+            .collect(),
         missing_apis,
-        apis,
+        apis: check.needs,
+        unbilled: check.unbilled,
         infra_services: if infra.is_empty() {
             Vec::new()
         } else {
@@ -3886,31 +3929,47 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             r.unknown_types.join(", ")
         ));
     }
-    // the other half: the APIs, on the project every call is billed to
-    if r.infra_project.is_empty() {
-        out.push_str("APIs: not checked — the estate binds no infra_project_name\n");
-    } else {
+    // the other half: the APIs, each on the project its resources' calls are billed to
+    let projects: std::collections::BTreeSet<&str> = r.apis.iter().map(|a| a.project.as_str()).collect();
+    for p in &projects {
+        let here: Vec<&crate::prerequisites::ApiNeed> = r.apis.iter().filter(|a| a.project == *p).collect();
+        let what = if *p == r.default_billing_project { "default provider's project" } else { "project" };
         out.push_str(&format!(
-            "infrastructure project: {} — {} of {} API(s) its resource types need are enabled there\n",
-            r.infra_project,
-            r.apis.len() - r.missing_apis.len(),
-            r.apis.len()
+            "{} {}: {} of {} API(s) the resources billed there need are enabled\n",
+            what,
+            p,
+            here.iter().filter(|a| a.declared).count(),
+            here.len()
         ));
-        if r.missing_apis.is_empty() {
-            out.push_str("missing APIs: none\n");
-        } else {
-            out.push_str("missing APIs:\n");
-            for a in &r.missing_apis {
-                out.push_str(&format!("  {} — for {}\n", a.api, a.reason.join(", ")));
+    }
+    for u in &r.unbilled {
+        out.push_str(&format!(
+            "APIs not checked for {}: {}\n",
+            u.reason.join(", "),
+            if u.configured {
+                format!("{} names no billing_project", u.provider)
+            } else {
+                format!("providers.tf configures no {}", u.provider)
             }
-            // Declaring an API is not enabling it. `satz plan` and `satz apply`
-            // switch on what the estate declares before the tool refreshes; an
-            // apply run with `tofu` directly needs this line first.
-            out.push_str(&format!(
-                "declared, not enabled — `satz plan` and `satz apply` enable them; for a bare \
-                 tofu run:\n  {}\n",
-                r.enable_missing_apis
-            ));
+        ));
+    }
+    if r.missing_apis.is_empty() {
+        if projects.is_empty() && r.unbilled.is_empty() {
+            out.push_str("APIs: the resource types need none\n");
+        } else if !projects.is_empty() {
+            out.push_str("missing APIs: none\n");
+        }
+    } else {
+        out.push_str("missing APIs:\n");
+        for a in &r.missing_apis {
+            out.push_str(&format!("  {} on {} — for {}\n", a.api, a.project, a.reason.join(", ")));
+        }
+        // Declaring an API is not enabling it. `satz plan` and `satz apply`
+        // switch on what the estate declares before the tool refreshes; an
+        // apply run with `tofu` directly needs these lines first.
+        out.push_str("declared, not enabled — `satz plan` and `satz apply` enable them; for a bare tofu run:\n");
+        for line in &r.enable_missing_apis {
+            out.push_str(&format!("  {}\n", line));
         }
     }
     out
@@ -3983,8 +4042,7 @@ pub(crate) fn prerequisites_write(
         }
     };
     let mut written = crate::prerequisites::write_grants(path, &params, &report.service_account, &org, &bill)?;
-    let apis: std::collections::BTreeSet<String> = report.missing_apis.iter().map(|a| a.api.clone()).collect();
-    match crate::prerequisites::write_apis(path, &params, &apis) {
+    match crate::prerequisites::write_apis(path, &params, &crate::prerequisites::by_project(&report.missing_apis)) {
         Ok(lines) => written.extend(lines),
         // the roles may already be on disk, so a refusal here restores the file
         // rather than leaving the estate half-written
@@ -4279,7 +4337,7 @@ async fn run_tf(
     }
     let mut args = args.to_vec();
     if (subcommand == "plan" || subcommand == "apply") && api_preflight {
-        enable_declared_apis(hcl_dir).await?;
+        enable_declared_apis(hcl_dir, &runtime_config.tf_tool).await?;
     }
     if subcommand == "plan" || subcommand == "apply" {
         for address in reset_replacements_for(runtime_config, hcl_dir, &args)? {
@@ -4460,8 +4518,9 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
     crate::gcp::configure_impersonation(provider.impersonate.clone())
 }
 
-/// Before `plan` or `apply`: every API the estate declares on the project the
-/// provider bills to, switched on where it is off.
+/// Before `plan` or `apply`: on every project a provider bills its calls to, every
+/// API the estate declares there, switched on where it is off — the default
+/// provider's project, and each project node's own (ADR 0059, ADR 0072).
 ///
 /// Says on stderr what it found and what it changed, beside the tool's own note:
 /// stdout belongs to the plan. A refusal prints the APIs and the `gcloud
@@ -4469,21 +4528,29 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
 /// started with an API off, because its refresh would stop halfway through,
 /// having already reported half an estate as drifted.
 ///
+/// A project node's project that neither the state holds nor an `import` block
+/// adopts does not exist yet: this run creates it, and its `project_service`
+/// entries after it, so there is nothing to refresh on it and nothing to enable
+/// before. It is named and skipped. The default provider's project is always
+/// checked — `bootstrap` creates it before any apply.
+///
 /// Every path says what it did, the ones that check nothing included: a
 /// preflight that prints nothing is read as a preflight that passed.
-async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<dyn std::error::Error>> {
     let provider = emitted_provider(hcl_dir)?;
-    let Some(project) = provider.billing_project.clone() else {
-        // A local-mode estate with no infrastructure project bills nothing
-        // centrally; each resource's own project carries its APIs, and `tofu`
-        // creates them.
+    let billing = emitted_billing(hcl_dir)?;
+    let projects = billing.projects();
+    if projects.is_empty() {
+        // A local-mode estate with no infrastructure project and no project node
+        // bills nothing through its providers; each resource's own project carries
+        // its APIs, and `tofu` creates them.
         eprintln!(
-            "APIs: not checked — the default `google` provider in {} names no `billing_project`, \
-             so there is no central project to check them on",
+            "APIs: not checked — no provider in {} names a `billing_project`, so there is no \
+             billed project to check them on",
             hcl_dir.join("providers.tf").display()
         );
         return Ok(());
-    };
+    }
     let main_tf = hcl_dir.join("main.tf");
     let text = match std::fs::read_to_string(&main_tf) {
         Ok(t) => t,
@@ -4494,19 +4561,101 @@ async fn enable_declared_apis(hcl_dir: &Path) -> Result<(), Box<dyn std::error::
         Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
     };
     let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
-    let manifest = crate::manifest::Manifest::from_blocks(body.blocks());
-    let declared = crate::prerequisites::declared_apis(&manifest, &project);
-    if declared.is_empty() {
-        eprintln!("APIs on {}: the estate declares none there — nothing to check", project);
-        return Ok(());
-    }
-    configure_emitted_impersonation(&provider)?;
-    match crate::prerequisites::enable_declared_apis(&project, declared).await {
-        Ok(done) => {
-            eprint!("{}", done.render());
-            Ok(())
+    let mut manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    let imports_tf = hcl_dir.join("imports.tf");
+    match std::fs::read_to_string(&imports_tf) {
+        Ok(t) => {
+            let imports = hcl::parse(&t).map_err(|e| format!("{}: {}", imports_tf.display(), e))?;
+            manifest.attach_imports(imports.blocks());
         }
-        Err(refusal) => Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {}", imports_tf.display(), e).into()),
+    }
+    let mut state: Option<crate::bootstrap::StateIndex> = None;
+    let mut impersonating = false;
+    for step in api_preflight_steps(&billing, &manifest) {
+        let (project, declared) = match step {
+            ApiPreflightStep::NoneDeclared(project) => {
+                eprintln!("APIs on {}: the estate declares none there — nothing to check", project);
+                continue;
+            }
+            ApiPreflightStep::Check(project, declared) => (project, declared),
+            ApiPreflightStep::IfManaged(project, address, declared) => {
+                if state.is_none() {
+                    state = Some(
+                        crate::bootstrap::state_index(tf_tool, hcl_dir)
+                            .map_err(|e| format!("reading the state for the projects whose APIs to check: {}", e))?,
+                    );
+                }
+                if !state.as_ref().is_some_and(|s| s.manages(&address)) {
+                    eprintln!(
+                        "APIs on {}: not checked — {} is neither in the state nor adopted by an import \
+                         block, so this run creates it and its {} declared API(s) after it",
+                        project,
+                        address,
+                        declared.len()
+                    );
+                    continue;
+                }
+                (project, declared)
+            }
+        };
+        if !impersonating {
+            configure_emitted_impersonation(&provider)?;
+            impersonating = true;
+        }
+        match crate::prerequisites::enable_declared_apis(&project, declared).await {
+            Ok(done) => eprint!("{}", done.render()),
+            Err(refusal) => return Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
+        }
+    }
+    Ok(())
+}
+
+/// What the preflight does on one billed project.
+#[derive(Debug, PartialEq, Eq)]
+enum ApiPreflightStep {
+    /// the estate declares no API there
+    NoneDeclared(String),
+    /// enable what is declared: the project exists
+    Check(String, Vec<String>),
+    /// enable what is declared if the state holds the project's `google_project`
+    /// (its address), else this run creates the project
+    IfManaged(String, String, Vec<String>),
+}
+
+/// The preflight's steps, one per project a provider bills to: the default
+/// provider's project always exists, a project the estate adopts by an `import`
+/// block does too, a project node's own project otherwise only when the state
+/// holds it, and a billed project the estate declares nowhere is somebody else's
+/// that exists.
+fn api_preflight_steps(billing: &crate::prerequisites::Billing, manifest: &crate::manifest::Manifest) -> Vec<ApiPreflightStep> {
+    billing
+        .projects()
+        .into_iter()
+        .map(|project| {
+            let declared = crate::prerequisites::declared_apis(manifest, project);
+            if declared.is_empty() {
+                return ApiPreflightStep::NoneDeclared(project.to_string());
+            }
+            if billing.default_project() == Some(project) {
+                return ApiPreflightStep::Check(project.to_string(), declared);
+            }
+            match manifest.of_type("google_project").find(|r| r.attrs.get("project_id").map(String::as_str) == Some(project)) {
+                Some(node) if node.import_id.is_none() => ApiPreflightStep::IfManaged(project.to_string(), node.address(), declared),
+                _ => ApiPreflightStep::Check(project.to_string(), declared),
+            }
+        })
+        .collect()
+}
+
+/// The project each provider in the emitted `providers.tf` bills to.
+fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, String> {
+    let path = hcl_dir.join("providers.tf");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => crate::prerequisites::Billing::parse(&text).map_err(|e| format!("{}: {}", path.display(), e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(format!("{}: {}", path.display(), e)),
     }
 }
 
@@ -6617,9 +6766,12 @@ mod manifest_gate {
                     }
                     assert_eq!(got.get(k), Some(v), "{}: {} {}", name, addr, k);
                 }
+                // The other extras: numbers and bools, which the scanner never
+                // read and an import id fills in (`{priority}`).
                 for (k, v) in got {
                     if !legacy.contains_key(k) {
-                        assert!(v.contains('"'), "{}: {} {} is new and not a quote-bearing value: {}", name, addr, k, v);
+                        let scalar = v == "true" || v == "false" || v.parse::<f64>().is_ok();
+                        assert!(v.contains('"') || scalar, "{}: {} {} is new and neither a quote-bearing value nor a number or bool: {}", name, addr, k, v);
                     }
                 }
             }
@@ -6958,11 +7110,12 @@ mod prerequisites_gate {
 
 #[cfg(test)]
 mod prerequisite_findings_speak {
-    //! The prerequisite check says what it did not check.
+    //! The prerequisite check says what it did not check, and judges each API on
+    //! the project its resource's provider bills to.
     //!
-    //! It is judged on two params — the project the default provider bills to,
-    //! and the IaC service account — and it used to return at the first sight of
-    //! an unbound `svc_iac_account`, taking the API half with it. An estate
+    //! It is judged on the emitted providers — the project each one bills to —
+    //! and on the IaC service account, and it used to return at the first sight
+    //! of an unbound `svc_iac_account`, taking the API half with it. An estate
     //! missing that one param therefore compiled with no prerequisite output at
     //! all, which reads as "checked, nothing to report"; binding the param made
     //! the same estate name a missing API. A check that cannot run says so.
@@ -6974,16 +7127,60 @@ mod prerequisite_findings_speak {
     /// whenever it can run at all.
     fn manifest() -> crate::manifest::Manifest {
         crate::manifest::Manifest::parse(
-            "resource \"google_storage_bucket\" \"state\" {\n  name = \"acme-data-001-state\"\n  project = \"acme-data-001\"\n}\n",
+            "resource \"google_storage_bucket\" \"state\" {\n  name = \"acme-data-001-state\"\n  project = \"acme-data-001\"\n  provider = google.google\n}\n",
         )
     }
 
-    fn findings(params: &[(&str, &str)]) -> Vec<crate::findings::Finding> {
+    /// The default provider as the emitter writes it: billed to the infra project
+    /// when the estate binds one, to nothing otherwise.
+    fn providers(params: &[(&str, &str)]) -> String {
+        match params.iter().find(|(k, _)| *k == "infra_project_name") {
+            Some((_, p)) => format!("provider \"google\" {{\n  alias = \"google\"\n  billing_project = \"{}\"\n  user_project_override = true\n}}\n", p),
+            None => "provider \"google\" {\n  alias = \"google\"\n}\n".to_string(),
+        }
+    }
+
+    fn findings_for(manifest: &crate::manifest::Manifest, providers_tf: Option<&str>, params: &[(&str, &str)]) -> Vec<crate::findings::Finding> {
         let env: satz_core::pipeline::Env =
             params.iter().map(|(k, v)| ((*k).to_string(), serde_yaml::Value::from(*v))).collect();
         let mut f = Vec::new();
-        crate::prerequisite_findings(&manifest(), &env, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
+        crate::prerequisite_findings(manifest, providers_tf, &env, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
         f
+    }
+
+    fn findings(params: &[(&str, &str)]) -> Vec<crate::findings::Finding> {
+        findings_for(&manifest(), Some(&providers(params)), params)
+    }
+
+    /// A bucket inside a project node is served by that project's alias, which
+    /// bills to the project itself: its API is missing THERE, and the infra
+    /// project enabling it does not help.
+    #[test]
+    fn a_resource_in_a_project_node_is_judged_on_its_own_project() {
+        let params = [("infra_project_name", "acme-infra-001"), ("svc_iac_account", "svc-iac-001")];
+        let providers_tf = format!(
+            "{}provider \"google\" {{\n  alias = \"project_data\"\n  project = \"acme-data-001\"\n  billing_project = \"acme-data-001\"\n  user_project_override = true\n}}\n",
+            providers(&params)
+        );
+        let m = crate::manifest::Manifest::parse(
+            "resource \"google_project_service\" \"infra_storage\" {\n  project = \"acme-infra-001\"\n  service = \"storage.googleapis.com\"\n  provider = google.google\n}\n\
+             resource \"google_storage_bucket\" \"state\" {\n  name = \"acme-data-001-state\"\n  project = \"acme-data-001\"\n  provider = google.project_data\n}\n",
+        );
+        let f = findings_for(&m, Some(&providers_tf), &params);
+        assert!(
+            says(&f, "storage.googleapis.com on acme-data-001 — needed by google_storage_bucket")
+                && !says(&f, "storage.googleapis.com on acme-infra-001"),
+            "{:?}",
+            f.iter().map(|x| &x.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// No `providers.tf` — its emission failed, which is its own finding — is no
+    /// silent pass for the API half.
+    #[test]
+    fn no_providers_is_said_not_passed() {
+        let f = findings_for(&manifest(), None, &[("infra_project_name", "acme-infra-001")]);
+        assert!(says(&f, "`providers.tf` was not emitted"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
     }
 
     fn says(f: &[crate::findings::Finding], needle: &str) -> bool {
@@ -7053,6 +7250,7 @@ mod prerequisite_findings_speak {
         let mut f = Vec::new();
         crate::prerequisite_findings(
             &manifest(),
+            Some(&providers(&[])),
             &BTreeMap::new(),
             Path::new("estate.satz"),
             "estate.satz",
@@ -7262,6 +7460,41 @@ provider "google" {
         assert_eq!(
             crate::prerequisites::declared_apis(&manifest, "corp-infra-001"),
             ["cloudasset.googleapis.com", "iam.googleapis.com"]
+        );
+    }
+
+    /// The preflight works on every project a provider bills to. The default
+    /// provider's project always exists; a project node's own does when the estate
+    /// adopts it by an `import` block, and otherwise only when the state holds it —
+    /// a project this run creates has nothing to refresh and cannot take an API yet.
+    #[test]
+    fn the_preflight_checks_every_billed_project_that_exists() {
+        let billing = crate::prerequisites::Billing::parse(
+            "provider \"google\" {\n  alias = \"google\"\n  billing_project = \"corp-infra-001\"\n}\n\
+             provider \"google\" {\n  alias = \"project_data\"\n  billing_project = \"corp-data-001\"\n}\n\
+             provider \"google\" {\n  alias = \"project_logs\"\n  billing_project = \"corp-logs-001\"\n}\n\
+             provider \"google\" {\n  alias = \"project_empty\"\n  billing_project = \"corp-empty-001\"\n}\n",
+        )
+        .unwrap();
+        let mut manifest = crate::manifest::Manifest::parse(
+            "resource \"google_project\" \"data\" {\n  project_id = \"corp-data-001\"\n}\n\
+             resource \"google_project\" \"logs\" {\n  project_id = \"corp-logs-001\"\n}\n\
+             resource \"google_project\" \"empty\" {\n  project_id = \"corp-empty-001\"\n}\n\
+             resource \"google_project_service\" \"infra_iam\" {\n  project = \"corp-infra-001\"\n  service = \"iam.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"data_bq\" {\n  project = google_project.data.project_id\n  service = \"bigquery.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"logs_logging\" {\n  project = google_project.logs.project_id\n  service = \"logging.googleapis.com\"\n}\n",
+        );
+        let imports = hcl::parse("import {\n  to = google_project.logs\n  id = \"corp-logs-001\"\n}\n").unwrap();
+        manifest.attach_imports(imports.blocks());
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            super::api_preflight_steps(&billing, &manifest),
+            [
+                super::ApiPreflightStep::IfManaged("corp-data-001".into(), "google_project.data".into(), v(&["bigquery.googleapis.com"])),
+                super::ApiPreflightStep::NoneDeclared("corp-empty-001".into()),
+                super::ApiPreflightStep::Check("corp-infra-001".into(), v(&["iam.googleapis.com"])),
+                super::ApiPreflightStep::Check("corp-logs-001".into(), v(&["logging.googleapis.com"])),
+            ]
         );
     }
 
@@ -7689,12 +7922,18 @@ mod init_template {
         // and the other half of a prerequisite: the APIs its own types are served
         // by, on the project every call is billed to. A fresh estate that warns on
         // its first transpile is a scaffold that was never finished.
-        let infra = get("infra_project_name").expect("the template names its infra project");
-        let missing_apis = crate::prerequisites::missing_apis(&out.manifest, &infra);
+        let providers_tf =
+            crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &std::collections::HashMap::new(), &std::collections::HashMap::new())
+                .expect("the template's providers.tf emits");
+        let billing = crate::prerequisites::Billing::parse(&providers_tf).expect("the template's providers.tf parses");
+        assert_eq!(billing.default_project().map(str::to_string), get("infra_project_name"), "the template bills to its infra project");
+        let check = crate::prerequisites::apis(&out.manifest, &billing);
+        assert!(check.unbilled.is_empty(), "the template has resources no project is billed for: {:?}", check.unbilled);
+        let missing_apis = check.missing();
         assert!(
             missing_apis.is_empty(),
             "the template misses APIs its own types need: {:?}",
-            missing_apis.iter().map(|a| a.api.as_str()).collect::<Vec<_>>()
+            missing_apis.iter().map(|a| format!("{} on {}", a.api, a.project)).collect::<Vec<_>>()
         );
         // the users group may become the IaC service account, and only that one:
         // TokenCreator and serviceAccountUser on the account, not on the org
@@ -8848,6 +9087,12 @@ params {
 terraform {
   backend {
     local { path = "terraform.tfstate" }
+  }
+}
+
+providers {
+  google {
+    alias = "google"
   }
 }
 

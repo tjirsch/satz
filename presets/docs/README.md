@@ -61,7 +61,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`integrations.microsoft_defender_for_cloud_cspm_role_default`](microsoft-defender-for-cloud-cspm-role-default.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, DEFAULT access mode. | 1 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_least_privilege`](microsoft-defender-for-cloud-cspm-role-least-privilege.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, LEAST PRIVILEGE mode. | 1 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm`](microsoft-defender-for-cloud-cspm.md) | 0.1 | Microsoft Defender for Cloud — the CSPM plan. | 5 | — |
-| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.5 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
+| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.6 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
 | [`integrations.microsoft_sentinel_auditlogs`](microsoft-sentinel-auditlogs.md) | 1.0 | The organisation's audit logs, on their way to Microsoft Sentinel. | 5 | — |
 | [`integrations.microsoft_sentinel_network_logs`](microsoft-sentinel-network-logs.md) | 1.0 | The four network log streams, on their way to Microsoft Sentinel. | 20 | — |
 | [`integrations.microsoft_sentinel`](microsoft-sentinel.md) | 1.1 | Microsoft Sentinel's GCP connector — the federation half, once per customer. | 7 | — |
