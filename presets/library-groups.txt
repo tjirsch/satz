@@ -1,0 +1,78 @@
+# The preset library by topic: the groups in reading order, and the packs in each.
+#
+# `[<group>]` opens a group; every line after it, up to the next group, is one pack,
+# named by its path under presets/, in the order an operator meets them — a base pack
+# before its extensions, a dry-run twin right after its pack. The files do not move:
+# an estate's `use` line names the path, whatever group the pack is in.
+#
+# `satz doc-packs` reads this file and refuses a pack in no group or in two, a line
+# that names no pack, a group with no pack, and a group presets/README.md has no
+# `## <group>` heading for, in this order. The index presets/docs/README.md prints
+# one section per group, and scripts/build-site.py builds the library's side menu
+# from the same file (ADR 0076).
+
+[Estate map and core]
+estate-map.satz
+estate-core.satz
+
+[Security groups and exemptions]
+security-group-models/s1-security-groups.satz
+security-group-models/s2-security-groups.satz
+exemptions/exemption-tag.satz
+
+[Billing and budget]
+billing-account-permissions.satz
+organization-budget.satz
+billing-export.satz
+
+[CIS baseline and extensions]
+cis/CIS-GCP-Foundation-4.0.satz
+cis/dns-logging.satz
+cis/internet-ssh-rdp.satz
+cis/block-project-ssh-keys.satz
+cis/block-project-ssh-keys-dry-run.satz
+cis/shielded-vm.satz
+cis/confidential-computing.satz
+cis/confidential-computing-dry-run.satz
+cis/cloud-sql.satz
+cis/cloud-sql-dry-run.satz
+cis/cloud-sql-iam-and-deletion-protection.satz
+cis/cloud-sql-iam-and-deletion-protection-dry-run.satz
+cis/cmek.satz
+cis/api-key-services.satz
+cis/api-key-services-dry-run.satz
+cis/bucket-retention.satz
+cis/bucket-retention-dry-run.satz
+cis/access-approval.satz
+
+[Monitoring and logging]
+monitoring/organization-audit-logsink.satz
+monitoring/organization-cis-log-alerts-central.satz
+monitoring/project-cis-log-alerts.satz
+essential-contacts-organization.satz
+
+[Networking]
+shared-network.satz
+
+[Projects and interfaces]
+project-onboarding.satz
+interface-notice.satz
+
+[Security operations and integrations]
+scc/scc-service-enablement.satz
+scc/scc-notifications.satz
+scc/scc-findings-mail.satz
+scc/scc-findings-siem.satz
+scc/scc-export.satz
+security-audit/sa-security-audit.satz
+integrations/microsoft-defender-for-cloud.satz
+integrations/microsoft-defender-for-cloud-cspm.satz
+integrations/microsoft-defender-for-cloud-cspm-role-default.satz
+integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz
+integrations/microsoft-sentinel.satz
+integrations/microsoft-sentinel-auditlogs.satz
+integrations/microsoft-sentinel-network-logs.satz
+
+[Continuous verification]
+ci/verification-runner.satz
+ci/verification-runner-grant.satz

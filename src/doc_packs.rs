@@ -1,7 +1,8 @@
 //! `satz doc-packs`: one Markdown page per pristine pack, DERIVED from the
 //! parser — header comment, the invocation that installs it, params with
 //! defaults, resources, claims with their catalog titles, duties, and the
-//! pack's own version history — plus an index of the library.
+//! pack's own version history — plus an index of the library, by the groups of
+//! `presets/library-groups.txt`.
 //! The hand-written part is a notes region the regeneration preserves.
 //! `--check` fails when the committed pages are behind the packs: docs are
 //! derived from the parser, never from intent.
@@ -629,6 +630,111 @@ fn changelog(presets_dir: &Path, all: &[(PathBuf, File, String)]) -> Result<Chan
     Ok(hist)
 }
 
+/// The file that sorts the library by topic (ADR 0076).
+const GROUPS_FILE: &str = "library-groups.txt";
+
+/// One topic of the library: its title and its packs, in reading order.
+#[derive(Debug)]
+struct Group {
+    title: String,
+    packs: Vec<PathBuf>,
+}
+
+/// The library's groups, read from `presets/library-groups.txt`: `[<title>]` opens a
+/// group, every other line is a pack path under `presets/`. Every pack is in exactly
+/// one group, every line names a pack, every group holds one — and `presets/README.md`
+/// carries a `## <title>` heading per group, in the file's order, so the library page
+/// reads in the order the index and the site's side menu do. Every problem is reported
+/// in one pass.
+fn groups(presets_dir: &Path, all: &[(PathBuf, File, String)]) -> Result<Vec<Group>, BoxErr> {
+    let path = presets_dir.join(GROUPS_FILE);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        format!("{}: {} — every pack belongs to one group of the library, listed in this file", path.display(), e)
+    })?;
+    let known: BTreeSet<PathBuf> = all.iter().map(|(rel, _, _)| rel.clone()).collect();
+    let mut out: Vec<Group> = Vec::new();
+    let mut placed: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut errs = Vec::new();
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let at = format!("{}:{}", path.display(), n + 1);
+        if let Some(title) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            let title = title.trim();
+            if title.is_empty() {
+                errs.push(format!("{}: a group with no title", at));
+            } else if out.iter().any(|g| g.title == title) {
+                errs.push(format!("{}: the group `{}` is opened twice", at, title));
+            }
+            out.push(Group { title: title.to_string(), packs: Vec::new() });
+            continue;
+        }
+        let Some(group) = out.last_mut() else {
+            errs.push(format!("{}: `{}` stands before the first `[<group>]` line", at, line));
+            continue;
+        };
+        let rel = PathBuf::from(line);
+        if !known.contains(&rel) {
+            errs.push(format!("{}: `{}` is not a pack in the library", at, line));
+        } else if let Some(first) = placed.get(&rel) {
+            errs.push(format!("{}: `{}` is in two groups, `{}` and `{}`", at, line, first, group.title));
+        } else {
+            placed.insert(rel.clone(), group.title.clone());
+            group.packs.push(rel);
+        }
+    }
+    for rel in &known {
+        if !placed.contains_key(rel) {
+            errs.push(format!("{}: presets/{} is in no group — add its path under the group it belongs to", path.display(), rel.display()));
+        }
+    }
+    for g in out.iter().filter(|g| g.packs.is_empty()) {
+        errs.push(format!("{}: the group `{}` holds no pack", path.display(), g.title));
+    }
+    errs.extend(readme_follows(presets_dir, &out)?);
+    if !errs.is_empty() {
+        return Err(format!("{} problem(s) with the library's groups:\n  {}", errs.len(), errs.join("\n  ")).into());
+    }
+    Ok(out)
+}
+
+/// The groups `presets/README.md` has no `## <title>` heading for, or has out of order.
+fn readme_follows(presets_dir: &Path, groups: &[Group]) -> Result<Vec<String>, BoxErr> {
+    let path = presets_dir.join("README.md");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let mut fence = false;
+    let mut heads: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with("```") {
+            fence = !fence;
+        } else if let (false, Some(h)) = (fence, line.strip_prefix("## ")) {
+            heads.push(h.trim());
+        }
+    }
+    let mut errs = Vec::new();
+    let mut last: Option<(usize, &str)> = None;
+    for g in groups {
+        match heads.iter().position(|h| *h == g.title) {
+            None => errs.push(format!("{}: no `## {}` heading — the library page carries one per group", path.display(), g.title)),
+            Some(i) => {
+                if let Some((_, prev)) = last.filter(|(j, _)| i < *j) {
+                    errs.push(format!(
+                        "{}: `## {}` stands before `## {}`, and {} lists them the other way round",
+                        path.display(),
+                        g.title,
+                        prev,
+                        GROUPS_FILE
+                    ));
+                }
+                last = Some((i, g.title.as_str()));
+            }
+        }
+    }
+    Ok(errs)
+}
+
 // ---------------------------------------------------------------------------
 // The page
 // ---------------------------------------------------------------------------
@@ -1094,11 +1200,6 @@ fn notes_region(existing: Option<&str>) -> String {
 // The index
 // ---------------------------------------------------------------------------
 
-/// The directory a pack lives in — the library's own grouping.
-fn family(rel: &Path) -> String {
-    rel.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default()
-}
-
 /// Control ids sort as numbers, not as text: 1.10 comes after 1.9.
 fn control_order(id: &str) -> Vec<u32> {
     id.split('.').map(|p| p.parse().unwrap_or(u32::MAX)).collect()
@@ -1116,14 +1217,15 @@ struct Row {
     claimed: Vec<(String, String, String)>,
 }
 
-fn index(rows: &[Row], cats: &Catalogs) -> String {
+fn index(rows: &[Row], groups: &[Group], cats: &Catalogs) -> String {
     let mut md = String::from(BANNER);
     md.push_str("\n# Preset packs\n\n");
     md.push_str(
-        "One page per pristine pack, derived from the pack file by `satz doc-packs`. The library's \
-         conventions and its per-family prose are [`presets/README.md`](../README.md); its version \
-         history is [the changelog](../README.md#changelog) at the foot of that page, repeated per \
-         pack under **History** on each page here.\n\n",
+        "One page per pristine pack, derived from the pack file by `satz doc-packs`, in the groups \
+         and the order of `presets/library-groups.txt`. The library's conventions and its prose per \
+         group are [`presets/README.md`](../README.md); its version history is \
+         [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under \
+         **History** on each page here.\n\n",
     );
     let resources: usize = rows.iter().map(|r| r.resources).sum();
     let claims: usize = rows.iter().map(|r| r.claims).sum();
@@ -1136,20 +1238,12 @@ fn index(rows: &[Row], cats: &Catalogs) -> String {
         if frameworks.is_empty() { String::new() } else { format!(" over {}", frameworks.join(" and ")) }
     ));
 
-    let mut families: BTreeMap<String, Vec<&Row>> = BTreeMap::new();
-    for r in rows {
-        families.entry(family(&r.rel)).or_default().push(r);
-    }
-    // the root family first, then the directories alphabetically
-    let mut order: Vec<&String> = families.keys().collect();
-    order.sort_by_key(|f| (!f.is_empty(), (*f).clone()));
-    for fam in order {
-        md.push_str(&match fam.is_empty() {
-            true => "## Root — `presets/*.satz`\n\n".to_string(),
-            false => format!("## `{}/`\n\n", fam),
-        });
+    // `groups` has placed every row exactly once: the gate ran before any page was rendered
+    let by_rel: BTreeMap<&Path, &Row> = rows.iter().map(|r| (r.rel.as_path(), r)).collect();
+    for g in groups {
+        md.push_str(&format!("## {}\n\n", g.title));
         md.push_str("| pack | version | what it does | resources | claims |\n|---|---|---|---|---|\n");
-        for r in &families[fam] {
+        for r in g.packs.iter().map(|rel| by_rel[rel.as_path()]) {
             let stem = r.rel.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             md.push_str(&format!(
                 "| [`{}`]({}.md) | {} | {} | {} | {} |\n",
@@ -1206,6 +1300,7 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
     }
     let cats = catalogs(presets_dir, &all)?;
     let hist = changelog(presets_dir, &all)?;
+    let groups = groups(presets_dir, &all)?;
     let lib = library(&all);
 
     // Header problems are collected and reported together: fixing them is one
@@ -1266,7 +1361,7 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
                 .collect(),
         });
     }
-    pages.push((out_dir.join("README.md"), index(&rows, &cats)));
+    pages.push((out_dir.join("README.md"), index(&rows, &groups, &cats)));
 
     // A page whose pack no longer exists is never regenerated, so comparing only what we
     // generate would leave it on disk and on the site for ever. Anything in the directory
@@ -1461,6 +1556,44 @@ mod tests {
     }
 
     #[test]
+    fn every_pack_is_in_one_group_and_the_library_page_follows_the_groups() {
+        let dir = std::env::temp_dir().join(format!("satz-groups-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("cis")).unwrap();
+        std::fs::write(dir.join("a.satz"), "// A pack.\n\npack a version \"1.0\"\n").unwrap();
+        std::fs::write(dir.join("cis/b.satz"), "// B pack.\n\npack b version \"1.0\"\n").unwrap();
+        let readme = |heads: &str| format!("# satz library\n\n```\n## Second\n```\n\n{}## Changelog\n", heads);
+        std::fs::write(dir.join("README.md"), readme("## First\n\n## Second\n\n")).unwrap();
+        let all = packs(&dir).unwrap();
+        let groups_of = |text: &str| {
+            std::fs::write(dir.join(GROUPS_FILE), text).unwrap();
+            groups(&dir, &all)
+        };
+
+        let g = groups_of("# comment\n[First]\ncis/b.satz\n\n[Second]\na.satz\n").unwrap();
+        assert_eq!(g.iter().map(|g| g.title.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+        assert_eq!(g[0].packs, [PathBuf::from("cis/b.satz")], "the file's order, not the directory's");
+
+        let e = groups_of("[First]\ncis/b.satz\n[Second]\n").unwrap_err().to_string();
+        assert!(e.contains("presets/a.satz is in no group") && e.contains("`Second` holds no pack"), "{}", e);
+        let e = groups_of("[First]\na.satz\ncis/b.satz\n[Second]\na.satz\n").unwrap_err().to_string();
+        assert!(e.contains("`a.satz` is in two groups, `First` and `Second`"), "{}", e);
+        let e = groups_of("a.satz\n[First]\ncis/b.satz\nc.satz\n[Second]\na.satz\n").unwrap_err().to_string();
+        assert!(e.contains("before the first `[<group>]`") && e.contains("`c.satz` is not a pack"), "{}", e);
+
+        // the library page: a heading per group, in the file's order; a fenced line is no heading
+        std::fs::write(dir.join("README.md"), readme("## Second\n\n## First\n\n")).unwrap();
+        let e = groups_of("[First]\ncis/b.satz\n[Second]\na.satz\n").unwrap_err().to_string();
+        assert!(e.contains("`## Second` stands before `## First`"), "{}", e);
+        std::fs::write(dir.join("README.md"), readme("## First\n\n")).unwrap();
+        let e = groups_of("[First]\ncis/b.satz\n[Second]\na.satz\n").unwrap_err().to_string();
+        assert!(e.contains("no `## Second` heading"), "{}", e);
+
+        std::fs::remove_file(dir.join(GROUPS_FILE)).unwrap();
+        assert!(groups(&dir, &all).unwrap_err().to_string().contains(GROUPS_FILE));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn a_page_whose_pack_was_deleted_fails_the_check_and_is_removed() {
         // The hole this closes: the run compared only the pages it GENERATES, so a page
         // left behind by a deleted pack was never looked at — it stayed in presets/docs
@@ -1471,9 +1604,10 @@ mod tests {
         std::fs::write(dir.join("p.satz"), "// A pack.\n\npack p version \"1.0\"\n").unwrap();
         std::fs::write(
             dir.join("README.md"),
-            "# satz library\n\nprose\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `p` | 1.0 | 2026-09-04 | first |\n",
+            "# satz library\n\nprose\n\n## Packs\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `p` | 1.0 | 2026-09-04 | first |\n",
         )
         .unwrap();
+        std::fs::write(dir.join(GROUPS_FILE), "[Packs]\np.satz\n").unwrap();
 
         run(&dir, &docs, false).unwrap();
         assert!(docs.join("p.md").exists(), "the pack's own page is written");
