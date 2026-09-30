@@ -79,6 +79,44 @@ for md in sorted((ROOT / "presets/docs").glob("*.md")):
         (md, f"presets/docs/{'index' if md.stem == 'README' else md.stem}.html")
     )
 
+# The library's groups, in reading order, with the pack pages in each: the side menu
+# of every pack page. `presets/library-groups.txt` is the one list (ADR 0076) and
+# `satz doc-packs` is its gate; the check here covers only what this script relies
+# on — every pack page is in the menu once, and every menu entry is a page.
+LIBRARY_PAGE = "presets/index.html"
+
+
+def library_groups() -> list[tuple[str, list[str]]]:
+    groups: list[tuple[str, list[str]]] = []
+    path = ROOT / "presets/library-groups.txt"
+    for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            groups.append((line[1:-1].strip(), []))
+        elif not groups:
+            raise SystemExit(f"build-site: {path}:{n}: a pack before the first group")
+        else:
+            groups[-1][1].append(Path(line).stem)
+    return groups
+
+
+LIBRARY_GROUPS = library_groups()
+_menu = [stem for _, stems in LIBRARY_GROUPS for stem in stems]
+_pack_stems = {src.stem for src, _ in PACK_PAGES} - {"README"}
+if sorted(_menu) != sorted(_pack_stems):
+    lines = ["build-site: the library menu names every pack page once."]
+    for stem in sorted(_pack_stems - set(_menu)):
+        lines.append(
+            f"  presets/docs/{stem}.md is in no group of presets/library-groups.txt"
+        )
+    for stem in sorted(set(_menu) - _pack_stems):
+        lines.append(f"  {stem} is in presets/library-groups.txt and has no page")
+    for stem in sorted({m for m in _menu if _menu.count(m) > 1}):
+        lines.append(f"  {stem} is in two groups")
+    raise SystemExit("\n".join(lines))
+
 # The menu, in reading order: what satz is, the language it is written in, the
 # library that ships with it, how you work with it, the machine interfaces, then
 # the reference shelf. Every page is named here and nothing else is — an unlisted
@@ -137,37 +175,47 @@ TOC_CSS = """
   .page { display: grid; grid-template-columns: 15.5rem minmax(0, calc(50% + 37ch - 9.25rem)); gap: 0 3rem;
     justify-content: center; align-items: start; }
   .page > main { margin: 0; max-width: none; }
-  details.toc { position: sticky; top: 4.4rem; margin: 84px 0 0; font-size: .9rem;
+  aside.side { position: sticky; top: 4.4rem; margin: 84px 0 0; font-size: .9rem;
     max-height: calc(100vh - 6rem); overflow-y: auto; overscroll-behavior: contain; }
-  details.toc summary { font-weight: 600; color: var(--ink-2); cursor: pointer; margin-bottom: .6rem;
+  aside.side details + details { margin-top: 1.4rem; }
+  aside.side summary { font-weight: 600; color: var(--ink-2); cursor: pointer; margin-bottom: .6rem;
     list-style: none; }
-  details.toc summary::-webkit-details-marker { display: none; }
-  details.toc summary::before { content: "▾ "; color: var(--muted); }
-  details.toc:not([open]) summary::before { content: "▸ "; }
-  details.toc nav { display: flex; flex-direction: column; border-left: 1px solid var(--line); }
-  details.toc a { color: var(--ink-2); text-decoration: none; line-height: 1.35;
+  aside.side summary::-webkit-details-marker { display: none; }
+  aside.side summary::before { content: "▾ "; color: var(--muted); }
+  aside.side details:not([open]) summary::before { content: "▸ "; }
+  aside.side nav { display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+  aside.side a { color: var(--ink-2); text-decoration: none; line-height: 1.35;
     padding: .18rem 0 .18rem .8rem; border-left: 2px solid transparent; margin-left: -1px; }
-  details.toc a:hover { color: var(--accent); }
-  details.toc a.active { color: var(--accent); border-left-color: var(--accent); }
-  details.toc a.lvl3 { padding-left: 1.7rem; font-size: .92em; color: var(--muted); }
-  details.toc a.lvl3:hover, details.toc a.lvl3.active { color: var(--accent); }
-  /* Narrow: the contents become a collapsed block above the text (the script
-     closes it on load), so a long list never buries the page it describes. */
+  aside.side a:hover { color: var(--accent); }
+  aside.side a.active, aside.side a.current { color: var(--accent); border-left-color: var(--accent); }
+  aside.side a.lvl3 { padding-left: 1.7rem; font-size: .92em; color: var(--muted); }
+  aside.side a.lvl3:hover, aside.side a.lvl3.active { color: var(--accent); }
+  /* A group header of the library: a label over the entries it holds. On the
+     library page it is the group's heading and links there; in a pack page's
+     library menu it is a label only. */
+  aside.side .grp { display: block; font-size: .74rem; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted); padding: .9rem 0 .2rem .8rem; }
+  aside.side nav > .grp:first-child { padding-top: .2rem; }
+  aside.side a.grp:hover, aside.side a.grp.active { color: var(--accent); }
+  /* Narrow: the side column becomes collapsed blocks above the text (the script
+     closes them on load), so a long list never buries the page it describes. */
   @media (max-width: 1180px) {
     .page { grid-template-columns: minmax(0, calc(50% + 37ch)); }
-    details.toc { position: static; max-height: none; overflow: visible; margin: 28px 0 0; }
+    aside.side { position: static; max-height: none; overflow: visible; margin: 28px 0 0; }
   }
-  @media print { details.toc { display: none; } }
+  @media print { aside.side { display: none; } }
 """
 
 TOC_JS = r"""
-/* The contents column: closed on narrow screens, and marking the section the
+/* The side column: closed on narrow screens, and marking the section the
    reader is actually in. No dependencies — the site ships no third-party JS. */
 (function () {
-  var toc = document.querySelector("details.toc");
-  if (!toc) return;
+  var side = document.querySelector("aside.side");
+  if (!side) return;
   var narrow = window.matchMedia("(max-width: 1180px)");
-  if (narrow.matches) toc.open = false;
+  if (narrow.matches) Array.prototype.forEach.call(side.querySelectorAll("details"), function (d) { d.open = false; });
+  var toc = side.querySelector("details.toc");
+  if (!toc) return;
   var links = [], heads = [];
   Array.prototype.forEach.call(toc.querySelectorAll("a[href^='#']"), function (a) {
     var el = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)));
@@ -188,12 +236,12 @@ TOC_JS = r"""
     if (active) active.classList.remove("active");
     active = a;
     a.classList.add("active");
-    /* keep the mark visible in a long contents list, without scrolling the page:
+    /* keep the mark visible in a long side column, without scrolling the page:
        only the aside's own scrollTop is touched */
-    if (!narrow.matches && toc.open && toc.scrollHeight > toc.clientHeight) {
-      var r = a.getBoundingClientRect(), t = toc.getBoundingClientRect();
-      if (r.top < t.top) toc.scrollTop -= (t.top - r.top) + 8;
-      else if (r.bottom > t.bottom) toc.scrollTop += (r.bottom - t.bottom) + 8;
+    if (!narrow.matches && toc.open && side.scrollHeight > side.clientHeight) {
+      var r = a.getBoundingClientRect(), t = side.getBoundingClientRect();
+      if (r.top < t.top) side.scrollTop -= (t.top - r.top) + 8;
+      else if (r.bottom > t.bottom) side.scrollTop += (r.bottom - t.bottom) + 8;
     }
   }
   function onScroll() { if (!queued) { queued = true; requestAnimationFrame(update); } }
@@ -350,27 +398,61 @@ GITHUB_BLOB = "https://github.com/tjirsch/satz/blob/main/"
 TOC_MIN_HEADINGS = 3
 
 
-def toc_html(body: str) -> str:
+def toc_html(body: str, grouped: bool = False) -> str:
     """ "On this page" — the h2/h3 headings of the rendered body, as a sidebar.
 
     Built AFTER `command_anchors` has run, so the hrefs are the ids the document
     actually carries. h4 and deeper are left out: a table of contents that lists
-    every paragraph is another long page to navigate.
+    every paragraph is another long page to navigate. A `grouped` page — the
+    library, whose h2 headings are its groups — shows one level more: the h2 as a
+    group header, its h3 and h4 as the entries under it.
     """
+    deepest = "4" if grouped else "3"
     heads = re.findall(
-        r'<h([23])[^>]*?\bid="([^"]+)"[^>]*>(.*?)</h\1>', body, flags=re.S
+        rf'<h([2-{deepest}])[^>]*?\bid="([^"]+)"[^>]*>(.*?)</h\1>', body, flags=re.S
     )
     if len(heads) < TOC_MIN_HEADINGS:
         return ""
+    cls = (
+        {"2": "grp", "3": "lvl2", "4": "lvl3"}
+        if grouped
+        else {"2": "lvl2", "3": "lvl3"}
+    )
     items = []
     for level, anchor, inner in heads:
         label = html_escape(doc.plain_text(inner))
-        items.append(f'<a class="lvl{level}" href="#{anchor}">{label}</a>')
+        items.append(f'<a class="{cls[level]}" href="#{anchor}">{label}</a>')
     return (
         '<details class="toc" open><summary>On this page</summary><nav>'
         + "".join(items)
         + "</nav></details>\n"
     )
+
+
+def library_html(current_rel: str) -> str:
+    """A pack page's library menu: every pack page under its group header, in
+    the order of `presets/library-groups.txt`, the current one marked."""
+    items = ['<a href="index.html">All packs</a>']
+    for title, stems in LIBRARY_GROUPS:
+        items.append(f'<span class="grp">{html_escape(title)}</span>')
+        for stem in stems:
+            cls = (
+                ' class="current"' if current_rel == f"presets/docs/{stem}.html" else ""
+            )
+            items.append(f'<a{cls} href="{stem}.html">{stem}</a>')
+    return (
+        '<details class="lib" open><summary>Library</summary><nav>'
+        + "".join(items)
+        + "</nav></details>\n"
+    )
+
+
+def side_html(body: str, rel: str, is_pack: bool) -> str:
+    """The side column: the page's own contents, and on a pack page the library."""
+    parts = toc_html(body, grouped=rel == LIBRARY_PAGE)
+    if is_pack:
+        parts += library_html(rel)
+    return f'<aside class="side">\n{parts}</aside>\n' if parts else ""
 
 
 def html_escape(text: str) -> str:
@@ -446,6 +528,7 @@ def main() -> None:
     OUT.mkdir(parents=True)
     index: list[dict] = []
     pages: dict[str, str] = {}
+    pack_rels = {r for s, r in PACK_PAGES if s.stem != "README"}
     for src, rel, _label in PAGES + [(s, r, "") for s, r in PACK_PAGES]:
         doc.MD = src  # the renderer inlines SVGs relative to the source
         body = doc.render(src.read_text(encoding="utf-8"))
@@ -462,7 +545,7 @@ def main() -> None:
             + "</style>\n"
             + nav_html(rel)
             + '<div class="page">\n'
-            + toc_html(body)
+            + side_html(body, rel, rel in pack_rels)
             + "<main>\n"
             + body
             + "\n</main>\n</div>\n"
