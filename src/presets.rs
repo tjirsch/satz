@@ -230,6 +230,7 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
     let questions_differ = satz_core::satz::canonical_questions(&lf) != satz_core::satz::canonical_questions(&pf);
     let offers_differ = satz_core::satz::canonical_offers(&lf) != satz_core::satz::canonical_offers(&pf);
     let notices_differ = satz_core::satz::canonical_notices(&lf) != satz_core::satz::canonical_notices(&pf);
+    let measures_differ = satz_core::satz::canonical_measures(&lf) != satz_core::satz::canonical_measures(&pf);
     let (l, p) = (satz_core::satz::canonical_parts(&lf), satz_core::satz::canonical_parts(&pf));
     if l.body != p.body {
         let lb: BTreeSet<&str> = l.body.lines().collect();
@@ -278,6 +279,9 @@ fn classify_source(local: &str, pristine: &str) -> Drift {
             return Drift::QuestionsOnly {
                 summary: format!("the notices differ: {} here, {} upstream", lf.notices.len(), pf.notices.len()),
             };
+        }
+        if measures_differ {
+            return Drift::QuestionsOnly { summary: "the claims' gcloud routes or risks differ".into() };
         }
         Drift::Clean
     } else {

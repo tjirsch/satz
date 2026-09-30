@@ -14,7 +14,7 @@
 //
 // Deleting these settings switches Access Approval off for the organisation.
 
-pack cis_extensions.access_approval version "1.0"
+pack cis_extensions.access_approval version "1.1"
 
 params {
   // Who receives approval requests. The pack cannot know; empty blocks the
@@ -48,6 +48,13 @@ claim "cis-gcp" "4.0" "2.15" implements {
   ]
   interpretation       = "Access Approval covers every supported service at the organisation, so Google personnel reach its content only after an approval."
   duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
+  gcloud = [
+    "gcloud access-approval settings update --organization=ORGANIZATION_ID --enrolled_services=all --notification_emails=EMAIL",
+  ]
+  gcloud_check = [
+    "gcloud access-approval settings get --organization=ORGANIZATION_ID",
+  ]
+  risk = "Google personnel reach the organisation's content for a support case without anyone in the organisation approving each access."
 }
 claim "cis-gcp" "5.0" "2.16" implements {
   resources = [
@@ -55,4 +62,11 @@ claim "cis-gcp" "5.0" "2.16" implements {
   ]
   interpretation       = "As for 4.0 §2.15 (5.0 §2.16: its new §2.2 moved the rest of §2 by one)."
   duty_answer_requests = "Someone on the notification list answers each request; an unanswered request is a support case that waits."
+  gcloud = [
+    "gcloud access-approval settings update --organization=ORGANIZATION_ID --enrolled_services=all --notification_emails=EMAIL",
+  ]
+  gcloud_check = [
+    "gcloud access-approval settings get --organization=ORGANIZATION_ID",
+  ]
+  risk = "Google personnel reach the organisation's content for a support case without anyone in the organisation approving each access."
 }

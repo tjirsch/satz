@@ -12,7 +12,7 @@
 // Google's constraint catalogue:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.18"
+pack CIS_GCP_Foundation_4_0 version "2.19"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_baseline_adopted = false
@@ -745,6 +745,10 @@ claim "cis-gcp" "5.0" "1.1.4" implements {
   ]
   interpretation       = "The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it."
   duty_review_baseline = "The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for."
+  gcloud_check = [
+    "gcloud org-policies list --organization=ORGANIZATION_ID",
+  ]
+  risk = "Without a central baseline every project owner decides these settings alone, and each new project starts from Google's defaults."
 }
 
 claim "cis-gcp" "4.0" "1.1" implements {
@@ -754,6 +758,24 @@ claim "cis-gcp" "4.0" "1.1" implements {
   interpretation         = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded."
   duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply."
   duty_review_allowlist  = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.allowedPolicyMembers
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedPrincipalSets:
+      - //cloudresourcemanager.googleapis.com/organizations/ORGANIZATION_ID
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.allowedPolicyMembers --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A role can be granted to any Google account, a personal one included, so access to the organisation's resources leaves its own identity control."
 }
 claim "cis-gcp" "5.0" "1.2" implements {
   resources = [
@@ -762,6 +784,24 @@ claim "cis-gcp" "5.0" "1.2" implements {
   interpretation         = "As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one)."
   duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten — see the 4.0 claim for why running it would weaken rather than strengthen the control."
   duty_review_allowlist  = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.allowedPolicyMembers
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedPrincipalSets:
+      - //cloudresourcemanager.googleapis.com/organizations/ORGANIZATION_ID
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.allowedPolicyMembers --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A role can be granted to any Google account, a personal one included, so access to the organisation's resources leaves its own identity control."
 }
 
 claim "cis-gcp" "4.0" "1.4" implements {
@@ -770,6 +810,30 @@ claim "cis-gcp" "4.0" "1.4" implements {
     "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
   ]
   interpretation = "User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountKeyCreation
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountKeyUpload
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset iam.disableServiceAccountKeyCreation --organization=ORGANIZATION_ID",
+    "gcloud org-policies reset iam.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.disableServiceAccountKeyCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.managed.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID --effective",
+    "gcloud iam service-accounts keys list --iam-account=SERVICE_ACCOUNT --managed-by=user",
+  ]
+  risk = "A user-managed service account key is a long-lived credential that works from anywhere once it is copied out of the platform."
 }
 claim "cis-gcp" "5.0" "1.5" implements {
   resources = [
@@ -777,6 +841,30 @@ claim "cis-gcp" "5.0" "1.5" implements {
     "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
   ]
   interpretation = "As for 4.0 §1.4 — 5.0 §1.5."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountKeyCreation
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountKeyUpload
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset iam.disableServiceAccountKeyCreation --organization=ORGANIZATION_ID",
+    "gcloud org-policies reset iam.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.disableServiceAccountKeyCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.managed.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID --effective",
+    "gcloud iam service-accounts keys list --iam-account=SERVICE_ACCOUNT --managed-by=user",
+  ]
+  risk = "A user-managed service account key is a long-lived credential that works from anywhere once it is copied out of the platform."
 }
 
 claim "cis-gcp" "4.0" "1.5" implements {
@@ -784,29 +872,119 @@ claim "cis-gcp" "4.0" "1.5" implements {
     "google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts",
   ]
   interpretation = "Default service accounts are prevented from holding privileged basic roles."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts --organization=ORGANIZATION_ID --effective",
+    "gcloud projects get-iam-policy PROJECT_ID --flatten='bindings[].members' --filter='bindings.members~^serviceAccount:.*(-compute@developer|@appspot)\\.gserviceaccount\\.com$' --format='table(bindings.role,bindings.members)'",
+  ]
+  risk = "A default service account holding Editor or Owner lets every workload that runs as it change the whole project."
 }
 claim "cis-gcp" "5.0" "1.6" implements {
   resources = [
     "google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts",
   ]
   interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts --organization=ORGANIZATION_ID --effective",
+    "gcloud projects get-iam-policy PROJECT_ID --flatten='bindings[].members' --filter='bindings.members~^serviceAccount:.*(-compute@developer|@appspot)\\.gserviceaccount\\.com$' --format='table(bindings.role,bindings.members)'",
+  ]
+  risk = "A default service account holding Editor or Owner lets every workload that runs as it change the whole project."
 }
 claim "cis-gcp" "4.0" "1.5" contributes {
   resources      = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
   interpretation = "Also disables the automatic Editor grant to default service accounts at project creation."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.automaticIamGrantsForDefaultServiceAccounts
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.automaticIamGrantsForDefaultServiceAccounts --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "Each new project grants its default service accounts the Editor role automatically."
 }
 claim "cis-gcp" "5.0" "1.6" contributes {
   resources      = ["google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts"]
   interpretation = "As for 4.0 §1.5 — 5.0 §1.6."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.automaticIamGrantsForDefaultServiceAccounts
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.automaticIamGrantsForDefaultServiceAccounts --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "Each new project grants its default service accounts the Editor role automatically."
 }
 
 claim "cis-gcp" "4.0" "1.16" contributes {
   resources      = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
   interpretation = "Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/essentialcontacts.managed.allowedContactDomains
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedDomains:
+      - '@DOMAIN'
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset essentialcontacts.allowedContactDomains --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe essentialcontacts.managed.allowedContactDomains --organization=ORGANIZATION_ID --effective",
+    "gcloud essential-contacts list --organization=ORGANIZATION_ID",
+  ]
+  risk = "An address outside the organisation's domains can be set as an essential contact and receives Google's security and legal notices about it."
 }
 claim "cis-gcp" "5.0" "1.17" contributes {
   resources      = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
   interpretation = "As for 4.0 §1.16 — 5.0 §1.17."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/essentialcontacts.managed.allowedContactDomains
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedDomains:
+      - '@DOMAIN'
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset essentialcontacts.allowedContactDomains --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe essentialcontacts.managed.allowedContactDomains --organization=ORGANIZATION_ID --effective",
+    "gcloud essential-contacts list --organization=ORGANIZATION_ID",
+  ]
+  risk = "An address outside the organisation's domains can be set as an essential contact and receives Google's security and legal notices about it."
 }
 
 claim "cis-gcp" "4.0" "2.1" contributes {
@@ -815,6 +993,27 @@ claim "cis-gcp" "4.0" "2.1" contributes {
     "google_org_policy_policy.iam_disableAuditLoggingExemption",
   ]
   interpretation = "Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/gcp.detailedAuditLoggingMode
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.disableAuditLoggingExemption
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe gcp.detailedAuditLoggingMode --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.disableAuditLoggingExemption --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A principal can be exempted from audit logging, and Cloud Storage audit entries carry no request and response detail."
 }
 claim "cis-gcp" "5.0" "2.1" contributes {
   resources = [
@@ -822,6 +1021,27 @@ claim "cis-gcp" "5.0" "2.1" contributes {
     "google_org_policy_policy.iam_disableAuditLoggingExemption",
   ]
   interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/gcp.detailedAuditLoggingMode
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.disableAuditLoggingExemption
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe gcp.detailedAuditLoggingMode --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe iam.disableAuditLoggingExemption --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A principal can be exempted from audit logging, and Cloud Storage audit entries carry no request and response detail."
 }
 
 // The one control in this pack whose witness is not an org policy, and not the pack's
@@ -845,80 +1065,319 @@ claim "cis-gcp" "5.0" "2.14" implements {
     "google_project_service.infra_cloudasset_googleapis_com",
   ]
   interpretation = "The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organisation's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live."
+  gcloud = [
+    "gcloud services enable cloudasset.googleapis.com --project=PROJECT_ID",
+  ]
+  gcloud_check = [
+    "gcloud services list --enabled --project=PROJECT_ID --filter='config.name=cloudasset.googleapis.com'",
+  ]
+  risk = "Without Cloud Asset Inventory there is no queryable record of the organisation's resources and of how their configuration changed."
 }
 
 claim "cis-gcp" "4.0" "3.1" implements {
   resources      = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
   interpretation = "New projects are created without the auto-mode default VPC and its permissive firewall rules."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.skipDefaultNetworkCreation
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.skipDefaultNetworkCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud compute networks list --project=PROJECT_ID --filter='name=default'",
+  ]
+  risk = "Each new project receives the default network, whose firewall rules admit SSH, RDP and ICMP from the internet."
 }
 claim "cis-gcp" "5.0" "3.1" implements {
   resources      = ["google_org_policy_policy.compute_skipDefaultNetworkCreation"]
   interpretation = "As for 4.0 §3.1 (5.0 §3.1, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.skipDefaultNetworkCreation
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.skipDefaultNetworkCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud compute networks list --project=PROJECT_ID --filter='name=default'",
+  ]
+  risk = "Each new project receives the default network, whose firewall rules admit SSH, RDP and ICMP from the internet."
 }
 
 claim "cis-gcp" "4.0" "3.8" implements {
   resources      = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "Subnets must enable VPC Flow Logs."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.requireVpcFlowLogs
+spec:
+  rules:
+  - values:
+      allowedValues:
+      - ESSENTIAL
+      - LIGHT
+      - COMPREHENSIVE
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.requireVpcFlowLogs --organization=ORGANIZATION_ID --effective",
+    "gcloud compute networks subnets list --project=PROJECT_ID --format='table(name,region,logConfig.enable)'",
+  ]
+  risk = "A subnet without flow logs leaves no record of which addresses its machines exchanged traffic with, so an incident cannot be traced."
 }
 claim "cis-gcp" "5.0" "3.10" implements {
   resources      = ["google_org_policy_policy.compute_requireVpcFlowLogs"]
   interpretation = "As for 4.0 §3.8 — 5.0 §3.10 (5.0 inserted 3.8 VPC Service Controls and 3.9 Private Service Connect)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.requireVpcFlowLogs
+spec:
+  rules:
+  - values:
+      allowedValues:
+      - ESSENTIAL
+      - LIGHT
+      - COMPREHENSIVE
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.requireVpcFlowLogs --organization=ORGANIZATION_ID --effective",
+    "gcloud compute networks subnets list --project=PROJECT_ID --format='table(name,region,logConfig.enable)'",
+  ]
+  risk = "A subnet without flow logs leaves no record of which addresses its machines exchanged traffic with, so an incident cannot be traced."
 }
 
 claim "cis-gcp" "4.0" "4.5" implements {
   resources      = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
   interpretation = "The serial-port-enable metadata key cannot be set to true, so no VM exposes an interactive serial console."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.disableSerialPortAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.disableSerialPortAccess --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "An instance's interactive serial console accepts connections from any address, because it supports no IP-based restriction."
 }
 claim "cis-gcp" "5.0" "4.5" implements {
   resources      = ["google_org_policy_policy.compute_managed_disableSerialPortAccess"]
   interpretation = "As for 4.0 §4.5 (5.0 §4.5, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.disableSerialPortAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.disableSerialPortAccess --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "An instance's interactive serial console accepts connections from any address, because it supports no IP-based restriction."
 }
 
 claim "cis-gcp" "4.0" "4.4" implements {
   resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation    = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.requireOsLogin
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset compute.requireOsLogin --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.requireOsLogin --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe compute.requireOsLogin --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "SSH access rests on keys in instance and project metadata rather than on IAM, so removing a person's access means finding every key they placed."
 }
 claim "cis-gcp" "5.0" "4.4" implements {
   resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation    = "As for 4.0 §4.4 (5.0 §4.4, unchanged)."
   duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.requireOsLogin
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+    "gcloud org-policies reset compute.requireOsLogin --organization=ORGANIZATION_ID",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.requireOsLogin --organization=ORGANIZATION_ID --effective",
+    "gcloud org-policies describe compute.requireOsLogin --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "SSH access rests on keys in instance and project metadata rather than on IAM, so removing a person's access means finding every key they placed."
 }
 
 claim "cis-gcp" "4.0" "4.6" implements {
   resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
   interpretation  = "Instances may not enable IP forwarding."
   duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.vmCanIpForward
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.vmCanIpForward --organization=ORGANIZATION_ID --effective",
+    "gcloud compute instances list --project=PROJECT_ID --format='table(name,zone,canIpForward)'",
+  ]
+  risk = "An instance with IP forwarding passes packets addressed to other hosts and can act as a router the network design does not know about."
 }
 claim "cis-gcp" "5.0" "4.6" implements {
   resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
   interpretation  = "As for 4.0 §4.6 (5.0 §4.6, unchanged)."
   duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.vmCanIpForward
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.vmCanIpForward --organization=ORGANIZATION_ID --effective",
+    "gcloud compute instances list --project=PROJECT_ID --format='table(name,zone,canIpForward)'",
+  ]
+  risk = "An instance with IP forwarding passes packets addressed to other hosts and can act as a router the network design does not know about."
 }
 
 claim "cis-gcp" "4.0" "4.9" implements {
   resources      = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
   interpretation = "Compute instances may not be given external IP addresses."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.vmExternalIpAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.vmExternalIpAccess --organization=ORGANIZATION_ID --effective",
+    "gcloud compute instances list --project=PROJECT_ID --format='table(name,zone,networkInterfaces[].accessConfigs[].natIP.list())'",
+  ]
+  risk = "An instance with an external IP address is reachable from the internet wherever a firewall rule admits traffic."
 }
 claim "cis-gcp" "5.0" "4.9" implements {
   resources      = ["google_org_policy_policy.compute_managed_vmExternalIpAccess"]
   interpretation = "As for 4.0 §4.9 (5.0 §4.9, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/compute.managed.vmExternalIpAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe compute.managed.vmExternalIpAccess --organization=ORGANIZATION_ID --effective",
+    "gcloud compute instances list --project=PROJECT_ID --format='table(name,zone,networkInterfaces[].accessConfigs[].natIP.list())'",
+  ]
+  risk = "An instance with an external IP address is reachable from the internet wherever a firewall rule admits traffic."
 }
 
 claim "cis-gcp" "4.0" "5.1" implements {
   resources      = ["google_org_policy_policy.storage_publicAccessPrevention"]
   interpretation = "Public access prevention is enforced, so buckets cannot be exposed to allUsers or allAuthenticatedUsers."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.publicAccessPrevention
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.publicAccessPrevention --organization=ORGANIZATION_ID --effective",
+    "gcloud storage buckets list --project=PROJECT_ID --format='table(name,public_access_prevention,uniform_bucket_level_access)'",
+  ]
+  risk = "A bucket or object can be granted to allUsers or allAuthenticatedUsers, which makes its data readable by anyone."
 }
 claim "cis-gcp" "5.0" "5.1" implements {
   resources      = ["google_org_policy_policy.storage_publicAccessPrevention"]
   interpretation = "As for 4.0 §5.1 (5.0 §5.1, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.publicAccessPrevention
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.publicAccessPrevention --organization=ORGANIZATION_ID --effective",
+    "gcloud storage buckets list --project=PROJECT_ID --format='table(name,public_access_prevention,uniform_bucket_level_access)'",
+  ]
+  risk = "A bucket or object can be granted to allUsers or allAuthenticatedUsers, which makes its data readable by anyone."
 }
 
 claim "cis-gcp" "4.0" "5.2" implements {
   resources      = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
   interpretation = "Uniform bucket-level access disables object ACLs; bucket access is governed by IAM alone."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.uniformBucketLevelAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.uniformBucketLevelAccess --organization=ORGANIZATION_ID --effective",
+    "gcloud storage buckets list --project=PROJECT_ID --format='table(name,public_access_prevention,uniform_bucket_level_access)'",
+  ]
+  risk = "Object ACLs grant access beside IAM, so a bucket's IAM policy does not show who can read its objects."
 }
 claim "cis-gcp" "5.0" "5.2" implements {
   resources      = ["google_org_policy_policy.storage_uniformBucketLevelAccess"]
   interpretation = "As for 4.0 §5.2 (5.0 §5.2, unchanged)."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/storage.uniformBucketLevelAccess
+spec:
+  rules:
+  - enforce: true
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe storage.uniformBucketLevelAccess --organization=ORGANIZATION_ID --effective",
+    "gcloud storage buckets list --project=PROJECT_ID --format='table(name,public_access_prevention,uniform_bucket_level_access)'",
+  ]
+  risk = "Object ACLs grant access beside IAM, so a bucket's IAM policy does not show who can read its objects."
 }

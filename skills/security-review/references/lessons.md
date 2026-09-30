@@ -26,14 +26,16 @@
   dossier reads Prowler-4 field names (`unmapped.check_id`, `cloud.project.uid`) and shows wrong
   titles/projects with Prowler 5 — read the OCSF directly (build_audit.py does).
 - `require --format json` gives the goal view: verdict per control and `providers` (packs that
-  would provide an unmet control) — that is where "Pack stellt es bereit" comes from.
+  would provide an unmet control). Every control in it and in `report-compliance --format json`
+  carries `measures`: per claiming pack its `use` path, whether the estate includes it, the gcloud
+  commands that meet (`gcloud`) and check (`gcloud_check`) the control without satz, and `risk`
+  (what goes wrong without it). build_audit.py renders the plan's satz `use` lines, the gcloud
+  alternative, the Prüfkommandos and "Risiko ohne Maßnahme" from them; `assets/measures.yaml`
+  adds only what satz does not state.
 - Identity: satz binds the estate's IaC SA; the ADC must be allowed to impersonate it. `satz whoami
   <estate>` before anything live. Switching customers = new ADC.
-- Packs that map to measures: `monitoring.organization_audit_logsink` (2.1/2.3/2.4),
-  `monitoring.organization_cis_log_alerts_central` (2.5–2.12), `essential_contacts_organization`
-  (1.17), `cis_extensions.*` (1.15, 2.4, 4.3, 4.8, 4.11, 6.5/6.7, 7.2/7.3/8.1),
-  `CIS_GCP_Foundation_4_0` (org policies: 1.1.4, 1.2, 1.5, 1.6, 3.1, 3.10, 4.4–4.6, 4.9, 5.1, 5.2),
-  `sa_security_audit` (audit identity). Legacy→reset policy changes need `tofu apply -replace`.
+- Which pack covers which control is satz's data (`measures[].pack` / `use`), not a list here.
+  Legacy→reset policy changes need `tofu apply -replace`.
 
 ## Documents
 

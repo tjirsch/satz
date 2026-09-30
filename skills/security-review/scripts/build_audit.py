@@ -174,6 +174,19 @@ def fill_placeholders(text, scope, project):
 
 
 # --------------------------------------------------------------------------- workloads
+def fill_satz(cmd, scope):
+    """satz's gcloud commands name their values in uppercase words; fill the ones the scope
+    knows and leave the rest for the operator."""
+    for word, value in (
+        ("ORGANIZATION_ID", scope.get("org_id")),
+        ("DOMAIN", scope.get("domain")),
+        ("REGION", scope.get("default_region", "europe-west3")),
+    ):
+        if value:
+            cmd = re.sub(rf"\b{word}\b", str(value), cmd)
+    return cmd
+
+
 def strip_paths(line):
     """A local path down to its last component — a document names no folder (PII) — and the
     finding layout's padded columns down to one space."""
@@ -534,6 +547,25 @@ def select_measures(scope, model, catalogue):
 
 def ver_key(cid):
     return [int(x) for x in cid.split(".")]
+
+
+def satz_measures(rows):
+    """The measures satz states for these controls: every claim that names one, from the
+    `measures` of satz's report row or, without a report, of its `require` row — pack, `use`
+    path, gcloud commands that meet and check the control, and the risk of leaving it open.
+    One entry per distinct pack and command list, in control order."""
+    out, seen = [], set()
+    for r in rows:
+        src = (r.get("satz") or {}).get("measures")
+        if src is None:
+            src = (r.get("require") or {}).get("measures") or []
+        for sm in src:
+            key = (sm["pack"], tuple(sm.get("gcloud") or []), sm.get("risk"))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(sm, cid=r["cid"]))
+    return out
 
 
 def measure_ctx(scope, model, m):
@@ -1072,37 +1104,51 @@ def build_docx(scope, model, measures, out):
             para(doc, "Befund", bold=True)
             add_bullets(doc, bef)
         para(doc, fmt(m.get("why", ""), ctx))
-        provs = sorted(
-            {
-                p
-                for r in m["_rows"]
-                for p in ((r.get("require") or {}).get("providers") or [])
-            }
+        sms = satz_measures(
+            [r for r in m["_rows"] if r["status"] != PASS or r in m["_drifted"]]
         )
-        if provs:
+        risks = []
+        for sm in sms:
+            if sm.get("risk") and sm["risk"] not in [x for _, x in risks]:
+                risks.append((sm["cid"], sm["risk"]))
+        if risks:
+            para(doc, "Risiko ohne Maßnahme (satz)", bold=True)
+            add_bullets(doc, [f"{c}: {x}" for c, x in risks])
+        uses = sorted({sm["use"] for sm in sms if sm.get("use") and not sm.get("included")})
+        if uses:
             para(
                 doc,
-                "satz require: nicht im Estate deklariert — bereitgestellt durch Pack "
-                + ", ".join(provs)
+                "satz: nicht im Estate deklariert — bereitgestellt durch "
+                + ", ".join(sorted({sm["pack"] for sm in sms if not sm.get("included")}))
                 + ".",
                 italic=True,
             )
-        if m.get("satz"):
+        if m.get("satz") or uses:
             para(doc, "Umsetzung mit satz", bold=True)
-            add_code(doc, fmt(m["satz"], ctx))
+            add_code(
+                doc,
+                "\n".join([f'use "{u}"' for u in uses] + ([fmt(m["satz"], ctx)] if m.get("satz") else [])),
+            )
+        routes = []
+        for sm in sms:
+            if sm.get("gcloud") and sm["gcloud"] not in routes:
+                routes.append(sm["gcloud"])
+        gcloud_text = "\n".join(fill_satz(c, scope) for route in routes for c in route)
         if m.get("gcloud"):
+            gcloud_text = "\n".join(x for x in (gcloud_text, fmt(m["gcloud"], ctx)) if x)
+        if gcloud_text:
             para(
                 doc,
                 "Alternative ohne satz (gcloud)"
-                if m.get("satz")
+                if m.get("satz") or uses
                 else "Umsetzung (gcloud)",
                 bold=True,
             )
-            add_code(doc, fmt(m["gcloud"], ctx))
+            add_code(doc, gcloud_text)
         if m.get("terraform"):
             para(doc, "Terraform", bold=True)
             add_code(doc, fmt(m["terraform"], ctx))
-        if not m.get("satz") and not m.get("gcloud"):
+        if not m.get("satz") and not gcloud_text:
             for r in m["_rows"]:
                 if r["remediation"]:
                     para(doc, f"CIS-Remediation {r['cid']}", bold=True)
@@ -1117,6 +1163,15 @@ def build_docx(scope, model, measures, out):
             add_bullets(doc, [fmt(p, ctx) for p in m["prereq"]])
         if m.get("nachweis"):
             para(doc, "Nachweis: " + fmt(m["nachweis"], ctx), italic=True)
+        checks = []
+        for sm in sms:
+            for c in sm.get("gcloud_check") or []:
+                c = fill_satz(c, scope)
+                if c not in checks:
+                    checks.append(c)
+        if checks:
+            para(doc, "Prüfkommandos (satz)", bold=True)
+            add_code(doc, "\n".join(checks))
 
     # False positives
     fps = [r for r in model["rows"] if r["status"] == FP]
@@ -1178,10 +1233,8 @@ def build_docx(scope, model, measures, out):
                 [
                     r["cid"],
                     r["title"],
-                    ", ".join(by_m[r["cid"]].get("packs", []))
-                    or by_m[r["cid"]]["title"]
-                    if r["cid"] in by_m
-                    else "—",
+                    ", ".join(sorted({sm["pack"] for sm in satz_measures([r])}))
+                    or (by_m[r["cid"]]["title"] if r["cid"] in by_m else "—"),
                 ]
                 for r in na
             ],

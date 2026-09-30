@@ -119,7 +119,7 @@
     },
     {
       "path": "presets/monitoring/organization-audit-logsink.satz",
-      "version": "1.6",
+      "version": "1.7",
       "role": "pack",
       "gate": "use_audit_logsink",
       "gate_declared_in": "presets/estate-map.satz",
@@ -129,7 +129,7 @@
     },
     {
       "path": "presets/monitoring/organization-cis-log-alerts-central.satz",
-      "version": "1.6",
+      "version": "1.7",
       "role": "pack",
       "gate": "use_central_alerts",
       "gate_declared_in": "presets/estate-map.satz",
@@ -139,7 +139,7 @@
     },
     {
       "path": "presets/cis/CIS-GCP-Foundation-4.0.satz",
-      "version": "2.18",
+      "version": "2.19",
       "role": "pack",
       "gate": "use_cis_baseline",
       "gate_declared_in": "presets/estate-map.satz",
@@ -157,7 +157,7 @@
     },
     {
       "path": "presets/cis/block-project-ssh-keys.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_block_project_ssh_keys",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -175,7 +175,7 @@
     },
     {
       "path": "presets/cis/shielded-vm.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_require_shielded_vm",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -192,7 +192,7 @@
     },
     {
       "path": "presets/cis/dns-logging.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_dns_logging",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -209,7 +209,7 @@
     },
     {
       "path": "presets/cis/confidential-computing.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_confidential_computing",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -226,7 +226,7 @@
     },
     {
       "path": "presets/cis/cloud-sql.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_cloud_sql_hardening",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -243,7 +243,7 @@
     },
     {
       "path": "presets/cis/cmek.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_cmek_required",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -260,7 +260,7 @@
     },
     {
       "path": "presets/cis/api-key-services.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_api_key_services",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -277,7 +277,7 @@
     },
     {
       "path": "presets/cis/bucket-retention.satz",
-      "version": "1.4",
+      "version": "1.5",
       "role": "pack",
       "gate": "cis_bucket_retention",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -294,7 +294,7 @@
     },
     {
       "path": "presets/cis/access-approval.satz",
-      "version": "1.0",
+      "version": "1.1",
       "role": "pack",
       "gate": "cis_access_approval",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -303,7 +303,7 @@
     },
     {
       "path": "presets/cis/internet-ssh-rdp.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "cis_block_internet_ssh_rdp",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -312,7 +312,7 @@
     },
     {
       "path": "presets/cis/cloud-sql-iam-and-deletion-protection.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_cloud_sql_iam_and_deletion_protection",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -329,7 +329,7 @@
     },
     {
       "path": "presets/cis/api-key-services-dry-run.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_api_key_services_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -347,7 +347,7 @@
     },
     {
       "path": "presets/cis/block-project-ssh-keys-dry-run.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_block_project_ssh_keys_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -364,7 +364,7 @@
     },
     {
       "path": "presets/cis/bucket-retention-dry-run.satz",
-      "version": "1.4",
+      "version": "1.5",
       "role": "pack",
       "gate": "cis_bucket_retention_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -381,7 +381,7 @@
     },
     {
       "path": "presets/cis/cloud-sql-dry-run.satz",
-      "version": "1.3",
+      "version": "1.4",
       "role": "pack",
       "gate": "cis_cloud_sql_hardening_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -398,7 +398,7 @@
     },
     {
       "path": "presets/cis/cloud-sql-iam-and-deletion-protection-dry-run.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_cloud_sql_iam_and_deletion_protection_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
@@ -415,7 +415,7 @@
     },
     {
       "path": "presets/cis/confidential-computing-dry-run.satz",
-      "version": "1.2",
+      "version": "1.3",
       "role": "pack",
       "gate": "cis_confidential_computing_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",

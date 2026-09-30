@@ -340,7 +340,8 @@ second line
 `[A-Za-z0-9_]+`, terminated by `}`; inside an `each` it may be `each.<field>` (§6.4), and
 any other dotted name is an unknown param. Interpolation works in values and keys, in an
 `action`'s `args` and `execute_args`, and in a `suppress` label and role. Every other
-statement string — a `use` path, a claim's header, `reason`, `interpretation` and duties, a
+statement string — a `use` path, a claim's header, `reason`, `interpretation`, duties,
+`gcloud`, `gcloud_check` and `risk`, a
 question's texts, an export's or interface's name, an action's name and `run` — is literal,
 and `{…}` in one is refused: `no interpolation allowed`.
 
@@ -1329,6 +1330,10 @@ claim "cis-gcp" "4.0" "1.4" implements {
   ]
   interpretation       = "Service account keys cannot be created or uploaded."
   duty_rotate_existing = "Existing user-managed keys must be removed by hand."
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.disableServiceAccountKeyCreation --organization=ORGANIZATION_ID --effective",
+  ]
+  risk = "A user-managed service account key is a long-lived credential that works from anywhere once it is copied out of the platform."
 }
 ```
 
@@ -1339,6 +1344,9 @@ claim-entry := "resources" "=" "[" { STRING } "]"
              | "interpretation" "=" STRING
              | "reason" "=" STRING            (deviates only, required)
              | "duty_" IDENT "=" STRING
+             | "gcloud" "=" "[" STRING { "," STRING } "]"
+             | "gcloud_check" "=" "[" STRING { "," STRING } "]"
+             | "risk" "=" STRING
 ```
 
 - The three header strings are plain — **no interpolation**; control ids are
@@ -1359,6 +1367,15 @@ claim-entry := "resources" "=" "[" { STRING } "]"
 - `duty_<name>` records a manual duty; underscores become hyphens in reports
   (`duty_validate_then_lock` → `validate-then-lock`).
 - `implements` discharges the control; `contributes` is a necessary part.
+- `gcloud`, `gcloud_check` and `risk` state the measure without satz: the gcloud
+  commands that meet the control the way the claim's resources do, the commands that
+  show whether it is met, and one sentence on what goes wrong without it. Each list
+  holds one command per entry; a multi-line command, such as a heredoc that writes a
+  policy file, is one triple-quoted entry. Placeholders are uppercase words —
+  `ORGANIZATION_ID`, `PROJECT_ID` — because a claim's strings do not interpolate. An
+  empty list is refused; a claim without a route leaves the attribute out. They emit
+  nothing and decide no verdict: `require` and `report-compliance` carry them in the
+  `measures` of each control, and a changed text never forks an estate's pack.
 
 The catalog the claim is judged against is data
 (`presets/catalogs/cis-gcp-4.0.yaml`): control ids, this project's own
@@ -2502,8 +2519,15 @@ control with `control`, `title`, `status`, `responsibility`, `duties`,
 those an OBJECT: `address`, `state` (`verified` · `missing` · `diverged` ·
 `unverifiable` · `not-checked`), `live_id`, `detail`, `conditional` (an org
 policy's conditional rules, one line each) and `declared_at`
-(`file` + `line`), and `undeclared_exemptions` — one `{value, target, policy}` per
-undeclared exemption binding that lets one of the row's witness policies out.
+(`file` + `line`), `undeclared_exemptions` — one `{value, target, policy}` per
+undeclared exemption binding that lets one of the row's witness policies out — and
+`measures`: every claim in the estate or the preset library that names the control, each
+with `pack`, `use` (the `presets/…` path an estate's `use` line names, `null` for a claim
+the estate declares itself), the claim's `framework`, `version`, `control` and
+`coverage`, `included` (the estate uses it), `resources`, `interpretation`, `gcloud`,
+`gcloud_check` and `risk` — each of the last four `null` where the claim states none. A
+control that takes its evidence through a cross-walk lists the measures of the controls
+it reads. `satz require --format json` carries the same `measures` on each control.
 `exemption_bindings` is `null` for an estate without the exemption key, and otherwise
 `status` (`checked` · `skipped` · `no-organization-id` · `unavailable`), `key`,
 `declared`, `live` (the live bindings of the key), `reason` and `undeclared` — each

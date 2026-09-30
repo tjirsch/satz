@@ -16,7 +16,7 @@
 // This fragment carries NO claim. A dry run discharges no control while it runs, and
 // `require` reports the control as unmet, which is the truth.
 
-pack cis_extensions.bucket_retention_dry_run version "1.4"
+pack cis_extensions.bucket_retention_dry_run version "1.5"
 
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run

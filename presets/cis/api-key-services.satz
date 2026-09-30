@@ -12,7 +12,7 @@
 // are non-empty and limited to `allowed_api_key_services`, which is what the
 // control asks for.
 
-pack cis_extensions.api_key_services version "1.3"
+pack cis_extensions.api_key_services version "1.4"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_api_key_services_adopted = false
@@ -58,6 +58,22 @@ claim "cis-gcp" "4.0" "1.14" implements {
   ]
   interpretation       = "A service-account API key may only be created when its API targets are non-empty and limited to the allowed services, so no key exists that can call every enabled API."
   duty_review_services = "The allowed-service list is the control: re-read it when an application starts calling a new API, rather than switching the constraint off."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountApiKeyCreation
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedServices: []
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.disableServiceAccountApiKeyCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud services api-keys list --project=PROJECT_ID --format='table(displayName,restrictions.apiTargets)'",
+  ]
+  risk = "An API key bound to a service account can call every API enabled in its project for whoever holds the key."
 }
 claim "cis-gcp" "5.0" "1.15" implements {
   resources = [
@@ -65,4 +81,20 @@ claim "cis-gcp" "5.0" "1.15" implements {
   ]
   interpretation       = "As for 4.0 §1.14 — 5.0 §1.15 (5.0 renumbered §1.13–1.16; its 1.13 is a different control, 'API keys only exist for active services')."
   duty_review_services = "The allowed-service list is the control: re-read it when an application starts calling a new API, rather than switching the constraint off."
+  gcloud = [
+    """cat > policy.yaml <<'EOF'
+name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountApiKeyCreation
+spec:
+  rules:
+  - enforce: true
+    parameters:
+      allowedServices: []
+EOF""",
+    "gcloud org-policies set-policy policy.yaml",
+  ]
+  gcloud_check = [
+    "gcloud org-policies describe iam.managed.disableServiceAccountApiKeyCreation --organization=ORGANIZATION_ID --effective",
+    "gcloud services api-keys list --project=PROJECT_ID --format='table(displayName,restrictions.apiTargets)'",
+  ]
+  risk = "An API key bound to a service account can call every API enabled in its project for whoever holds the key."
 }

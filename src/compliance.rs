@@ -75,7 +75,7 @@ fn default_automatability() -> String {
     "technical".to_string()
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub(crate) struct Claim {
     pub framework: String,
     #[serde(rename = "framework-version", default)]
@@ -95,6 +95,15 @@ pub(crate) struct Claim {
     /// rendered under the witnesses
     #[serde(default)]
     pub interpretation: String,
+    /// the measure without satz: gcloud commands that meet the control, one per entry
+    #[serde(default)]
+    pub gcloud: Vec<String>,
+    /// gcloud commands that show whether the control is met
+    #[serde(default)]
+    pub gcloud_check: Vec<String>,
+    /// what goes wrong without the measure, in one sentence
+    #[serde(default)]
+    pub risk: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -591,7 +600,8 @@ fn load_catalog(presets_dir: &str, framework: &str) -> Result<Catalog, BoxErr> {
 /// existing (they only appear after a transpile). `.diff.satz` files are
 /// adoption ledgers, not usable packs, and are skipped so a fork's ledger can
 /// never masquerade as a provider.
-fn load_library_satz_claims(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> {
+fn load_library_satz_claims(presets_dir: &str) -> Result<Vec<LibraryClaim>, BoxErr> {
+    let root = PathBuf::from(presets_dir);
     let mut out = Vec::new();
     let mut stack = vec![PathBuf::from(presets_dir)];
     while let Some(dir) = stack.pop() {
@@ -611,12 +621,26 @@ fn load_library_satz_claims(presets_dir: &str) -> Result<Vec<(String, Claim)>, B
             // transpile reports it. Skip it rather than fail the goal view.
             let Ok(file) = satz_core::satz::parse(&src) else { continue };
             let pack = file.estate.clone().unwrap_or_default();
+            // The estate always writes `presets/…`, whatever presets_dir resolves to here.
+            let rel = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
             for c in &file.claims {
-                out.push((pack.clone(), claim_from_decl(c)));
+                out.push(LibraryClaim { pack: pack.clone(), use_path: format!("presets/{}", rel), claim: claim_from_decl(c) });
             }
         }
     }
+    // Deterministic, and a pristine pack before its `.local` fork: where both declare the
+    // same claim, the measure names the pack an estate adopts, not somebody's fork.
+    out.sort_by(|a, b| {
+        (a.use_path.contains(".local."), &a.use_path).cmp(&(b.use_path.contains(".local."), &b.use_path))
+    });
     Ok(out)
+}
+
+/// One claim of the preset library, with the `use` path that pulls its pack in.
+pub(crate) struct LibraryClaim {
+    pub pack: String,
+    pub use_path: String,
+    pub claim: Claim,
 }
 
 /// The claims the estate actually pulled in, straight from the front end.
@@ -643,14 +667,116 @@ fn claim_from_decl(c: &satz_core::satz::ClaimDecl) -> Claim {
             .map(|(id, duty)| ManualDuty { id: id.clone(), duty: duty.clone() })
             .collect(),
         interpretation: c.interpretation.clone().unwrap_or_default(),
+        gcloud: c.gcloud.clone(),
+        gcloud_check: c.gcloud_check.clone(),
+        risk: c.risk.clone().unwrap_or_default(),
     }
 }
 
 /// Library view for remediation suggestions: the claims of every `.satz` pack in
 /// the library. Generated `.claims.yaml` sidecars are gone — a pack's claims are
 /// read from its source.
-fn load_library_view(presets_dir: &str) -> Result<Vec<(String, Claim)>, BoxErr> {
-    load_library_satz_claims(presets_dir)
+/// The library as `resolve_goals` reads it (pack, claim), and with each claim's `use` path.
+type LibraryView = (Vec<(String, Claim)>, Vec<LibraryClaim>);
+
+fn load_library_view(presets_dir: &str) -> Result<LibraryView, BoxErr> {
+    let library = load_library_satz_claims(presets_dir)?;
+    let view = library.iter().map(|l| (l.pack.clone(), l.claim.clone())).collect();
+    Ok((view, library))
+}
+
+/// One way to meet a control: the pack that does it, the claim it makes, and the same
+/// measure without satz — the gcloud commands that meet and check it, and what goes
+/// wrong without it. The pack author's statement, as data; an agent writing a plan reads
+/// it and judges which to recommend (ADR 0073).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct Measure {
+    /// the pack that declares the claim
+    pub pack: String,
+    /// the path an estate's `use` line names for that pack, `presets/…`; null for a
+    /// claim the estate declares itself or a pack this presets_dir does not hold
+    #[serde(rename = "use")]
+    pub use_path: Option<String>,
+    /// the control the claim names — the row's own, or the benchmark control a
+    /// cross-walked framework reads its evidence from
+    pub framework: String,
+    pub version: String,
+    pub control: String,
+    /// implements | contributes | deviates
+    pub coverage: String,
+    /// the estate uses the pack (or declares the claim); false for a pack the library
+    /// holds and the estate does not use
+    pub included: bool,
+    /// the claim's witnesses: the resources the pack emits for it
+    pub resources: Vec<String>,
+    pub interpretation: Option<String>,
+    /// gcloud commands that meet the control without satz, one per entry, with
+    /// ORGANIZATION_ID-style placeholders; null when the pack states no gcloud route
+    pub gcloud: Option<Vec<String>>,
+    /// gcloud commands that show whether the control is met; null when the pack states none
+    pub gcloud_check: Option<Vec<String>>,
+    /// what goes wrong without the measure, in one sentence; null when the pack states none
+    pub risk: Option<String>,
+}
+
+/// The measures for one control: every claim that names it, from the packs the estate
+/// includes and from the rest of the library. A control that reads its evidence through
+/// a cross-walk (`evidence:` in the catalog) takes the measures of the controls it reads.
+pub(crate) fn measures_for(
+    catalog: &Catalog,
+    id: &str,
+    library: &[LibraryClaim],
+    included_claims: &[(String, Claim)],
+) -> Vec<Measure> {
+    let Some(control) = catalog.controls.get(id) else { return Vec::new() };
+    let targets: Vec<(String, String, String)> = if control.evidence.is_empty() {
+        vec![(catalog.catalog.clone(), catalog.version.clone(), id.to_string())]
+    } else {
+        control
+            .evidence
+            .iter()
+            .flat_map(|(source, ids)| {
+                let (fw, ver) = source.split_once('/').unwrap_or((source.as_str(), ""));
+                ids.iter().map(move |sid| (fw.to_string(), ver.to_string(), sid.clone()))
+            })
+            .collect()
+    };
+    let names = |c: &Claim, (fw, ver, ctrl): &(String, String, String)| {
+        c.framework == *fw && (c.framework_version.is_empty() || c.framework_version == *ver) && c.control == *ctrl
+    };
+    let measure = |pack: &str, use_path: Option<String>, c: &Claim, included: bool| Measure {
+        pack: pack.to_string(),
+        use_path,
+        framework: c.framework.clone(),
+        version: c.framework_version.clone(),
+        control: c.control.clone(),
+        coverage: c.coverage.clone(),
+        included,
+        resources: c.resources.clone(),
+        interpretation: (!c.interpretation.is_empty()).then(|| c.interpretation.clone()),
+        gcloud: (!c.gcloud.is_empty()).then(|| c.gcloud.clone()),
+        gcloud_check: (!c.gcloud_check.is_empty()).then(|| c.gcloud_check.clone()),
+        risk: (!c.risk.is_empty()).then(|| c.risk.clone()),
+    };
+    let path_of = |pack: &str| library.iter().find(|l| l.pack == pack).map(|l| l.use_path.clone());
+    let mut out: Vec<Measure> = Vec::new();
+    let mut seen: BTreeSet<(String, String, String, String, String)> = BTreeSet::new();
+    for t in &targets {
+        for (pack, c) in included_claims.iter().filter(|(_, c)| names(c, t)) {
+            if seen.insert((pack.clone(), c.framework.clone(), c.framework_version.clone(), c.control.clone(), c.coverage.clone())) {
+                out.push(measure(pack, path_of(pack), c, true));
+            }
+        }
+    }
+    for t in &targets {
+        for l in library.iter().filter(|l| names(&l.claim, t)) {
+            let c = &l.claim;
+            if seen.insert((l.pack.clone(), c.framework.clone(), c.framework_version.clone(), c.control.clone(), c.coverage.clone())) {
+                out.push(measure(&l.pack, Some(l.use_path.clone()), c, false));
+            }
+        }
+    }
+    out
 }
 
 /// The `require` command. Returns true if any technical control is unmet or a
@@ -692,6 +818,9 @@ pub(crate) struct ControlRow {
     pub reasons: Vec<(String, String)>,
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub contributes_only: bool,
+    /// every way to meet the control: the packs that claim it, included or not, each with
+    /// the gcloud route and the risk its pack states
+    pub measures: Vec<Measure>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
@@ -732,7 +861,7 @@ pub(crate) fn require_report(
     manifest: &Manifest,
 ) -> Result<RequireReport, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
-    let library_claims = load_library_view(presets_dir)?;
+    let (library_claims, library) = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
     let effects = policy_effects(manifest);
     let exempted = declared_exemptions(manifest);
@@ -759,6 +888,7 @@ pub(crate) fn require_report(
             exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
+            measures: measures_for(&catalog, id, &library, included_claims),
         };
         match goal {
             Goal::Satisfied { witnesses } => {
@@ -957,6 +1087,7 @@ mod tests {
             exemptions: Vec::new(),
             reasons: Vec::new(),
             contributes_only: false,
+            measures: Vec::new(),
         }
     }
 
@@ -1188,6 +1319,59 @@ controls:
         .unwrap()
     }
 
+    #[test]
+    fn a_control_lists_every_pack_that_meets_it_with_its_route_without_satz() {
+        let lib = |pack: &str, path: &str, control: &str, gcloud: &[&str], risk: &str| LibraryClaim {
+            pack: pack.into(),
+            use_path: path.into(),
+            claim: Claim {
+                gcloud: gcloud.iter().map(|g| g.to_string()).collect(),
+                risk: risk.into(),
+                ..claim(pack, control, "implements", &["google_x.a"], &[]).1
+            },
+        };
+        let library = vec![
+            lib("sink", "presets/sink.satz", "2.2", &["gcloud logging sinks create x"], "Logs are lost."),
+            lib("sink", "presets/sink.local.satz", "2.2", &[], ""),
+            lib("other", "presets/other.satz", "2.2", &[], ""),
+        ];
+        let included = vec![claim("sink", "2.2", "implements", &["google_x.a"], &[])];
+        let m = measures_for(&catalog(), "2.2", &library, &included);
+        assert_eq!(m.len(), 2, "the included claim, then the library's other pack — the fork is the same measure: {m:?}");
+        assert!(m[0].included && m[0].pack == "sink");
+        assert_eq!(m[0].use_path.as_deref(), Some("presets/sink.satz"), "the pristine path, not the fork");
+        assert_eq!(m[0].gcloud, None, "the included claim is what the estate holds, and it states no route");
+        assert!(!m[1].included && m[1].pack == "other" && m[1].risk.is_none());
+        let only_library = measures_for(&catalog(), "2.2", &library, &[]);
+        assert_eq!(only_library[0].gcloud.as_deref(), Some(&["gcloud logging sinks create x".to_string()][..]));
+        assert_eq!(only_library[0].risk.as_deref(), Some("Logs are lost."));
+        // a cross-walked control reads the measures of the controls it takes its evidence from
+        let iso: Catalog = serde_yaml::from_str(
+            "catalog: iso\nversion: \"1\"\ncontrols:\n  \"8.15\": { title: logging, evidence: { \"cis-gcp/4.0\": [\"2.2\"] } }\n",
+        )
+        .unwrap();
+        let via = measures_for(&iso, "8.15", &library, &[]);
+        assert_eq!((via[0].framework.as_str(), via[0].control.as_str()), ("cis-gcp", "2.2"));
+        assert!(measures_for(&catalog(), "9.9", &library, &[]).is_empty());
+    }
+
+    /// Every claim the library ships states its measure without satz: what goes wrong without
+    /// it, and how to check it. A route to meet it (`gcloud`) is absent only where the claim
+    /// is the sum of the others — the baseline's §1.1.4.
+    #[test]
+    fn every_library_claim_states_its_risk_and_its_check() {
+        let presets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        let library = load_library_satz_claims(&presets.to_string_lossy()).unwrap();
+        assert!(!library.is_empty());
+        for l in &library {
+            let c = &l.claim;
+            let at = format!("{} {} {} {} ({})", l.use_path, c.framework_version, c.control, c.coverage, l.pack);
+            assert!(!c.risk.is_empty(), "{at}: no risk");
+            assert!(!c.gcloud_check.is_empty(), "{at}: no gcloud_check");
+            assert!(!c.gcloud.is_empty() || c.control == "1.1.4", "{at}: no gcloud route");
+        }
+    }
+
     /// No policy has a readable effect — every witness is judged on existence alone,
     /// which is what every test written before R7 assumes.
     fn no_effects() -> BTreeMap<String, (PolicyEffect, String)> {
@@ -1213,6 +1397,7 @@ controls:
                     .map(|d| ManualDuty { id: d.to_string(), duty: String::new() })
                     .collect(),
                 interpretation: String::new(),
+                ..Default::default()
             },
         )
     }
@@ -1377,6 +1562,7 @@ controls:
                     id: "role-matrix-reviewed".into(),
                     duty: "review the role matrix each quarter".into(),
                 }],
+                ..Default::default()
             },
         );
         let goals = resolve_goals(&catalog(), std::slice::from_ref(&claim), std::slice::from_ref(&claim), &BTreeSet::new(), &no_effects());
@@ -2492,7 +2678,7 @@ pub(crate) async fn report_compliance_evidence(
             m
         })
         .unwrap_or_default();
-    let library_claims = load_library_view(presets_dir)?;
+    let (library_claims, library) = load_library_view(presets_dir)?;
     let emitted = manifest.addresses();
     let effects = policy_effects(manifest);
     let goals =
@@ -2946,6 +3132,9 @@ pub(crate) async fn report_compliance_evidence(
             "prowler_findings": prowler_findings.cloned().unwrap_or_default(),
             "checkov": checkov_cell.replace("**","").replace('`',""),
             "undeclared_exemptions": undeclared,
+            // every way to meet the control — the packs that claim it, each with the
+            // gcloud route and the risk its pack states
+            "measures": measures_for(&catalog, id, &library, included_claims),
         }));
     }
 
@@ -3930,7 +4119,7 @@ pub(crate) fn triage_rows(
     prowler_path: &Path,
 ) -> Result<Triage, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
-    let library_claims = load_library_view(presets_dir)?;
+    let library_claims = load_library_view(presets_dir)?.0;
     let emitted = manifest.addresses();
     let effects = policy_effects(manifest);
     let goals =
@@ -4013,7 +4202,7 @@ pub(crate) fn remediation_run(
     checkov: Option<&crate::scan::Report>,
 ) -> Result<RemediationRun, BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
-    let library_claims = load_library_view(presets_dir)?;
+    let library_claims = load_library_view(presets_dir)?.0;
     let emitted = manifest.addresses();
     let effects = policy_effects(manifest);
     let goals =

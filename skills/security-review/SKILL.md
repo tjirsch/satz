@@ -164,7 +164,13 @@ partial, unmet, plus the pack `satz require` says would provide it); Maßnahme =
 Measures come from `assets/measures.yaml`, a catalogue that covers all 93 controls: a measure is
 emitted when one of its controls is FAIL/LÜCKE/FALSE POSITIVE (review measures: MANUAL), numbered in
 phase order Sofort → Kurzfristig → Nach Freigabe → Laufend → CISO-Review, with satz pack lines AND
-a gcloud alternative, prerequisites, and the proof command. MANUAL controls get a review table,
+a gcloud alternative, prerequisites, and the proof command. What satz knows comes from satz: every
+control in `--satz-report` (or, without it, `--satz-require`) carries `measures` — per claiming
+pack its `use` path, the gcloud commands that meet and check the control without satz, and the
+risk of leaving it open (ADR 0073 in the satz repository). The plan's `use` lines, the gcloud
+alternative, the "Prüfkommandos (satz)" and "Risiko ohne Maßnahme (satz)" are rendered from them;
+the catalogue adds the German prose, the phase, the effort, the risk of the change itself
+(`risiko`), and gcloud steps for controls no pack claims. MANUAL controls get a review table,
 N/A controls a Wiedervorlage table naming the pack that pre-empts them. `scope.workloads` gets one
 section in the plan and one sheet in the workbook, "Workloads": per project its name, kind, Google
 project and the outcome of its consumer check (bestanden, or the refusals as satz printed them) and

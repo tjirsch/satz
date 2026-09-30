@@ -5,7 +5,7 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.6"
+pack monitoring.organization_audit_logsink version "1.7"
 
 params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"
@@ -139,10 +139,28 @@ google_storage_bucket_iam_member {
 claim "cis-gcp" "4.0" "2.1" implements {
   resources      = ["google_organization_iam_audit_config.org_all_services"]
   interpretation = "ADMIN_READ/DATA_READ/DATA_WRITE on allServices at organization scope; exemptions via exempted_members keep the category enabled and visible."
+  gcloud = [
+    "gcloud organizations get-iam-policy ORGANIZATION_ID --format=json > policy.json",
+    "jq '.auditConfigs = ([.auditConfigs[]? | select(.service != \"allServices\")] + [{{\"service\": \"allServices\", \"auditLogConfigs\": [{{\"logType\": \"ADMIN_READ\"}}, {{\"logType\": \"DATA_READ\"}}, {{\"logType\": \"DATA_WRITE\"}}]}}])' policy.json > policy.new.json",
+    "gcloud organizations set-iam-policy ORGANIZATION_ID policy.new.json",
+  ]
+  gcloud_check = [
+    "gcloud organizations get-iam-policy ORGANIZATION_ID --format='yaml(auditConfigs)'",
+  ]
+  risk = "Data Access audit logs are off by default, so reads and writes of the organisation's data leave no record."
 }
 claim "cis-gcp" "5.0" "2.1" implements {
   resources      = ["google_organization_iam_audit_config.org_all_services"]
   interpretation = "As for 4.0 §2.1 (5.0 §2.1, unchanged)."
+  gcloud = [
+    "gcloud organizations get-iam-policy ORGANIZATION_ID --format=json > policy.json",
+    "jq '.auditConfigs = ([.auditConfigs[]? | select(.service != \"allServices\")] + [{{\"service\": \"allServices\", \"auditLogConfigs\": [{{\"logType\": \"ADMIN_READ\"}}, {{\"logType\": \"DATA_READ\"}}, {{\"logType\": \"DATA_WRITE\"}}]}}])' policy.json > policy.new.json",
+    "gcloud organizations set-iam-policy ORGANIZATION_ID policy.new.json",
+  ]
+  gcloud_check = [
+    "gcloud organizations get-iam-policy ORGANIZATION_ID --format='yaml(auditConfigs)'",
+  ]
+  risk = "Data Access audit logs are off by default, so reads and writes of the organisation's data leave no record."
 }
 
 claim "cis-gcp" "4.0" "2.2" implements {
@@ -152,6 +170,15 @@ claim "cis-gcp" "4.0" "2.2" implements {
     "google_storage_bucket_iam_member.org_audit_sink_writer",
   ]
   interpretation = "Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only."
+  gcloud = [
+    "gcloud storage buckets create gs://BUCKET_NAME --project=LOG_PROJECT_ID --location=REGION --default-storage-class=NEARLINE --uniform-bucket-level-access --public-access-prevention",
+    "gcloud logging sinks create SINK_NAME storage.googleapis.com/BUCKET_NAME --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",
+    "gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME --member=\"$(gcloud logging sinks describe SINK_NAME --organization=ORGANIZATION_ID --format='value(writerIdentity)')\" --role=roles/storage.objectCreator",
+  ]
+  gcloud_check = [
+    "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
+  ]
+  risk = "Audit logs stay in each project's own log buckets, where Data Access entries expire after 30 days and a project owner can exclude or reroute them."
 }
 claim "cis-gcp" "5.0" "2.3" implements {
   resources = [
@@ -160,15 +187,40 @@ claim "cis-gcp" "5.0" "2.3" implements {
     "google_storage_bucket_iam_member.org_audit_sink_writer",
   ]
   interpretation = "As for 4.0 §2.2 — 5.0 §2.3 (5.0 inserted a new 2.2 for Workspace data sharing)."
+  gcloud = [
+    "gcloud storage buckets create gs://BUCKET_NAME --project=LOG_PROJECT_ID --location=REGION --default-storage-class=NEARLINE --uniform-bucket-level-access --public-access-prevention",
+    "gcloud logging sinks create SINK_NAME storage.googleapis.com/BUCKET_NAME --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",
+    "gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME --member=\"$(gcloud logging sinks describe SINK_NAME --organization=ORGANIZATION_ID --format='value(writerIdentity)')\" --role=roles/storage.objectCreator",
+  ]
+  gcloud_check = [
+    "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
+  ]
+  risk = "Audit logs stay in each project's own log buckets, where Data Access entries expire after 30 days and a project owner can exclude or reroute them."
 }
 
 claim "cis-gcp" "4.0" "2.3" contributes {
   resources               = ["google_storage_bucket.org_audit_logs"]
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
   interpretation          = "Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial."
+  gcloud = [
+    "gcloud storage buckets update gs://BUCKET_NAME --retention-period=400d",
+    "gcloud storage buckets update gs://BUCKET_NAME --lock-retention-period",
+  ]
+  gcloud_check = [
+    "gcloud storage buckets describe gs://BUCKET_NAME --format='yaml(retention_policy,lifecycle_config)'",
+  ]
+  risk = "Exported audit logs can be deleted by anyone with write access to the bucket before an investigation needs them."
 }
 claim "cis-gcp" "5.0" "2.4" contributes {
   resources               = ["google_storage_bucket.org_audit_logs"]
   duty_validate_then_lock = "After validating the pipeline, set retention_policy and is_locked on the audit bucket (one-way door; deliberately not preset-default)."
   interpretation          = "As for 4.0 §2.3 — 5.0 §2.4."
+  gcloud = [
+    "gcloud storage buckets update gs://BUCKET_NAME --retention-period=400d",
+    "gcloud storage buckets update gs://BUCKET_NAME --lock-retention-period",
+  ]
+  gcloud_check = [
+    "gcloud storage buckets describe gs://BUCKET_NAME --format='yaml(retention_policy,lifecycle_config)'",
+  ]
+  risk = "Exported audit logs can be deleted by anyone with write access to the bucket before an investigation needs them."
 }
