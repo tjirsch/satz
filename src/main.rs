@@ -1784,6 +1784,7 @@ Thumbs.db
                         // provider block the child reads with carries it.
                         let mut impersonate = None;
                         let mut identity = crate::discovery::SweepIdentity::Caller;
+                        let mut infra = None;
                         if let Some(estate) = &bind {
                             // `--as` that borrows no account is refused before anything
                             // is bound or swept: it would read as the caller, which the
@@ -1791,6 +1792,16 @@ Thumbs.db
                             let target = estate_impersonation_target(estate, &runtime_config)?;
                             identity = sweep_identity(estate, target, crate::gcp::impersonation_disabled(), as_only)?;
                             impersonate = configure_estate_impersonation(estate, &runtime_config)?;
+                            // every read the import makes is billed to the estate's
+                            // infrastructure project (ADR 0074)
+                            infra = estate_infra_project(estate, &runtime_config)?;
+                            match &infra {
+                                Some(infra) => crate::gcp::bill_reads_to(infra)?,
+                                None => println!(
+                                    "import: {} binds no infra_project_name — the reads are billed to the caller's quota project",
+                                    estate.display()
+                                ),
+                            }
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
                         // the scope has to be the estate's organisation or inside it: a
@@ -1799,6 +1810,11 @@ Thumbs.db
                         if let Some(estate) = &bind {
                             let org = estate_organization(estate, &runtime_config)?;
                             crate::import::refuse_scope_outside(&parent, &org, estate).await?;
+                        }
+                        // the infrastructure project switches on the APIs the reads
+                        // call before the sweep and the estate's lookups make them
+                        if let Some(infra) = &infra {
+                            crate::import::enable_read_apis(infra).await?;
                         }
                         match into_path {
                             Some(estate) => import_delta(&parent, estate, cfg, filtered, on_collision, cli.verbose, generate_unmapped, &identity, impersonate, &tool_config, &runtime_config).await,
@@ -4441,7 +4457,9 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
 
 /// Before `plan` or `apply`: on every project a provider bills its calls to, every
 /// API the estate declares there, switched on where it is off — the default
-/// provider's project, and each project node's own (ADR 0059, ADR 0072).
+/// provider's project, and each project node's own (ADR 0059, ADR 0072). The
+/// Service Usage calls are billed to the default provider's project, the
+/// infrastructure project, which switches the APIs on for all of them.
 ///
 /// Says on stderr what it found and what it changed, beside the tool's own note:
 /// stdout belongs to the plan. A refusal prints the APIs and the `gcloud
@@ -4525,7 +4543,7 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
             configure_emitted_impersonation(&provider)?;
             impersonating = true;
         }
-        match crate::prerequisites::enable_declared_apis(&project, declared).await {
+        match crate::prerequisites::enable_declared_apis(&project, declared, billing.default_project()).await {
             Ok(done) => eprint!("{}", done.render()),
             Err(refusal) => return Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
         }
@@ -4902,6 +4920,13 @@ fn estate_organization(estate: &Path, runtime_config: &ToolConfig) -> Result<Str
             )
             .into()
         })
+}
+
+/// The estate's infrastructure project — its `infra_project_name` — or `None` when
+/// it binds none, as a local-mode estate may.
+fn estate_infra_project(estate: &Path, runtime_config: &ToolConfig) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let params = satz_estate_params(estate, &runtime_config.include_dirs)?;
+    Ok(params.get("infra_project_name").and_then(|v| v.as_str()).map(str::to_string).filter(|p| !p.is_empty()))
 }
 
 /// Configure the identity live estate commands run as: on a

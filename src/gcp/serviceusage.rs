@@ -56,7 +56,10 @@ pub(crate) async fn enable_service(
 const BATCH: usize = 20;
 
 /// Which of `services` are enabled on `project_id`, one entry per service the
-/// API answered for.
+/// API answered for. `quota` is the project the call is billed to
+/// (`x-goog-user-project`), the infrastructure project wherever satz knows one, so
+/// the answer does not depend on `serviceusage.googleapis.com` being on
+/// `project_id` itself.
 ///
 /// `services:batchGet` rather than a `get` per service: an estate declares
 /// twenty-odd APIs and each `get` is a round trip. The response names a service
@@ -68,6 +71,7 @@ pub(crate) async fn service_states(
     token: &str,
     project_id: &str,
     services: &[String],
+    quota: Option<&str>,
 ) -> Result<std::collections::BTreeMap<String, bool>, ApiError> {
     let mut states = std::collections::BTreeMap::new();
     for chunk in services.chunks(BATCH) {
@@ -75,8 +79,7 @@ pub(crate) async fn service_states(
             .iter()
             .map(|s| ("names", format!("projects/{}/services/{}", project_id, s)))
             .collect();
-        let res = client
-            .get(format!("{}/projects/{}/services:batchGet", BASE, project_id))
+        let res = super::billed_to(client.get(format!("{}/projects/{}/services:batchGet", BASE, project_id)), quota)
             .query(&names)
             .bearer_auth(token)
             .send()
@@ -96,15 +99,16 @@ pub(crate) async fn service_states(
 /// `services:batchEnable` on `project_id`, in chunks of twenty, each waited to
 /// completion. Returns when every service is on — an operation that reports an
 /// error is that error, and a half-finished batch is never reported as done.
+/// `quota` is billed as in [`service_states`].
 pub(crate) async fn batch_enable(
     client: &reqwest::Client,
     token: &str,
     project_id: &str,
     services: &[String],
+    quota: Option<&str>,
 ) -> Result<(), ApiError> {
     for chunk in services.chunks(BATCH) {
-        let res = client
-            .post(format!("{}/projects/{}/services:batchEnable", BASE, project_id))
+        let res = super::billed_to(client.post(format!("{}/projects/{}/services:batchEnable", BASE, project_id)), quota)
             .bearer_auth(token)
             .json(&serde_json::json!({ "serviceIds": chunk }))
             .send()
@@ -122,7 +126,7 @@ pub(crate) async fn batch_enable(
                         "the API accepted the request but returned no operation name",
                     ));
                 };
-                await_operation(client, token, name).await?
+                await_operation(client, token, name, quota).await?
             }
         };
         if let Some(err) = op.get("error") {
@@ -139,11 +143,11 @@ async fn await_operation(
     client: &reqwest::Client,
     token: &str,
     op_name: &str,
+    quota: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
     for _ in 0..60 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        let res = client
-            .get(format!("{}/{}", BASE, op_name))
+        let res = super::billed_to(client.get(format!("{}/{}", BASE, op_name)), quota)
             .bearer_auth(token)
             .send()
             .await

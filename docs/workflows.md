@@ -353,7 +353,9 @@ created.
 for every project a provider bills to and the service account the default provider
 impersonates, read `main.tf` for the services declared on each of those projects, ask
 Service Usage which are off and switch those on, as the estate's IaC service account —
-the identity the estate grants `roles/serviceusage.serviceUsageAdmin`. `satz transpile
+the identity the estate grants `roles/serviceusage.serviceUsageAdmin` — through the
+default provider's project: the Service Usage calls bill to the infrastructure project,
+so a project with `serviceusage.googleapis.com` off has its APIs switched on as well. `satz transpile
 --plan` and `--apply` do the same. A project node's project is checked when the state
 holds its `google_project` or an `import` block adopts it; otherwise the run creates it,
 its services come after it, and the preflight says so and goes on. The default
@@ -611,7 +613,33 @@ everything inside one — its grants, its log buckets, a resource no row maps, w
 Cloud Asset goes on listing a switched-off service as `ENABLED`, so every service
 the sweep found is confirmed with Service Usage per project; one it does not report
 enabled is left out, and a project whose services cannot be read is named with its
-services written as Cloud Asset lists them. A subnet's local route, which states a
+services written as Cloud Asset lists them.
+
+A resource written inside a project is served by that project's own provider, which
+bills its calls to the project, so the project needs the resource's API on. The same
+Service Usage request asks for every API the resources inside the project need; one
+the project has off is added to its `project_service` list with the import id it has
+once it is on, and the run names each:
+
+```
+import: 1 API(s) added to a project's `project_service` list — the project has it off and resources imported into it need it; `satz plan` and `satz apply` switch it on through the infrastructure project before `tofu` starts:
+  logging.googleapis.com on acme-log-001 — needed by google_logging_project_bucket_config
+```
+
+`satz plan` switches it on before `tofu` refreshes anything ([the API
+preflight](#the-api-preflight)), and the plan imports it with the rest. Under `--into`,
+an API the estate declares on that project already is left to the estate. A `tofu plan`
+run directly needs the `gcloud services enable <api> --project <project>` first.
+
+Given an estate (`--into`, `--as`), every read the run makes — the sweep, Service Usage,
+Cloud Billing, Resource Manager, the lookups `--into` resolves the estate with — is billed
+to the estate's `infra_project_name`, and the run switches on there any of the APIs
+those reads call that is off (`cloudasset`, `cloudbilling`, `cloudidentity`,
+`cloudresourcemanager`, `orgpolicy`, `serviceusage`) once the scope is checked and before the sweep. A workload
+project is never switched on by the import itself. An estate that binds no
+`infra_project_name` reads with the caller's quota project, and the run says so.
+
+A subnet's local route, which states a
 `nextHopNetwork` no argument of `google_compute_route` sets, is listed as
 `platform-managed`. A type the provider has no import for (`importable: false` on
 its row: a service account key) is not swept, and the run names it.

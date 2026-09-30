@@ -819,9 +819,15 @@ impl ApiRefusal {
 /// fails — no permission, the Service Usage API itself off on the billed
 /// project, an org policy — is an [`ApiRefusal`], never a warning the caller can
 /// run past.
+///
+/// `through` is the project the Service Usage calls themselves are billed to: the
+/// infrastructure project, which switches APIs on for every project of the estate
+/// (ADR 0072), so a project with `serviceusage.googleapis.com` off has its APIs
+/// switched on all the same. `None` bills them to the credential's own project.
 pub(crate) async fn enable_declared_apis(
     project: &str,
     declared: Vec<String>,
+    through: Option<&str>,
 ) -> Result<ApiPreflight, ApiRefusal> {
     let refused = |why: &str, detail: String, enable: Vec<String>| ApiRefusal {
         project: project.to_string(),
@@ -833,7 +839,7 @@ pub(crate) async fn enable_declared_apis(
         .await
         .map_err(|e| refused("satz has no credential to check them with", e, declared.clone()))?;
     let client = reqwest::Client::new();
-    let states = crate::gcp::serviceusage::service_states(&client, &token, project, &declared)
+    let states = crate::gcp::serviceusage::service_states(&client, &token, project, &declared, through)
         .await
         .map_err(|e| refused("satz could not read which of them are enabled", e.to_string(), declared.clone()))?;
     let mut off = Vec::new();
@@ -856,7 +862,7 @@ pub(crate) async fn enable_declared_apis(
     if off.is_empty() {
         return Ok(ApiPreflight { project: project.to_string(), declared, enabled: Vec::new() });
     }
-    crate::gcp::serviceusage::batch_enable(&client, &token, project, &off)
+    crate::gcp::serviceusage::batch_enable(&client, &token, project, &off, through)
         .await
         .map_err(|e| refused("satz could not enable them", e.to_string(), off.clone()))?;
     Ok(ApiPreflight { project: project.to_string(), declared, enabled: off })

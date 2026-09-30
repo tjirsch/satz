@@ -822,9 +822,14 @@ fn adc_file_path_from(explicit: Option<&str>, home: Option<&str>) -> Option<Path
     Some(well_known)
 }
 
-/// Resolve the quota/billing project: env vars first, then the ADC file's
-/// `quota_project_id` (written by `gcloud auth application-default set-quota-project`).
+/// Resolve the quota/billing project: the project a live import given an estate
+/// bills its reads to (`gcp::bill_reads_to`), then the env vars, then the ADC
+/// file's `quota_project_id` (written by `gcloud auth application-default
+/// set-quota-project`).
 pub(crate) fn resolve_quota_project() -> Option<String> {
+    if let Some(project) = crate::gcp::reads_billed_to() {
+        return Some(project);
+    }
     for key in [
         "GOOGLE_CLOUD_QUOTA_PROJECT",
         "GOOGLE_CLOUD_PROJECT",

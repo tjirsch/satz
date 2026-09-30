@@ -1910,6 +1910,26 @@ names the file and the line.
 
 ### v0.90.0
 
+**A live import adds to a project's `project_service` list every API the resources it
+writes inside that project need and the project has off, and given an estate it bills
+its reads to the estate's infrastructure project.** `satz import <scope>` wrote such a
+project's resources and left the API off, and `satz plan` stopped with a 403 per resource
+("Cloud Logging API has not been used in project … or it is disabled"). The import now
+writes the API with its import id (`{ service = "logging.googleapis.com" "import-id" =
+"<project>/logging.googleapis.com" }`) and names it under "API(s) added to a project's
+`project_service` list"; `satz plan` and `satz apply` switch it on in that project before
+`tofu` starts, and the plan imports it. Given an estate (`--into`, `--as`), the run bills
+every read to `infra_project_name` and switches on there any of `cloudasset`,
+`cloudbilling`, `cloudidentity`, `cloudresourcemanager`, `orgpolicy` and `serviceusage`
+that is off, before the sweep.
+
+Find it: the import's output names each added API and each API it switched on in the
+infrastructure project. **The edit:** none. The next `satz import --into` rewrites the
+packs with the added entries, and the next `satz plan` switches each API on and plans
+the service as an import where it stopped on a 403 before. A `tofu plan` run directly,
+not through `satz plan`, needs `gcloud services enable <api> --project <project>` first
+for each named API.
+
 **`satz add-project` is gone.** A project is onboarded by an entry of `projects` in
 `presets/project-onboarding.satz`, which writes the project's Google project, IaC service
 account, state bucket, grants and `interface "<name>"` per entry.

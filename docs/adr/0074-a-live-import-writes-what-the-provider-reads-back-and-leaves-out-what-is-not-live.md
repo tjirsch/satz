@@ -110,3 +110,83 @@ the instance already takes as the same. The difference is named here, not hidden
   test that measured it.
 - A resource whose data states no name is keyed by its asset name's last segment,
   a singleton by what it is the singleton of, instead of by the whole asset name.
+
+## Amendment — an API a project has off, and the project the reads bill to
+
+- **Date:** 2026-09-30
+
+### Context
+
+After the decision above, the same sweep on the test organisation planned 233 imports and
+4 errors: the `_Default` and `_Required` log bucket configs of two projects whose Logging
+API is off. They are written inside their project's node, so the project's own provider
+alias serves them and bills their calls to that project
+([ADR 0059](0059-a-projects-provider-alias-is-the-estates-provider-scoped-to-that-project.md));
+Google refuses the read there. The import had no rule for an API that is off where the
+resources it writes need it, and it billed its own reads to whatever quota project the
+caller's credentials named.
+
+### Decision
+
+An API used by resources inside a workload project is switched on in that project and
+used through that project's own provider. Everything not tied to one project goes
+through the infrastructure project, which also switches the APIs on.
+
+- **The import's own reads.** Given an estate (`--into`, `--as`), every read — the
+  sweep, Service Usage, Cloud Billing, Resource Manager, the lookups `--into` resolves
+  the estate with — is billed to the estate's `infra_project_name`
+  (`gcp::bill_reads_to`, which `resolve_quota_project` answers first). Once the scope
+  is checked against the estate's organisation, and before the sweep, any of the APIs those reads call (`import::READ_APIS`) that is off there is
+  switched on; the infrastructure project is satz's own. The import switches nothing on
+  in a workload project. Without an estate the reads stay on the caller's quota project.
+- **An API a project has off.** The Service Usage request that confirms a project's
+  services also asks for every API the resources written inside the project need
+  (`prerequisites::apis_for` of each type in the project's node, its own
+  `project_service` entries excepted, which the provider around the project serves).
+  One that is off is added to the project's `project_service` list with the import id
+  it has once it is on (`<project>/<api>`) and named in the report. Under `--into`, an
+  API the estate declares on that project already is left to the estate.
+- **Switching it on.** The `plan`/`apply` preflight
+  ([ADR 0072](0072-an-api-is-judged-on-the-project-its-provider-bills-to.md)) checks an
+  adopted project — its `google_project` has an `import` block — and switches the
+  declared API on before `tofu` starts, with the Service Usage calls billed to the
+  infrastructure project. The plan then imports the service with the rest.
+- **The collision default is unchanged.** A grant one principal holds on two nodes
+  still stops the import and names `--on-collision counter`.
+
+### Options
+
+**Write the added API without an import id.** *Rejected.* The plan would show a create
+per added service — a no-op against a service the preflight has just switched on, but
+an "add" in a plan that is otherwise imports only, and the next `--into` would find
+the service live under an id the estate does not carry. With the id, the plan imports
+it. The cost: a `tofu plan` run directly, without `satz plan`, fails on that import
+until the API is on — and it failed on the resources' refresh before, so it needs the
+`gcloud services enable` line either way.
+
+**Switch the API on during the import.** *Rejected.* The import reads; changing a
+workload project is an apply-time act, and `satz plan` already does it as the estate's
+identity, where the estate declares it.
+
+**Leave the resources out, as not live.** *Rejected.* They are live; only the API that
+reads them is off, and the estate's own list is where an API is switched on.
+
+**Derive the needed APIs from the emitted `providers.tf`**, as ADR 0072's check does.
+*Not needed here.* The import writes the tree whose position decides the provider, and
+the compile after it runs ADR 0072's check against `providers.tf`, which finds a gap
+this rule missed.
+
+**Keep the reads on the caller's quota project.** *Rejected.* That project is a
+setting of the person's `gcloud`, which may be in another organisation or have the
+APIs off; the infrastructure project is the estate's own and already the one its
+providers bill to.
+
+### Consequences
+
+- On the test organisation the same sweep plans 240 imports, 8 in-place changes (the
+  ones listed above) and no error; three APIs were added — Logging on two projects and
+  Resource Manager on one, whose project grants need it.
+- A run given an estate may switch an API on in the estate's infrastructure project,
+  and says so.
+- `serviceusage::service_states`, `batch_enable` and `billing::project_billing_account`
+  take the project their call bills to.
