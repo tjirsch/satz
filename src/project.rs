@@ -1,17 +1,12 @@
-//! A project on satz, end to end. `satz add-project` writes into the central estate the
-//! section that onboards one project — its Google project, IaC service account and state
-//! bucket, and the `interface "<name>"` that publishes them — the way `init` writes the
-//! infra section; the pull request that carries it is the request's review. `satz init
-//! --project` writes the project's own estate from that interface file.
-//!
-//! A pack cannot do the first half: a pack is one instance — its params join one
-//! estate-wide namespace, `use … as` reads a file as a map, and no `interface` block is
-//! written per entry of a list (`each`, ADR 0071, expands resources, not interfaces) — so
-//! one project is one generated section, plain Satz the operator owns afterwards (ADR 0070).
+//! A project on satz, end to end. An entry of `projects` in
+//! `presets/project-onboarding.satz` gives the central estate the project's Google project,
+//! IaC service account and state bucket, and the `interface "<name>"` that publishes them;
+//! the pull request that adds the entry is the request's review. `satz init --project`
+//! writes the project's own estate from that interface file.
 
 use satz_core::satz::InterfaceFile;
 
-/// The exports `add-project` writes and `init --project` reads, by name.
+/// The exports `presets/project-onboarding.satz` publishes and `init --project` reads, by name.
 const PROJECT_ID: &str = "project_id";
 const IAC_ACCOUNT: &str = "iac_account";
 const STATE_BUCKET: &str = "state_bucket";
@@ -36,250 +31,15 @@ pub(crate) fn label(name: &str) -> String {
     name.replace('-', "_")
 }
 
-/// The section that onboards one project into the central estate. `folder` says where the
-/// workload folder is: a folder (`google_folder.workload_folder`) or the organisation.
-pub(crate) fn section(name: &str, owner_group: &str, folder: bool, choices: &Choices) -> String {
-    const TEXT: &str = r#"// ---- project "@NAME@": its Google project, IaC service account and state bucket, and the
-//      interface `@NAME@` that publishes them — written by `satz add-project` -------------------
-google_project {
-  @LABEL@ {
-    name            = "@NAME@"
-    project_id      = "{customer_shortname}-@NAME@-001"
-    @PARENT@
-    billing_account = billing_account_infra
-    project_service = [
-      "cloudresourcemanager.googleapis.com",
-      "iam.googleapis.com",
-      "iamcredentials.googleapis.com",
-      "serviceusage.googleapis.com",
-      "storage.googleapis.com",
-    ]
-    google_service_account {
-      @LABEL@_iac {
-        account_id   = "svc-iac-@NAME@"
-        display_name = "IaC provisioner of the project @NAME@"
-      }
-    }
-    google_storage_bucket {
-      @LABEL@_state {
-        name                        = "{customer_shortname}-@NAME@-001-state"
-        location                    = default_region
-        force_destroy               = true
-        public_access_prevention    = "enforced"
-        uniform_bucket_level_access = true
-        versioning { enabled = true }
-      }
-    }
-    // The project's IaC service account grants itself what its estate's resource types
-    // need (`satz update-prerequisites` there): here it takes the project's IAM and its
-    // services, and the state bucket. The owner group reads the project.
-    google_project_iam_member {
-      "serviceAccount:svc-iac-@NAME@@{customer_shortname}-@NAME@-001.iam.gserviceaccount.com" = [
-        "roles/resourcemanager.projectIamAdmin",
-        "roles/serviceusage.serviceUsageAdmin",
-      ]
-      "group:@GROUP@" = [
-        "roles/viewer",
-      ]
-    }
-    google_storage_bucket_iam_member {
-      bucket = "{customer_shortname}-@NAME@-001-state"
-      "serviceAccount:svc-iac-@NAME@@{customer_shortname}-@NAME@-001.iam.gserviceaccount.com" = [
-        "roles/storage.objectAdmin",
-      ]
-    }
-  }
-}
-
-// The owner group may become the project's IaC service account — that account only.
-google_service_account_iam_member {
-  service_account_id = "${{google_service_account.@LABEL@_iac.name}}"
-  "group:@GROUP@" = [
-    "roles/iam.serviceAccountTokenCreator",
-    "roles/iam.serviceAccountUser",
-  ]
-}
-
-// What the project's estate reads: `satz init --project @NAME@ --interface
-// interfaces/@NAME@/@NAME@/satz/interface.satz` writes it from `project_id`,
-// `iac_account`, `state_bucket` and the core export `default_region`.
-"#;
-    let parent = if folder {
-        "folder_id       = \"${{google_folder.workload_folder.name}}\""
-    } else {
-        "org_id          = customer_organization_id"
-    };
-    let own = [
-        format!("export \"project_id\" = \"${{{{google_project.{l}.project_id}}}}\" attach [\"google_project_iam_member\"] description \"The project's Google project\"", l = label(name)),
-        format!("export \"project_number\" = \"${{{{google_project.{l}.number}}}}\" description \"Its number, looked up\"", l = label(name)),
-        format!("export \"iac_account\" = \"${{{{google_service_account.{l}_iac.email}}}}\" description \"The IaC service account the project's estate runs as\"", l = label(name)),
-        format!("export \"state_bucket\" = \"${{{{google_storage_bucket.{l}_state.name}}}}\" description \"The bucket the project's estate keeps its state in\"", l = label(name)),
-    ];
-    let text = TEXT.replace("@NAME@", name).replace("@LABEL@", &label(name)).replace("@GROUP@", owner_group).replace("@PARENT@", parent);
-    format!("{}{}", text, interface_block(name, &own, choices))
-}
-
-/// What a project's interface takes beyond what `add-project` declares for it: the
-/// interfaces its module also carries, and exports of other interfaces written into it
-/// again — each the declaring line as it stands, so a param it reads stays a param.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Choices {
-    pub uses: Vec<String>,
-    pub exports: Vec<String>,
-}
-
-/// `interface "<name>" { … }`: `use interface` first, then the block's own exports, then
-/// the copied ones. Aligned by the formatter the caller runs.
-pub(crate) fn interface_block(name: &str, own: &[String], choices: &Choices) -> String {
-    let mut s = format!("interface \"{}\" {{\n", name);
-    match choices.uses.as_slice() {
-        [] => {}
-        [one] => s.push_str(&format!("  use interface \"{}\"\n", one)),
-        many => s.push_str(&format!("  use interface [{}]\n", many.iter().map(|u| format!("\"{}\"", u)).collect::<Vec<_>>().join(", "))),
-    }
-    for e in own.iter().chain(&choices.exports) {
-        s.push_str(&format!("  {}\n", e.trim()));
-    }
-    s.push_str("}\n");
-    s
-}
-
-/// The interface alone, for a workload that brings its own Google project: an interface
-/// is a module a team sources, and it may carry the core exports and what `choices` picks
-/// and nothing of its own.
-pub(crate) fn with_interface(src: &str, name: &str, choices: &Choices, estate: &Declared) -> Result<String, String> {
-    valid_name(name)?;
-    refuse_twice(src, name, estate)?;
-    if choices.uses.is_empty() && choices.exports.is_empty() {
-        return Err(format!(
-            "interface \"{}\" would carry the core exports alone, which `interfaces/common/core/` already is — pick an interface to use (`--use-interface`) or an export to carry (`--export`)",
-            name
-        ));
-    }
-    Ok(appended(src, &format!("// ---- the interface \"{}\", written by `satz add-project --interface-only` ----\n{}", name, interface_block(name, &[], choices))))
-}
-
-/// What the compiled estate declares, read off `interface_report::report`: the interfaces
-/// — its own and its packs' — and the form of its `workload_folder` export. `add-project`
-/// judges these, not the estate file's text: a pack's interface is in no file of the
-/// estate, and the export may stand in a used file.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Declared {
-    pub interfaces: Vec<String>,
-    pub workload_folder: Option<WorkloadFolder>,
-}
-
-/// Where a project goes: a folder the estate declares, or the organisation itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WorkloadFolder {
-    Folder,
-    Organisation,
-}
-
-impl Declared {
-    /// Read off the report of the compiled estate.
-    pub(crate) fn of(report: &crate::interface_report::InterfacesReport) -> Self {
-        let workload_folder = report.exports.iter().find(|e| e.name == "workload_folder").map(|e| {
-            if e.targets.iter().any(|t| t.starts_with("google_folder.")) { WorkloadFolder::Folder } else { WorkloadFolder::Organisation }
-        });
-        Declared { interfaces: report.interfaces.iter().map(|i| i.name.clone()).collect(), workload_folder }
-    }
-}
-
-fn refuse_twice(src: &str, name: &str, estate: &Declared) -> Result<(), String> {
-    let header = format!("interface \"{}\"", name);
-    if let Some((n, _)) = src.lines().enumerate().find(|(_, l)| l.trim_start().starts_with(&header)) {
-        return Err(format!("line {} declares `{}` already — one project is one interface", n + 1, header));
-    }
-    if estate.interfaces.iter().any(|i| i == name) {
-        return Err(format!("the estate declares `{}` already, through a pack it uses — one project is one interface, and a pack's interface is every project's", header));
-    }
-    Ok(())
-}
-
-fn appended(src: &str, section: &str) -> String {
-    let mut out = src.to_string();
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push('\n');
-    out.push_str(section);
-    out
-}
-
-/// `src` with the project's section at its end. Refused: an estate that declares
-/// `interface "<name>"` already — in its own text, naming the line, or through a pack —
-/// and one that publishes no `workload_folder`, which says where a project goes.
-pub(crate) fn with_project(src: &str, name: &str, owner_group: &str, choices: &Choices, estate: &Declared) -> Result<String, String> {
-    valid_name(name)?;
-    if !owner_group.contains('@') || owner_group.starts_with("group:") {
-        return Err(format!("`--owner-group {}`: the group's address, `<name>@<domain>`", owner_group));
-    }
-    refuse_twice(src, name, estate)?;
-    let folder = match estate.workload_folder {
-        Some(WorkloadFolder::Folder) => true,
-        Some(WorkloadFolder::Organisation) => false,
-        None => {
-            return Err(
-                "the estate publishes no `workload_folder`, which is where a project goes — `satz init --workload-folder-name <name>` (a folder) or `satz interview` (`workload_folder_name`, `\"\"` for the organisation) writes the section".to_string(),
-            )
-        }
-    };
-    Ok(appended(src, &section(name, owner_group, folder, choices)))
-}
-
-/// `--export <interface>.<name>` (or `<name>` when one interface declares it) as the line
-/// that declares it, read from the file and line the compile reports. A core export is
-/// refused: every interface carries it already.
-pub(crate) fn copied_export(
-    wanted: &str,
-    report: &crate::interface_report::InterfacesReport,
-    read: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<String, String> {
-    let (iface, name) = match wanted.split_once('.') {
-        Some((i, n)) => (Some(i), n),
-        None => (None, wanted),
-    };
-    let found: Vec<&crate::interface_report::ExportRow> =
-        report.exports.iter().filter(|e| e.name == name && (iface.is_none() || e.interface.as_deref() == iface)).collect();
-    let row = match found.as_slice() {
-        [] => {
-            return Err(format!(
-                "`--export {}`: the estate declares no such export — its exports: {}",
-                wanted,
-                report.exports.iter().map(|e| format!("`{}`", e.interface.as_ref().map(|i| format!("{}.{}", i, e.name)).unwrap_or(e.name.clone()))).collect::<Vec<_>>().join(", ")
-            ))
-        }
-        [one] => *one,
-        many => {
-            return Err(format!(
-                "`--export {}`: {} interfaces declare it — name one: {}",
-                wanted,
-                many.len(),
-                many.iter().filter_map(|e| e.interface.as_ref().map(|i| format!("`{}.{}`", i, e.name))).collect::<Vec<_>>().join(", ")
-            ))
-        }
-    };
-    if row.interface.is_none() {
-        return Err(format!("`--export {}` is a core export, which every interface carries already", wanted));
-    }
-    let text = read(&row.file)?;
-    let line = text.lines().nth(row.line.saturating_sub(1)).unwrap_or_default().trim();
-    if !line.starts_with(&format!("export \"{}\"", name)) {
-        return Err(format!("{}:{}: `--export {}` is declared on a line that is no single `export` statement — copy it by hand", row.file, row.line, wanted));
-    }
-    Ok(line.to_string())
-}
-
 /// A static string output of the interface, by name.
 fn static_output(file: &InterfaceFile, name: &str) -> Option<String> {
     file.outputs.iter().find(|o| o.name == name).and_then(|o| crate::interface::static_text(&o.value))
 }
 
-/// The project's own estate, from the interface `add-project` published for it: it runs as
-/// the project's IaC service account, keeps its state in the project's bucket, and reads the
-/// central estate through `use_path`. Refused when the interface lacks one of the four
-/// exports `add-project` writes.
+/// The project's own estate, from the interface `presets/project-onboarding.satz` published
+/// for it: it runs as the project's IaC service account, keeps its state in the project's
+/// bucket, and reads the central estate through `use_path`. Refused when the interface lacks
+/// one of the four exports the pack publishes.
 pub(crate) fn estate(name: &str, file: &InterfaceFile, use_path: &str) -> Result<String, String> {
     valid_name(name)?;
     let read = |export: &str| -> Result<String, String> {
@@ -287,7 +47,7 @@ pub(crate) fn estate(name: &str, file: &InterfaceFile, use_path: &str) -> Result
             let writer = if export == REGION {
                 "`presets/estate-core.satz` exports it: switch its `use` line on in the central estate".to_string()
             } else {
-                format!("`satz add-project {}` writes the section that does", name)
+                format!("an entry `{{ name = \"{}\" … }}` in `projects` of `presets/project-onboarding.satz` publishes it", name)
             };
             format!(
                 "the interface `{}` of the estate `{}` publishes no static `{}` — {}; it publishes: {}",
@@ -370,34 +130,10 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    const GROUP: &str = "payments-owners@example.com";
-
-    /// What the compiled estate declares, read off the source the way `Declared::of` reads
-    /// it off the report: the interface headers and the `workload_folder` export's form.
-    fn declared_of(src: &str) -> Declared {
-        let interfaces = src
-            .lines()
-            .filter_map(|l| l.trim_start().strip_prefix("interface \""))
-            .filter_map(|r| r.split('"').next())
-            .map(str::to_string)
-            .collect();
-        let workload_folder = src.lines().find(|l| l.trim_start().starts_with("export \"workload_folder\"")).map(|l| {
-            if l.contains("google_folder.workload_folder.") { WorkloadFolder::Folder } else { WorkloadFolder::Organisation }
-        });
-        Declared { interfaces, workload_folder }
-    }
-
-    fn with_project(src: &str, name: &str, owner_group: &str, choices: &Choices) -> Result<String, String> {
-        super::with_project(src, name, owner_group, choices, &declared_of(src))
-    }
-
-    fn with_interface(src: &str, name: &str, choices: &Choices) -> Result<String, String> {
-        super::with_interface(src, name, choices, &declared_of(src))
-    }
-
-    /// The central estate `init` writes, with or without a workload folder. `tag` keeps two
-    /// tests' scratch directories apart: the runner interleaves them.
-    fn central(tag: &str, folder: Option<&str>) -> String {
+    /// The central estate `init` writes, with or without a workload folder, with the pack
+    /// used and `projects` bound. `tag` keeps two tests' scratch directories apart: the
+    /// runner interleaves them.
+    fn central(tag: &str, folder: Option<&str>, projects: &str) -> String {
         let dir = std::env::temp_dir().join(format!("satz-project-{}-{}-{}", std::process::id(), tag, folder.is_some()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -407,10 +143,20 @@ mod tests {
         crate::template::generate_template(&args, None, &path).unwrap();
         let src = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        src
+        let parent = if folder.is_some() { "  project_onboarding_folder = \"google_folder.workload_folder.name\"\n" } else { "" };
+        let src = src.replacen("params {\n", &format!("params {{\n  projects = [{}]\n{}", projects, parent), 1);
+        format!("{}\nuse \"presets/project-onboarding.satz\"\n", src)
     }
 
-    fn compile(src: &str, loader: &dyn Fn(&str) -> Result<String, String>) -> (satz_core::pipeline::FrontEnd, crate::manifest::Manifest, crate::interface::Interface) {
+    /// The library's pack from the repository, every other path refused.
+    fn presets(p: &str) -> Result<String, String> {
+        match p {
+            "presets/project-onboarding.satz" => std::fs::read_to_string(p).map_err(|e| e.to_string()),
+            other => Err(format!("no {}", other)),
+        }
+    }
+
+    fn compile(src: &str, loader: &dyn Fn(&str) -> Result<String, String>) -> (crate::manifest::Manifest, crate::interface::Interface) {
         let reg = crate::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("e.satz", src, &resolver, loader).unwrap_or_else(|e| panic!("front-end: {}\n{}", e, src));
@@ -421,54 +167,45 @@ mod tests {
         let out = crate::emitter::emit(&folded, &ctx).unwrap();
         let i = crate::interface::build("e", &fe.exports, &fe.interfaces, &out.manifest, "hashicorp/google", None)
             .unwrap_or_else(|r| panic!("an export refused: {:?}", r));
-        (fe, out.manifest, i)
+        (out.manifest, i)
     }
 
-    /// The section compiles in the estate `init` writes, under the organisation and under a
-    /// workload folder, and publishes the four exports the project's estate is written from.
+    const PROJECTS: &str = "{ name = \"payments\" owner_group = \"payments-owners@example.com\" }, { name = \"data-lake\" owner_group = \"lake-owners@example.com\" }";
+
+    /// One entry is one project: its Google project under the organisation or the workload
+    /// folder, its grants, and its own interface — not a common one, though a pack writes
+    /// it — with the four exports the project's estate is written from. A name with `-` is
+    /// the label with `_`, in the resources and in the references the interface reads.
     #[test]
-    fn the_section_compiles_and_publishes_what_the_project_needs() {
+    fn each_entry_is_a_project_with_its_own_interface() {
         for folder in [None, Some("Workloads")] {
-            // the handler formats what it writes, which aligns the interface block
-            let src = satz_core::fmt::format(&with_project(&central("section", folder), "payments", GROUP, &Choices::default()).unwrap()).unwrap();
-            let (_, manifest, i) = compile(&src, &|p| Err(format!("no {}", p)));
-            let project = manifest.resources.values().find(|r| r.address() == "google_project.payments").expect("the project");
+            let (manifest, i) = compile(&central("pack", folder, PROJECTS), &presets);
+            let project = manifest.resources.values().find(|r| r.address() == "google_project.data_lake").expect("the project");
             match folder {
                 None => assert_eq!(project.attrs.get("org_id").map(String::as_str), Some("123456789012"), "{:?}", project.attrs),
                 Some(_) => assert_eq!(project.refs.get("folder_id").map(String::as_str), Some("google_folder.workload_folder.name"), "{:?}", project.refs),
             }
-            assert!(i.projects().contains(&"payments".to_string()), "{:?}", i.projects());
-            let outputs: Vec<(&str, bool)> = i.module_outputs("payments").iter().map(|o| (o.name.as_str(), o.static_text().is_some())).collect();
-            for (name, is_static) in [("project_id", true), ("project_number", false), ("iac_account", true), ("state_bucket", true)] {
-                assert!(outputs.contains(&(name, is_static)), "{} static={} — {:?}", name, is_static, outputs);
+            for name in ["payments", "data-lake"] {
+                assert!(i.projects().contains(&name.to_string()), "{} — {:?}", name, i.projects());
+                let outputs: Vec<(&str, bool)> = i.module_outputs(name).iter().map(|o| (o.name.as_str(), o.static_text().is_some())).collect();
+                for (export, is_static) in [("project_id", true), ("project_number", false), ("iac_account", true), ("state_bucket", true)] {
+                    assert!(outputs.contains(&(export, is_static)), "{}: {} static={} — {:?}", name, export, is_static, outputs);
+                }
             }
-            let attach = i.module_outputs("payments").into_iter().find(|o| o.name == "project_id").unwrap();
-            assert_eq!(attach.attach, ["google_project_iam_member"]);
-            assert_eq!(i.module_outputs("payments").into_iter().find(|o| o.name == "iac_account").unwrap().static_text().as_deref(), Some("svc-iac-payments@acme-payments-001.iam.gserviceaccount.com"));
-            // the grants: the account on its project and its bucket, the group on the account
+            assert_eq!(i.module_outputs("payments").into_iter().find(|o| o.name == "project_id").unwrap().attach, ["google_project_iam_member"]);
+            assert_eq!(
+                i.module_outputs("data-lake").into_iter().find(|o| o.name == "iac_account").unwrap().static_text().as_deref(),
+                Some("svc-iac-data-lake@acme-data-lake-001.iam.gserviceaccount.com")
+            );
+            assert!(!i.module_outputs("payments").iter().any(|o| o.name == "state_bucket" && o.static_text().as_deref() == Some("acme-data-lake-001-state")), "one project's interface carries another's values");
             assert!(manifest.resources.values().any(|r| r.tf_type == "google_project_iam_member" && r.attrs.get("role").map(String::as_str) == Some("roles/resourcemanager.projectIamAdmin")));
             assert!(manifest.resources.values().any(|r| r.tf_type == "google_storage_bucket_iam_member" && r.attrs.get("bucket").map(String::as_str) == Some("acme-payments-001-state")));
-            assert!(manifest.resources.values().any(|r| r.tf_type == "google_service_account_iam_member" && r.attrs.get("member").map(String::as_str) == Some(&format!("group:{}", GROUP))));
+            assert!(manifest.resources.values().any(|r| r.tf_type == "google_service_account_iam_member" && r.attrs.get("member").map(String::as_str) == Some("group:lake-owners@example.com")));
         }
-    }
-
-    #[test]
-    fn a_project_is_added_once_and_only_where_the_estate_says_where_projects_go() {
-        let src = central("once", None);
-        let none_chosen = Choices::default();
-        let with_project = |s: &str, n: &str, g: &str| super::with_project(s, n, g, &none_chosen, &declared_of(s));
-        let once = with_project(&src, "payments", GROUP).unwrap();
-        let twice = with_project(&once, "payments", GROUP).unwrap_err();
-        assert!(twice.contains("declares `interface \"payments\"` already"), "{}", twice);
-        // an interface a pack declares is in no line of the estate; the compiled estate knows it
-        let packed = Declared { interfaces: vec!["payments".into()], workload_folder: Some(WorkloadFolder::Organisation) };
-        assert!(super::with_project(&src, "payments", GROUP, &none_chosen, &packed).unwrap_err().contains("through a pack it uses"));
-        let none = src.lines().filter(|l| !l.contains("export \"workload_folder\"")).collect::<Vec<_>>().join("\n");
-        assert!(with_project(&none, "payments", GROUP).unwrap_err().contains("publishes no `workload_folder`"));
-        assert!(with_project(&src, "Payments", GROUP).unwrap_err().contains("lowercase"));
-        assert!(with_project(&src, "core", GROUP).unwrap_err().contains("reserved"));
-        assert!(with_project(&src, "payments", "group:x@example.com").unwrap_err().contains("the group's address"));
-        assert!(with_project(&src, "payments", "owners").unwrap_err().contains("the group's address"));
+        // no entry, no project and no interface
+        let (manifest, i) = compile(&central("none", None, ""), &presets);
+        assert!(!manifest.resources.values().any(|r| r.address() == "google_project.payments"));
+        assert!(i.projects().is_empty(), "{:?}", i.projects());
     }
 
     /// `init --project` writes an estate from the four exports, in the canonical layout,
@@ -477,8 +214,8 @@ mod tests {
     fn the_project_estate_runs_as_the_projects_account_and_reads_the_interface() {
         // the interface the central estate published, as the file a project takes; the
         // region is estate-core's export, which the estate `init` writes switches on later
-        let src = format!("{}\nexport \"default_region\" = default_region\n", with_project(&central("estate", None), "payments", GROUP, &Choices::default()).unwrap());
-        let (_, manifest, i) = compile(&src, &|p| Err(format!("no {}", p)));
+        let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", None, PROJECTS));
+        let (manifest, i) = compile(&src, &presets);
         let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
         let text = satz_core::fmt::format(&i.satz_file("payments", &facts, "0.0.0", "e.satz")).unwrap();
         let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
@@ -499,37 +236,8 @@ mod tests {
         // an interface without the exports is refused by name
         let bare = satz_core::satz::parse("interface \"x\"\n\ncentral {\n  estate = \"e\"\n  organizations = []\n}\n\noutput \"project_id\" {\n  value = \"p\"\n}\n").unwrap().interface_file.unwrap();
         let err = super::estate("payments", &bare, "x").unwrap_err();
-        assert!(err.contains("publishes no static `iac_account`") && err.contains("`project_id`"), "{}", err);
+        assert!(err.contains("publishes no static `iac_account`") && err.contains("`project_id`") && err.contains("project-onboarding.satz"), "{}", err);
         let no_region = satz_core::satz::parse(&text.replace("output \"default_region\"", "output \"region_gone\"")).unwrap().interface_file.unwrap();
         assert!(super::estate("payments", &no_region, "x").unwrap_err().contains("estate-core"));
-    }
-
-    /// What the wizard picks lands in the block: a `use interface` line and a copied
-    /// export, the copy the declaring line as it stands; and an interface alone compiles.
-    #[test]
-    fn the_choices_land_in_the_interface_and_an_interface_alone_compiles() {
-        let shared = "\ninterface \"network\" common {\n  export \"region_list\" = [default_region]\n}\n\ninterface \"audit\" {\n  export \"infra\" = \"${{google_project.infra.project_id}}\" attach [\"google_project_iam_member\"]\n}\n";
-        let base = format!("{}{}", central("choices", None), shared);
-        let (fe, manifest, i) = compile(&base, &|p| Err(format!("no {}", p)));
-        let report = crate::interface_report::report("e", Some(&i), &fe.exports, &fe.interfaces, &fe.requests);
-        let read = |_: &str| -> Result<String, String> { Ok(base.clone()) };
-        let copied = copied_export("audit.infra", &report, &read).unwrap();
-        assert_eq!(copied, "export \"infra\" = \"${{google_project.infra.project_id}}\" attach [\"google_project_iam_member\"]");
-        assert!(copied_export("infra", &report, &read).is_ok(), "one interface declares it: the bare name is enough");
-        assert!(copied_export("organization_id", &report, &read).unwrap_err().contains("no such export"));
-        assert!(copied_export("workload_folder", &report, &read).unwrap_err().contains("core export"));
-        let choices = Choices { uses: vec!["network".into()], exports: vec![copied] };
-        let src = satz_core::fmt::format(&with_project(&base, "payments", GROUP, &choices).unwrap()).unwrap();
-        let (_, _, i) = compile(&src, &|p| Err(format!("no {}", p)));
-        let names: Vec<&str> = i.module_outputs("payments").iter().map(|o| o.name.as_str()).collect();
-        for n in ["project_id", "infra", "region_list"] {
-            assert!(names.contains(&n), "{} missing from {:?}", n, names);
-        }
-        // an interface alone, for a workload with its own Google project
-        let alone = satz_core::fmt::format(&with_interface(&base, "billing", &Choices { uses: vec![], exports: vec![copied_export("audit.infra", &report, &read).unwrap()] }).unwrap()).unwrap();
-        let (_, _, i) = compile(&alone, &|p| Err(format!("no {}", p)));
-        assert!(i.projects().contains(&"billing".to_string()));
-        assert!(with_interface(&base, "billing", &Choices::default()).unwrap_err().contains("core exports alone"));
-        let _ = manifest;
     }
 }

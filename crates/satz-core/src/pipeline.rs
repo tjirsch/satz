@@ -285,6 +285,93 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
     out
 }
 
+/// The entries of the list param `list` an `each … by <key>` expands, each with its label —
+/// the entry's `key` field. The list is the param as `env` holds it, contributions merged
+/// (ADR 0051). Refused at the `each` line: a list no file declares, a param that is no
+/// list, an entry that is no object, one without the field or whose field is no label, and
+/// two entries with one label.
+fn each_list<'e>(env: &'e Env, list: &str, key: &str, file_name: &str, line: usize) -> Result<Vec<(String, &'e serde_yaml::Mapping)>, PipelineError> {
+    let what = format!("each {} by {}", list, key);
+    let entries = match env.get(list) {
+        Some(serde_yaml::Value::Sequence(s)) => s,
+        Some(other) => return perr(file_name, line, format!("`{}`: `{}` is {} — `each` expands a list of objects", what, list, yaml_kind(other))),
+        None => return perr(file_name, line, format!("`{}`: unknown param '{}' — declare the list in `params {{ … }}` before the map that expands it", what, list)),
+    };
+    let mut out: Vec<(String, &serde_yaml::Mapping)> = Vec::new();
+    for (n, entry) in entries.iter().enumerate() {
+        let serde_yaml::Value::Mapping(fields) = entry else {
+            return perr(file_name, line, format!("`{}`: entry {} of `{}` is {} — each entry is an object, `{{ {} = \"…\" … }}`", what, n + 1, list, yaml_kind(entry), key));
+        };
+        let label = match fields.get(key) {
+            Some(serde_yaml::Value::String(s)) => s.clone(),
+            Some(other) => return perr(file_name, line, format!("`{}`: entry {} of `{}` has `{}` = {} — a label is a string", what, n + 1, list, key, yaml_text(other))),
+            None => return perr(file_name, line, format!("`{}`: entry {} of `{}` has no `{}`, the field that labels its body", what, n + 1, list, key)),
+        };
+        let fits = label.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !fits {
+            return perr(file_name, line, format!("`{}`: `{}` = \"{}\" is no label — a letter, then letters, digits, `_` and `-`", what, key, label));
+        }
+        if let Some(first) = out.iter().position(|(l, _)| *l == label) {
+            return perr(file_name, line, format!("`{}`: entries {} and {} of `{}` are both `{}` = \"{}\" — one label is one resource", what, first + 1, n + 1, list, key, label));
+        }
+        out.push((label, fields));
+    }
+    Ok(out)
+}
+
+/// A file's interfaces, each with whether a pack's declaration makes it common: an
+/// interface a pack declares is common, one an `each` writes is one project's. An `each`'s
+/// interface is written once per entry of its list, its name and its export values read
+/// from the entry; the name is then judged as a written one is.
+fn interfaces_of(file: &satz::File, file_name: &str, env: &Env) -> Result<Vec<(satz::InterfaceDecl, bool)>, PipelineError> {
+    let mut out = Vec::new();
+    for i in &file.interfaces {
+        let Some(each) = &i.each else {
+            out.push((i.clone(), file.is_pack));
+            continue;
+        };
+        let what = format!("each {} by {}", each.list, each.key);
+        for (label, fields) in each_list(env, &each.list, &each.key, file_name, each.line)? {
+            let at = |line: usize, msg: String| PipelineError { file: file_name.to_string(), line, msg: format!("`{}`, entry `{}`: {}", what, label, msg) };
+            let name: String = each_parts(&each.name, fields)
+                .map_err(|m| at(i.line, m))?
+                .iter()
+                .map(|p| match p {
+                    StrPart::Lit(l) => l.clone(),
+                    StrPart::Param(n) => format!("{{{}}}", n),
+                })
+                .collect();
+            if !satz::valid_interface_name(&name) || name == satz::CORE_INTERFACE || name == satz::COMMON_LIBRARY {
+                return Err(at(
+                    i.line,
+                    format!(
+                        "interface \"{}\": an interface name is the folder interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter, and not `{}` or `{}`",
+                        name,
+                        satz::CORE_INTERFACE,
+                        satz::COMMON_LIBRARY
+                    ),
+                ));
+            }
+            let mut exports = Vec::new();
+            for x in &i.exports {
+                let value = match &x.value {
+                    satz::ExportValue::Value(v) => {
+                        let v = each_value(v, fields, x.line).map_err(|m| at(x.line, m))?;
+                        if let Value::Obj(_) = v {
+                            return Err(at(x.line, format!("export \"{}\": the value is an object — an export is a string, a number, a bool or a list", x.name)));
+                        }
+                        satz::ExportValue::Value(v)
+                    }
+                    all => all.clone(),
+                };
+                exports.push(satz::ExportDecl { value, ..x.clone() });
+            }
+            out.push((satz::InterfaceDecl { name, exports, each: None, ..i.clone() }, false));
+        }
+    }
+    Ok(out)
+}
+
 /// The body of an `each` for one entry: `{each.x}` in a string or a key becomes the
 /// field's text, a bare `each.x` the field's value. A `use` and a second `each` inside the
 /// body are refused.
@@ -318,18 +405,35 @@ fn each_field<'f>(name: &str, fields: &'f serde_yaml::Mapping) -> Result<Option<
     }
 }
 
+/// `{each.x}` in a string as the field's text. Inside a `${{type.label.attribute}}`
+/// reference the text is a label, and a label reaches the HCL with `-` as `_` (§2.2), so
+/// there it is written that way: `${{google_project.{each.name}.number}}` of `data-lake`
+/// names `google_project.data_lake`.
 fn each_parts(parts: &[StrPart], fields: &serde_yaml::Mapping) -> Result<Vec<StrPart>, String> {
+    let mut in_reference = false;
     parts
         .iter()
         .map(|p| match p {
-            StrPart::Param(name) => match each_field(name, fields)? {
-                Some(serde_yaml::Value::String(s)) => Ok(StrPart::Lit(s.clone())),
-                Some(serde_yaml::Value::Number(n)) => Ok(StrPart::Lit(n.to_string())),
-                Some(serde_yaml::Value::Bool(b)) => Ok(StrPart::Lit(b.to_string())),
-                Some(other) => Err(format!("`{{{}}}` is {} — a string holds a scalar; write `{}` alone as the value", name, yaml_kind(other), name)),
-                None => Ok(p.clone()),
-            },
-            StrPart::Lit(_) => Ok(p.clone()),
+            StrPart::Param(name) => {
+                let text = match each_field(name, fields)? {
+                    Some(serde_yaml::Value::String(s)) => s.clone(),
+                    Some(serde_yaml::Value::Number(n)) => n.to_string(),
+                    Some(serde_yaml::Value::Bool(b)) => b.to_string(),
+                    Some(other) => return Err(format!("`{{{}}}` is {} — a string holds a scalar; write `{}` alone as the value", name, yaml_kind(other), name)),
+                    None => return Ok(p.clone()),
+                };
+                Ok(StrPart::Lit(if in_reference { text.replace('-', "_") } else { text }))
+            }
+            StrPart::Lit(l) => {
+                for (i, c) in l.char_indices() {
+                    if c == '$' && l[i + 1..].starts_with('{') {
+                        in_reference = true;
+                    } else if c == '}' {
+                        in_reference = false;
+                    }
+                }
+                Ok(p.clone())
+            }
         })
         .collect()
 }
@@ -1360,7 +1464,8 @@ pub fn compile_estate_using(
     // export (the fold's idempotence), a different one is a hard error naming both files.
     // The same interface in two files is one interface.
     let mut exports: Vec<ResolvedExport> = Vec::new();
-    let declared = exports_of(&file, file_name).into_iter().chain(walked_exports);
+    let own_interfaces = interfaces_of(&file, file_name, &tfvars)?;
+    let declared = exports_of(&file, file_name, &own_interfaces).into_iter().chain(walked_exports);
     for (f, interface, x) in declared {
         let r = ResolvedExport {
             interface,
@@ -1416,7 +1521,7 @@ pub fn compile_estate_using(
         }
     }
 
-    let declared_interfaces = file.interfaces.iter().map(|i| (file_name.to_string(), i.clone(), file.is_pack)).chain(walked_interfaces);
+    let declared_interfaces = own_interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)).chain(walked_interfaces);
     let interfaces = resolve_interfaces(declared_interfaces.collect(), &exports, &tfvars)?;
 
     // the estate's own questions first, then those of the packs it used
@@ -2192,17 +2297,18 @@ struct Walk<'a> {
     /// `request` statements of the used files, after the `when` guard
     requests: Vec<(String, satz::RequestDecl)>,
     /// `interface` blocks of every file the walk visits, for their `use interface` lines,
-    /// each with whether its file is a pack (whose interfaces are common).
+    /// an `each`'s one per entry, each with whether a pack's declaration makes it common.
     interfaces: Vec<(String, satz::InterfaceDecl, bool)>,
     /// generated interface files the walk visits
     interface_files: Vec<UsedInterfaceFile>,
 }
 
-/// A file's exports with the file and the interface each stands in (`None`: core).
-fn exports_of(file: &satz::File, file_name: &str) -> Vec<(String, Option<String>, satz::ExportDecl)> {
+/// A file's exports with the file and the interface each stands in (`None`: core), the
+/// interfaces as `interfaces_of` writes them.
+fn exports_of(file: &satz::File, file_name: &str, interfaces: &[(satz::InterfaceDecl, bool)]) -> Vec<(String, Option<String>, satz::ExportDecl)> {
     let mut out: Vec<(String, Option<String>, satz::ExportDecl)> =
         file.exports.iter().map(|x| (file_name.to_string(), None, x.clone())).collect();
-    for i in &file.interfaces {
+    for (i, _) in interfaces {
         out.extend(i.exports.iter().map(|x| (file_name.to_string(), Some(i.name.clone()), x.clone())));
     }
     out
@@ -2313,13 +2419,15 @@ impl Walk<'_> {
     }
 
     /// After the guard too: a pack switched off publishes nothing.
-    fn absorb_exports(&mut self, file: &satz::File, file_name: &str) {
+    fn absorb_exports(&mut self, file: &satz::File, file_name: &str) -> Result<(), PipelineError> {
         self.requests.extend(file.requests.iter().map(|r| (file_name.to_string(), r.clone())));
-        self.exports.extend(exports_of(file, file_name));
-        self.interfaces.extend(file.interfaces.iter().map(|i| (file_name.to_string(), i.clone(), file.is_pack)));
+        let interfaces = interfaces_of(file, file_name, &self.genv)?;
+        self.exports.extend(exports_of(file, file_name, &interfaces));
+        self.interfaces.extend(interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)));
         if let Some(i) = &file.interface_file {
             self.interface_files.push(UsedInterfaceFile { file: file_name.to_string(), interface: i.clone() });
         }
+        Ok(())
     }
 
     /// After the guard too: a pack switched off asks for nothing to be run.
@@ -2385,34 +2493,7 @@ impl Walk<'_> {
             };
             self.belongs(pos, e, file_name)?;
             let what = format!("each {} by {}", list, key);
-            let entries = match self.genv.get(list) {
-                Some(serde_yaml::Value::Sequence(s)) => s,
-                Some(other) => {
-                    return perr(file_name, *line, format!("`{}`: `{}` is {} — `each` expands a list of objects", what, list, yaml_kind(other)))
-                }
-                None => return perr(file_name, *line, format!("`{}`: unknown param '{}' — declare the list in `params {{ … }}` before the map that expands it", what, list)),
-            };
-            let mut seen: Vec<String> = Vec::new();
-            for (n, entry) in entries.iter().enumerate() {
-                let serde_yaml::Value::Mapping(fields) = entry else {
-                    return perr(file_name, *line, format!("`{}`: entry {} of `{}` is {} — each entry is an object, `{{ {} = \"…\" … }}`", what, n + 1, list, yaml_kind(entry), key));
-                };
-                let label = match fields.get(key.as_str()) {
-                    Some(serde_yaml::Value::String(s)) => s.clone(),
-                    Some(other) => {
-                        return perr(file_name, *line, format!("`{}`: entry {} of `{}` has `{}` = {} — a label is a string", what, n + 1, list, key, yaml_text(other)))
-                    }
-                    None => return perr(file_name, *line, format!("`{}`: entry {} of `{}` has no `{}`, the field that labels its body", what, n + 1, list, key)),
-                };
-                let fits = label.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                    && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-                if !fits {
-                    return perr(file_name, *line, format!("`{}`: `{}` = \"{}\" is no label — a letter, then letters, digits, `_` and `-`", what, key, label));
-                }
-                if let Some(first) = seen.iter().position(|l| *l == label) {
-                    return perr(file_name, *line, format!("`{}`: entries {} and {} of `{}` are both `{}` = \"{}\" — one label is one resource", what, first + 1, n + 1, list, key, label));
-                }
-                seen.push(label.clone());
+            for (label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
                 let at = |msg: String| PipelineError { file: file_name.to_string(), line: *line, msg: format!("`{}`, entry `{}`: {}", what, label, msg) };
                 let body = each_entries(template, fields, *line).map_err(at)?;
                 out.push(Entry::Map { key: Key::Str(vec![StrPart::Lit(label)]), name: None, body, line: *line });
@@ -2450,7 +2531,7 @@ impl Walk<'_> {
         self.absorb_questions(&file, use_path);
         self.absorb_notices(&file, use_path);
         self.absorb_actions(&file, use_path);
-        self.absorb_exports(&file, use_path);
+        self.absorb_exports(&file, use_path)?;
         self.use_chain.push(use_path.to_string());
         Ok(file)
     }
@@ -3563,6 +3644,39 @@ mod estate_channel_tests {
         assert!(e.msg.contains("is common and uses `pay`"), "{}", e.msg);
     }
 
+    /// `each` around `interface` writes one per entry — a pack's too, each one project's
+    /// own — its name and its values from the entry, an entry's text inside `${{…}}` with
+    /// `-` as `_`; a contributed entry is an interface too.
+    #[test]
+    fn each_writes_one_interface_per_entry_and_each_is_a_project_s() {
+        let pack = "pack p version \"1.0\"\nparams {\n  teams = []\n}\neach teams by name {\n  interface \"{each.name}\" {\n    use interface \"net\"\n    export \"project\" = \"${{google_project.{each.name}.project_id}}\" description \"d\"\n    export \"owner\"   = each.owner\n  }\n}\ninterface \"net\" {\n  export \"vpc\" = \"v\"\n}\n";
+        let asks = "pack asks version \"1.0\"\nparams {\n  contributes_teams = [{ name = \"ops\" owner = \"o\" }]\n}\n";
+        let load = |p: &str| -> Result<String, String> {
+            match p {
+                "p.satz" => Ok(pack.into()),
+                "asks.satz" => Ok(asks.into()),
+                other => Err(format!("no load: {}", other)),
+            }
+        };
+        let estate = "estate t\nparams {\n  teams = [{ name = \"data-lake\" owner = \"a\" }]\n}\nuse \"p.satz\"\nuse \"asks.satz\"\n";
+        let fe = compile_estate("t.satz", estate, &Table, &load).unwrap();
+        let common: Vec<(&str, bool)> = fe.interfaces.iter().map(|i| (i.name.as_str(), i.common)).collect();
+        assert_eq!(common, [("data-lake", false), ("net", true), ("ops", false)]);
+        assert_eq!(fe.interfaces.iter().find(|i| i.name == "ops").unwrap().uses, ["net"]);
+        let value = |i: &str, n: &str| fe.exports.iter().find(|x| x.interface.as_deref() == Some(i) && x.name == n).map(|x| x.value.clone()).unwrap();
+        assert_eq!(value("data-lake", "project"), serde_yaml::Value::String("${google_project.data_lake.project_id}".into()));
+        assert_eq!(value("ops", "owner"), serde_yaml::Value::String("o".into()));
+        // the entry's name is judged as a written name is
+        let e = compile_estate("t.satz", &estate.replace("data-lake", "Data"), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("entry `Data`") && e.msg.contains("interface name"), "{}", e.msg);
+        let e = compile_estate("t.satz", &estate.replace("\"data-lake\" owner = \"a\"", "\"core\" owner = \"a\""), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("not `core`"), "{}", e.msg);
+        let e = compile_estate("t.satz", &estate.replace("owner = \"a\"", "owner = { x = 1 }"), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("is an object"), "{}", e.msg);
+        let e = compile_estate("t.satz", &estate.replace("owner = \"a\"", "other = 1"), &Table, &load).err().expect("refused");
+        assert!(e.msg.contains("no field `owner`"), "{}", e.msg);
+    }
+
     const IFACE: &str = "interface \"pay\"\n\ncentral {\n  estate        = \"central\"\n  organizations = [\"organizations/123456789012\"]\n}\n\noutput \"org_id\" {\n  value = \"123456789012\"\n}\n\noutput \"folder\" {\n  value   = \"${{data.google_active_folder.pay.name}}\"\n  attach  = [\"google_folder_iam_member\"]\n  targets = [\"google_folder.pay\"]\n}\n\noutput \"regions\" {\n  value = [\"europe-west3\", \"europe-west4\"]\n}\n\nlookup \"data.google_active_folder.pay\" {\n  reads      = \"google_folder.pay\"\n  permission = \"resourcemanager.folders.list on the parent\"\n  arguments {\n    display_name = \"Pay\"\n    parent       = \"${{data.google_active_folder.infra.name}}\"\n  }\n}\n\nlookup \"data.google_active_folder.infra\" {\n  reads      = \"google_folder.infra\"\n  permission = \"resourcemanager.folders.list on the parent\"\n  arguments {\n    display_name = \"Infrastructure\"\n    parent       = \"organizations/123456789012\"\n  }\n}\n";
 
     fn project_load(p: &str) -> Result<String, String> {
@@ -4556,7 +4670,7 @@ google_storage_bucket {
         refused(&with("  xs = [ { name = \"a\" tags = [\"x\"] } ]", &bucket_map("    name = \"{each.tags}\"")), "a string holds a scalar");
         refused(&with("  xs = [ { name = \"a\" } ]", &bucket_map("    use \"p.satz\"")), "a `use` inside `each`");
         // where it stands
-        refused(&with("  xs = [ { name = \"a\" } ]", "each xs by name {\n  name = \"x\"\n}\n"), "stands at the top level of a file");
+        refused(&with("  xs = [ { name = \"a\" } ]", "each xs by name {\n  name = \"x\"\n}\n"), "at the top level of a file holds `interface` blocks");
         refused(
             &with("  xs = [ { name = \"a\" } ]", "google_folder {\n  f {\n    display_name = \"F\"\n    each xs by name {\n      display_name = \"x\"\n    }\n  }\n}\n"),
             "the body of a `google_folder`",

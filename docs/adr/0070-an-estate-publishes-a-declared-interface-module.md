@@ -489,7 +489,10 @@ workload folder, its IaC service account and state bucket inside it, the grants,
 account, the `gcs` backend on its bucket, the `use` of the interface file; nothing derived
 from the credentials.
 
-- **A generated section, not a pack** (decided 2026-09-26). A pack is one instance: its
+- **A generated section, not a pack** (decided 2026-09-26; *superseded by
+  [ADR 0075](0075-each-writes-an-interface-per-entry-and-onboarding-is-a-pack.md): `each`
+  writes an interface per entry, `presets/project-onboarding.satz` onboards the projects
+  and `add-project` is removed*). A pack is one instance: its
   params join one estate-wide namespace, `use … as google_x` reads a file as a map, and
   no `interface` block is written per entry of a list (`each`, ADR 0071, expands resources,
   not interfaces) — so a `project-onboarding.satz` taking `projects = [{…}]` cannot publish

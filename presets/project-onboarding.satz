@@ -1,0 +1,134 @@
+// The projects on the estate, one entry of `projects` each. Per entry a Google project
+// with its own IaC service account and state bucket, and the interface that publishes
+// them to the project.
+//
+//   use "presets/project-onboarding.satz" when use_project_onboarding
+//
+// A project is an estate beside this one, in its own repository, that reads this estate
+// through `interfaces/<name>/`. Onboarding one is an entry in `projects`,
+// `{ name = "payments" owner_group = "payments-owners@example.com" }` — bound in the
+// estate, or requested by the project as `contributes_projects` in a small pack of its own,
+// checked with `satz check-request` and vendored into the estate by pull request. The
+// entry's `name` is the interface's name and a folder name: lowercase letters, digits and
+// `-`, starting with a letter.
+//
+// PER ENTRY. The Google project `{customer_shortname}-<name>-001`, billed to the
+// infrastructure billing account, with the five APIs a project's estate needs to run.
+// Its IaC service account `svc-iac-<name>`, which holds the project's IAM and its
+// services and the state bucket `{customer_shortname}-<name>-001-state` — what the
+// project's own estate grants itself the rest from (`satz update-prerequisites` there).
+// The owner group reads the project and may become its IaC service account, that account
+// only. `interface "<name>"` publishes `project_id` (an attach point for
+// `google_project_iam_member`), `project_number`, `iac_account` and `state_bucket`;
+// `satz init --project <name> --interface interfaces/<name>/<name>/satz/interface.satz`
+// writes the project's estate from them and the core export `default_region`.
+//
+// WHERE THE PROJECTS GO. `project_onboarding_folder` names the parent: empty is the
+// organisation; the workload folder `satz init --workload-folder-name` writes is
+// `google_folder.workload_folder.name`.
+//
+// MORE IN AN INTERFACE. An interface declared in two files is one interface, so the estate
+// adds to a project's interface by writing a block of the same name in its own file:
+// `interface "payments" { use interface "network" }`.
+//
+// NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
+
+pack project_onboarding version "1.0"
+
+params {
+  // One entry per project, `{ name owner_group }`: the name, and the group — its address,
+  // `<name>@<domain>` — that reads the project and may become its IaC service account.
+  projects                  = []
+  // The folder the projects are created in. Empty is the organisation. A folder the
+  // estate declares is named by reference, `google_folder.<label>.name`; one that already
+  // exists by its id.
+  project_onboarding_folder = ""
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question project_onboarding_folder {
+  prompt   = "The folder the projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It decides the policies and the grants every project inherits. Changing it afterwards moves every live project between parents."
+  reversal = edit
+  blast    = low
+}
+
+// ---- what a project may ask for ---------------------------------------------------
+
+request projects {
+  key         = "name"
+  fields      = ["name", "owner_group"]
+  description = "A project on the estate: its name, which is its interface's, and the address of the group that owns it"
+}
+
+// ---- per project: its Google project, IaC service account and state bucket ----------
+
+google_project {
+  each projects by name {
+    name            = "{each.name}"
+    project_id      = "{customer_shortname}-{each.name}-001"
+    folder_id       = project_onboarding_folder
+    billing_account = billing_account_infra
+    project_service = [
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+    google_service_account {
+      "{each.name}_iac" {
+        account_id   = "svc-iac-{each.name}"
+        display_name = "IaC provisioner of the project {each.name}"
+      }
+    }
+    google_storage_bucket {
+      "{each.name}_state" {
+        name                        = "{customer_shortname}-{each.name}-001-state"
+        location                    = default_region
+        force_destroy               = true
+        public_access_prevention    = "enforced"
+        uniform_bucket_level_access = true
+        versioning { enabled = true }
+      }
+    }
+    // The project's IaC service account grants itself what its estate's resource types
+    // need (`satz update-prerequisites` there): here it takes the project's IAM and its
+    // services, and the state bucket. The owner group reads the project.
+    google_project_iam_member {
+      "serviceAccount:svc-iac-{each.name}@{customer_shortname}-{each.name}-001.iam.gserviceaccount.com" = [
+        "roles/resourcemanager.projectIamAdmin",
+        "roles/serviceusage.serviceUsageAdmin",
+      ]
+      "group:{each.owner_group}" = [
+        "roles/viewer",
+      ]
+    }
+    google_storage_bucket_iam_member {
+      bucket = "{customer_shortname}-{each.name}-001-state"
+      "serviceAccount:svc-iac-{each.name}@{customer_shortname}-{each.name}-001.iam.gserviceaccount.com" = [
+        "roles/storage.objectAdmin",
+      ]
+    }
+    // The owner group may become the project's IaC service account — that account only.
+    google_service_account_iam_member {
+      service_account_id = "${{google_service_account.{each.name}_iac.name}}"
+      "group:{each.owner_group}" = [
+        "roles/iam.serviceAccountTokenCreator",
+        "roles/iam.serviceAccountUser",
+      ]
+    }
+  }
+}
+
+// ---- what each project reads --------------------------------------------------------
+
+each projects by name {
+  interface "{each.name}" {
+    export "project_id"     = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number" = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "iac_account"    = "${{google_service_account.{each.name}_iac.email}}" description "The IaC service account the project's estate runs as"
+    export "state_bucket"   = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
+  }
+}

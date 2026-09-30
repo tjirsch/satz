@@ -976,27 +976,42 @@ names a project's values `<project>__<export>`, with `-` written `_`
 
 ### Onboarding a project, and a project on satz
 
-A project is one section of the central estate, and `satz add-project` writes it:
-
-```bash
-satz add-project acme.satz --name payments --owner-group payments-owners@example.com
-```
-
-appends, at the end of the estate, the project's Google project under the workload
-folder — `folder_id = "${{google_folder.workload_folder.name}}"`, or `org_id` when the
-workload folder is the organisation — with its IaC service account (`svc-iac-payments`)
-and its state bucket inside it, the grants (the account takes the project's IAM and its
-services and the bucket, so its estate grants itself the rest with `satz
-update-prerequisites`; the owner group reads the project and may become the account), and:
+A project is one entry of `projects` in `presets/project-onboarding.satz`:
 
 ```
-interface "payments" {
-  export "project_id"     = "${{google_project.payments.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
-  export "project_number" = "${{google_project.payments.number}}" description "Its number, looked up"
-  export "iac_account"    = "${{google_service_account.payments_iac.email}}" description "The IaC service account the project's estate runs as"
-  export "state_bucket"   = "${{google_storage_bucket.payments_state.name}}" description "The bucket the project's estate keeps its state in"
+params {
+  projects = [
+    { name = "payments" owner_group = "payments-owners@example.com" },
+  ]
+  project_onboarding_folder = "google_folder.workload_folder.name"
+}
+
+use "presets/project-onboarding.satz" when use_project_onboarding
+```
+
+Per entry the pack declares the project's Google project `{customer_shortname}-payments-001`
+under `project_onboarding_folder` — the workload folder here; empty is the organisation —
+with its IaC service account (`svc-iac-payments`) and its state bucket inside it, the grants
+(the account takes the project's IAM and its services and the bucket, so its estate grants
+itself the rest with `satz update-prerequisites`; the owner group reads the project and may
+become the account), and the project's interface, written once per entry:
+
+```
+each projects by name {
+  interface "{each.name}" {
+    export "project_id"     = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number" = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "iac_account"    = "${{google_service_account.{each.name}_iac.email}}" description "The IaC service account the project's estate runs as"
+    export "state_bucket"   = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
+  }
 }
 ```
+
+The entry is the estate's own, or the project's request: `contributes_projects = [ … ]` in
+a small pack of the project's, checked with `satz check-request` and vendored into the
+estate by pull request ([language §6.17](language.md#request--what-a-project-may-add-to-a-list)). The pull request
+is the request's review; the apply creates the project; `satz transpile` writes
+`interfaces/payments/`. Two entries of one name are refused.
 
 A project's natural set is often what stands under its folder:
 `export "team_projects" = all google_project under google_folder.team_a` publishes that
@@ -1005,18 +1020,18 @@ google_storage_bucket.logs` in the estate keeps one resource — a pack's includ
 every export.
 
 `satz interfaces acme.satz --format text --out -` lists every export and interface there
-is to pick from. `--use-interface network` adds a `use interface` line to the project's
-interface, `--export archive.archive_project_id` writes that export into it again as its
-declaring line stands, and `--interface-only` writes the interface alone — for a workload,
-in HCL or in Satz, that brings its own Google project.
+is to pick from. An interface declared in two files is one interface, so the estate adds
+to a project's interface with a block of the same name in its own file:
 
-The section is plain Satz the operator owns from then on. The pull request that carries it
-is the request's review; the apply creates the project; `satz transpile` writes
-`interfaces/payments/`. A second `add-project` of one name is refused, and so is an estate
-that publishes no `workload_folder`, which says where a project goes. One project is one
-section because a pack is one instance — its params join one estate-wide namespace, and no
-`interface` block is written per entry of a list (`each`, §6.4 of the language reference,
-expands resources, not interfaces).
+```
+interface "payments" {
+  use interface "network"
+  export "archive_project_id" = "${{google_project.archive.project_id}}" attach ["google_project_iam_member"]
+}
+```
+
+A workload, in HCL or in Satz, that brings its own Google project gets an interface
+written by hand, `interface "billing" { … }`, and no entry.
 
 **A project on satz** starts from that interface. In its own directory:
 

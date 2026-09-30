@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.6"
+pack estate_map version "2.7"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -47,6 +47,7 @@ params {
   use_budget                    = false
   use_billing_export            = false
   use_shared_network            = false
+  use_project_onboarding        = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -127,6 +128,13 @@ question use_budget {
 question use_shared_network {
   prompt   = "Run a shared VPC for the projects: a host project, one network, and a firewall policy whose subnets and rules the projects request?"
   why      = "Projects then run in one network the estate owns instead of each building its own: a project asks for a subnet or a firewall rule by pull request, the estate applies it, and the interface publishes it. Turning it off later destroys the host project, the network and every subnet and rule in it, and cuts off every project attached to it."
+  reversal = recreate
+  blast    = high
+}
+
+question use_project_onboarding {
+  prompt   = "Onboard projects from this estate: per project a Google project with its own IaC service account and state bucket, and the interface the project's estate reads?"
+  why      = "A project — a team's estate beside this one, in its own repository — is then one entry of `projects`, requested by pull request, and `satz init --project` writes its estate from the interface. Turning it off later destroys every onboarded project's Google project, with everything the project built in it."
   reversal = recreate
   blast    = high
 }
@@ -296,6 +304,11 @@ offers "presets/organization-budget.satz" {
 
 offers "presets/billing-export.satz" {
   when = use_billing_export
+}
+
+offers "presets/project-onboarding.satz" {
+  when  = use_project_onboarding
+  phase = "once the estate runs as the service account — the projects' own estates run as their own accounts"
 }
 
 offers "presets/shared-network.satz" {

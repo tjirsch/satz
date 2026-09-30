@@ -35,6 +35,7 @@ params {
   sentinel_project_number             = "123456789012"
   scc_siem_subscriber                 = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"
   access_approval_notification_emails = ["security@example.com"]
+  projects                            = [{ name = "payments" owner_group = "payments-owners@example.com" }]
 }
 
 terraform {
@@ -104,6 +105,7 @@ use "presets/scc/scc-findings-siem.satz"
 use "presets/scc/scc-export.satz"
 use "presets/billing-export.satz"
 use "presets/shared-network.satz"
+use "presets/project-onboarding.satz"
 
 use "presets/integrations/microsoft-defender-for-cloud.satz"
 use "presets/integrations/microsoft-sentinel.satz"
