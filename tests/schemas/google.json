@@ -2731,6 +2731,437 @@
             "description_kind": "plain"
           }
         },
+        "google_compute_disk": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "access_mode": {
+                "type": "string",
+                "description": "The access mode of the disk.\nFor example:\n  * READ_WRITE_SINGLE: The default AccessMode, means the disk can be attached to single instance in RW mode.\n  * READ_WRITE_MANY: The AccessMode means the disk can be attached to multiple instances in RW mode.\n  * READ_ONLY_SINGLE: The AccessMode means the disk can be attached to multiple instances in RO mode.\nThe AccessMode is only valid for Hyperdisk disk types.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "architecture": {
+                "type": "string",
+                "description": "The architecture of the disk. Values include 'X86_64', 'ARM64'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "create_snapshot_before_destroy": {
+                "type": "bool",
+                "description": "If set to true, a snapshot of the disk will be created before it is destroyed.\nIf your disk is encrypted with customer managed encryption keys these will be reused for the snapshot creation.\nThe name of the snapshot by default will be '{{disk-name}}-YYYYMMDD-HHmm'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "create_snapshot_before_destroy_prefix": {
+                "type": "string",
+                "description": "This will set a custom name prefix for the snapshot that's created when the disk is deleted.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property when\nyou create the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "disk_id": {
+                "type": "string",
+                "description": "The unique identifier for the resource. This identifier is defined by the server.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "enable_confidential_compute": {
+                "type": "bool",
+                "description": "Whether this disk is using confidential compute mode.\nNote: Only supported on hyperdisk skus, disk_encryption_key is required when setting to true",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "image": {
+                "type": "string",
+                "description": "The image from which to initialize this disk. This can be\none of: the image's 'self_link', 'projects/{project}/global/images/{image}',\n'projects/{project}/global/images/family/{family}', 'global/images/{image}',\n'global/images/family/{family}', 'family/{family}', '{project}/{family}',\n'{project}/{image}', '{family}', or '{image}'. If referred by family, the\nimages names must include the family name. If they don't, use the\n[google_compute_image data source](/docs/providers/google/d/compute_image.html).\nFor instance, the image 'centos-6-v20180104' includes its family name 'centos-6'.\nThese images can be referred by family name here.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "label_fingerprint": {
+                "type": "string",
+                "description": "The fingerprint used for optimistic locking of this resource.  Used\ninternally during updates.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Labels to apply to this disk.  A list of key->value pairs.\n\n\n**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\nPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "last_attach_timestamp": {
+                "type": "string",
+                "description": "Last attach timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "last_detach_timestamp": {
+                "type": "string",
+                "description": "Last detach timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "licenses": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "Any applicable license URI.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the resource. Provided by the client when the resource is\ncreated. The name must be 1-63 characters long, and comply with\nRFC1035. Specifically, the name must be 1-63 characters long and match\nthe regular expression '[a-z]([-a-z0-9]*[a-z0-9])?' which means the\nfirst character must be a lowercase letter, and all following\ncharacters must be a dash, lowercase letter, or digit, except the last\ncharacter, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "physical_block_size_bytes": {
+                "type": "number",
+                "description": "Physical block size of the persistent disk, in bytes. If not present\nin a request, a default value is used. Currently supported sizes\nare 4096 and 16384, other sizes may be added in the future.\nIf an unsupported value is requested, the error message will list\nthe supported values for the caller's project.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "provisioned_iops": {
+                "type": "number",
+                "description": "Indicates how many IOPS must be provisioned for the disk.\nNote: Updating currently is only supported by hyperdisk skus without the need to delete and recreate the disk, hyperdisk\nallows for an update of IOPS every 4 hours. To update your hyperdisk more frequently, you'll need to manually delete and recreate it",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "provisioned_throughput": {
+                "type": "number",
+                "description": "Indicates how much Throughput must be provisioned for the disk.\nNote: Updating currently is only supported by hyperdisk skus without the need to delete and recreate the disk, hyperdisk\nallows for an update of Throughput every 4 hours. To update your hyperdisk more frequently, you'll need to manually delete and recreate it",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "size": {
+                "type": "number",
+                "description": "Size of the persistent disk, specified in GB. You can specify this\nfield when creating a persistent disk using the 'image' or\n'snapshot' parameter, or specify it alone to create an empty\npersistent disk.\n\nIf you specify this field along with 'image' or 'snapshot',\nthe value must not be less than the size of the image\nor the size of the snapshot.\n\n~>**NOTE** If you change the size, Terraform updates the disk size\nif upsizing is detected but recreates the disk if downsizing is requested.\nYou can add 'lifecycle.prevent_destroy' in the config to prevent destroying\nand recreating.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "snapshot": {
+                "type": "string",
+                "description": "The source snapshot used to create this disk. You can provide this as\na partial or full URL to the resource. If the snapshot is in another\nproject than this disk, you must supply a full URL. For example, the\nfollowing are valid values:\n\n* 'https://www.googleapis.com/compute/v1/projects/project/global/snapshots/snapshot'\n* 'projects/project/global/snapshots/snapshot'\n* 'global/snapshots/snapshot'\n* 'snapshot'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "source_disk": {
+                "type": "string",
+                "description": "The source disk used to create this disk. You can provide this as a partial or full URL to the resource.\nFor example, the following are valid values:\n\n* https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/disks/{disk}\n* https://www.googleapis.com/compute/v1/projects/{project}/regions/{region}/disks/{disk}\n* projects/{project}/zones/{zone}/disks/{disk}\n* projects/{project}/regions/{region}/disks/{disk}\n* zones/{zone}/disks/{disk}\n* regions/{region}/disks/{disk}",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "source_disk_id": {
+                "type": "string",
+                "description": "The ID value of the disk used to create this image. This value may\nbe used to determine whether the image was taken from the current\nor a previous instance of a given disk name.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "source_image_id": {
+                "type": "string",
+                "description": "The ID value of the image used to create this disk. This value\nidentifies the exact image that was used to create this persistent\ndisk. For example, if you created the persistent disk from an image\nthat was later deleted and recreated under the same name, the source\nimage ID would identify the exact version of the image that was used.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "source_instant_snapshot": {
+                "type": "string",
+                "description": "The source instant snapshot used to create this disk. You can provide this as a partial or full URL to the resource.\nFor example, the following are valid values:\n\n* 'https://www.googleapis.com/compute/v1/projects/project/zones/zone/instantSnapshots/instantSnapshot'\n* 'projects/project/zones/zone/instantSnapshots/instantSnapshot'\n* 'zones/zone/instantSnapshots/instantSnapshot'",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "source_instant_snapshot_id": {
+                "type": "string",
+                "description": "The unique ID of the instant snapshot used to create this disk. This value identifies\nthe exact instant snapshot that was used to create this persistent disk.\nFor example, if you created the persistent disk from an instant snapshot that was later\ndeleted and recreated under the same name, the source instant snapshot ID would identify\nthe exact version of the instant snapshot that was used.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "source_snapshot_id": {
+                "type": "string",
+                "description": "The unique ID of the snapshot used to create this disk. This value\nidentifies the exact snapshot that was used to create this persistent\ndisk. For example, if you created the persistent disk from a snapshot\nthat was later deleted and recreated under the same name, the source\nsnapshot ID would identify the exact version of the snapshot that was\nused.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "source_storage_object": {
+                "type": "string",
+                "description": "The full Google Cloud Storage URI where the disk image is stored.\nThis file must be a gzip-compressed tarball whose name ends in .tar.gz or virtual machine disk whose name ends in vmdk.\nValid URIs may start with gs:// or https://storage.googleapis.com/.\nThis flag is not optimized for creating multiple disks from a source storage object.\nTo create many disks from a source storage object, use gcloud compute images import instead.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "storage_pool": {
+                "type": "string",
+                "description": "The URL or the name of the storage pool in which the new disk is created.\nFor example:\n* https://www.googleapis.com/compute/v1/projects/{project}/zones/{zone}/storagePools/{storagePool}\n* /projects/{project}/zones/{zone}/storagePools/{storagePool}\n* /zones/{zone}/storagePools/{storagePool}\n* /{storagePool}",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource\n and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "type": {
+                "type": "string",
+                "description": "URL of the disk type resource describing which disk type to use to\ncreate the disk. Provide this when creating the disk.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "users": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "Links to the users of the disk (attached instances) in form:\nproject/zones/zone/instances/instance",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "zone": {
+                "type": "string",
+                "description": "A reference to the zone where the disk resides.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              }
+            },
+            "block_types": {
+              "async_primary_disk": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "disk": {
+                      "type": "string",
+                      "description": "Primary disk for asynchronous disk replication.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "A nested object resource.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "disk_encryption_key": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self link of the encryption key used to encrypt the disk. Also called KmsKeyName\nin the cloud console. Your project's Compute Engine System service account\n('service-{{PROJECT_NUMBER}}@compute-system.iam.gserviceaccount.com') must have\n'roles/cloudkms.cryptoKeyEncrypterDecrypter' to use this feature.\nSee https://cloud.google.com/compute/docs/disks/customer-managed-encryption#encrypt_a_new_persistent_disk_with_your_own_keys",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "kms_key_service_account": {
+                      "type": "string",
+                      "description": "The service account used for the encryption request for the given KMS key.\nIf absent, the Compute Engine Service Agent service account is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "raw_key": {
+                      "type": "string",
+                      "description": "Specifies a 256-bit customer-supplied encryption key, encoded in\nRFC 4648 base64 to either encrypt or decrypt this resource.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "rsa_encrypted_key": {
+                      "type": "string",
+                      "description": "Specifies an RFC 4648 base64 encoded, RSA-wrapped 2048-bit\ncustomer-supplied encryption key to either encrypt or decrypt\nthis resource. You can provide either the rawKey or the rsaEncryptedKey.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "description": "The RFC 4648 base64 encoded SHA-256 hash of the customer-supplied\nencryption key that protects this resource.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "Encrypts the disk using a customer-supplied encryption key.\n\nAfter you encrypt a disk with a customer-supplied key, you must\nprovide the same key if you use the disk later (e.g. to create a disk\nsnapshot or an image, or to attach the disk to a virtual machine).\n\nCustomer-supplied encryption keys do not protect access to metadata of\nthe disk.\n\nIf you do not provide an encryption key when creating the disk, then\nthe disk will be encrypted using an automatically generated key and\nyou do not need to provide a key to use the disk later.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "guest_os_features": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "type": {
+                      "type": "string",
+                      "description": "The type of supported feature. Read [Enabling guest operating system features](https://cloud.google.com/compute/docs/images/create-delete-deprecate-private-images#guest-os-features) to see a list of available options.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "A list of features to enable on the guest operating system.\nApplicable only for bootable disks.",
+                  "description_kind": "plain"
+                }
+              },
+              "params": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "resource_manager_tags": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "Resource manager tags to be bound to the disk. Tag keys and values have the\nsame definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id},\nand values are in the format tagValues/456.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Additional params passed with the request, but not persisted as part of resource payload",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "source_image_encryption_key": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self link of the encryption key used to encrypt the disk. Also called KmsKeyName\nin the cloud console. Your project's Compute Engine System service account\n('service-{{PROJECT_NUMBER}}@compute-system.iam.gserviceaccount.com') must have\n'roles/cloudkms.cryptoKeyEncrypterDecrypter' to use this feature.\nSee https://cloud.google.com/compute/docs/disks/customer-managed-encryption#encrypt_a_new_persistent_disk_with_your_own_keys",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "kms_key_service_account": {
+                      "type": "string",
+                      "description": "The service account used for the encryption request for the given KMS key.\nIf absent, the Compute Engine Service Agent service account is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "raw_key": {
+                      "type": "string",
+                      "description": "Specifies a 256-bit customer-supplied encryption key, encoded in\nRFC 4648 base64 to either encrypt or decrypt this resource.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "description": "The RFC 4648 base64 encoded SHA-256 hash of the customer-supplied\nencryption key that protects this resource.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "The customer-supplied encryption key of the source image. Required if\nthe source image is protected by a customer-supplied encryption key.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "source_snapshot_encryption_key": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self link of the encryption key used to encrypt the disk. Also called KmsKeyName\nin the cloud console. Your project's Compute Engine System service account\n('service-{{PROJECT_NUMBER}}@compute-system.iam.gserviceaccount.com') must have\n'roles/cloudkms.cryptoKeyEncrypterDecrypter' to use this feature.\nSee https://cloud.google.com/compute/docs/disks/customer-managed-encryption#encrypt_a_new_persistent_disk_with_your_own_keys",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "kms_key_service_account": {
+                      "type": "string",
+                      "description": "The service account used for the encryption request for the given KMS key.\nIf absent, the Compute Engine Service Agent service account is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "raw_key": {
+                      "type": "string",
+                      "description": "Specifies a 256-bit customer-supplied encryption key, encoded in\nRFC 4648 base64 to either encrypt or decrypt this resource.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "description": "The RFC 4648 base64 encoded SHA-256 hash of the customer-supplied\nencryption key that protects this resource.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "The customer-supplied encryption key of the source snapshot. Required\nif the source snapshot is protected by a customer-supplied encryption\nkey.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_compute_firewall_policy": {
           "version": 0,
           "block": {
@@ -3164,6 +3595,1193 @@
                   "description": "A list of secure tags that controls which instances the firewall rule applies to.\nIf targetSecureTag are specified, then the firewall rule applies only to instances in the VPC network that have one of those EFFECTIVE secure tags, if all the targetSecureTag are in INEFFECTIVE state, then this rule will be ignored.\ntargetSecureTag may not be set at the same time as targetServiceAccounts. If neither targetServiceAccounts nor targetSecureTag are specified, the firewall rule applies to all instances on the specified network. Maximum number of target secure tags allowed is 256.",
                   "description_kind": "plain"
                 }
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "update": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_compute_instance": {
+          "version": 6,
+          "block": {
+            "attributes": {
+              "allow_stopping_for_update": {
+                "type": "bool",
+                "description": "If true, allows Terraform to stop the instance to update its properties. If you try to update a property that requires stopping the instance without setting this field, the update will fail.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "can_ip_forward": {
+                "type": "bool",
+                "description": "Whether sending and receiving of packets with non-matching source or destination IPs is allowed.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "cpu_platform": {
+                "type": "string",
+                "description": "The CPU platform used by this instance.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "current_status": {
+                "type": "string",
+                "description": "\n\t\t\t\t\tCurrent status of the instance.\n\t\t\t\t\tThis could be one of the following values: PROVISIONING, STAGING, RUNNING, STOPPING, SUSPENDING, SUSPENDED, REPAIRING, and TERMINATED.\n\t\t\t\t\tFor more information about the status of the instance, see [Instance life cycle](https://cloud.google.com/compute/docs/instances/instance-life-cycle).",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "deletion_protection": {
+                "type": "bool",
+                "description": "Whether deletion protection is enabled on this instance.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "description": {
+                "type": "string",
+                "description": "A brief description of the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "desired_status": {
+                "type": "string",
+                "description": "Desired status of the instance. Either \"RUNNING\", \"SUSPENDED\" or \"TERMINATED\".",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "effective_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "All of labels (key/value pairs) present on the resource in GCP, including the labels configured through Terraform, other clients and services.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "enable_display": {
+                "type": "bool",
+                "description": "Whether the instance has virtual displays enabled.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "hostname": {
+                "type": "string",
+                "description": "A custom hostname for the instance. Must be a fully qualified DNS name and RFC-1035-valid. Valid format is a series of labels 1-63 characters long matching the regular expression [a-z]([-a-z0-9]*[a-z0-9]), concatenated with periods. The entire hostname must not exceed 253 characters. Changing this forces a new resource to be created.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "instance_id": {
+                "type": "string",
+                "description": "The server-assigned unique identifier of this instance.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "key_revocation_action_type": {
+                "type": "string",
+                "description": "Action to be taken when a customer's encryption key is revoked. Supports \"STOP\" and \"NONE\", with \"NONE\" being the default.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "label_fingerprint": {
+                "type": "string",
+                "description": "The unique fingerprint of the labels.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "A set of key/value label pairs assigned to the instance.\n\n\t\t\t\t**Note**: This field is non-authoritative, and will only manage the labels present in your configuration.\n\t\t\t\tPlease refer to the field 'effective_labels' for all of the labels present on the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "machine_type": {
+                "type": "string",
+                "description": "The machine type to create.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "metadata": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "Metadata key/value pairs made available within the instance.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "metadata_fingerprint": {
+                "type": "string",
+                "description": "The unique fingerprint of the metadata.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "metadata_startup_script": {
+                "type": "string",
+                "description": "Metadata startup scripts made available within the instance.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "min_cpu_platform": {
+                "type": "string",
+                "description": "The minimum CPU platform specified for the VM instance.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The name of the instance. One of name or self_link must be provided.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description": "The ID of the project in which the resource belongs. If self_link is provided, this value is ignored. If neither self_link nor project are provided, the provider project is used.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "resource_policies": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "A list of self_links of resource policies to attach to the instance. Currently a max of 1 resource policy is supported.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "self_link": {
+                "type": "string",
+                "description": "The URI of the created resource.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "tags": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "The list of tags attached to the instance.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "tags_fingerprint": {
+                "type": "string",
+                "description": "The unique fingerprint of the tags.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "terraform_labels": {
+                "type": [
+                  "map",
+                  "string"
+                ],
+                "description": "The combination of labels configured directly on the resource and default labels configured on the provider.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "zone": {
+                "type": "string",
+                "description": "The zone of the instance. If self_link is provided, this value is ignored. If neither self_link nor zone are provided, the provider zone is used.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              }
+            },
+            "block_types": {
+              "advanced_machine_features": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "enable_nested_virtualization": {
+                      "type": "bool",
+                      "description": "Whether to enable nested virtualization or not.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "enable_uefi_networking": {
+                      "type": "bool",
+                      "description": "Whether to enable UEFI networking for the instance.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "performance_monitoring_unit": {
+                      "type": "string",
+                      "description": "The PMU is a hardware component within the CPU core that monitors how the processor runs code. Valid values for the level of PMU are \"STANDARD\", \"ENHANCED\", and \"ARCHITECTURAL\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "threads_per_core": {
+                      "type": "number",
+                      "description": "The number of threads per physical core. To disable simultaneous multithreading (SMT) set this to 1. If unset, the maximum number of threads supported per core by the underlying processor is assumed.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "turbo_mode": {
+                      "type": "string",
+                      "description": "Turbo frequency mode to use for the instance. Currently supported modes is \"ALL_CORE_MAX\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "visible_core_count": {
+                      "type": "number",
+                      "description": "The number of physical cores to expose to an instance. Multiply by the number of threads per core to compute the total number of virtual CPUs to expose to the instance. If unset, the number of cores is inferred from the instance\\'s nominal CPU count and the underlying platform\\'s SMT width.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Controls for advanced machine-related behavior features.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "attached_disk": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "device_name": {
+                      "type": "string",
+                      "description": "Name with which the attached disk is accessible under /dev/disk/by-id/",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "disk_encryption_key_raw": {
+                      "type": "string",
+                      "description": "A 256-bit customer-supplied encryption key, encoded in RFC 4648 base64 to encrypt this disk. Only one of kms_key_self_link, disk_encryption_key_rsa and disk_encryption_key_raw may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "disk_encryption_key_rsa": {
+                      "type": "string",
+                      "description": "Specifies an RFC 4648 base64 encoded, RSA-wrapped 2048-bit customer-supplied encryption key to either encrypt or decrypt this resource. Only one of kms_key_self_link, disk_encryption_key_rsa and disk_encryption_key_raw may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "disk_encryption_key_sha256": {
+                      "type": "string",
+                      "description": "The RFC 4648 base64 encoded SHA-256 hash of the customer-supplied encryption key that protects this resource.",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "disk_encryption_service_account": {
+                      "type": "string",
+                      "description": "The service account being used for the encryption request for the given KMS key. If absent, the Compute Engine default service account is used",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "force_attach": {
+                      "type": "bool",
+                      "description": "Whether to force attach the regional disk even if it's currently attached to another instance. If you try to force attach a zonal disk to an instance, you will receive an error. Setting this parameter cause VM recreation.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self_link of the encryption key that is stored in Google Cloud KMS to encrypt this disk. Only one of kms_key_self_link, disk_encryption_key_rsa and disk_encryption_key_raw may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "Read/write mode for the disk. One of \"READ_ONLY\" or \"READ_WRITE\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "The name or self_link of the disk attached to this instance.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "List of disks attached to the instance",
+                  "description_kind": "plain"
+                }
+              },
+              "boot_disk": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "auto_delete": {
+                      "type": "bool",
+                      "description": "Whether the disk will be auto-deleted when the instance is deleted.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "device_name": {
+                      "type": "string",
+                      "description": "Name with which attached disk will be accessible under /dev/disk/by-id/",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "disk_encryption_key_raw": {
+                      "type": "string",
+                      "description": "A 256-bit customer-supplied encryption key, encoded in RFC 4648 base64 to encrypt this disk. Only one of kms_key_self_link, disk_encryption_key_raw and disk_encryption_key_rsa may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "disk_encryption_key_rsa": {
+                      "type": "string",
+                      "description": "Specifies an RFC 4648 base64 encoded, RSA-wrapped 2048-bit customer-supplied encryption key to either encrypt or decrypt this resource. Only one of kms_key_self_link, disk_encryption_key_raw and disk_encryption_key_rsa may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "sensitive": true
+                    },
+                    "disk_encryption_key_sha256": {
+                      "type": "string",
+                      "description": "The RFC 4648 base64 encoded SHA-256 hash of the customer-supplied encryption key that protects this resource.",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "disk_encryption_service_account": {
+                      "type": "string",
+                      "description": "The service account being used for the encryption request for the given KMS key. If absent, the Compute Engine default service account is used",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "force_attach": {
+                      "type": "bool",
+                      "description": "Whether to force attach the regional disk even if it's currently attached to another instance. If you try to force attach a zonal disk to an instance, you will receive an error. Setting this parameter cause VM recreation.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "guest_os_features": {
+                      "type": [
+                        "list",
+                        "string"
+                      ],
+                      "description": "A list of features to enable on the guest operating system. Applicable only for bootable images.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "interface": {
+                      "type": "string",
+                      "description": "The disk interface used for attaching this disk. One of SCSI or NVME. (This field is shared with attached_disk and only used for specific cases, please don't specify this field without advice from Google.)",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self_link of the encryption key that is stored in Google Cloud KMS to encrypt this disk. Only one of kms_key_self_link, disk_encryption_key_raw and disk_encryption_key_rsa may be set.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "mode": {
+                      "type": "string",
+                      "description": "Read/write mode for the disk. One of \"READ_ONLY\" or \"READ_WRITE\".",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "source": {
+                      "type": "string",
+                      "description": "The name or self_link of the disk attached to this instance.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    }
+                  },
+                  "block_types": {
+                    "initialize_params": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "architecture": {
+                            "type": "string",
+                            "description": "The architecture of the disk. One of \"X86_64\" or \"ARM64\".",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "enable_confidential_compute": {
+                            "type": "bool",
+                            "description": "A flag to enable confidential compute mode on boot disk",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "image": {
+                            "type": "string",
+                            "description": "The image from which this disk was initialised.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "labels": {
+                            "type": [
+                              "map",
+                              "string"
+                            ],
+                            "description": "A set of key/value label pairs assigned to the disk.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "provisioned_iops": {
+                            "type": "number",
+                            "description": "Indicates how many IOPS to provision for the disk. This sets the number of I/O operations per second that the disk can handle.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "provisioned_throughput": {
+                            "type": "number",
+                            "description": "Indicates how much throughput to provision for the disk. This sets the number of throughput mb per second that the disk can handle.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "resource_manager_tags": {
+                            "type": [
+                              "map",
+                              "string"
+                            ],
+                            "description": "A map of resource manager tags. Resource manager tag keys and values have the same definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id}, and values are in the format tagValues/456. The field is ignored (both PUT & PATCH) when empty.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "resource_policies": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "A list of self_links of resource policies to attach to the instance's boot disk. Modifying this list will cause the instance to recreate. Currently a max of 1 resource policy is supported.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "size": {
+                            "type": "number",
+                            "description": "The size of the image in gigabytes.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "snapshot": {
+                            "type": "string",
+                            "description": "The snapshot from which this disk was initialised.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "storage_pool": {
+                            "type": "string",
+                            "description": "The URL of the storage pool in which the new disk is created",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "type": {
+                            "type": "string",
+                            "description": "The Google Compute Engine disk type. Such as pd-standard, pd-ssd or pd-balanced.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          }
+                        },
+                        "block_types": {
+                          "source_image_encryption_key": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "kms_key_self_link": {
+                                  "type": "string",
+                                  "description": "The self link of the encryption key that is stored in Google Cloud KMS. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "kms_key_service_account": {
+                                  "type": "string",
+                                  "description": "The service account being used for the encryption request for the given KMS key. If absent, the Compute Engine default service account is used.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                },
+                                "raw_key": {
+                                  "type": "string",
+                                  "description": "Specifies a 256-bit customer-supplied encryption key, encoded in RFC 4648 base64 to either encrypt or decrypt this resource. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "sensitive": true
+                                },
+                                "rsa_encrypted_key": {
+                                  "type": "string",
+                                  "description": "Specifies an RFC 4648 base64 encoded, RSA-wrapped 2048-bit customer-supplied encryption key to either encrypt or decrypt this resource. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "sensitive": true
+                                },
+                                "sha256": {
+                                  "type": "string",
+                                  "description": "The SHA256 hash of the encryption key used to encrypt this disk.",
+                                  "description_kind": "plain",
+                                  "computed": true
+                                }
+                              },
+                              "description": "The encryption key used to decrypt the source image.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          },
+                          "source_snapshot_encryption_key": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "kms_key_self_link": {
+                                  "type": "string",
+                                  "description": "The self link of the encryption key that is stored in Google Cloud KMS. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "computed": true
+                                },
+                                "kms_key_service_account": {
+                                  "type": "string",
+                                  "description": "The service account being used for the encryption request for the given KMS key. If absent, the Compute Engine default service account is used.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                },
+                                "raw_key": {
+                                  "type": "string",
+                                  "description": "Specifies a 256-bit customer-supplied encryption key, encoded in RFC 4648 base64 to either encrypt or decrypt this resource. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "sensitive": true
+                                },
+                                "rsa_encrypted_key": {
+                                  "type": "string",
+                                  "description": "Specifies an RFC 4648 base64 encoded, RSA-wrapped 2048-bit customer-supplied encryption key to either encrypt or decrypt this resource. Only one of kms_key_self_link, rsa_encrypted_key and raw_key may be set.",
+                                  "description_kind": "plain",
+                                  "optional": true,
+                                  "sensitive": true
+                                },
+                                "sha256": {
+                                  "type": "string",
+                                  "description": "The SHA256 hash of the encryption key used to encrypt this disk.",
+                                  "description_kind": "plain",
+                                  "computed": true
+                                }
+                              },
+                              "description": "The encryption key used to decrypt the source snapshot.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          }
+                        },
+                        "description": "Parameters with which a disk was created alongside the instance.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "The boot disk for the instance.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1,
+                "max_items": 1
+              },
+              "confidential_instance_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "confidential_instance_type": {
+                      "type": "string",
+                      "description": "\n\t\t\t\t\t\t\t\tThe confidential computing technology the instance uses.\n\t\t\t\t\t\t\t\tSEV is an AMD feature. TDX is an Intel feature. One of the following\n\t\t\t\t\t\t\t\tvalues is required: SEV, SEV_SNP, TDX. If SEV_SNP, min_cpu_platform =\n\t\t\t\t\t\t\t\t\"AMD Milan\" is currently required.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "enable_confidential_compute": {
+                      "type": "bool",
+                      "description": "Defines whether the instance should have confidential compute enabled. Field will be deprecated in a future release",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "The Confidential VM config being used by the instance.  on_host_maintenance has to be set to TERMINATE or this will fail to create.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "guest_accelerator": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "count": {
+                      "type": "number",
+                      "description": "The number of the guest accelerator cards exposed to this instance.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "The accelerator type resource exposed to this instance. E.g. nvidia-tesla-k80.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "List of the type and count of accelerator cards attached to the instance.",
+                  "description_kind": "plain"
+                }
+              },
+              "instance_encryption_key": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_self_link": {
+                      "type": "string",
+                      "description": "The self link of the encryption key that is stored in Google Cloud KMS.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "kms_key_service_account": {
+                      "type": "string",
+                      "description": "The service account being used for the encryption request for the given KMS key. If absent, the Compute Engine default service account is used.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "description": "The SHA256 hash of the customer's encryption key.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "Encryption key used to provide data encryption on the given instance.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "network_interface": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "internal_ipv6_prefix_length": {
+                      "type": "number",
+                      "description": "The prefix length of the primary internal IPv6 range.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "ipv6_access_type": {
+                      "type": "string",
+                      "description": "One of EXTERNAL, INTERNAL to indicate whether the IP can be accessed from the Internet. This field is always inherited from its subnetwork.",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "ipv6_address": {
+                      "type": "string",
+                      "description": "An IPv6 internal network address for this network interface. If not specified, Google Cloud will automatically assign an internal IPv6 address from the instance's subnetwork.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The name of the interface",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "network": {
+                      "type": "string",
+                      "description": "The name or self_link of the network attached to this interface.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "network_attachment": {
+                      "type": "string",
+                      "description": "The URL of the network attachment that this interface should connect to in the following format: projects/{projectNumber}/regions/{region_name}/networkAttachments/{network_attachment_name}.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "network_ip": {
+                      "type": "string",
+                      "description": "The private IP address assigned to the instance.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "nic_type": {
+                      "type": "string",
+                      "description": "The type of vNIC to be used on this interface. Possible values:GVNIC, VIRTIO_NET, IDPF, MRDMA, and IRDMA",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "queue_count": {
+                      "type": "number",
+                      "description": "The networking queue count that's specified by users for the network interface. Both Rx and Tx queues will be set to this number. It will be empty if not specified.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "stack_type": {
+                      "type": "string",
+                      "description": "The stack type for this network interface to identify whether the IPv6 feature is enabled or not. If not specified, IPV4_ONLY will be used.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "subnetwork": {
+                      "type": "string",
+                      "description": "The name or self_link of the subnetwork attached to this interface.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "subnetwork_project": {
+                      "type": "string",
+                      "description": "The project in which the subnetwork belongs.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    }
+                  },
+                  "block_types": {
+                    "access_config": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "nat_ip": {
+                            "type": "string",
+                            "description": "The IP address that is be 1:1 mapped to the instance's network ip.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "network_tier": {
+                            "type": "string",
+                            "description": "The networking tier used for configuring this instance. One of PREMIUM or STANDARD.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "public_ptr_domain_name": {
+                            "type": "string",
+                            "description": "The DNS domain name for the public PTR record.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Access configurations, i.e. IPs via which this instance can be accessed via the Internet.",
+                        "description_kind": "plain"
+                      }
+                    },
+                    "alias_ip_range": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "ip_cidr_range": {
+                            "type": "string",
+                            "description": "The IP CIDR range represented by this alias IP range.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "subnetwork_range_name": {
+                            "type": "string",
+                            "description": "The subnetwork secondary range name specifying the secondary range from which to allocate the IP CIDR range for this alias IP range.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "An array of alias IP ranges for this network interface.",
+                        "description_kind": "plain"
+                      }
+                    },
+                    "ipv6_access_config": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "external_ipv6": {
+                            "type": "string",
+                            "description": "The first IPv6 address of the external IPv6 range associated with this instance, prefix length is stored in externalIpv6PrefixLength in ipv6AccessConfig. To use a static external IP address, it must be unused and in the same region as the instance's zone. If not specified, Google Cloud will automatically assign an external IPv6 address from the instance's subnetwork.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "external_ipv6_prefix_length": {
+                            "type": "string",
+                            "description": "The prefix length of the external IPv6 range.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "The name of this access configuration. In ipv6AccessConfigs, the recommended name is External IPv6.",
+                            "description_kind": "plain",
+                            "optional": true,
+                            "computed": true
+                          },
+                          "network_tier": {
+                            "type": "string",
+                            "description": "The service-level to be provided for IPv6 traffic when the subnet has an external subnet. Only PREMIUM tier is valid for IPv6",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "public_ptr_domain_name": {
+                            "type": "string",
+                            "description": "The domain name to be used when creating DNSv6 records for the external IPv6 ranges.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "An array of IPv6 access configurations for this interface. Currently, only one IPv6 access config, DIRECT_IPV6, is supported. If there is no ipv6AccessConfig specified, then this instance will have no external IPv6 Internet access.",
+                        "description_kind": "plain"
+                      }
+                    }
+                  },
+                  "description": "The networks attached to the instance.",
+                  "description_kind": "plain"
+                },
+                "min_items": 1
+              },
+              "network_performance_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "total_egress_bandwidth_tier": {
+                      "type": "string",
+                      "description": "The egress bandwidth tier to enable. Possible values:TIER_1, DEFAULT",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "Configures network performance settings for the instance. If not specified, the instance will be created with its default network performance configuration.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "params": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "resource_manager_tags": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "A map of resource manager tags. Resource manager tag keys and values have the same definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id}, and values are in the format tagValues/456. The field is ignored (both PUT & PATCH) when empty.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Stores additional params passed with the request, but not persisted as part of resource payload.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "reservation_affinity": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "type": {
+                      "type": "string",
+                      "description": "The type of reservation from which this instance can consume resources.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "block_types": {
+                    "specific_reservation": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "key": {
+                            "type": "string",
+                            "description": "Corresponds to the label key of a reservation resource. To target a SPECIFIC_RESERVATION by name, specify compute.googleapis.com/reservation-name as the key and specify the name of your reservation as the only value.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "values": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description": "Corresponds to the label values of a reservation resource.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Specifies the label selector for the reservation to use.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "Specifies the reservations that this instance can consume from.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "scheduling": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "automatic_restart": {
+                      "type": "bool",
+                      "description": "Specifies if the instance should be restarted if it was terminated by Compute Engine (not a user).",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "availability_domain": {
+                      "type": "number",
+                      "description": "Specifies the availability domain, which this instance should be scheduled on.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "instance_termination_action": {
+                      "type": "string",
+                      "description": "Specifies the action GCE should take when SPOT VM is preempted.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "min_node_cpus": {
+                      "type": "number",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "on_host_maintenance": {
+                      "type": "string",
+                      "description": "Describes maintenance behavior for the instance. One of MIGRATE or TERMINATE,",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "preemptible": {
+                      "type": "bool",
+                      "description": "Whether the instance is preemptible.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "provisioning_model": {
+                      "type": "string",
+                      "description": "Whether the instance is spot. If this is set as SPOT.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "termination_time": {
+                      "type": "string",
+                      "description": "Specifies the timestamp, when the instance will be terminated,\nin RFC3339 text format. If specified, the instance termination action\nwill be performed at the termination time.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "local_ssd_recovery_timeout": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "nanos": {
+                            "type": "number",
+                            "description": "Span of time that's a fraction of a second at nanosecond\nresolution. Durations less than one second are represented\nwith a 0 seconds field and a positive nanos field. Must\nbe from 0 to 999,999,999 inclusive.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "seconds": {
+                            "type": "number",
+                            "description": "Span of time at a resolution of a second.\nMust be from 0 to 315,576,000,000 inclusive.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Specifies the maximum amount of time a Local Ssd Vm should wait while\n  recovery of the Local Ssd state is attempted. Its value should be in\n  between 0 and 168 hours with hour granularity and the default value being 1\n  hour.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "max_run_duration": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "nanos": {
+                            "type": "number",
+                            "description": "Span of time that's a fraction of a second at nanosecond\nresolution. Durations less than one second are represented\nwith a 0 seconds field and a positive nanos field. Must\nbe from 0 to 999,999,999 inclusive.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "seconds": {
+                            "type": "number",
+                            "description": "Span of time at a resolution of a second.\nMust be from 0 to 315,576,000,000 inclusive.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "The timeout for new network connections to hosts.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "node_affinities": {
+                      "nesting_mode": "set",
+                      "block": {
+                        "attributes": {
+                          "key": {
+                            "type": "string",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "operator": {
+                            "type": "string",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "values": {
+                            "type": [
+                              "set",
+                              "string"
+                            ],
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "description": "Specifies node affinities or anti-affinities to determine which sole-tenant nodes your instances and managed instance groups will use as host systems.",
+                        "description_kind": "plain"
+                      }
+                    },
+                    "on_instance_stop_action": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "discard_local_ssd": {
+                            "type": "bool",
+                            "description": "If true, the contents of any attached Local SSD disks will be discarded.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "description": "Defines the behaviour for instances with the instance_termination_action.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    }
+                  },
+                  "description": "The scheduling strategy being used by the instance.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "scratch_disk": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "device_name": {
+                      "type": "string",
+                      "description": "Name with which the attached disk is accessible under /dev/disk/by-id/",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "interface": {
+                      "type": "string",
+                      "description": "The disk interface used for attaching this disk. One of SCSI or NVME.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "size": {
+                      "type": "number",
+                      "description": "The size of the disk in gigabytes. One of 375 or 3000.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "The scratch disks attached to the instance.",
+                  "description_kind": "plain"
+                }
+              },
+              "service_account": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "email": {
+                      "type": "string",
+                      "description": "The service account e-mail address.",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "computed": true
+                    },
+                    "scopes": {
+                      "type": [
+                        "set",
+                        "string"
+                      ],
+                      "description": "A list of service scopes.",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "The service account to attach to the instance.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "shielded_instance_config": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "enable_integrity_monitoring": {
+                      "type": "bool",
+                      "description": "Whether integrity monitoring is enabled for the instance.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "enable_secure_boot": {
+                      "type": "bool",
+                      "description": "Whether secure boot is enabled for the instance.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "enable_vtpm": {
+                      "type": "bool",
+                      "description": "Whether the instance uses vTPM.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "The shielded vm config being used by the instance.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
               },
               "timeouts": {
                 "nesting_mode": "single",
@@ -3836,6 +5454,243 @@
             "description_kind": "plain"
           }
         },
+        "google_compute_route": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "as_paths": {
+                "type": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "as_lists": [
+                        "list",
+                        "number"
+                      ],
+                      "path_segment_type": "string"
+                    }
+                  ]
+                ],
+                "description_kind": "plain",
+                "computed": true
+              },
+              "creation_timestamp": {
+                "type": "string",
+                "description": "Creation timestamp in RFC3339 text format.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description of this resource. Provide this property\nwhen you create the resource.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "dest_range": {
+                "type": "string",
+                "description": "The destination range of outgoing packets that this route applies to.\nOnly IPv4 is supported.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "name": {
+                "type": "string",
+                "description": "Name of the resource. Provided by the client when the resource is\ncreated. The name must be 1-63 characters long, and comply with\nRFC1035.  Specifically, the name must be 1-63 characters long and\nmatch the regular expression '[a-z]([-a-z0-9]*[a-z0-9])?' which means\nthe first character must be a lowercase letter, and all following\ncharacters must be a dash, lowercase letter, or digit, except the\nlast character, which cannot be a dash.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "network": {
+                "type": "string",
+                "description": "The network that this route applies to.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "next_hop_gateway": {
+                "type": "string",
+                "description": "URL to a gateway that should handle matching packets.\nCurrently, you can only specify the internet gateway, using a full or\npartial valid URL:\n* 'https://www.googleapis.com/compute/v1/projects/project/global/gateways/default-internet-gateway'\n* 'projects/project/global/gateways/default-internet-gateway'\n* 'global/gateways/default-internet-gateway'\n* The string 'default-internet-gateway'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "next_hop_hub": {
+                "type": "string",
+                "description": "The hub network that should handle matching packets, which should conform to RFC1035.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_ilb": {
+                "type": "string",
+                "description": "The IP address or URL to a forwarding rule of type\nloadBalancingScheme=INTERNAL that should handle matching\npackets.\n\nWith the GA provider you can only specify the forwarding\nrule as a partial or full URL. For example, the following\nare all valid values:\n* 10.128.0.56\n* https://www.googleapis.com/compute/v1/projects/project/regions/region/forwardingRules/forwardingRule\n* regions/region/forwardingRules/forwardingRule\n\nWhen the beta provider, you can also specify the IP address\nof a forwarding rule from the same VPC or any peered VPC.\n\nNote that this can only be used when the destinationRange is\na public (non-RFC 1918) IP CIDR range.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "next_hop_instance": {
+                "type": "string",
+                "description": "URL to an instance that should handle matching packets.\nYou can specify this as a full or partial URL. For example:\n* 'https://www.googleapis.com/compute/v1/projects/project/zones/zone/instances/instance'\n* 'projects/project/zones/zone/instances/instance'\n* 'zones/zone/instances/instance'\n* Just the instance name, with the zone in 'next_hop_instance_zone'.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "next_hop_instance_zone": {
+                "type": "string",
+                "description": "The zone of the instance specified in next_hop_instance. Omit if next_hop_instance is specified as a URL.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "next_hop_inter_region_cost": {
+                "type": "string",
+                "description": "Internal fixed region-to-region cost that Google Cloud calculates based on factors such as network performance, distance, and available bandwidth between regions.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_ip": {
+                "type": "string",
+                "description": "Network IP address of an instance that should handle matching packets.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "next_hop_med": {
+                "type": "string",
+                "description": "Multi-Exit Discriminator, a BGP route metric that indicates the desirability of a particular route in a network.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_network": {
+                "type": "string",
+                "description": "URL to a Network that should handle matching packets.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_origin": {
+                "type": "string",
+                "description": "Indicates the origin of the route. Can be IGP (Interior Gateway Protocol), EGP (Exterior Gateway Protocol), or INCOMPLETE.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_peering": {
+                "type": "string",
+                "description": "The network peering name that should handle matching packets, which should conform to RFC1035.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "next_hop_vpn_tunnel": {
+                "type": "string",
+                "description": "URL to a VpnTunnel that should handle matching packets.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "priority": {
+                "type": "number",
+                "description": "The priority of this route. Priority is used to break ties in cases\nwhere there is more than one matching route of equal prefix length.\n\nIn the case of two routes with equal prefix length, the one with the\nlowest-numbered priority value wins.\n\nDefault value is 1000. Valid range is 0 through 65535.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "project": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "route_status": {
+                "type": "string",
+                "description": "The status of the route, which can be one of the following values:\n- 'ACTIVE' for an active route\n- 'INACTIVE' for an inactive route",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "route_type": {
+                "type": "string",
+                "description": "The type of this route, which can be one of the following values:\n- 'TRANSIT' for a transit route that this router learned from another Cloud Router and will readvertise to one of its BGP peers\n- 'SUBNET' for a route from a subnet of the VPC\n- 'BGP' for a route learned from a BGP peer of this router\n- 'STATIC' for a static route",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "self_link": {
+                "type": "string",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "tags": {
+                "type": [
+                  "set",
+                  "string"
+                ],
+                "description": "A list of instance tags to which this route applies.",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "warnings": {
+                "type": [
+                  "list",
+                  [
+                    "object",
+                    {
+                      "code": "string",
+                      "data": [
+                        "list",
+                        [
+                          "object",
+                          {
+                            "key": "string",
+                            "value": "string"
+                          }
+                        ]
+                      ],
+                      "message": "string"
+                    }
+                  ]
+                ],
+                "description": "If potential misconfigurations are detected for this route, this field will be populated with warning messages.",
+                "description_kind": "plain",
+                "computed": true
+              }
+            },
+            "block_types": {
+              "params": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "resource_manager_tags": {
+                      "type": [
+                        "map",
+                        "string"
+                      ],
+                      "description": "Resource manager tags to be bound to the route. Tag keys and values have the\nsame definition as resource manager tags. Keys must be in the format tagKeys/{tag_key_id},\nand values are in the format tagValues/456. The field is ignored when empty.\nThe field is immutable and causes resource replacement when mutated. This field is only\nset at create time and modifying this field after creation will trigger recreation.\nTo apply tags to an existing resource, see the google_tags_tag_binding resource.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description": "Additional params passed with the request, but not persisted as part of resource payload",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "timeouts": {
+                "nesting_mode": "single",
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "delete": {
+                      "type": "string",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "description_kind": "plain"
+                }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
         "google_compute_shared_vpc_host_project": {
           "version": 0,
           "block": {
@@ -4158,6 +6013,475 @@
                   },
                   "description_kind": "plain"
                 }
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_dns_record_set": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "managed_zone": {
+                "type": "string",
+                "description": "The name of the zone in which this record set will reside.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The DNS name this record set will apply to.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "project": {
+                "type": "string",
+                "description": "The ID of the project in which the resource belongs. If it is not provided, the provider project is used.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "rrdatas": {
+                "type": [
+                  "list",
+                  "string"
+                ],
+                "description": "The string data for the records in this record set whose meaning depends on the DNS type. For TXT record, if the string data contains spaces, add surrounding \\\" if you don't want your string to get split on spaces. To specify a single record value longer than 255 characters such as a TXT record for DKIM, add \\\"\\\" inside the Terraform configuration string (e.g. \"first255characters\\\"\\\"morecharacters\").",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "ttl": {
+                "type": "number",
+                "description": "The time-to-live of this record set (seconds).",
+                "description_kind": "plain",
+                "optional": true
+              },
+              "type": {
+                "type": "string",
+                "description": "The DNS record set type.",
+                "description_kind": "plain",
+                "required": true
+              }
+            },
+            "block_types": {
+              "routing_policy": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "enable_geo_fencing": {
+                      "type": "bool",
+                      "description": "Specifies whether to enable fencing for geo queries.",
+                      "description_kind": "plain",
+                      "optional": true
+                    },
+                    "health_check": {
+                      "type": "string",
+                      "description": "Specifies the health check.",
+                      "description_kind": "plain",
+                      "optional": true
+                    }
+                  },
+                  "block_types": {
+                    "geo": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "location": {
+                            "type": "string",
+                            "description": "The location name defined in Google Cloud.",
+                            "description_kind": "plain",
+                            "required": true
+                          },
+                          "rrdatas": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "block_types": {
+                          "health_checked_targets": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "external_endpoints": {
+                                  "type": [
+                                    "list",
+                                    "string"
+                                  ],
+                                  "description": "The Internet IP addresses to be health checked.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "block_types": {
+                                "internal_load_balancers": {
+                                  "nesting_mode": "list",
+                                  "block": {
+                                    "attributes": {
+                                      "ip_address": {
+                                        "type": "string",
+                                        "description": "The frontend IP address of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "ip_protocol": {
+                                        "type": "string",
+                                        "description": "The configured IP protocol of the load balancer. This value is case-sensitive. Possible values: [\"tcp\", \"udp\"]",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "load_balancer_type": {
+                                        "type": "string",
+                                        "description": "The type of load balancer. This value is case-sensitive. Possible values: [\"regionalL4ilb\", \"regionalL7ilb\", \"globalL7ilb\"]",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      },
+                                      "network_url": {
+                                        "type": "string",
+                                        "description": "The fully qualified url of the network in which the load balancer belongs. This should be formatted like `https://www.googleapis.com/compute/v1/projects/{project}/global/networks/{network}`.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "port": {
+                                        "type": "string",
+                                        "description": "The configured port of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "project": {
+                                        "type": "string",
+                                        "description": "The ID of the project in which the load balancer belongs.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "region": {
+                                        "type": "string",
+                                        "description": "The region of the load balancer. Only needed for regional load balancers.",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      }
+                                    },
+                                    "description": "The list of internal load balancers to health check.",
+                                    "description_kind": "plain"
+                                  }
+                                }
+                              },
+                              "description": "For A and AAAA types only. The list of targets to be health checked. These can be specified along with `rrdatas` within this item.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          }
+                        },
+                        "description": "The configuration for Geo location based routing policy.",
+                        "description_kind": "plain"
+                      }
+                    },
+                    "primary_backup": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "enable_geo_fencing_for_backups": {
+                            "type": "bool",
+                            "description": "Specifies whether to enable fencing for backup geo queries.",
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "trickle_ratio": {
+                            "type": "number",
+                            "description": "Specifies the percentage of traffic to send to the backup targets even when the primary targets are healthy.",
+                            "description_kind": "plain",
+                            "optional": true
+                          }
+                        },
+                        "block_types": {
+                          "backup_geo": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "location": {
+                                  "type": "string",
+                                  "description": "The location name defined in Google Cloud.",
+                                  "description_kind": "plain",
+                                  "required": true
+                                },
+                                "rrdatas": {
+                                  "type": [
+                                    "list",
+                                    "string"
+                                  ],
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "block_types": {
+                                "health_checked_targets": {
+                                  "nesting_mode": "list",
+                                  "block": {
+                                    "attributes": {
+                                      "external_endpoints": {
+                                        "type": [
+                                          "list",
+                                          "string"
+                                        ],
+                                        "description": "The Internet IP addresses to be health checked.",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      }
+                                    },
+                                    "block_types": {
+                                      "internal_load_balancers": {
+                                        "nesting_mode": "list",
+                                        "block": {
+                                          "attributes": {
+                                            "ip_address": {
+                                              "type": "string",
+                                              "description": "The frontend IP address of the load balancer.",
+                                              "description_kind": "plain",
+                                              "required": true
+                                            },
+                                            "ip_protocol": {
+                                              "type": "string",
+                                              "description": "The configured IP protocol of the load balancer. This value is case-sensitive. Possible values: [\"tcp\", \"udp\"]",
+                                              "description_kind": "plain",
+                                              "required": true
+                                            },
+                                            "load_balancer_type": {
+                                              "type": "string",
+                                              "description": "The type of load balancer. This value is case-sensitive. Possible values: [\"regionalL4ilb\", \"regionalL7ilb\", \"globalL7ilb\"]",
+                                              "description_kind": "plain",
+                                              "optional": true
+                                            },
+                                            "network_url": {
+                                              "type": "string",
+                                              "description": "The fully qualified url of the network in which the load balancer belongs. This should be formatted like `https://www.googleapis.com/compute/v1/projects/{project}/global/networks/{network}`.",
+                                              "description_kind": "plain",
+                                              "required": true
+                                            },
+                                            "port": {
+                                              "type": "string",
+                                              "description": "The configured port of the load balancer.",
+                                              "description_kind": "plain",
+                                              "required": true
+                                            },
+                                            "project": {
+                                              "type": "string",
+                                              "description": "The ID of the project in which the load balancer belongs.",
+                                              "description_kind": "plain",
+                                              "required": true
+                                            },
+                                            "region": {
+                                              "type": "string",
+                                              "description": "The region of the load balancer. Only needed for regional load balancers.",
+                                              "description_kind": "plain",
+                                              "optional": true
+                                            }
+                                          },
+                                          "description": "The list of internal load balancers to health check.",
+                                          "description_kind": "plain"
+                                        }
+                                      }
+                                    },
+                                    "description": "For A and AAAA types only. The list of targets to be health checked. These can be specified along with `rrdatas` within this item.",
+                                    "description_kind": "plain"
+                                  },
+                                  "max_items": 1
+                                }
+                              },
+                              "description": "The backup geo targets, which provide a regional failover policy for the otherwise global primary targets.",
+                              "description_kind": "plain"
+                            },
+                            "min_items": 1
+                          },
+                          "primary": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "external_endpoints": {
+                                  "type": [
+                                    "list",
+                                    "string"
+                                  ],
+                                  "description": "The Internet IP addresses to be health checked.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "block_types": {
+                                "internal_load_balancers": {
+                                  "nesting_mode": "list",
+                                  "block": {
+                                    "attributes": {
+                                      "ip_address": {
+                                        "type": "string",
+                                        "description": "The frontend IP address of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "ip_protocol": {
+                                        "type": "string",
+                                        "description": "The configured IP protocol of the load balancer. This value is case-sensitive. Possible values: [\"tcp\", \"udp\"]",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "load_balancer_type": {
+                                        "type": "string",
+                                        "description": "The type of load balancer. This value is case-sensitive. Possible values: [\"regionalL4ilb\", \"regionalL7ilb\", \"globalL7ilb\"]",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      },
+                                      "network_url": {
+                                        "type": "string",
+                                        "description": "The fully qualified url of the network in which the load balancer belongs. This should be formatted like `https://www.googleapis.com/compute/v1/projects/{project}/global/networks/{network}`.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "port": {
+                                        "type": "string",
+                                        "description": "The configured port of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "project": {
+                                        "type": "string",
+                                        "description": "The ID of the project in which the load balancer belongs.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "region": {
+                                        "type": "string",
+                                        "description": "The region of the load balancer. Only needed for regional load balancers.",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      }
+                                    },
+                                    "description": "The list of internal load balancers to health check.",
+                                    "description_kind": "plain"
+                                  }
+                                }
+                              },
+                              "description": "The list of global primary targets to be health checked.",
+                              "description_kind": "plain"
+                            },
+                            "min_items": 1,
+                            "max_items": 1
+                          }
+                        },
+                        "description": "The configuration for a failover policy with global to regional failover. Queries are responded to with the global primary targets, but if none of the primary targets are healthy, then we fallback to a regional failover policy.",
+                        "description_kind": "plain"
+                      },
+                      "max_items": 1
+                    },
+                    "wrr": {
+                      "nesting_mode": "list",
+                      "block": {
+                        "attributes": {
+                          "rrdatas": {
+                            "type": [
+                              "list",
+                              "string"
+                            ],
+                            "description_kind": "plain",
+                            "optional": true
+                          },
+                          "weight": {
+                            "type": "number",
+                            "description": "The ratio of traffic routed to the target.",
+                            "description_kind": "plain",
+                            "required": true
+                          }
+                        },
+                        "block_types": {
+                          "health_checked_targets": {
+                            "nesting_mode": "list",
+                            "block": {
+                              "attributes": {
+                                "external_endpoints": {
+                                  "type": [
+                                    "list",
+                                    "string"
+                                  ],
+                                  "description": "The Internet IP addresses to be health checked.",
+                                  "description_kind": "plain",
+                                  "optional": true
+                                }
+                              },
+                              "block_types": {
+                                "internal_load_balancers": {
+                                  "nesting_mode": "list",
+                                  "block": {
+                                    "attributes": {
+                                      "ip_address": {
+                                        "type": "string",
+                                        "description": "The frontend IP address of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "ip_protocol": {
+                                        "type": "string",
+                                        "description": "The configured IP protocol of the load balancer. This value is case-sensitive. Possible values: [\"tcp\", \"udp\"]",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "load_balancer_type": {
+                                        "type": "string",
+                                        "description": "The type of load balancer. This value is case-sensitive. Possible values: [\"regionalL4ilb\", \"regionalL7ilb\", \"globalL7ilb\"]",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      },
+                                      "network_url": {
+                                        "type": "string",
+                                        "description": "The fully qualified url of the network in which the load balancer belongs. This should be formatted like `https://www.googleapis.com/compute/v1/projects/{project}/global/networks/{network}`.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "port": {
+                                        "type": "string",
+                                        "description": "The configured port of the load balancer.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "project": {
+                                        "type": "string",
+                                        "description": "The ID of the project in which the load balancer belongs.",
+                                        "description_kind": "plain",
+                                        "required": true
+                                      },
+                                      "region": {
+                                        "type": "string",
+                                        "description": "The region of the load balancer. Only needed for regional load balancers.",
+                                        "description_kind": "plain",
+                                        "optional": true
+                                      }
+                                    },
+                                    "description": "The list of internal load balancers to health check.",
+                                    "description_kind": "plain"
+                                  }
+                                }
+                              },
+                              "description": "The list of targets to be health checked. Note that if DNSSEC is enabled for this zone, only one of `rrdatas` or `health_checked_targets` can be set.",
+                              "description_kind": "plain"
+                            },
+                            "max_items": 1
+                          }
+                        },
+                        "description": "The configuration for Weighted Round Robin based routing policy.",
+                        "description_kind": "plain"
+                      }
+                    }
+                  },
+                  "description": "The configuration for steering traffic based on query. You can specify either Weighted Round Robin(WRR) type or Geolocation(GEO) type.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
               }
             },
             "description_kind": "plain"
@@ -4698,6 +7022,121 @@
                   "description_kind": "plain"
                 },
                 "max_items": 1
+              }
+            },
+            "description_kind": "plain"
+          }
+        },
+        "google_logging_folder_bucket_config": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "bucket_id": {
+                "type": "string",
+                "description": "The name of the logging bucket. Logging automatically creates two log buckets: _Required and _Default.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "description": {
+                "type": "string",
+                "description": "An optional description for this bucket.",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "folder": {
+                "type": "string",
+                "description": "The parent resource that contains the logging bucket.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "id": {
+                "type": "string",
+                "description_kind": "plain",
+                "optional": true,
+                "computed": true
+              },
+              "lifecycle_state": {
+                "type": "string",
+                "description": "The bucket's lifecycle such as active or deleted.",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "location": {
+                "type": "string",
+                "description": "The location of the bucket.",
+                "description_kind": "plain",
+                "required": true
+              },
+              "name": {
+                "type": "string",
+                "description": "The resource name of the bucket",
+                "description_kind": "plain",
+                "computed": true
+              },
+              "retention_days": {
+                "type": "number",
+                "description": "Logs will be retained by default for this amount of time, after which they will automatically be deleted. The minimum retention period is 1 day. If this value is set to zero at bucket creation time, the default time of 30 days will be used.",
+                "description_kind": "plain",
+                "optional": true
+              }
+            },
+            "block_types": {
+              "cmek_settings": {
+                "nesting_mode": "list",
+                "block": {
+                  "attributes": {
+                    "kms_key_name": {
+                      "type": "string",
+                      "description": "The resource name for the configured Cloud KMS key.\nKMS key name format:\n\"projects/[PROJECT_ID]/locations/[LOCATION]/keyRings/[KEYRING]/cryptoKeys/[KEY]\"\nTo enable CMEK for the bucket, set this field to a valid kmsKeyName for which the associated service account has the required cloudkms.cryptoKeyEncrypterDecrypter roles assigned for the key.\nThe Cloud KMS key used by the bucket can be updated by changing the kmsKeyName to a new valid key name. Encryption operations that are in progress will be completed with the key that was in use when they started. Decryption operations will be completed using the key that was used at the time of encryption unless access to that key has been revoked.\nSee [Enabling CMEK for Logging Buckets](https://cloud.google.com/logging/docs/routing/managed-encryption-storage) for more information.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "kms_key_version_name": {
+                      "type": "string",
+                      "description": "The CryptoKeyVersion resource name for the configured Cloud KMS key.\nKMS key name format:\n\"projects/[PROJECT_ID]/locations/[LOCATION]/keyRings/[KEYRING]/cryptoKeys/[KEY]/cryptoKeyVersions/[VERSION]\"\nFor example:\n\"projects/my-project/locations/us-central1/keyRings/my-ring/cryptoKeys/my-key/cryptoKeyVersions/1\"\nThis is a read-only field used to convey the specific configured CryptoKeyVersion of kms_key that has been configured. It will be populated in cases where the CMEK settings are bound to a single key version.",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "The resource name of the CMEK settings.",
+                      "description_kind": "plain",
+                      "computed": true
+                    },
+                    "service_account_id": {
+                      "type": "string",
+                      "description": "The service account associated with a project for which CMEK will apply.\nBefore enabling CMEK for a logging bucket, you must first assign the cloudkms.cryptoKeyEncrypterDecrypter role to the service account associated with the project for which CMEK will apply. Use [v2.getCmekSettings](https://cloud.google.com/logging/docs/reference/v2/rest/v2/TopLevel/getCmekSettings#google.logging.v2.ConfigServiceV2.GetCmekSettings) to obtain the service account ID.\nSee [Enabling CMEK for Logging Buckets](https://cloud.google.com/logging/docs/routing/managed-encryption-storage) for more information.",
+                      "description_kind": "plain",
+                      "computed": true
+                    }
+                  },
+                  "description": "The CMEK settings of the log bucket. If present, new log entries written to this log bucket are encrypted using the CMEK key provided in this configuration. If a log bucket has CMEK settings, the CMEK settings cannot be disabled later by updating the log bucket. Changing the KMS key is allowed.",
+                  "description_kind": "plain"
+                },
+                "max_items": 1
+              },
+              "index_configs": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "field_path": {
+                      "type": "string",
+                      "description": "The LogEntry field path to index.",
+                      "description_kind": "plain",
+                      "required": true
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "The type of data in this index\nNote that some paths are automatically indexed, and other paths are not eligible for indexing. See [indexing documentation]( https://cloud.google.com/logging/docs/view/advanced-queries#indexed-fields) for details.\nFor example: jsonPayload.request.status",
+                      "description_kind": "plain",
+                      "required": true
+                    }
+                  },
+                  "description": "A list of indexed fields and related configuration data.",
+                  "description_kind": "plain"
+                },
+                "max_items": 20
               }
             },
             "description_kind": "plain"

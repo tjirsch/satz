@@ -1820,6 +1820,21 @@ names the file and the line.
 
 ### v0.89.0
 
+**A live import keys a resource whose asset data states no name by its asset name's own
+segment.** `satz import <scope>` wrote such a resource under its whole Cloud Asset name
+(`"--compute-googleapis-com-projects-acme-infra-001-zones-europe-west3-b-instancesettings-instancesettings"`);
+it now writes the last segment, and a singleton by what it is the singleton of
+(`"europe-west3-b-instancesettings"`, prefixed with the project where two projects hold the
+same one). A `google_compute_instance_settings` is the resource this is known for.
+
+Find it: a pack an earlier `satz import --into` wrote (`imported-*.satz`) that holds a key
+starting `--`. A discovered estate written by a plain `satz import` keeps its keys; only a
+new import writes the new ones. **The edit:** none until the next `satz import --into`
+rewrites that pack. If the resource was already imported into the state under the old
+label, the next plan after that rewrite shows the old address destroyed and the new one
+imported: move it first, `tofu state mv '<type>.<old label>' '<type>.<new label>'`, and the
+plan does not move.
+
 **An estate that uses both the CIS baseline and the Defender foundation plans one subject
 fewer.** `presets/integrations/microsoft-defender-for-cloud.satz` no longer contributes
 `serviceAccount:mdc-agentless-scanning@guardians-prod-diskscanning.iam.gserviceaccount.com`

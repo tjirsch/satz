@@ -117,6 +117,19 @@ pub struct ImportResourceConfig {
     /// is not unique in its document (`map-types` says so).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_schema: Option<String>,
+    /// `false`: the provider has no import for this type (`tofu plan` says
+    /// "resource … doesn't support import"), so no route can write it with an
+    /// import id. `--all` leaves the row off, and a sweep that has it on leaves
+    /// it out and says so. Absent is `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importable: Option<bool>,
+}
+
+impl ImportResourceConfig {
+    /// Whether the provider can import this type at all.
+    pub fn provider_imports(&self) -> bool {
+        self.importable != Some(false)
+    }
 }
 
 /// Where a live import starts. `organization` is required for the live shape;
@@ -182,7 +195,8 @@ impl ImportConfig {
     pub fn apply_all(&mut self, live: bool) -> usize {
         let mut on = 0;
         for rc in self.resource_types.values_mut() {
-            let deliverable = !live || rc.asset_type.as_deref().is_some_and(|a| !a.starts_with("TODO"));
+            let deliverable =
+                rc.provider_imports() && (!live || rc.asset_type.as_deref().is_some_and(|a| !a.starts_with("TODO")));
             if deliverable && !rc.import {
                 rc.import = true;
                 on += 1;
