@@ -1852,6 +1852,36 @@ scanning, onboarded outside the library, adds the account to its own
 constraint refuses the scanner's grants. An estate that already names the account keeps
 it and its plan does not move.
 
+**`satz import <dir>` over `.tf` files writes a different estate when the configuration's
+default `google` provider sets a `project`, `region` or `zone`, uses a variable with no
+default as the organisation, or expands a `count` over a list that names an entry twice.**
+The new estate plans as the source does. An estate imported before is not read again and
+needs no edit; a re-import is the one that differs. Find a configuration it applies to:
+`grep -nE '^provider|org_id *= *var\.|element\(' <dir>/*.tf`.
+
+- The resources that name no project take the provider's default project: they sit in the
+  imported project of that id, or write it as their own `project`. The default region and
+  zone are in the estate's `providers { google { … } }`.
+- A `provider` block that a verbatim block still uses is carried verbatim, and
+  `--wrap-all` carries every `provider` block.
+- `org_id = var.org_id` with no default is written `org_id = customer_organization_id`, the
+  organisation `--organization` names. Before, the import wrapped the project and refused
+  the input.
+- A repeated list entry is one resource.
+
+**A translated resource that references a resource relying on a provider default satz
+cannot write is refused.** The default is a `data.` reference, for example. The import
+names both sides, the same refusal as any reference into a verbatim block:
+
+```
+the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not emit.
+  main.tf:9 `google_storage_bucket.b` references `google_service_account.sa`, which stays verbatim inside `hcl trust` (main.tf:5 — it names no `project` and relies on the provider's default project `data.google_project.current.project_id`, which satz cannot write: a reference to `data`, which is neither a promoted param nor a resource of the provider schema)
+Either make the referenced block translatable (its reason is above), import the file that declares it too, or carry everything verbatim with `--wrap-all`.
+```
+
+**The edit:** give the referenced resource its own `project` in the `.tf` file, or import
+with `--wrap-all`.
+
 ### v0.88.0
 
 **An API a resource inside a `google_project` node needs is judged on THAT project.** The
