@@ -16,7 +16,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`. The 
 | [`estate_map`](estate-map.md) | 2.7 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`interface_notice`](interface-notice.md) | 1.2 | Tells the projects that read this estate's interface when an exported value changes: one Pub/Sub message per apply that changes one. | 5 | — |
 | [`organization_budget`](organization-budget.md) | 1.0 | An organization-wide budget on the infrastructure billing account, with alert thresholds at 50, 80 and 100 % of current spend. | 1 | — |
-| [`project_onboarding`](project-onboarding.md) | 1.0 | The projects on the estate, one entry of `projects` each. | 1 | — |
+| [`project_onboarding`](project-onboarding.md) | 1.1 | The projects on the estate, one entry of `projects` each. | 1 | — |
 | [`shared_network`](shared-network.md) | 1.0 | A shared VPC in a host project of its own: one network, the subnets the projects ask for, and a network firewall policy whose rules they ask for. | 7 | — |
 
 ## `ci/`

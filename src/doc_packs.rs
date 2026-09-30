@@ -997,7 +997,7 @@ fn render(
                 "| `{}` | `{}` | {} | {} |\n",
                 r.param,
                 r.key,
-                r.fields.iter().map(|f| format!("`{}`", f)).collect::<Vec<_>>().join(", "),
+                crate::interface_report::fields_cell(&r.fields, &r.patterns),
                 r.description.as_deref().unwrap_or("").replace('|', "\\|")
             ));
         }

@@ -71,7 +71,7 @@
     },
     {
       "path": "presets/project-onboarding.satz",
-      "version": "1.0",
+      "version": "1.1",
       "role": "pack",
       "gate": "use_project_onboarding",
       "gate_declared_in": "presets/estate-map.satz",

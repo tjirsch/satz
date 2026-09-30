@@ -433,6 +433,7 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | `"${{interface.x}}"` names no export, kind `interface-use` | the interface file the estate `use`s has no export `x`; the message lists what it has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
 | `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the request point does not declare; the message lists its fields |
+| `request <param>: entry … has <field> = "…", which the request point's pattern … does not match` | the field's value is not of the form the request point's `patterns` sets — `owner_group` of `projects` is an address `<name>@<domain>`; write the value in that form |
 | `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules

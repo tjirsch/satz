@@ -993,7 +993,11 @@ params {
 
 | request point | key | fields |
 |---|---|---|
-| `projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`), `owner_group` (the address of the group that reads the project and may become its IaC service account) |
+| `projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that reads the project and may become its IaC service account, `<name>@<domain>`) |
+
+The request point's patterns hold both fields: a `name` outside `[a-z][a-z0-9-]*` and an
+`owner_group` that is not `<name>@<domain>` — `payments-owners`, or `group:payments-owners@example.com`
+— are refused at compile and by `satz check-request`, naming the entry and the value.
 
 **Per entry** `payments`:
 
@@ -2897,6 +2901,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `project_onboarding` | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |
 | `project_onboarding` | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
 | `estate_map` | 2.7 | 2026-09-30 | offers `project-onboarding` on `use_project_onboarding`, off by default, with its question; nothing already on changes |
 | `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |

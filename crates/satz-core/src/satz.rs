@@ -384,10 +384,12 @@ pub struct ExportDecl {
     pub line: usize,
 }
 
-/// `request <list param> { key = "<field>" fields = [ … ] description = "…" }`: what a
-/// team may add to a list param through a contribution (ADR 0051), and the shape of each
-/// entry. Checked against every entry at every compile, and by `satz check-request`
-/// against a team's file before it is vendored.
+/// `request <list param> { key = "<field>" fields = [ … ] patterns = { <field> = "<regex>" }
+/// description = "…" }`: what a team may add to a list param through a contribution
+/// (ADR 0051), and the shape of each entry — a field `patterns` names holds a value the
+/// whole of which the regular expression matches (ADR 0075). Checked against every entry
+/// at every compile, and by `satz check-request` against a team's file before it is
+/// vendored.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestDecl {
     pub param: String,
@@ -395,6 +397,8 @@ pub struct RequestDecl {
     pub key: String,
     /// every field an entry may carry, `key` among them
     pub fields: Vec<String>,
+    /// per field, the regular expression its whole value matches, as written
+    pub patterns: Vec<(String, String)>,
     pub description: Option<String>,
     pub line: usize,
 }
@@ -709,6 +713,11 @@ fn err<T>(line: usize, msg: impl Into<String>) -> Result<T, SatzError> {
 
 /// A string that must not interpolate. Used where a value has to be readable in a
 /// warning exactly as it is written in the file.
+/// A request point's pattern as the regular expression it is matched by: the whole value.
+pub fn whole(pattern: &str) -> String {
+    format!("^(?:{})$", pattern)
+}
+
 fn lit_str(parts: &[StrPart], line: usize, what: &str) -> Result<String, SatzError> {
     match parts {
         [StrPart::Lit(v)] => Ok(v.clone()),
@@ -1700,6 +1709,7 @@ impl P {
         self.expect(Tok::LBrace, "'{' after the requested list param")?;
         let body = self.entries()?;
         let (mut key, mut fields, mut description) = (None, None, None);
+        let mut patterns: Vec<(String, String)> = Vec::new();
         for e in body {
             match e {
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "key" => {
@@ -1718,10 +1728,30 @@ impl P {
                     }
                     fields = Some(out);
                 }
+                Entry::Attr { key: Key::Ident(k), value: Value::Obj(entries), line: l } if k == "patterns" => {
+                    for p in entries {
+                        match p {
+                            Entry::Attr { key: Key::Ident(f), value: Value::Str(parts), line: pl } => {
+                                let re = lit_str(&parts, pl, &format!("request {}: the pattern of `{}`", param, f))?;
+                                if let Err(e) = regex::Regex::new(&whole(&re)) {
+                                    return err(pl, format!("request {}: the pattern of `{}` is no regular expression — {}", param, f, e));
+                                }
+                                if patterns.iter().any(|(g, _)| *g == f) {
+                                    return err(pl, format!("request {}: the pattern of `{}` is written twice", param, f));
+                                }
+                                patterns.push((f, re));
+                            }
+                            other => return err(l, format!("request {}: patterns maps a field to a regular expression, `<field> = \"<regex>\"`, found {:?}", param, other)),
+                        }
+                    }
+                }
                 other => {
                     return err(
                         line,
-                        format!("request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …] and description = \"…\"", param, other),
+                        format!(
+                            "request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …], patterns = {{ <field> = \"<regex>\" }} and description = \"…\"",
+                            param, other
+                        ),
                     )
                 }
             }
@@ -1734,7 +1764,10 @@ impl P {
         if let Some(d) = fields.iter().enumerate().find_map(|(i, f)| fields[..i].contains(f).then_some(f)) {
             return err(line, format!("request {}: the field `{}` is named twice", param, d));
         }
-        Ok(RequestDecl { param, key, fields, description, line })
+        if let Some((f, _)) = patterns.iter().find(|(f, _)| !fields.contains(f)) {
+            return err(line, format!("request {}: the pattern of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
+        }
+        Ok(RequestDecl { param, key, fields, patterns, description, line })
     }
 
     fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
@@ -3062,7 +3095,14 @@ pub fn canonical_parts(file: &File) -> Canonical {
         body.push_str(&format!("private({})\n", x.address));
     }
     for r in &file.requests {
-        body.push_str(&format!("request({}|{}|{}|{})\n", r.param, r.key, r.fields.join(","), r.description.as_deref().unwrap_or("")));
+        body.push_str(&format!(
+            "request({}|{}|{}|[{}]|{})\n",
+            r.param,
+            r.key,
+            r.fields.join(","),
+            r.patterns.iter().map(|(f, p)| format!("{}={}", f, p)).collect::<Vec<_>>().join(","),
+            r.description.as_deref().unwrap_or("")
+        ));
     }
     for h in &file.hcl_blocks {
         body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
@@ -4148,7 +4188,7 @@ mod review_2026_08_29_tests {
         let f = parse("pack p version \"1.0\"\nparams { subnets = [] }\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\n").unwrap();
         assert_eq!(
             f.requests,
-            [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], description: Some("A subnet".into()), line: 3 }]
+            [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], patterns: vec![], description: Some("A subnet".into()), line: 3 }]
         );
         let refused = |src: &str, needle: &str| {
             let e = parse(src).unwrap_err();
@@ -4158,6 +4198,14 @@ mod review_2026_08_29_tests {
         refused("pack p\nrequest s {\n  key = \"a\"\n}\n", "`fields` lists every field");
         refused("pack p\nrequest s {\n  key = \"b\"\n  fields = [\"a\"]\n}\n", "the key `b` is not among the fields");
         refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"a\"]\n}\n", "named twice");
+        // a pattern per field: a regular expression, of a declared field, once
+        let f = parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n  patterns = { b = \"[^@]+@[^@]+\" }\n}\n").unwrap();
+        assert_eq!(f.requests[0].patterns, [("b".to_string(), "[^@]+@[^@]+".to_string())]);
+        let without = parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap();
+        assert_ne!(canonical_parts(&f), canonical_parts(&without), "a pattern is part of the pack's canonical form");
+        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { c = \"x\" }\n}\n", "the pattern of `c` is no field's");
+        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"(\" }\n}\n", "is no regular expression");
+        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"x\" a = \"y\" }\n}\n", "");
         refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  size = 3\n}\n", "unexpected entry");
         let a = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n}\n").unwrap());
         let b = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap());

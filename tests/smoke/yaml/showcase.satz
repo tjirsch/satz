@@ -239,6 +239,7 @@ google_project {
 request event_topics {
   key         = "name"
   fields      = ["name", "retention"]
+  patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" }
   description = "A Pub/Sub topic in the infrastructure project"
 }
 

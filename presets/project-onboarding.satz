@@ -10,7 +10,8 @@
 // estate, or requested by the project as `contributes_projects` in a small pack of its own,
 // checked with `satz check-request` and vendored into the estate by pull request. The
 // entry's `name` is the interface's name and a folder name: lowercase letters, digits and
-// `-`, starting with a letter.
+// `-`, starting with a letter. Its `owner_group` is the group's address, `<name>@<domain>`.
+// The request point's patterns refuse either at compile, naming the entry and the value.
 //
 // PER ENTRY. The Google project `{customer_shortname}-<name>-001`, billed to the
 // infrastructure billing account, with the five APIs a project's estate needs to run.
@@ -33,7 +34,7 @@
 //
 // NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
 
-pack project_onboarding version "1.0"
+pack project_onboarding version "1.1"
 
 params {
   // One entry per project, `{ name owner_group }`: the name, and the group — its address,
@@ -59,6 +60,7 @@ question project_onboarding_folder {
 request projects {
   key         = "name"
   fields      = ["name", "owner_group"]
+  patterns    = { name = "[a-z][a-z0-9-]*" owner_group = "[^@: ]+@[^@: ]+" }
   description = "A project on the estate: its name, which is its interface's, and the address of the group that owns it"
 }
 

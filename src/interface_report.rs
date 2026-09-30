@@ -27,6 +27,9 @@ pub(crate) struct RequestRow {
     pub param: String,
     pub key: String,
     pub fields: Vec<String>,
+    /// per field, the regular expression its whole value matches
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub patterns: std::collections::BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// the entries the list holds now
@@ -119,6 +122,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             param: r.param.clone(),
             key: r.key.clone(),
             fields: r.fields.clone(),
+            patterns: r.patterns.iter().cloned().collect(),
             description: r.description.clone(),
             entries: r.entries.len(),
             file: r.file.clone(),
@@ -145,11 +149,24 @@ pub(crate) fn requests_readme(requests: &[ResolvedRequest]) -> String {
             "| `{}` | `{}` | {} | {} |\n",
             r.param,
             r.key,
-            r.fields.iter().map(|f| format!("`{}`", f)).collect::<Vec<_>>().join(", "),
+            fields_cell(&r.fields, &r.patterns),
             r.description.as_deref().unwrap_or("").replace('|', "\\|")
         ));
     }
     s
+}
+
+/// A request point's fields as a markdown table cell, each with the pattern its value
+/// matches when the request point sets one.
+pub(crate) fn fields_cell(fields: &[String], patterns: &[(String, String)]) -> String {
+    fields
+        .iter()
+        .map(|f| match patterns.iter().find(|(p, _)| p == f) {
+            Some((_, re)) => format!("`{}` matching `{}`", f, re.replace('|', "\\|")),
+            None => format!("`{}`", f),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The report for a person: the core exports, then each interface with its own.
@@ -164,7 +181,20 @@ pub(crate) fn render_text(r: &InterfacesReport) -> String {
     };
     let mut s = format!("estate {}\n", r.estate);
     for q in &r.requests {
-        s.push_str(&format!("request {} (key `{}`, fields {}) — {} entr{}  {}:{}\n", q.param, q.key, q.fields.join(", "), q.entries, if q.entries == 1 { "y" } else { "ies" }, q.file, q.line));
+        let fields = q.fields.iter().map(|f| match q.patterns.get(f) {
+            Some(re) => format!("{} ~ {}", f, re),
+            None => f.clone(),
+        });
+        s.push_str(&format!(
+            "request {} (key `{}`, fields {}) — {} entr{}  {}:{}\n",
+            q.param,
+            q.key,
+            fields.collect::<Vec<_>>().join(", "),
+            q.entries,
+            if q.entries == 1 { "y" } else { "ies" },
+            q.file,
+            q.line
+        ));
     }
     if r.exports.is_empty() {
         s.push_str("\nno export — the estate publishes nothing to a project\n");

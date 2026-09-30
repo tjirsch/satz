@@ -174,6 +174,7 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
             param: r.param.clone(),
             key: r.key.clone(),
             fields: r.fields.clone(),
+            patterns: r.patterns.clone(),
             description: r.description.clone(),
             entries: entries.clone(),
             file: file.clone(),
@@ -185,7 +186,8 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
 
 /// The entries of a request point's list, or the ones a team asks for (`existing` then
 /// holds the list as it is, an entry equal to its own not a collision — the file is
-/// already vendored): each an object carrying the key, the declared fields only, keys
+/// already vendored): each an object carrying the key, the declared fields only, each
+/// field a pattern names a string or number the whole of which the pattern matches, keys
 /// unique.
 pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value], existing: &[serde_yaml::Value]) -> Result<(), String> {
     let mut seen: Vec<String> = Vec::new();
@@ -201,6 +203,19 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
         };
         if let Some(f) = fields.keys().filter_map(|k| k.as_str()).find(|k| !r.fields.iter().any(|f| f == k)) {
             return Err(format!("request {}: entry `{}` has `{}`, which is no field of this request — its fields: {}", r.param, key, f, r.fields.join(", ")));
+        }
+        for (f, pattern) in &r.patterns {
+            let text = match fields.get(f.as_str()) {
+                None => continue,
+                Some(serde_yaml::Value::String(s)) => s.clone(),
+                Some(serde_yaml::Value::Number(v)) => v.to_string(),
+                Some(other) => return Err(format!("request {}: entry `{}` has `{}` = {} — a field with a pattern holds a string", r.param, key, f, yaml_text(other))),
+            };
+            // the parser compiled the pattern once already, and refused one that is no regular expression
+            let re = regex::Regex::new(&satz::whole(pattern)).map_err(|e| format!("request {}: the pattern of `{}`: {}", r.param, f, e))?;
+            if !re.is_match(&text) {
+                return Err(format!("request {}: entry `{}` has `{}` = \"{}\", which the request point's pattern `{}` does not match", r.param, key, f, text, pattern));
+            }
         }
         if seen.contains(&key) {
             return Err(format!("request {}: two entries are `{}` = \"{}\" — the key names one entry", r.param, r.key, key));
@@ -277,7 +292,14 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
                 continue;
             }
         };
-        let decl = satz::RequestDecl { param: point.param.clone(), key: point.key.clone(), fields: point.fields.clone(), description: None, line: point.line };
+        let decl = satz::RequestDecl {
+            param: point.param.clone(),
+            key: point.key.clone(),
+            fields: point.fields.clone(),
+            patterns: point.patterns.clone(),
+            description: None,
+            line: point.line,
+        };
         if let Err(msg) = check_request_entries(&decl, &entries, &point.entries) {
             out.push((*line, msg));
         }
@@ -661,6 +683,8 @@ pub struct ResolvedRequest {
     pub param: String,
     pub key: String,
     pub fields: Vec<String>,
+    /// per field, the regular expression its whole value matches
+    pub patterns: Vec<(String, String)>,
     pub description: Option<String>,
     /// the entries the list holds now, contributions included
     pub entries: Vec<serde_yaml::Value>,
@@ -4727,6 +4751,28 @@ request subnets {
         let off = format!("{}params {{ want = false }}\nuse \"net.satz\" when want\n", HEAD.replace("params { customer_organization_id = \"1\" }\n", "params { customer_organization_id = \"1\" want = false }\n"));
         let off = off.replace("params { want = false }\n", "");
         assert!(compile_with(&off, &[("net.satz", REQUESTED)]).expect("compiles").requests.is_empty());
+    }
+
+    /// A field a pattern names is refused at compile, naming the entry and the value, when
+    /// the pattern does not match the whole of it — the estate's own entry and a contributed
+    /// one alike, and a team's file before it is vendored.
+    #[test]
+    fn a_request_pattern_refuses_an_entry_it_does_not_match() {
+        let patterned = REQUESTED.replace("  description = \"A subnet\"\n", "  patterns    = { cidr = \"[0-9./]+\" }\n  description = \"A subnet\"\n");
+        let src = format!("{}use \"net.satz\"\n", HEAD);
+        let fe = compile_with(&src, &[("net.satz", &patterned)]).expect("the estate's entry matches");
+        assert_eq!(fe.requests[0].patterns, [("cidr".to_string(), "[0-9./]+".to_string())]);
+        let bad = patterned.replace("cidr = \"10.0.0.0/24\"", "cidr = \"x10.0.0.0/24\"");
+        let err = compile_with(&src, &[("net.satz", &bad)]).must_fail("a value the pattern does not match");
+        assert!(err.msg.contains("entry `base` has `cidr` = \"x10.0.0.0/24\", which the request point's pattern `[0-9./]+` does not match"), "{}", err.msg);
+        // the whole value, not a part of it
+        let tail = patterned.replace("cidr = \"10.0.0.0/24\"", "cidr = \"10.0.0.0/24 \"");
+        compile_with(&src, &[("net.satz", &tail)]).must_fail("a trailing blank");
+        let team = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"ten\" } ]\n}\n";
+        let err = compile_with(&format!("{}use \"team.satz\"\n", src), &[("net.satz", &patterned), ("team.satz", team)]).must_fail("a contributed entry");
+        assert!(err.msg.contains("entry `team` has `cidr` = \"ten\""), "{}", err.msg);
+        let found = check_request_file(team, &fe.requests, &fe.tfvars);
+        assert!(found.iter().any(|(_, m)| m.contains("entry `team` has `cidr` = \"ten\"")), "{:?}", found);
     }
 
     /// A team's file, before it is vendored: contributions to request points alone, each

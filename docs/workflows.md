@@ -994,7 +994,9 @@ under `project_onboarding_folder` — the workload folder here; empty is the org
 with its IaC service account (`svc-iac-payments`) and its state bucket inside it, the grants
 (the account takes the project's IAM and its services and the bucket, so its estate grants
 itself the rest with `satz update-prerequisites`; the owner group reads the project and may
-become the account), and the project's interface, written once per entry:
+become the account), and the project's interface, written once per entry. The compile refuses
+an entry whose `owner_group` is not an address `<name>@<domain>` or whose `name` is not
+lowercase letters, digits and `-` starting with a letter, naming the entry and the value:
 
 ```
 each projects by name {

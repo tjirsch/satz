@@ -2322,6 +2322,7 @@ entry or reads a param, a name an entry makes that is no interface name or is `c
 request event_topics {
   key         = "name"
   fields      = ["name", "retention"]
+  patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" }
   description = "A Pub/Sub topic in the infrastructure project"
 }
 ```
@@ -2331,14 +2332,23 @@ entries to it through `contributes_<param>` (§6.3) in a file of its own — a p
 contribution is written in one — which the estate `use`s once the pull request that
 vendors it is reviewed. `key` is the field that names an entry, `fields` every field an
 entry may carry, `key` among them, `description` what an entry is; an entry's key is a
-string or a number. A pack declares it
+string or a number. `patterns` is optional and maps a field to a regular expression (Rust's
+`regex` syntax, no interpolation) that the field's whole value matches; a field without one
+takes any value. A pack declares it
 beside the list; like an export it reaches the estate from a used file after the `use …
 when` guard. An `each` over the list (§6.4) makes each entry a resource, which the
 interface then publishes like any other.
 
 Every compile holds every entry of the list to the request point, the estate's own and
-every contributed one: an object, carrying the key, no field `fields` does not name, no
-key twice. `satz check-request <file> [<estate>]` holds a project's file to it offline,
+every contributed one: an object, carrying the key, no field `fields` does not name, each
+field a pattern names a string or number its pattern matches whole, no key twice. A value
+the pattern does not match is refused naming the entry, the field, the value and the
+pattern:
+
+```
+request projects: entry `payments` has `owner_group` = "payments-owners", which the request point's pattern `[^@: ]+@[^@: ]+` does not match
+```
+ `satz check-request <file> [<estate>]` holds a project's file to it offline,
 before the file is vendored: the file holds a `pack` header and `params {
 contributes_<param> = [ … ] }` for request points alone, every entry shaped, no key the
 list already holds for another entry (the same entry again is the file already
@@ -2348,7 +2358,8 @@ field the pack's `each` body reads — is refused before the pull request. `satz
 `README.md` says what may be requested and how.
 
 Refused: a request point on a param no file declares or that is no list, two request
-points on one list, a `key` not among the `fields`, a field named twice.
+points on one list, a `key` not among the `fields`, a field named twice, a pattern for a
+field `fields` does not name, a pattern that is no regular expression.
 
 ### 6.18 Provenance: pristine, fork, ledger
 
