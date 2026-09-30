@@ -979,6 +979,15 @@ fn render(
     if !file.interfaces.iter().all(|i| i.uses.is_empty()) {
         md.push('\n');
     }
+    // An interface an `each` writes is one per entry, each one project's own.
+    for i in &file.interfaces {
+        if let Some(e) = &i.each {
+            md.push_str(&format!(
+                "`{}` is written once per entry of `{}`, named by the entry's `{}`, and each is one project's own interface, not a common one.\n\n",
+                i.name, e.list, e.key
+            ));
+        }
+    }
     if !file.requests.is_empty() {
         md.push_str("## Requests\n\n");
         md.push_str("What a project may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.\n\n");

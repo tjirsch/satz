@@ -807,6 +807,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
     ("export", "a value published to the projects beside the estate, carried by every interface under interfaces/: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
     ("interface", "one project's exports, written to interfaces/<name>/ beside the core ones: `interface \"name\" [common] { export … use interface … }` — `common` puts it into the library every project's folder carries; `interface \"name\"` alone on its line heads an interface file satz generates, which a project estate `use`s and reads as `\"${{interface.<export>}}\"`"),
+    ("each", "one interface per entry of a list param: `each LIST by FIELD { interface \"{each.FIELD}\" { … } }`; inside a resource type map, one labelled body per entry"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("private", "keep one resource out of every export and every `all` map: `private TYPE.LABEL`"),
     ("request", "a pack only — what a project may add to a list param, checked by `satz check-request`: `request PARAM { key fields description }`"),

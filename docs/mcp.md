@@ -118,8 +118,7 @@ org-policy tools the compliance plane answers for (`export-`, `diff-` and
 (`scan-plan`, `generate-migration`), what decides a human's own output (`silence` — an
 agent is handed every finding, the silenced ones included and marked), the client
 configuration that sets this server's own ceiling (`mcp-config`), the interface plane's
-commands, which have no tools (`add-project` writes a section into the estate from a human's
-decision, `interfaces` is the report satz-studio reads through the CLI, `check-request` runs
+commands, which have no tools (`interfaces` is the report satz-studio reads through the CLI, `check-request` runs
 in a project's pipeline on the pull request that vendors the file), and the terminal
 affordances (`completion`, `open-readme`, `self-update`, `help`). Every one of them except the
 terminal affordances, `mcp` itself and `lsp` is named with its reason in the
@@ -456,8 +455,6 @@ as the plain ADC.
   returns every row's status rather than an exit code.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.
-- **`satz add-project`, `satz interfaces` and `satz check-request` have no tool.**
-  `add-project` writes a section into the estate from a human's decision, reviewed as a
-  pull request; `interfaces` is the report satz-studio reads through the CLI; `check-request`
+- **`satz interfaces` and `satz check-request` have no tool.** `interfaces` is the report satz-studio reads through the CLI; `check-request`
   runs in a project's pipeline on the pull request that vendors the file. `satz_check_consumer`
   is the interface plane's one tool, and it reads.

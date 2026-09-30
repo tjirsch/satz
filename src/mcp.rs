@@ -169,7 +169,6 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("add-pack", Parity::Tools(&["satz_add_pack"])),
     ("check-request", Parity::Off("a project's pipeline runs it on the pull request that vendors the file, before the estate's owner reviews it; the interface plane has no tools")),
     ("interfaces", Parity::Off("satz-studio reads its json form through the CLI, and an agent reads the interface READMEs the transpile writes; the interface plane has no tools")),
-    ("add-project", Parity::Off("it writes a section into the estate from a human's decision, reviewed as a pull request; the interface plane has no tools")),
     ("remove-pack", Parity::Tools(&["satz_remove_pack"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),

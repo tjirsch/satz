@@ -298,6 +298,17 @@ interface "archive" {
   export "archive_project_number" = "${{google_project.archive.number}}"
 }
 
+// --- `each` around `interface`: one interface per entry of a list param, named and
+//     filled from the entry — interfaces/orders-events/ and interfaces/billing-events/,
+//     each one project's own, a pack's too. Inside `${{…}}` the entry's text is a label,
+//     written with `-` as `_`.
+each event_topics by name {
+  interface "{each.name}-events" {
+    use interface "audit"
+    export "topic" = "${{google_pubsub_topic.{each.name}.id}}" description "The project's Pub/Sub topic"
+  }
+}
+
 // --- `hcl`: raw passthrough, verbatim, never interpolated, opaque to claims. --
 hcl trust "reviewed 2026-08-30: static address until the provider gap closes" {
   resource "google_compute_address" "legacy_ip" {
