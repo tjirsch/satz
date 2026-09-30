@@ -48,7 +48,7 @@ in the `guid` list of `scripts/check-names-allow.txt`, the gate's allow-lists.
 
 | identifier | what it is |
 |---|---|
-| `2041288c-b303-4ca0-9076-9612db3beeb2` | **Microsoft Sentinel's application id.** The audience the GCP connector's tokens carry (`api://<id>`), published in Microsoft's connector documentation and in its own Terraform; identical for every customer. |
+| `2041288c-b303-4ca0-9076-9612db3beeb2` | **Microsoft Sentinel's application id, and Defender for Cloud's containers-streams audience.** The audience Sentinel's GCP connector tokens carry (`api://<id>`), published in Microsoft's connector documentation and in its own Terraform; Defender for Cloud's generated GCP onboarding script carries the same id as the audience of its `containers-streams` provider. Identical for every customer. |
 | `33e01921-4d64-4f8c-a055-5bdaffd5e33d` | **Microsoft's commercial-cloud tenant.** The `sts.windows.net/<tenant>` issuer every Defender for Cloud and Sentinel connector federates from — published in Microsoft's connector documentation for AWS and GCP alike, identical for every customer. It is *not* the customer's tenant, which is why it is allowed. |
 | `d17a7d74-7e73-4e7d-bd41-8d9525e86cab` | Defender for Cloud's auto-provisioner application id, the `api://…` audience of the auto-provisioner OIDC provider. |
 | `6e81e733-9e7f-474a-85f0-385c097f7f52` | Defender for Cloud's CSPM application id, the audience of the CSPM provider. |

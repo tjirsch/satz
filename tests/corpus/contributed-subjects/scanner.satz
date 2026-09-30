@@ -1,0 +1,10 @@
+// A pack that adds an external scanner's account to the CIS baseline's
+// `allowed_policy_member_subjects`, which the estate names as well.
+
+pack corpus_contributed_subjects_scanner version "1.0"
+
+params {
+  contributes_allowed_policy_member_subjects = [
+    "serviceAccount:scanner@acme-scanner-001.iam.gserviceaccount.com",
+  ]
+}
