@@ -189,7 +189,7 @@ for m in core audit; do
   [ -f "interfaces/common/$m/satz/interface.satz" ] || fail "the library lacks interfaces/common/$m/"
 done
 [ -e interfaces/common/archive ] && fail "the library carries a project's interface"
-[ "$(ls interfaces)" = "$(printf 'archive\ncommon')" ] || fail "interfaces/ holds more than the library and the project:\n$(ls interfaces)"
+[ "$(ls interfaces)" = "$(printf 'archive\nbilling-events\ncommon\norders-events')" ] || fail "interfaces/ holds more than the library and the projects:\n$(ls interfaces)"
 grep -q 'Content hash: `sha256:[0-9a-f]\{64\}`' $si/README.md || fail "the project's folder carries no content hash:\n$(cat $si/README.md)"
 [ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
 [ -e tmp/showcase-hcl/interfaces ] && fail "the root module holds interfaces/"
@@ -276,13 +276,14 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 [ -e $si/archive/CHANGES.md ] && fail "a transpile that changed nothing wrote a CHANGES.md"
 [ "$(grep -o 'sha256:[0-9a-f]*' $si/README.md)" = "$hash_before" ] || fail "the content hash depends on the previous state"
 
-step "add-project: the section into the estate, its interface out, and a project estate written from it"
-cp yaml/showcase.satz tmp/with-project.satz
-"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name payments --owner-group payments-owners@example.com > tmp/add-project.txt 2>&1 || fail "add-project failed:\n$(cat tmp/add-project.txt)"
-grep -q '^interface "payments"' tmp/with-project.satz || fail "the section was not appended:\n$(tail -20 tmp/with-project.satz)"
-"$satz" fmt --check tmp/with-project.satz || fail "add-project wrote a section that is not in the canonical layout"
-"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name payments --owner-group payments-owners@example.com > tmp/add-project-twice.txt 2>&1 && fail "a project was added twice"
-grep -q 'already' tmp/add-project-twice.txt || fail "the second add does not say why:\n$(cat tmp/add-project-twice.txt)"
+step "project onboarding: an entry of the pack's list, its interface out, and a project estate written from it"
+python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+s = s.replace("params {\n", 'params {\n  projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n', 1)
+s += '\nuse "presets/project-onboarding.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
+open(sys.argv[2], "w", encoding="utf-8").write(s)
+PY2
 # the report satz-studio reads: every export with its interface, and every interface
 "$satz" --config . interfaces "$PWD/tmp/with-project.satz" --format json --out tmp/interfaces.json >/dev/null 2>&1 || fail "satz interfaces failed"
 python3 - tmp/interfaces.json <<'PY' || fail "the interfaces report is not what the estate declares:\n$(cat tmp/interfaces.json)"
@@ -302,15 +303,15 @@ PY
 "$satz" --config . check-request "$root/tests/smoke/requests/bad.satz" "$PWD/tmp/with-project.satz" > tmp/check-request-bad.txt 2>&1 && fail "a request file with an undeclared field passed"
 grep -q 'has `labels`, which is no field of this request' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
 grep -q '## What you may request' interfaces/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/common/core/README.md)"
-# an interface alone, carrying another interface's export and using a common one
-"$satz" --config . add-project "$PWD/tmp/with-project.satz" --name billing --interface-only --use-interface audit --export archive.archive_project_number > tmp/add-interface.txt 2>&1 || fail "add-project --interface-only failed:\n$(cat tmp/add-interface.txt)"
-grep -q 'export "archive_project_number" = "${{google_project.archive.number}}"' tmp/with-project.satz || fail "the export was not copied as declared:\n$(tail -8 tmp/with-project.satz)"
-"$satz" fmt --check tmp/with-project.satz || fail "add-project --interface-only wrote a section that is not in the canonical layout"
 "$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
 pi=interfaces/payments/payments/satz/interface.satz
 [ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces)"
-for o in project_id project_number iac_account state_bucket; do
+for o in project_id project_number iac_account state_bucket audit_bucket_name; do
   grep -q "^output \"$o\"" "$pi" || fail "the interface lacks $o:\n$(cat $pi)"
+done
+[ -d interfaces/common/payments ] && fail "the interface an each writes reached the library"
+for t in orders billing; do
+  grep -q '^output "topic"' "interfaces/$t-events/$t-events/satz/interface.satz" || fail "the showcase's each wrote no interface $t-events:\n$(ls interfaces)"
 done
 grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not emitted"
 pia="$PWD/$pi"
@@ -331,6 +332,7 @@ import re, sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
 s = re.sub(r'(?ms)^interface "[^"]*"( common)? \{.*?^\}\n', "", s)
+s = re.sub(r'(?ms)^each [^\n]*\{\n.*?^\}\n', "", s)
 s = re.sub(r'(?m)^export .*\n', "", s)
 open(p, "w", encoding="utf-8").write(s)
 PY

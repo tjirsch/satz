@@ -140,7 +140,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "add-project", "interfaces", "check-request"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
     (
@@ -279,7 +279,7 @@ pub(crate) enum Commands {
         #[arg(long, requires = "interface")]
         project: Option<String>,
         /// With `--project`: the project's `interfaces/<project>/<project>/satz/interface.satz`,
-        /// as the central estate wrote it after `satz add-project`
+        /// as the central estate wrote it for an entry of `presets/project-onboarding.satz`
         #[arg(long, requires = "project")]
         interface: Option<PathBuf>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
@@ -794,31 +794,6 @@ pub(crate) enum Commands {
         /// Where it goes — the one file this run writes (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
-    },
-    /// Onboard a project: append to the estate the section that declares its Google project, IaC service account and state bucket, and the interface that publishes them
-    ///
-    /// The pull request that carries the section is the request's review; `satz transpile`
-    /// then writes `interfaces/<name>/`, which `satz init --project` reads.
-    AddProject {
-        /// Estate file (.satz, inside yaml_dir if relative)
-        input: String,
-        /// The project's name: an interface name (lowercase letters, digits and `-`)
-        #[arg(long)]
-        name: String,
-        /// The group that reads the project and may become its IaC service account, `<name>@<domain>`;
-        /// not with `--interface-only`
-        #[arg(long, required_unless_present = "interface_only", conflicts_with = "interface_only")]
-        owner_group: Option<String>,
-        /// An interface the project's module also carries, repeated for each
-        #[arg(long = "use-interface", value_name = "INTERFACE")]
-        use_interface: Vec<String>,
-        /// An export of another interface written into this one again, `<interface>.<name>`
-        /// (or `<name>` when one interface declares it), repeated for each
-        #[arg(long = "export", value_name = "EXPORT")]
-        export: Vec<String>,
-        /// The interface alone, for a workload that brings its own Google project
-        #[arg(long)]
-        interface_only: bool,
     },
     /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate deploys nothing
     ///
@@ -2416,60 +2391,6 @@ Thumbs.db
             };
             let what = format!("{} export(s), {} interface(s)", report.exports.len(), report.interfaces.len());
             write_report(&out, text.as_bytes(), &what)?;
-            Ok(())
-        }
-        Commands::AddProject { input, name, owner_group, use_interface, export, interface_only } => {
-            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let src = fsx::read_to_string(&input_path).map_err(|e| format!("{}: {}", input_path.display(), e))?;
-            let refused = |e: String| format!("add-project {}: nothing changed.\n\n{}", name, e);
-            let mut choices = crate::project::Choices { uses: use_interface, exports: Vec::new() };
-            // what the estate declares now — its interfaces, a pack's included, and where a
-            // project goes — to judge the name against and to copy from
-            let compiled = pipeline_b_compile(&input_path, &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent)?;
-            let report = crate::interface_report::report("", compiled.interface.as_ref(), &compiled.exports, &compiled.interfaces, &compiled.requests);
-            let declared = crate::project::Declared::of(&report);
-            if !export.is_empty() || !choices.uses.is_empty() {
-                for u in &choices.uses {
-                    if !report.interfaces.iter().any(|i| &i.name == u) {
-                        return Err(refused(format!(
-                            "`--use-interface {}`: the estate declares no such interface — it declares: {}",
-                            u,
-                            report.interfaces.iter().map(|i| format!("`{}`", i.name)).collect::<Vec<_>>().join(", ")
-                        ))
-                        .into());
-                    }
-                }
-                let dir = input_path.parent().map(Path::to_path_buf).unwrap_or_default();
-                let read = |file: &str| -> Result<String, String> {
-                    let candidates = std::iter::once(dir.join(file)).chain(runtime_config.include_dirs.iter().map(|d| Path::new(d).join(file)));
-                    for c in candidates {
-                        if c.is_file() {
-                            return fsx::read_to_string(&c).map_err(|e| format!("{}: {}", c.display(), e));
-                        }
-                    }
-                    Err(format!("{}: not found beside the estate or in include_dirs", file))
-                };
-                for x in &export {
-                    choices.exports.push(crate::project::copied_export(x, &report, &read).map_err(refused)?);
-                }
-            }
-            let out = if interface_only {
-                crate::project::with_interface(&src, &name, &choices, &declared)
-            } else {
-                crate::project::with_project(&src, &name, owner_group.as_deref().unwrap_or_default(), &choices, &declared)
-            }
-            .map_err(refused)?;
-            let out = satz_core::fmt::format(&out).map_err(|e| format!("add-project {}: the section does not parse ({}:{}) — a generator defect", name, e.line, e.msg))?;
-            fsx::write_edited_satz(&input_path, &src, &out)?;
-            println!(
-                "add-project {}: the section stands at the end of {} — review it; `satz transpile` then writes interfaces/{}/, and the project's own estate is `satz init --project {} --interface interfaces/{}/{}/satz/interface.satz` in its directory",
-                name,
-                input_path.display(),
-                name,
-                name,
-                name,
-                name
-            );
             Ok(())
         }
         Commands::RemovePack { input, pack, cascade, format } => {
@@ -5767,7 +5688,6 @@ mod command_groups {
         ("update-prerequisites", Identity::NoGoogleApi),
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
-        ("add-project", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
         ("check-request", Identity::NoGoogleApi),
         // The API preflight: as the identity the emitted provider impersonates,

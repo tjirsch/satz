@@ -320,9 +320,9 @@ may add to that list, and a project's request file — a pack of `contributes_<p
 — is checked by `satz check-request` and vendored into the estate by pull request.
 
 Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
-`satz add-project`, `satz interfaces` and `satz check-request` have no tool: ask a human for
-them — a project is onboarded by a reviewed pull request, and a request file is checked in
-the project's pipeline.
+`satz interfaces` and `satz check-request` have no tool: ask a human for them. A project is
+onboarded by an entry of `projects` in `presets/project-onboarding.satz`, added by a reviewed
+pull request, and a request file is checked in the project's pipeline.
 
 ## Working through the MCP server
 

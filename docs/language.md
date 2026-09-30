@@ -779,8 +779,8 @@ Refused, at the `each` line: a list param no file declares, a param that is no l
 entry that is no object, one without the field or whose field is no label (a letter,
 then letters, digits, `_` and `-`), two entries with one label, `{each.x}` of a field the
 entry lacks or of a list or an object inside a string, a `use` or a second `each` inside
-the body, `each` at the top level of a file, in a resource body or in a grant map, and
-`{each.x}` outside an `each`. A label an `each` writes that the map also writes by hand is
+the body, `each` in a resource body or in a grant map, and `{each.x}` outside an `each`.
+At the top level of a file `each` writes interfaces, not resources (§6.17). A label an `each` writes that the map also writes by hand is
 one address declared twice. `each` without `by`, or `each { … }`, is a label named
 `each`.
 
@@ -2024,7 +2024,8 @@ interface "archive" {
   starting with a letter; `core` and `common` are refused. An interface declared in two
   files is one interface, and their exports merge; one file declares it once.
 - **Common or one project's.** An interface is **common** when the block says so —
-  `interface "<name>" common { … }` — or when a pack declares it; `core` is common too. The
+  `interface "<name>" common { … }` — or when a pack declares it outside an `each`; `core`
+  is common too. The
   common interfaces are the **library**: `interfaces/common/` holds it alone, and every
   project's folder carries it whole. Every other interface is one project's own, and
   only that project's folder carries it. A common interface uses only common ones: one
@@ -2281,6 +2282,39 @@ copied to `vendor/archive/`.)
 
 An export emits no resource and is no witness: it never enters the fold, the emission
 manifest or a claim.
+
+#### `each` around `interface` — one interface per entry of a list
+
+```
+each event_topics by name {
+  interface "{each.name}-events" {
+    use interface "audit"
+    export "topic" = "${{google_pubsub_topic.{each.name}.id}}" description "The project's Pub/Sub topic"
+  }
+}
+```
+
+(`tests/smoke/yaml/showcase.satz`.)
+
+`each <list param> by <field> { … }` at the top level of a file holds `interface` blocks
+and writes each once per entry of the list: the showcase writes `orders-events` and
+`billing-events`. The name reads the entry, `"{each.<field>}"`, with text around it, and is
+then judged as a written name is; an export's value reads it as a resource body in an
+`each` does (§6.4) — `{each.x}` in a string, a bare `each.x` for the value itself. Inside a
+`${{…}}` reference the entry's text is a label, so it is written with `-` as `_`:
+`${{google_project.{each.name}.number}}` of the entry `data-lake` reads
+`google_project.data_lake`. The list is the param as the compile sees it, contributions
+included, so an entry a project requests is an interface too.
+
+An interface an `each` writes is one project's own, in a pack too — one entry is one
+project — unless its block says `common`. One of the same name in another file is the same
+interface, and their exports merge: that is how an estate adds to the interfaces a pack
+writes. The library's `presets/project-onboarding.satz` writes one per project it onboards.
+
+Refused: what the resource `each` refuses about the list and its entries (§6.4), anything
+but `interface` blocks inside it, an `each` with none, a name that reads no field of the
+entry or reads a param, a name an entry makes that is no interface name or is `core` or
+`common`, and an export whose value an entry makes an object.
 
 #### `request` — what a project may add to a list
 
@@ -2617,6 +2651,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
 | keep a pack's resource out of every export | `private google_storage_bucket.logs` |
 | one resource per entry of a list param | `google_pubsub_topic { each event_topics by name { name = "{each.name}" } }` |
+| one interface per entry of a list param | `each projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
 | let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
@@ -2643,7 +2678,6 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `lsp` | Satz | the language server on stdio, started by the editor: diagnostics, completion, hover, go-to-definition, formatting |
 | `init [flags] [--interview]` / `init --project <n> --interface <file>` | Satz | write a new estate from the day-0 values, or a project's estate from its interface file (§6.17) |
 | `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and request point the estate publishes (§6.17) |
-| `add-project <estate>.satz --name <n> --owner-group <g> [--use-interface i] [--export i.x] [--interface-only]` | Satz | append the section that onboards one project — its Google project, IaC account, state bucket and `interface "<n>"` |
 | `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, and the estate's compile with the file in place, before the pull request that vendors it |
 | `check-consumer <dir> [<estate>.satz]` | HCL | a project's HCL against the interface it reads: attach points, authoritative grants, duplicates |
 | `mcp [--allow read,write,exec] [--root d]` / `mcp-config <estate>.satz` | — | serve the estate over the Model Context Protocol (`docs/mcp.md`); write the client's configuration |

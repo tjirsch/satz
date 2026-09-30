@@ -183,7 +183,6 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked before it is vendored into the estate: request points only, each entry shaped, no key the list holds for another entry, and the estate compiled with the file in place |
 | `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields and entries; the json form is what satz-studio reads |
-| `add-project <ESTATE>` | `--use-interface <name>` and `--export <interface>.<name>` (each repeated: what the project's interface also carries), `--interface-only` (the interface alone, no `--owner-group`), `--name <name>` (the project: an interface name), `--owner-group <address>` (the group that reads the project and may become its IaC service account) — appends to the estate the section that declares the project's Google project, IaC service account and state bucket, and the `interface "<name>"` that publishes them |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
@@ -295,7 +294,7 @@ satz init \
 - Fetches the latest provider schemas for the configured providers.
 
 **A project estate** (`--project <name> --interface <path>`): the estate of one project of a
-central estate, written from the interface file `satz add-project` published for it —
+central estate, written from the interface file `presets/project-onboarding.satz` published for it —
 `project_id`, `iac_account`, `state_bucket`, and the core export `default_region` (from
 `estate-core.satz`; a central estate without it is refused). It runs in cloud mode as the
 project's own IaC service account, keeps its state in the project's bucket, and `use`s the
@@ -308,32 +307,32 @@ asks for the same day-0 values one at a time and offers the derived ones as defa
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
-### Add a project (`add-project`)
-`add-project` onboards one project into the central estate: it appends the section that
-declares the project's Google project (under the workload folder), its IaC service
-account, its state bucket, the grants, and the `interface "<name>"` that publishes them —
-`project_id` (an attach point for `google_project_iam_member`), `project_number`,
+### Onboard a project (`presets/project-onboarding.satz`)
+A project is an entry of the list param `projects` of `presets/project-onboarding.satz`,
+`{ name owner_group }`. Per entry the pack declares the project's Google project, its IaC
+service account, its state bucket, the grants, and the `interface "<name>"` that publishes
+them — `project_id` (an attach point for `google_project_iam_member`), `project_number`,
 `iac_account`, `state_bucket`.
 
-```bash
-satz add-project C0example.satz --name payments --owner-group payments-owners@example.com
+```
+params {
+  projects                  = [{ name = "payments" owner_group = "payments-owners@example.com" }]
+  project_onboarding_folder = "google_folder.workload_folder.name"
+}
+
+use "presets/project-onboarding.satz" when use_project_onboarding
 ```
 
-The section is plain Satz at the end of the estate, the operator's to edit; the pull
-request that carries it is the request's review. `satz transpile` then writes
+The entry is bound in the estate, or requested by the project as `contributes_projects`
+in a file of its own, checked with `satz check-request` and vendored into the estate by
+pull request; the pull request is the request's review. `project_onboarding_folder` is
+the parent, the organisation when it is empty. `satz transpile` then writes
 `interfaces/payments/`, and the project's own estate is `satz init --project payments
---interface interfaces/payments/payments/satz/interface.satz` in its directory. Refused:
-a name that is no interface name, an estate that declares `interface "<name>"` already —
-in its own text or through a pack it uses — and one that publishes no `workload_folder`,
-which says where a project goes; both are judged on the compiled estate.
-
-The interface takes more than the project's own four exports when the command says so:
-`--use-interface <name>` adds a `use interface` line, and `--export <interface>.<name>`
-writes an export of another interface into this one again, as the line that declares
-it stands, so a param it reads stays a param (a core export is refused: every
-interface carries it). `--interface-only` writes the interface alone, for a workload
-that brings its own Google project — it needs at least one of the two. `satz interfaces
-<estate> --format text --out -` lists what there is to pick.
+--interface interfaces/payments/payments/satz/interface.satz` in its directory. An
+interface declared in two files is one interface, so the estate adds to a project's
+interface with a block of the same name in its own file — `interface "payments" { use
+interface "network" }` — and a workload that brings its own Google project gets an
+interface written by hand, `interface "billing" { … }`.
 
 ### Day 0 Bootstrap (`bootstrap`)
 `bootstrap` runs the day-0 onboarding of a new customer organization.
@@ -2337,8 +2336,7 @@ cloud knows is a `data` source keyed by what satz writes (`presets/interface-loo
 A project estate's `${{interface.<export>}}` is replaced before emission, and its
 resources are held to the interface file's attach points (`src/consumer.rs`).
 `src/interface_report.rs` is the `satz interfaces` report, `src/interface_changes.rs` writes
-`CHANGES.md` from the previous interface file, and `src/project.rs` is `add-project` and
-`init --project`.
+`CHANGES.md` from the previous interface file, and `src/project.rs` is `init --project`.
 - **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block. A project that writes one says its own parent — a reference to a folder the estate declares, or an id — and an empty value says nothing, so the enclosing block decides.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
 

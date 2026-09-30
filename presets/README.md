@@ -956,6 +956,79 @@ params {
 
 Nothing in the pack bills while idle.
 
+## project-onboarding.satz
+
+The projects on the estate: one entry of `projects` per project, and per entry its Google
+project, its IaC service account and state bucket, the grants, and the project's own
+interface — written by `each projects by name { interface "{each.name}" { … } }`
+([language §6.17](../docs/language.md#each-around-interface--one-interface-per-entry-of-a-list)).
+
+**Use** — the projects land in the folder `project_onboarding_folder` names, so the line
+stands at the top level:
+
+```
+params {
+  use_project_onboarding    = true
+  project_onboarding_folder = "google_folder.workload_folder.name"
+  projects = [
+    { name = "payments" owner_group = "payments-owners@example.com" },
+  ]
+}
+
+use "presets/project-onboarding.satz" when use_project_onboarding
+```
+
+**Requests.** A project asks to be onboarded with a small pack of its own, checked with
+`satz check-request <file> <estate>` and vendored into the estate by pull request:
+
+```
+pack requests_payments version "1.0"
+
+params {
+  contributes_projects = [
+    { name = "payments" owner_group = "payments-owners@example.com" },
+  ]
+}
+```
+
+| request point | key | fields |
+|---|---|---|
+| `projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`), `owner_group` (the address of the group that reads the project and may become its IaC service account) |
+
+**Per entry** `payments`:
+
+| resource | what |
+|---|---|
+| `google_project.payments` | `{customer_shortname}-payments-001` under `project_onboarding_folder`, billed to `billing_account_infra`, with the Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs |
+| `google_service_account.payments_iac` | `svc-iac-payments`, the IaC service account the project's estate runs as; it holds `roles/resourcemanager.projectIamAdmin` and `roles/serviceusage.serviceUsageAdmin` on the project, so the project's estate grants itself the rest (`satz update-prerequisites` there) |
+| `google_storage_bucket.payments_state` | `{customer_shortname}-payments-001-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
+| the owner group's grants | `roles/viewer` on the project; `roles/iam.serviceAccountTokenCreator` and `roles/iam.serviceAccountUser` on the account alone |
+
+A name with `-` is the label with `_`: `data-lake` is `google_project.data_lake`.
+
+**What the project reads** — its own interface `payments`, in `interfaces/payments/`:
+
+| export | value | attach point for |
+|---|---|---|
+| `project_id` | the Google project's id | `google_project_iam_member`: the project grants on its own Google project in its own state |
+| `project_number` | its number, looked up | — |
+| `iac_account` | the IaC service account's email | — |
+| `state_bucket` | the state bucket's name | — |
+
+`satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
+writes the project's estate from these and the core export `default_region`. The estate
+adds to a project's interface with a block of the same name in its own file — `interface
+"payments" { use interface "network" }` — since an interface declared in two files is one.
+
+**Overridable defaults:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `projects` | `[]` | the projects, bound in the estate or filled by requests |
+| `project_onboarding_folder` | `""` | the folder the projects are created in, asked; empty is the organisation, the workload folder is `"google_folder.workload_folder.name"` |
+
+Nothing in the pack bills while idle.
+
 ## billing-export.satz
 
 Cloud Billing usage and cost data, exported to BigQuery — what the money went on, per
@@ -1731,7 +1804,9 @@ repository or folder, config, state and pipeline.
 
 **A pack's interface is common.** An interface a pack declares — `interface "network" {
 export … }` — is in the library every project's folder carries (`interfaces/common/` and
-`interfaces/<project>/`), without the word `common`. A project's interface takes it with
+`interfaces/<project>/`), without the word `common`. One an `each` writes is the
+exception: `each projects by name { interface "{each.name}" { … } }` writes one interface
+per entry, and each is that project's own (`project-onboarding.satz`). A project's interface takes it with
 `use interface "network"`: the author keeps the set stable, and every project receives
 it. A pack's interface uses only common interfaces. What satz generates from it —
 `interfaces/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
@@ -1832,6 +1907,34 @@ What a satz release refuses that the release before it compiled, and the edit th
 satisfies it. Newest first. Each entry says what is refused, how to find it in an
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
+
+### v0.90.0
+
+**`satz add-project` is gone.** A project is onboarded by an entry of `projects` in
+`presets/project-onboarding.satz`, which writes the project's Google project, IaC service
+account, state bucket, grants and `interface "<name>"` per entry.
+
+An estate that holds a section `add-project` wrote keeps it: the section is plain Satz and
+compiles as it did, and its plan does not move. Find one: `grep -n 'written by .satz
+add-project' satz/*.satz`. A new project is an entry, not a section:
+
+```
+params {
+  use_project_onboarding    = true
+  project_onboarding_folder = "google_folder.workload_folder.name" // "" when the workload folder is the organisation
+  projects = [
+    { name = "billing" owner_group = "billing-owners@example.com" },
+  ]
+}
+
+use "presets/project-onboarding.satz" when use_project_onboarding
+```
+
+A project that already has a section gets no entry as well: the entry declares the section's
+resources again, under the same labels and names. What
+`--use-interface` and `--export` added is a block of the interface's name in the estate's
+own file, `interface "billing" { use interface "network" }`; what `--interface-only` wrote
+is an `interface "<name>" { … }` block written by hand.
 
 ### v0.89.0
 
@@ -2774,6 +2877,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `project_onboarding` | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
+| `estate_map` | 2.7 | 2026-09-30 | offers `project-onboarding` on `use_project_onboarding`, off by default, with its question; nothing already on changes |
 | `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |
 | `estate_map` | 2.6 | 2026-09-26 | offers `shared-network` on `use_shared_network`, off by default, with its question; nothing already on changes |
 | `interface_notice` | 1.2 | 2026-09-26 | the header and the question's text say project where they said team, and `interfaces/` where they said `hcl/interfaces/`; the resources are unchanged |

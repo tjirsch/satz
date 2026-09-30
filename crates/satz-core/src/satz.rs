@@ -19,6 +19,7 @@
 //!              | statement                one of `STATEMENT_KEYWORDS`: claim, question,
 //!                                         action, offers, notice, export, interface,
 //!                                         suppress, private, request, hcl
+//!              | "each" IDENT "by" IDENT "{" { interface } "}"   one interface per entry
 //!              | block
 //! param       := IDENT "=" value
 //! block       := IDENT [ IDENT | STRING ] "{" { entry } "}"
@@ -443,15 +444,33 @@ pub fn valid_interface_name(name: &str) -> bool {
 /// its own folder `interfaces/<name>/` beside the core exports every interface carries. The
 /// same name in two files is one interface: their exports merge. `common` puts it into the
 /// library every project's folder carries; an interface a pack declares is common without
-/// the word.
+/// the word, unless an `each` writes it — one per entry, each one project's.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDecl {
+    /// the name; for an interface an `each` writes, the name as written, `{each.name}`
     pub name: String,
     /// written `interface "<name>" common { … }`
     pub common: bool,
     pub exports: Vec<ExportDecl>,
     /// `use interface "<name>"` / `use interface ["<a>", "<b>"]` lines, in file order
     pub uses: Vec<InterfaceUse>,
+    /// written inside `each <list> by <field> { … }` at the top level of a file: one
+    /// interface per entry of the list, expanded by the compile once params are resolved
+    pub each: Option<EachInterface>,
+    pub line: usize,
+}
+
+/// `each <list param> by <field> { interface "{each.<field>}" { … } }` at the top level of
+/// a file: the interface is written once per entry of the list. The name and the export
+/// values read the entry through `{each.x}` and `each.x`, as a resource body an `each`
+/// expands does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EachInterface {
+    pub list: String,
+    pub key: String,
+    /// the interface's name, its text and `{each.x}` parts
+    pub name: Vec<StrPart>,
+    /// the line of `each`
     pub line: usize,
 }
 
@@ -1920,12 +1939,31 @@ impl P {
         Ok(types)
     }
 
-    fn interface_stmt(&mut self, line: usize) -> Result<InterfaceDecl, SatzError> {
-        let name = match self.next() {
-            Some(Tok::Str(parts)) => lit_str(&parts, line, "interface: the name")?,
+    /// `interface "<name>" [common] { … }`, after `interface`. Inside a top-level `each`
+    /// (`each` is `(list, key, line of each)`) the name reads the entry, `"{each.<field>}"`,
+    /// and is judged once the compile has expanded it.
+    fn interface_stmt(&mut self, line: usize, each: Option<(&str, &str, usize)>) -> Result<InterfaceDecl, SatzError> {
+        let parts = match self.next() {
+            Some(Tok::Str(parts)) => parts,
             other => return err(line, format!("interface: expected a quoted name, found {:?}", other)),
         };
-        if !valid_interface_name(&name) {
+        let (name, each) = match each {
+            None => (lit_str(&parts, line, "interface: the name")?, None),
+            Some((list, key, each_line)) => {
+                if let Some(StrPart::Param(p)) = parts.iter().find(|p| matches!(p, StrPart::Param(n) if !n.starts_with("each."))) {
+                    return err(line, format!("interface \"…{{{}}}…\" inside `each {} by {}`: the name reads the entry alone, `{{each.<field>}}` — a param is no part of it", p, list, key));
+                }
+                if !parts.iter().any(|p| matches!(p, StrPart::Param(_))) {
+                    return err(
+                        line,
+                        format!("interface inside `each {} by {}`: the name is one per entry, so it reads the entry — `interface \"{{each.{}}}\"`", list, key, key),
+                    );
+                }
+                let text: String = parts.iter().map(|p| match p { StrPart::Lit(l) => l.clone(), StrPart::Param(n) => format!("{{{}}}", n) }).collect();
+                (text, Some(EachInterface { list: list.to_string(), key: key.to_string(), name: parts, line: each_line }))
+            }
+        };
+        if each.is_none() && !valid_interface_name(&name) {
             return err(
                 line,
                 format!(
@@ -1993,7 +2031,7 @@ impl P {
                 }
             }
         }
-        Ok(InterfaceDecl { name, common, exports, uses, line })
+        Ok(InterfaceDecl { name, common, exports, uses, each, line })
     }
 
     /// `use interface "<name>" [when <param>]` or `use interface ["<a>", …] [when <param>]`,
@@ -2343,7 +2381,7 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                     file.interface_file = Some(InterfaceFile { name, line, ..InterfaceFile::default() });
                     continue;
                 }
-                let i = p.interface_stmt(line)?;
+                let i = p.interface_stmt(line, None)?;
                 if let Some(first) = file.interfaces.iter().find(|x| x.name == i.name) {
                     return err(
                         i.line,
@@ -2431,12 +2469,45 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                             Tok::Str(s) => Key::Str(s),
                             _ => unreachable!(),
                         };
+                        // `each <list> by <field> { interface "{each.<field>}" { … } }`: one
+                        // interface per entry. A resource's `each` stands inside its type map.
                         if let (Key::Ident(k), Key::Ident(list), Some(Tok::Ident(b))) = (&key, &name, p.peek()) {
                             if k == "each" && b == "by" {
-                                return err(
-                                    line,
-                                    format!("`each {} by …` stands at the top level of a file — it writes one labelled body per entry, so it stands where labels do: inside a resource type map, `google_x {{ each … }}`", list),
-                                );
+                                let list = list.clone();
+                                p.next();
+                                let field = match p.next() {
+                                    Some(Tok::Ident(f)) if !f.contains('.') => f,
+                                    other => return err(line, format!("each {} by: expected the field of each entry that names its interface, found {:?}", list, other)),
+                                };
+                                p.expect(Tok::LBrace, "'{' after `each <list> by <field>`")?;
+                                let mut written = 0;
+                                loop {
+                                    let at = p.line();
+                                    match p.next() {
+                                        Some(Tok::RBrace) => break,
+                                        Some(Tok::Ident(id)) if id == "interface" => {
+                                            let i = p.interface_stmt(at, Some((&list, &field, line)))?;
+                                            if let Some(first) = file.interfaces.iter().find(|x| x.name == i.name) {
+                                                return err(i.line, format!("interface \"{}\": declared twice in this file (line {} and line {})", i.name, first.line, i.line));
+                                            }
+                                            file.interfaces.push(i);
+                                            written += 1;
+                                        }
+                                        other => {
+                                            return err(
+                                                at,
+                                                format!(
+                                                    "`each {} by {}` at the top level of a file holds `interface` blocks, one per entry — found {:?}; a resource's `each` stands inside its type map, `google_x {{ each … }}`",
+                                                    list, field, other
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
+                                if written == 0 {
+                                    return err(line, format!("`each {} by {} {{ }}` writes nothing — it holds the `interface` blocks written once per entry", list, field));
+                                }
+                                continue;
                             }
                         }
                         p.expect(Tok::LBrace, "'{' after block name")?;
@@ -3041,6 +3112,11 @@ pub fn canonical_parts(file: &File) -> Canonical {
     common.sort();
     common.dedup();
     common.into_iter().for_each(|c| body.push_str(&format!("common_interface({})\n", c)));
+    // An interface an `each` writes is one per entry of its list.
+    let mut each: Vec<String> =
+        file.interfaces.iter().filter_map(|i| i.each.as_ref().map(|e| format!("each_interface({}|{}|{})\n", i.name, e.list, e.key))).collect();
+    each.sort();
+    each.into_iter().for_each(|e| body.push_str(&e));
     Canonical { params, body }
 }
 
@@ -4039,6 +4115,32 @@ mod review_2026_08_29_tests {
         assert_ne!(with, without);
         let e = parse("estate e\ngoogle_x {\n  each xs by name\n}\n").unwrap_err();
         assert!(e.msg.contains("'{' after `each <list> by <field>`"), "{}", e.msg);
+    }
+
+    /// At the top level `each` holds interface blocks, named from the entry; the canonical
+    /// form carries it; anything else inside it, and a name that reads no field, is refused.
+    #[test]
+    fn each_at_the_top_level_writes_interfaces() {
+        let f = parse("pack p\neach xs by name {\n  interface \"{each.name}-api\" {\n    export \"a\" = \"${{google_x.{each.name}.id}}\"\n  }\n}\n").unwrap();
+        assert_eq!(f.interfaces.len(), 1);
+        let i = &f.interfaces[0];
+        assert_eq!(i.name, "{each.name}-api");
+        let e = i.each.as_ref().expect("an each");
+        assert_eq!((e.list.as_str(), e.key.as_str(), e.line), ("xs", "name", 2));
+        assert_eq!(e.name, [StrPart::Param("each.name".into()), StrPart::Lit("-api".into())]);
+        let plain = parse("pack p\ninterface \"x-api\" {\n  export \"a\" = \"${{google_x.x.id}}\"\n}\n").unwrap();
+        assert_ne!(canonical_parts(&f), canonical_parts(&plain));
+        for (src, says) in [
+            ("each xs by name {\n  google_x {\n  }\n}\n", "holds `interface` blocks"),
+            ("each xs by name {\n}\n", "writes nothing"),
+            ("each xs by name {\n  interface \"fixed\" {\n  }\n}\n", "reads the entry"),
+            ("each xs by name {\n  interface \"{p}-{each.name}\" {\n  }\n}\n", "a param is no part of it"),
+        ] {
+            let e = parse(&format!("pack p\n{}", src)).unwrap_err();
+            assert!(e.msg.contains(says), "{}: {}", src, e.msg);
+        }
+        // `each` alone is still a key
+        assert!(parse("estate e\neach {\n  a = 1\n}\n").is_ok());
     }
 
     #[test]

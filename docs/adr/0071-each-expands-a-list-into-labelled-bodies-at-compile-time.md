@@ -57,7 +57,9 @@ contributed to a list, whatever the entries become.
 ## Consequences
 
 - `each` on `interface` and `export` statements is not built: onboarding a project stays
-  `satz add-project` until an interface can be written per entry.
+  `satz add-project` until an interface can be written per entry. *Built by
+  [ADR 0075](0075-each-writes-an-interface-per-entry-and-onboarding-is-a-pack.md): `each`
+  at the top level around `interface` blocks, and `add-project` removed.*
 - The grammar (`satz-tree-sitter`), the Zed extension and satz-studio's tree learn the
   entry; the canonical form carries it, so pack drift sees it.
 - An entry's label is part of what the estate publishes when an `all` export reaches its
