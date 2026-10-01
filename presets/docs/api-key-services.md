@@ -94,7 +94,7 @@ Every resource this pack contributes is a witness of a claim above.
 | 1.1 | 2026-09-10 | one `question` block on the allowed services; the empty default blocks on purpose — it is a legitimate answer, but it has to be the customer's. Nothing emitted changes |
 | 1.0 | 2026-09-04 | CIS 4.0 1.14 / 5.0 1.15, opt-in: a managed constraint with an `allowedServices` parameter, not a bare boolean |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

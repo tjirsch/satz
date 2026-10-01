@@ -88,7 +88,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_cloud_sql_iam_and_deletion_protection_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
 | 1.0 | 2026-09-11 | CIS 5.0 6.6 and 6.9, opt-in: two custom constraints on Cloud SQL instances — IAM database authentication on (SQL Server exempt), deletion protection on — each enforced by a policy on the organisation |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

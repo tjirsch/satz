@@ -1283,7 +1283,7 @@ pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<Pipel
 ///
 /// A `use` of a moved path is refused, and the refusal is the whole of it: satz
 /// rewrites no estate for a move. `edit` is the hand edit the refusal names, and
-/// `presets/README.md` under `## Breaking changes` carries the same steps in full.
+/// `presets/CHANGELOG.md` under `## Breaking changes` carries the same steps in full.
 /// Like a renamed param, an entry stays for one release line and is removed once
 /// the fleet is past it.
 struct MovedPack {
@@ -1346,7 +1346,7 @@ fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> 
         file: file.to_string(),
         line,
         msg: format!(
-            "use \"{}\": this pack moved to \"{}\" — {}. {}. Commenting the line out instead takes what the pack deploys off the organisation at the next apply. `satz get-presets` installs the pack at its new path; `## Breaking changes` in presets/README.md has every step.",
+            "use \"{}\": this pack moved to \"{}\" — {}. {}. Commenting the line out instead takes what the pack deploys off the organisation at the next apply. `satz get-presets` installs the pack at its new path; `## Breaking changes` in presets/CHANGELOG.md has every step.",
             use_path, to, m.why, m.edit
         ),
     })

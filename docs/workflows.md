@@ -867,7 +867,7 @@ interface "payments" {
 
 A pack that removes or renames an export, or changes the shape of its value, breaks
 every project that reads it: that is a breaking change, with an entry under
-`## Breaking changes` in `presets/README.md`, and the release that ships it is a minor
+`## Breaking changes` in `presets/CHANGELOG.md`, and the release that ships it is a minor
 one.
 
 ### The folder a project takes
@@ -1488,7 +1488,7 @@ A `use` of a path the library moved is **refused**, naming the file and the line
 path the pack lives at now and the edit. The old file is still in the estate's
 `presets/`, so following it would compile a copy nothing updates again, at the version
 it had when the library moved it. No command rewrites the line or moves the files
-beside it: the steps are in [Breaking changes](../presets/README.md#breaking-changes).
+beside it: the steps are in [Breaking changes](../presets/CHANGELOG.md#breaking-changes).
 
 ### Is it stale, or edited?
 

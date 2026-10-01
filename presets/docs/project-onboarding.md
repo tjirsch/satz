@@ -117,7 +117,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |
 | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

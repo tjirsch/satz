@@ -147,7 +147,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-10 | two `question` blocks: the one project this use watches, and the alert recipient's local part. Nothing emitted changes |
 | 1.0 | 2026-08-21 | per-project variant of the CIS 2.5–2.12 metrics + alerts |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

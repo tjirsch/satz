@@ -131,7 +131,7 @@ _None — this pack proves no control by itself._
 | 0.2 | 2026-09-10 | four `question` blocks: the two ids only Microsoft's wizard knows (both block until typed), whether CSPM is licensed, and — only when it is — the access mode as a `oneof` under `ask_when`, the library's first gated choice. Nothing emitted changes |
 | 0.1 | 2026-09-03 | first cut — the foundation of Microsoft's GCP onboarding as Satz: management project + its API set, the workload identity pool, the auto-provisioner plan and its custom role. Transcribed from a customer's generated wizard Terraform; Microsoft's own tenant, application-id audiences, provider ids and role ids are inlined constants, the customer's Entra tenant and the management project id are params |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

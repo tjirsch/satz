@@ -53,7 +53,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 0.1 | 2026-09-03 | first cut — the CSPM custom role in LEAST PRIVILEGE mode: the 82 permissions Microsoft's script enumerates in place of viewer's reach. Use this or the default role, never both |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

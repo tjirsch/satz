@@ -110,7 +110,7 @@ Every resource this pack contributes is a witness of a claim above.
 | 1.1 | 2026-09-10 | two `question` blocks: the services that must use a CMEK and the projects that may supply keys — both refuse resource creation when wrong. Nothing emitted changes |
 | 1.0 | 2026-09-04 | CIS 7.2, 7.3 and 8.1, opt-in: two LIST constraints; the keys and grants must exist first, and the key-project value takes a resource PATH |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

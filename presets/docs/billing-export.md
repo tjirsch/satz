@@ -124,7 +124,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 1.0 | 2026-09-22 | Cloud Billing usage and cost data exported to BigQuery: a project of its own, the BigQuery API on it, the dataset, and Google's export account's dataEditor on it — with that account contributed to `allowed_policy_member_subjects`, and a notice for the console step Cloud Billing has no API for |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

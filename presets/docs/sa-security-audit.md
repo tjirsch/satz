@@ -91,7 +91,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-10 | three `question` blocks — the hosting project (no default, blocks), the account id, the auditors group; each a recreate. The display name is not asked. Nothing emitted changes |
 | 1.0 | 2026-08-21 | read-only security-audit service account with its custom role |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 
