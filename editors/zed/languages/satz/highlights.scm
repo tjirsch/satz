@@ -24,7 +24,7 @@
   "notice"
   "offers"
   "export" "description" "attach" "all" "under"
-  "each" "by"
+  "each" "by" "not"
   "interface" "common"
   "suppress" "role" "private" "request"
   "hcl" "trust"

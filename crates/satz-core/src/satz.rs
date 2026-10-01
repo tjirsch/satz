@@ -72,6 +72,14 @@ pub enum Key {
     Str(Vec<StrPart>),
 }
 
+/// The `when` of an `each`: the field an entry must carry for the body to be written, or,
+/// with `not`, must not carry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EachWhen {
+    pub field: String,
+    pub not: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
     Attr { key: Key, value: Value, line: usize },
@@ -79,8 +87,10 @@ pub enum Entry {
     Use { path: String, as_key: Option<String>, when: Option<String>, line: usize },
     /// `each <list param> by <field> { … }` inside a resource type map: one labelled body
     /// per entry of the list, labelled by the entry's `<field>`; `{each.x}` and `each.x` in
-    /// the body read the entry's fields. Expanded by the walk, once params are resolved.
-    Each { list: String, key: String, body: Vec<Entry>, line: usize },
+    /// the body read the entry's fields. `each <list> by <field> when <field> { … }` writes the
+    /// body only for the entries that carry the second field with a value that is not empty,
+    /// `when not <field>` only for the others. Expanded by the walk, once params are resolved.
+    Each { list: String, key: String, when: Option<EachWhen>, body: Vec<Entry>, line: usize },
 }
 
 /// `suppress <tf_type> "<label>"` — estate-level subtractive override: remove a
@@ -399,6 +409,10 @@ pub struct RequestDecl {
     pub fields: Vec<String>,
     /// per field, the regular expression its whole value matches, as written
     pub patterns: Vec<(String, String)>,
+    /// per field, the value an entry that does not carry the field takes, as written —
+    /// resolved against the params when the request point is read, so every reader of
+    /// the list (an `each`, the request check, the interface, tfvars) sees it filled in
+    pub defaults: Vec<(String, Value, usize)>,
     pub description: Option<String>,
     pub line: usize,
 }
@@ -1247,9 +1261,26 @@ impl P {
                         Some(Tok::Ident(k)) if !k.contains('.') => k,
                         other => return err(line, format!("each {} by: expected the field of each entry that labels its body, found {:?}", list, other)),
                     };
-                    self.expect(Tok::LBrace, "'{' after `each <list> by <field>`")?;
+                    let when = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "when") {
+                        self.next();
+                        // `when not <field>`; a field named `not` is `when not {`
+                        let not = matches!(self.peek(), Some(Tok::Ident(n)) if n == "not")
+                            && matches!(self.toks.get(self.i + 1), Some((Tok::Ident(_), _)));
+                        if not {
+                            self.next();
+                        }
+                        match self.next() {
+                            Some(Tok::Ident(f)) if !f.contains('.') => Some(EachWhen { field: f, not }),
+                            other => {
+                                return err(line, format!("each {} by {} when: expected the field an entry must carry for its body to be written, found {:?}", list, key, other))
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    self.expect(Tok::LBrace, "'{' after `each <list> by <field>`, optionally followed by `when <field>` or `when not <field>`")?;
                     let body = self.entries()?;
-                    out.push(Entry::Each { list, key, body, line });
+                    out.push(Entry::Each { list, key, when, body, line });
                 }
                 Some(Tok::Ident(_)) | Some(Tok::Str(_)) => {
                     let key = match self.next().unwrap() {
@@ -1710,6 +1741,7 @@ impl P {
         let body = self.entries()?;
         let (mut key, mut fields, mut description) = (None, None, None);
         let mut patterns: Vec<(String, String)> = Vec::new();
+        let mut defaults: Vec<(String, Value, usize)> = Vec::new();
         for e in body {
             match e {
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "key" => {
@@ -1745,11 +1777,24 @@ impl P {
                         }
                     }
                 }
+                Entry::Attr { key: Key::Ident(k), value: Value::Obj(entries), line: l } if k == "defaults" => {
+                    for d in entries {
+                        match d {
+                            Entry::Attr { key: Key::Ident(f), value, line: dl } => {
+                                if defaults.iter().any(|(g, _, _)| *g == f) {
+                                    return err(dl, format!("request {}: the default of `{}` is written twice", param, f));
+                                }
+                                defaults.push((f, value, dl));
+                            }
+                            other => return err(l, format!("request {}: defaults maps a field to the value an entry without it takes, `<field> = <value>`, found {:?}", param, other)),
+                        }
+                    }
+                }
                 other => {
                     return err(
                         line,
                         format!(
-                            "request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …], patterns = {{ <field> = \"<regex>\" }} and description = \"…\"",
+                            "request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …], patterns = {{ <field> = \"<regex>\" }}, defaults = {{ <field> = <value> }} and description = \"…\"",
                             param, other
                         ),
                     )
@@ -1767,7 +1812,13 @@ impl P {
         if let Some((f, _)) = patterns.iter().find(|(f, _)| !fields.contains(f)) {
             return err(line, format!("request {}: the pattern of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
         }
-        Ok(RequestDecl { param, key, fields, patterns, description, line })
+        if let Some((f, _, dl)) = defaults.iter().find(|(f, _, _)| !fields.contains(f)) {
+            return err(*dl, format!("request {}: the default of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
+        }
+        if let Some((_, _, dl)) = defaults.iter().find(|(f, _, _)| *f == key) {
+            return err(*dl, format!("request {}: the key `{}` has no default — it names the entry, so every entry carries it", param, key));
+        }
+        Ok(RequestDecl { param, key, fields, patterns, defaults, description, line })
     }
 
     fn offers_stmt(&mut self, line: usize) -> Result<OffersDecl, SatzError> {
@@ -3103,6 +3154,15 @@ pub fn canonical_parts(file: &File) -> Canonical {
             r.patterns.iter().map(|(f, p)| format!("{}={}", f, p)).collect::<Vec<_>>().join(","),
             r.description.as_deref().unwrap_or("")
         ));
+        // defaults change what the list holds, so they are body; only where written, so a
+        // request without them keeps the canonical form it had
+        if !r.defaults.is_empty() {
+            body.push_str(&format!(
+                "request-defaults({}|[{}])\n",
+                r.param,
+                r.defaults.iter().map(|(f, v, _)| format!("{}={}", f, canon_value(v))).collect::<Vec<_>>().join(",")
+            ));
+        }
     }
     for h in &file.hcl_blocks {
         body.push_str(&format!("hcl({}){{{}}}\n", h.trust.as_deref().unwrap_or(""), h.body.trim()));
@@ -3269,8 +3329,13 @@ fn canon_entry(e: &Entry, out: &mut String) {
                 when.as_deref().unwrap_or("")
             ));
         }
-        Entry::Each { list, key, body, .. } => {
-            out.push_str(&format!("each({}|{}){{", list, key));
+        Entry::Each { list, key, when, body, .. } => {
+            // `when` only where written, so an `each` without one keeps the canonical form
+            // it had, and no pack forks in an estate for a change it did not make
+            match when {
+                Some(w) => out.push_str(&format!("each({}|{}|{}{}){{", list, key, if w.not { "!" } else { "" }, w.field)),
+                None => out.push_str(&format!("each({}|{}){{", list, key)),
+            }
             for b in body {
                 canon_entry(b, out);
                 out.push(';');
@@ -4145,8 +4210,9 @@ mod review_2026_08_29_tests {
     fn each_parses_and_its_canonical_form_carries_it() {
         let f = parse("estate e\ngoogle_x {\n  each xs by name {\n    a = \"{each.name}\"\n    b = each.size\n  }\n}\n").unwrap();
         let Entry::Map { body, .. } = &f.items[0] else { panic!("{:?}", f.items) };
-        let Entry::Each { list, key, body, line } = &body[0] else { panic!("{:?}", body) };
+        let Entry::Each { list, key, when, body, line } = &body[0] else { panic!("{:?}", body) };
         assert_eq!((list.as_str(), key.as_str(), *line), ("xs", "name", 3));
+        assert_eq!(when, &None);
         assert_eq!(body.len(), 2);
         let Entry::Attr { value: Value::Str(parts), .. } = &body[0] else { panic!() };
         assert_eq!(parts, &[StrPart::Param("each.name".into())]);
@@ -4155,6 +4221,45 @@ mod review_2026_08_29_tests {
         assert_ne!(with, without);
         let e = parse("estate e\ngoogle_x {\n  each xs by name\n}\n").unwrap_err();
         assert!(e.msg.contains("'{' after `each <list> by <field>`"), "{}", e.msg);
+    }
+
+    #[test]
+    fn each_when_parses_and_only_a_written_when_moves_the_canonical_form() {
+        let src = "estate e\ngoogle_x {\n  each xs by name when budget {\n    a = each.budget\n  }\n}\n";
+        let f = parse(src).unwrap();
+        let Entry::Map { body, .. } = &f.items[0] else { panic!("{:?}", f.items) };
+        let Entry::Each { when, .. } = &body[0] else { panic!("{:?}", body) };
+        assert_eq!(when, &Some(EachWhen { field: "budget".into(), not: false }));
+        let negated = parse(&src.replace("when budget", "when not budget")).unwrap();
+        let Entry::Map { body: nb, .. } = &negated.items[0] else { panic!() };
+        let Entry::Each { when, .. } = &nb[0] else { panic!() };
+        assert_eq!(when, &Some(EachWhen { field: "budget".into(), not: true }));
+        assert_ne!(canonical_parts(&negated), canonical_parts(&f));
+        // a field named `not`
+        let named_not = parse(&src.replace("when budget", "when not")).unwrap();
+        let Entry::Map { body: nn, .. } = &named_not.items[0] else { panic!() };
+        let Entry::Each { when, .. } = &nn[0] else { panic!() };
+        assert_eq!(when, &Some(EachWhen { field: "not".into(), not: false }));
+        let plain = canonical_parts(&parse("estate e\ngoogle_x {\n  each xs by name {\n    a = each.budget\n  }\n}\n").unwrap());
+        assert_ne!(canonical_parts(&f), plain);
+        assert!(plain.body.contains("each(xs|name){"), "{}", plain.body);
+        let e = parse("estate e\ngoogle_x {\n  each xs by name when {\n  }\n}\n").unwrap_err();
+        assert!(e.msg.contains("expected the field an entry must carry"), "{}", e.msg);
+    }
+
+    #[test]
+    fn request_defaults_parse_and_name_a_field_that_is_not_the_key() {
+        let f = parse("pack p\nparams {\n  xs = []\n}\nrequest xs {\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n  defaults = { apis = [\"a\"] }\n}\n").unwrap();
+        assert_eq!(f.requests[0].defaults.len(), 1);
+        assert_eq!(f.requests[0].defaults[0].0, "apis");
+        for (body, msg) in [
+            ("  defaults = { size = 1 }\n", "the default of `size` is no field's"),
+            ("  defaults = { name = \"x\" }\n", "the key `name` has no default"),
+        ] {
+            let src = format!("pack p\nparams {{\n  xs = []\n}}\nrequest xs {{\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n{}}}\n", body);
+            let e = parse(&src).unwrap_err();
+            assert!(e.msg.contains(msg), "{}", e.msg);
+        }
     }
 
     /// At the top level `each` holds interface blocks, named from the entry; the canonical
@@ -4188,7 +4293,7 @@ mod review_2026_08_29_tests {
         let f = parse("pack p version \"1.0\"\nparams { subnets = [] }\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\n").unwrap();
         assert_eq!(
             f.requests,
-            [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], patterns: vec![], description: Some("A subnet".into()), line: 3 }]
+            [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], patterns: vec![], defaults: vec![], description: Some("A subnet".into()), line: 3 }]
         );
         let refused = |src: &str, needle: &str| {
             let e = parse(src).unwrap_err();

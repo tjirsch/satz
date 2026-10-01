@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.7"
+pack estate_map version "2.8"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -119,8 +119,8 @@ question use_essential_contacts {
 }
 
 question use_budget {
-  prompt   = "Put a budget with alerts at 50, 80 and 100 % on the infrastructure billing account?"
-  why      = "The one alarm on runaway cost. The pack carries an import-id placeholder for adopting a budget that already exists — delete it for a fresh one, as its header says."
+  prompt   = "Put budgets with alerts at 50, 80 and 100 % on the infrastructure billing account — the organisation's, and any for projects or folders?"
+  why      = "The one alarm on runaway cost. The pack asks for the amount and who beyond the billing account's administrators gets the alerts; a budget that already exists is adopted through its entry's import_id."
   reversal = recreate
   blast    = none
 }

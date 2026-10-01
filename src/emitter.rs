@@ -548,10 +548,13 @@ fn without_private(entity: &Entity) -> Result<(Option<Entity>, bool), String> {
 pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     let mut blocks: Vec<hcl::Block> = Vec::new();
     let mut imports: Vec<hcl::Block> = Vec::new();
+    // An empty `"import-id"` adopts nothing: a pack that writes one from a list entry
+    // (`"import-id" = each.import_id`, defaulted to `""`) creates the entries that name none.
     let attr_import = |attrs: &serde_yaml::Mapping| -> Option<String> {
         attrs
             .get(serde_yaml::Value::String("import-id".into()))
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
     };
 

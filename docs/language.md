@@ -768,6 +768,25 @@ bodies give, with no `for_each` in it, so adoption, claims, attach points and th
 interface read them as any other resource. Resources nested in the body are expanded with
 it; a label that must differ per entry is a quoted key, `"{each.name}_iac" { … }`.
 
+`each <list> by <field> when <field> { … }` writes the body only for the entries that
+carry the second field with a value: an entry without it, or with `""`, an empty list or
+object, or `false`, is skipped. `when not <field>` writes it for exactly those entries.
+Two `each` over one list, one `when` and one `when not`, write every entry once — a body
+that names a resource only some entries have, beside one that names none:
+
+```
+google_pubsub_subscription {
+  each event_topics by name when subscription {
+    name    = "{each.subscription}"
+    project = infra_project_name
+    topic   = "${{google_pubsub_topic.{each.name}.id}}"
+  }
+}
+```
+
+A field an entry may leave out takes a default from the list's request point,
+`defaults = { <field> = <value> }` (§6.17), so a body reads it from every entry.
+
 The list is the param as the compile sees it, a pack's `contributes_<param>` entries
 included (ADR 0051), so a project's or a pack's entry expands like the estate's own. A label
 is the entry's field, never its place in the list: reordering the list moves nothing,
@@ -779,7 +798,8 @@ Refused, at the `each` line: a list param no file declares, a param that is no l
 entry that is no object, one without the field or whose field is no label (a letter,
 then letters, digits, `_` and `-`), two entries with one label, `{each.x}` of a field the
 entry lacks or of a list or an object inside a string, a `use` or a second `each` inside
-the body, `each` in a resource body or in a grant map, and `{each.x}` outside an `each`.
+the body, `each` in a resource body or in a grant map, `when` with no field after it, and
+`{each.x}` outside an `each`.
 At the top level of a file `each` writes interfaces, not resources (§6.17). A label an `each` writes that the map also writes by hand is
 one address declared twice. `each` without `by`, or `each { … }`, is a label named
 `each`.
@@ -2334,7 +2354,12 @@ vendors it is reviewed. `key` is the field that names an entry, `fields` every f
 entry may carry, `key` among them, `description` what an entry is; an entry's key is a
 string or a number. `patterns` is optional and maps a field to a regular expression (Rust's
 `regex` syntax, no interpolation) that the field's whole value matches; a field without one
-takes any value. A pack declares it
+takes any value. `defaults` is optional and maps a field to the value an entry that leaves
+it out takes — any value, a param read by name included, never the key. The defaults are
+written into the list when the request point is read, before anything reads the list, so
+an `each`, the patterns, the interface and `terraform.tfvars` all see the filled entry; a
+project's file is checked as written, its entries filled the same way before they are
+compared with the estate's. A pack declares it
 beside the list; like an export it reaches the estate from a used file after the `use …
 when` guard. An `each` over the list (§6.4) makes each entry a resource, which the
 interface then publishes like any other.
@@ -2789,11 +2814,11 @@ across files it is the fold's conflict above.
   a fork; `suppress` + redeclare cannot express it because the
   redeclaration lands at the same address and folds to a conflict.
 - **`each` expands one level.** The label comes from a string field; a `use` or a second
-  `each` inside the body is refused; and `each` stands in a resource type map only — not in
-  a body, a grant map or at the top level of a file, so a bare-list pack cannot hold one.
-- **A pack is one instance.** Its params join one estate-wide namespace, the same pack
-  used twice is the same resources, and no `interface` block is written per entry of a
-  list (ADR 0071).
+  `each` inside the body is refused; and `each` stands in a resource type map, or at the top
+  level of a file around `interface` blocks — not in a body or a grant map, so a bare-list
+  pack cannot hold one. `when` reads one field of the entry; there is no condition on two.
+- **A pack is one instance.** Its params join one estate-wide namespace, and the same pack
+  used twice is the same resources (ADR 0075).
 - **`private` and `suppress` are read from the estate's own files**, never from a used one.
 - **`satz apply` does not run actions.** `run-actions` is a separate verb, and
   `phase` only orders and selects — nothing enforces that a `before-apply`

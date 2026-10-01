@@ -170,11 +170,16 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
         if let Err(msg) = check_request_entries(r, entries, &[]) {
             return perr(file, r.line, msg);
         }
+        let mut defaults = Vec::new();
+        for (f, v, line) in &r.defaults {
+            defaults.push((f.clone(), resolve_value(v, env, file, *line)?));
+        }
         out.push(ResolvedRequest {
             param: r.param.clone(),
             key: r.key.clone(),
             fields: r.fields.clone(),
             patterns: r.patterns.clone(),
+            defaults,
             description: r.description.clone(),
             entries: entries.clone(),
             file: file.clone(),
@@ -281,7 +286,7 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
             ));
             continue;
         };
-        let entries = match resolve_value(value, env, "", *line) {
+        let mut entries = match resolve_value(value, env, "", *line) {
             Ok(serde_yaml::Value::Sequence(s)) => s,
             Ok(other) => {
                 out.push((*line, format!("`{}` is {} — a contribution is a list of entries", name, yaml_kind(&other))));
@@ -292,11 +297,24 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
                 continue;
             }
         };
+        // a field the file leaves out takes the request point's default, as the estate's
+        // compile fills it in — so an entry already vendored compares equal to its copy in
+        // the estate's list
+        for e in entries.iter_mut() {
+            let serde_yaml::Value::Mapping(fields) = e else { continue };
+            for (f, v) in &point.defaults {
+                let k = serde_yaml::Value::String(f.clone());
+                if !fields.contains_key(&k) {
+                    fields.insert(k, v.clone());
+                }
+            }
+        }
         let decl = satz::RequestDecl {
             param: point.param.clone(),
             key: point.key.clone(),
             fields: point.fields.clone(),
             patterns: point.patterns.clone(),
+            defaults: Vec::new(),
             description: None,
             line: point.line,
         };
@@ -412,6 +430,18 @@ fn each_entries(entries: &[Entry], fields: &serde_yaml::Mapping, line: usize) ->
             Entry::Each { .. } => Err(format!("an `each` inside `each` (line {}) — one level expands", line)),
         })
         .collect()
+}
+
+/// `each … when <field>`: the entry carries the field with a value — absent, `""`, an empty
+/// list or object and `false` do not count; a number does.
+fn carries(fields: &serde_yaml::Mapping, field: &str) -> bool {
+    match fields.get(field) {
+        None | Some(serde_yaml::Value::Null) => false,
+        Some(serde_yaml::Value::String(s)) => !s.is_empty(),
+        Some(serde_yaml::Value::Sequence(s)) => !s.is_empty(),
+        Some(serde_yaml::Value::Mapping(m)) => !m.is_empty(),
+        Some(v) => truthy(Some(v)),
+    }
 }
 
 fn each_field<'f>(name: &str, fields: &'f serde_yaml::Mapping) -> Result<Option<&'f serde_yaml::Value>, String> {
@@ -685,8 +715,10 @@ pub struct ResolvedRequest {
     pub fields: Vec<String>,
     /// per field, the regular expression its whole value matches
     pub patterns: Vec<(String, String)>,
+    /// per field, the value an entry without it takes, resolved
+    pub defaults: Vec<(String, serde_yaml::Value)>,
     pub description: Option<String>,
-    /// the entries the list holds now, contributions included
+    /// the entries the list holds now, contributions included, defaults filled in
     pub entries: Vec<serde_yaml::Value>,
     pub file: String,
     pub line: usize,
@@ -1408,6 +1440,9 @@ pub fn compile_estate_using(
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
     };
+    for r in &file.requests {
+        w.fill_defaults(r, file_name)?;
+    }
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let mut tfvars = w.genv;
     // An acknowledgement is not configuration: nothing reads it (`satz pack-graph`
@@ -2442,8 +2477,39 @@ impl Walk<'_> {
         self.questions.push(pack_questions(file, file_name));
     }
 
+    /// A request point's `defaults` written into the list it names: every entry that does
+    /// not carry a defaulted field takes the default, resolved against the params as they
+    /// stand. Done when the request point is read, before the file's items are walked, so
+    /// an `each`, the request check, the interface and tfvars all see one list. A list the
+    /// walk does not hold yet is left to `resolve_requests`, which names it.
+    fn fill_defaults(&mut self, r: &satz::RequestDecl, file_name: &str) -> Result<(), PipelineError> {
+        if r.defaults.is_empty() {
+            return Ok(());
+        }
+        let mut values = Vec::new();
+        for (field, v, line) in &r.defaults {
+            values.push((field.clone(), resolve_value(v, &self.genv, file_name, *line)?));
+        }
+        let Some(serde_yaml::Value::Sequence(entries)) = self.genv.get_mut(&r.param) else {
+            return Ok(());
+        };
+        for e in entries.iter_mut() {
+            let serde_yaml::Value::Mapping(fields) = e else { continue };
+            for (field, value) in &values {
+                let k = serde_yaml::Value::String(field.clone());
+                if !fields.contains_key(&k) {
+                    fields.insert(k, value.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// After the guard too: a pack switched off publishes nothing.
     fn absorb_exports(&mut self, file: &satz::File, file_name: &str) -> Result<(), PipelineError> {
+        for r in &file.requests {
+            self.fill_defaults(r, file_name)?;
+        }
         self.requests.extend(file.requests.iter().map(|r| (file_name.to_string(), r.clone())));
         let interfaces = interfaces_of(file, file_name, &self.genv)?;
         self.exports.extend(exports_of(file, file_name, &interfaces));
@@ -2511,13 +2577,21 @@ impl Walk<'_> {
         }
         let mut out = Vec::new();
         for e in body {
-            let Entry::Each { list, key, body: template, line } = e else {
+            let Entry::Each { list, key, when, body: template, line } = e else {
                 out.push(e.clone());
                 continue;
             };
             self.belongs(pos, e, file_name)?;
-            let what = format!("each {} by {}", list, key);
+            let what = match when {
+                Some(w) => format!("each {} by {} when {}{}", list, key, if w.not { "not " } else { "" }, w.field),
+                None => format!("each {} by {}", list, key),
+            };
             for (label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
+                if let Some(w) = when {
+                    if carries(fields, &w.field) == w.not {
+                        continue;
+                    }
+                }
                 let at = |msg: String| PipelineError { file: file_name.to_string(), line: *line, msg: format!("`{}`, entry `{}`: {}", what, label, msg) };
                 let body = each_entries(template, fields, *line).map_err(at)?;
                 out.push(Entry::Map { key: Key::Str(vec![StrPart::Lit(label)]), name: None, body, line: *line });
@@ -4708,6 +4782,71 @@ google_storage_bucket {
         refused(&with("", "google_storage_bucket {\n  b {\n    name = \"{each.name}\"\n  }\n}\n"), "stands inside its body");
         // an expanded label that meets a written one is two bodies for one address
         refused(&with("  xs = [ { name = \"b\" } ]", "google_storage_bucket {\n  each xs by name {\n    name = \"x\"\n  }\n  b {\n    name = \"y\"\n  }\n}\n"), "declared twice in this file");
+    }
+
+    /// `each … when <field>` writes the body for the entries that carry the field with a
+    /// value, and skips the rest; the plain `each` beside it still writes every entry.
+    #[test]
+    fn each_when_writes_only_the_entries_that_carry_the_field() {
+        let src = "estate e\nparams {\n  customer_organization_id = \"1\"\n  xs = [\n    { name = \"a\" budget = 100 },\n    { name = \"b\" },\n    { name = \"c\" budget = \"\" },\n    { name = \"d\" budget = false },\n  ]\n}\ngoogle_storage_bucket {\n  each xs by name {\n    name = \"{each.name}\"\n  }\n}\ngoogle_cloud_identity_group {\n  each xs by name when budget {\n    display_name = \"{each.budget}\"\n  }\n}\n";
+        let fe = compile(src).expect("compiles");
+        assert_eq!(expanded(&fe, "google_storage_bucket").len(), 4);
+        let groups = expanded(&fe, "google_cloud_identity_group");
+        assert_eq!(groups.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(groups[0].1["display_name"], serde_yaml::Value::String("100".into()));
+        // `when not` writes the others, so the two together write every entry once
+        let fe = compile(&src.replace("when budget {\n    display_name = \"{each.budget}\"", "when not budget {\n    display_name = \"{each.name}\"")).expect("compiles");
+        let others = expanded(&fe, "google_cloud_identity_group");
+        assert_eq!(others.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["b", "c", "d"]);
+    }
+
+    const DEFAULTED: &str = r#"pack proj version "1.0"
+params {
+  fallback_email = "ops@example.com"
+  projects = [ { name = "base" } ]
+}
+request projects {
+  key      = "name"
+  fields   = ["name", "apis", "email", "budget"]
+  defaults = { apis = ["storage.googleapis.com"] email = fallback_email }
+}
+google_project {
+  each projects by name {
+    name            = "{each.name}"
+    project_id      = "acme-{each.name}"
+    project_service = each.apis
+    labels          = { contact = "{each.email}" }
+  }
+}
+google_cloud_identity_group {
+  each projects by name when budget {
+    display_name = "{each.name}"
+  }
+}
+"#;
+
+    /// A request point's `defaults` fill every entry that leaves a field out — the
+    /// estate's own and a contributed one — before anything reads the list, a default may
+    /// read a param, and a field an entry carries is kept as written.
+    #[test]
+    fn request_defaults_fill_the_entries_that_leave_a_field_out() {
+        let team = "pack team version \"1.0\"\nparams {\n  contributes_projects = [ { name = \"team\" apis = [\"run.googleapis.com\"] budget = 50 } ]\n}\n";
+        let src = format!("{}use \"proj.satz\"\nuse \"team.satz\"\n", HEAD);
+        let fe = compile_with(&src, &[("proj.satz", DEFAULTED), ("team.satz", team)]).expect("compiles");
+        let got = expanded(&fe, "google_project");
+        let base = &got.iter().find(|(l, _)| l == "base").unwrap().1;
+        assert_eq!(base["project_service"], serde_yaml::from_str::<serde_yaml::Value>("[storage.googleapis.com]").unwrap());
+        assert_eq!(base["labels"]["contact"], serde_yaml::Value::String("ops@example.com".into()));
+        let t = &got.iter().find(|(l, _)| l == "team").unwrap().1;
+        assert_eq!(t["project_service"], serde_yaml::from_str::<serde_yaml::Value>("[run.googleapis.com]").unwrap());
+        // `when` reads the filled list: only the entry that carries a budget gets one
+        assert_eq!(expanded(&fe, "google_cloud_identity_group").iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["team"]);
+        // the request point reports the entries filled in, and its resolved defaults
+        assert_eq!(fe.requests[0].defaults.len(), 2);
+        assert!(fe.requests[0].entries.iter().all(|e| e.get("email").is_some()));
+        // a team's file sending its vendored entry again, as written, is no collision
+        let found = check_request_file(team, &fe.requests, &fe.tfvars);
+        assert!(found.is_empty(), "{:?}", found);
     }
 
     /// `each` alone, and `each <name> { … }`, are what they were: a label, a named entry.

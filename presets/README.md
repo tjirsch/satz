@@ -496,15 +496,43 @@ the IaC service account keeps `billing.admin`. Declares its own
 
 ### organization-budget.satz
 
-A global budget (1000 EUR, thresholds at 50/80/100% of current spend) on the infra
-billing account (declares its own `google_billing_budget` map).
+Budgets on the infrastructure billing account: the organisation's, and one per entry of
+`budgets` for a set of projects or folders.
 
 **Use** (root level): `use "presets/organization-budget.satz"`
 
-**Notes:** contains a placeholder `"import-id"` for adopting an existing budget — remove
-it for a fresh budget, or replace it with the real budget id (`satz adopt` does not
-resolve budgets: they are matched by display name, which needs the Budgets API). The
-amount and the thresholds are literals, not params.
+**Questions.** `budget_amount` (the organisation budget per month), `budget_currency`
+(the billing account's own), `budget_notification_email` (an address beside the billing
+account's administrators; empty is nobody else) and `budget_default_recipients_off`.
+`budget_threshold_rules` (50, 80 and 100 % of current spend) and `budget_channel_project`
+(the infrastructure project) are params nobody is asked.
+
+**Recipients.** Google mails every alert to the billing account's administrators and
+users with no resource. An entry with an `email` also gets an e-mail notification channel
+in `budget_channel_project`, named in its budget — no Pub/Sub. With
+`budget_default_recipients_off = true` a budget that has a channel mails its channel
+alone; a budget without one keeps the administrators.
+
+**More budgets.** Each entry of `budgets` is `{ name amount }` plus, optionally,
+`projects` (`projects/<number>`; `"projects/${{google_project.<label>.number}}"` for a
+declared project), `folders` (`folders/<id>` or `organizations/<id>`; a declared folder's
+`"${{google_folder.<label>.name}}"`), `email` and `import_id`. The first entry is the
+organisation's budget, `global-budget`; binding `budgets` replaces the list, so an estate
+that adds budgets writes it too:
+
+```
+budgets = [
+  { name = "global-budget" amount = budget_amount },
+  { name = "payments" amount = 300 projects = ["projects/${{google_project.payments.number}}"] email = "payments-team@example.com" },
+]
+```
+
+`budgets` is a request point: a project asks for its own budget with
+`contributes_budgets`, checked by `satz check-request`.
+
+**Adopting an existing budget.** Its entry's `import_id = "billingAccounts/<account>/budgets/<id>"`
+(`gcloud billing budgets list --billing-account=<account>`); `satz adopt` does not resolve
+budgets.
 
 ### billing-export.satz
 
