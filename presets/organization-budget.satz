@@ -1,39 +1,166 @@
-// An organization-wide budget on the infrastructure billing account, with alert
-// thresholds at 50, 80 and 100 % of current spend.
+// Budgets on the infrastructure billing account with alert thresholds: one for the whole
+// account, and one per entry of `budgets` for a set of projects or folders.
 //
 //   use "presets/organization-budget.satz"
 //
-// The `"import-id"` in the body is a placeholder for adopting a budget that
-// already exists — delete it for a fresh budget, or replace it with the real id.
-// `satz adopt` does not resolve budgets: they are matched by display name and
-// need the Budgets API.
+// WHAT AN ENTRY IS. `{ name amount }`, and optionally `projects`, `folders`, `email` and
+// `import_id`. The first entry of `budgets` is the organisation's budget, `global-budget`,
+// built from `budget_amount` and `budget_notification_email`. Binding `budgets` in the
+// estate replaces the whole list, so an estate that adds budgets writes that entry too;
+// a project asks for its own with `contributes_budgets`, checked by `satz check-request`.
+//
+// WHAT A BUDGET COUNTS. An entry with neither `projects` nor `folders` counts the whole
+// billing account. `projects` lists `projects/<number>` — the project NUMBER:
+// `"projects/${{google_project.<label>.number}}"` for a project the estate declares.
+// `folders` lists `folders/<id>` or `organizations/<id>`; `google_folder.<label>.name`
+// already has that form. A budget lives on the billing account whatever it counts, so a
+// project billed to another account is not counted here.
+//
+// WHO IS TOLD. The billing account's administrators and users get every alert by e-mail
+// from Google, with no resource — the group `presets/billing-account-permissions.satz`
+// grants `roles/billing.admin`. An entry with an `email` also gets an e-mail notification
+// channel in `budget_channel_project` (the infrastructure project), named in its budget;
+// no Pub/Sub is involved. `budget_default_recipients_off` stops the mails to the billing
+// account's administrators and users for the budgets that have a channel; a budget without
+// one keeps them, so no budget alerts nobody.
+//
+// ADOPTING AN EXISTING BUDGET. Give its entry `import_id = "billingAccounts/<account>/
+// budgets/<id>"` (`gcloud billing budgets list --billing-account=<account>`); `satz adopt`
+// does not resolve budgets. An empty `import_id` creates the budget.
 
-pack organization_budget version "1.0"
+pack organization_budget version "2.0"
+
+params {
+  // The organisation budget's amount per calendar month, in whole units of the billing
+  // account's currency. Asked: no amount fits every customer, and the default is no
+  // answer — the question stays open until the estate binds one.
+  budget_amount   = "1000"
+  // ISO 4217; it must be the billing account's own currency, or the API refuses the budget.
+  budget_currency = "EUR"
+  // When an alert goes out, as fractions of the amount; FORECASTED_SPEND warns before the
+  // money is spent.
+  budget_threshold_rules = [
+    {
+      threshold_percent = 0.5
+      spend_basis       = "CURRENT_SPEND"
+    },
+    {
+      threshold_percent = 0.8
+      spend_basis       = "CURRENT_SPEND"
+    },
+    {
+      threshold_percent = 1.0
+      spend_basis       = "CURRENT_SPEND"
+    },
+  ]
+  // An address that gets the alerts beside the billing account's administrators and
+  // users; empty is nobody else. The default `email` of every entry.
+  budget_notification_email     = ""
+  // true: the budgets with a channel no longer mail the billing account's administrators
+  // and users.
+  budget_default_recipients_off = false
+  // The project the e-mail channels live in.
+  budget_channel_project        = infra_project_name
+  // One entry per budget; the first is the organisation's.
+  budgets = [
+    {
+      name   = "global-budget"
+      amount = budget_amount
+    },
+  ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question budget_amount {
+  prompt   = "The organisation budget's amount per calendar month, in whole units of the billing account's currency"
+  why      = "Alerts go out at 50, 80 and 100 % of it. Too high and the alarm comes after the money is gone; too low and the alerts are noise nobody reads."
+  reversal = edit
+  blast    = none
+}
+
+question budget_currency {
+  prompt   = "The billing account's currency (ISO 4217, for example EUR or USD)"
+  why      = "A budget is stated in the billing account's own currency; any other is refused when the budget is created."
+  reversal = edit
+  blast    = none
+}
+
+question budget_notification_email {
+  prompt   = "An address that gets the budget alerts beside the billing account's administrators — a group's address, never a person's"
+  why      = "Google mails the billing account's administrators and users on its own. An address here adds an e-mail notification channel, for a team that holds no billing role."
+  empty    = "the billing account's administrators and users alone"
+  reversal = edit
+  blast    = none
+}
+
+question budget_default_recipients_off {
+  prompt   = "Stop mailing the billing account's administrators and users for the budgets that have an address of their own?"
+  why      = "A project's budget then reaches the project's team alone. A budget without an address keeps mailing the administrators, so no budget alerts nobody."
+  reversal = edit
+  blast    = none
+}
+
+// ---- what a project may ask for ---------------------------------------------------
+
+request budgets {
+  key         = "name"
+  fields      = ["name", "amount", "projects", "folders", "email", "import_id"]
+  patterns    = { name = "[a-z][a-z0-9-]*" amount = "[0-9]+" email = "([^@: ]+@[^@: ]+)?" }
+  defaults    = { projects = [] folders = [] email = budget_notification_email import_id = "" }
+  description = "A budget: its name, its monthly amount, the projects (`projects/<number>`) or folders (`folders/<id>`) it counts, and the address its alerts go to"
+}
+
+// ---- one e-mail channel per budget that names an address ----------------------------
+
+google_monitoring_notification_channel {
+  each budgets by name when email {
+    project      = budget_channel_project
+    display_name = "Budget {each.name}"
+    type         = "email"
+    labels {
+      email_address = each.email
+    }
+  }
+}
+
+// ---- the budgets: with a channel, and without one -----------------------------------
 
 google_billing_budget {
-  "global-budget" {
-    "import-id"     = "billingAccounts/123456-123456-123456/budgets/123456-123456789012"
-    display_name    = "Global Budget"
+  each budgets by name when email {
+    "import-id"     = each.import_id
+    display_name    = "{each.name}"
     billing_account = billing_account_infra
+    budget_filter {
+      projects           = each.projects
+      resource_ancestors = each.folders
+    }
     amount {
       specified_amount {
-        currency_code = "EUR"
-        units         = "1000"
+        currency_code = budget_currency
+        units         = "{each.amount}"
       }
     }
-    threshold_rules = [
-      {
-        threshold_percent = 0.5
-        spend_basis       = "CURRENT_SPEND"
-      },
-      {
-        threshold_percent = 0.8
-        spend_basis       = "CURRENT_SPEND"
-      },
-      {
-        threshold_percent = 1.0
-        spend_basis       = "CURRENT_SPEND"
-      },
-    ]
+    threshold_rules = budget_threshold_rules
+    all_updates_rule {
+      monitoring_notification_channels = ["${{google_monitoring_notification_channel.{each.name}.name}}"]
+      disable_default_iam_recipients   = budget_default_recipients_off
+    }
+  }
+  each budgets by name when not email {
+    "import-id"     = each.import_id
+    display_name    = "{each.name}"
+    billing_account = billing_account_infra
+    budget_filter {
+      projects           = each.projects
+      resource_ancestors = each.folders
+    }
+    amount {
+      specified_amount {
+        currency_code = budget_currency
+        units         = "{each.amount}"
+      }
+    }
+    threshold_rules = budget_threshold_rules
   }
 }

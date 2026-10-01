@@ -7,7 +7,7 @@
     },
     {
       "path": "presets/estate-map.satz",
-      "version": "2.7",
+      "version": "2.8",
       "role": "map",
       "order": 0,
       "phase": "once the estate runs as the service account — the map, which declares the questions\nevery line below is gated on. This is the one to uncomment first.",
@@ -44,7 +44,7 @@
     },
     {
       "path": "presets/organization-budget.satz",
-      "version": "1.0",
+      "version": "2.0",
       "role": "pack",
       "gate": "use_budget",
       "gate_declared_in": "presets/estate-map.satz",

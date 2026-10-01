@@ -13,6 +13,20 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.91.0
+
+**`presets/organization-budget.satz` asks four questions, and its budget is written from
+the list `budgets`.** An estate that uses the pack (`grep -n organization-budget satz/*.satz`)
+is refused by `satz bootstrap` and `satz transpile --apply` until it answers
+`budget_amount`, `budget_currency`, `budget_notification_email` and
+`budget_default_recipients_off`; `satz interview <estate>` asks them. To keep the budget
+as it was, bind `budget_amount = "1000"`, `budget_currency = "EUR"`,
+`budget_notification_email = ""` and `budget_default_recipients_off = false`. The plan
+then changes `google_billing_budget.global_budget` in place, once: its display name
+becomes `global-budget` and an empty `budget_filter` is written. An estate whose
+`organization-budget.local.satz` fork carries a real `"import-id"` moves that id into the
+entry: `budgets = [ { name = "global-budget" amount = budget_amount import_id = "<the id>" } ]`.
+
 ### v0.90.0
 
 **A live import adds to a project's `project_service` list every API the resources it
@@ -1004,6 +1018,7 @@ the private history recorded them.
 |---|---|---|---|
 | `project_onboarding` | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |
 | `project_onboarding` | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
+| `estate_map` | 2.8 | 2026-10-02 | `use_budget` asks for budgets on projects and folders too, and no longer speaks of a placeholder id; nothing on or off changes |
 | `estate_map` | 2.7 | 2026-09-30 | offers `project-onboarding` on `use_project_onboarding`, off by default, with its question; nothing already on changes |
 | `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |
 | `estate_map` | 2.6 | 2026-09-26 | offers `shared-network` on `use_shared_network`, off by default, with its question; nothing already on changes |
@@ -1191,4 +1206,5 @@ the private history recorded them.
 | `sa_security_audit` | 1.0 | 2026-08-21 | read-only security-audit service account with its custom role |
 | `billing_account_permissions` | 1.1 | 2026-09-01 | split by audience: the domain gets `billing.user` + `billing.viewer`; a `billing_admins_group` param (default `gcp-billing-admins@{customer_domain}`) gets `billing.admin` + `billing.costsManager`; the IaC SA keeps `billing.admin`. Adoption adds three grants per estate — a real plan |
 | `billing_account_permissions` | 1.0 | 2026-08-20 | billing-account IAM for the S1 groups and the IaC service account |
+| `organization_budget` | 2.0 | 2026-10-02 | amount, currency, thresholds and recipients are params, `budget_amount` and the recipients asked; `budgets` adds budgets for projects or folders, each with an optional e-mail channel, as a request point; an existing budget is adopted through an entry's `import_id`, the placeholder id is gone |
 | `organization_budget` | 1.0 | 2026-08-20 | organization budget with threshold alerts (`"import-id"` example) |

@@ -163,7 +163,10 @@ grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules miss
 for t in orders billing; do
   grep -q "resource \"google_pubsub_topic\" \"$t\"" "$sc" || fail "each did not write the topic $t:\n$(grep -A4 google_pubsub_topic "$sc")"
 done
-grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "604800s"' "$sc" || fail "each did not read the entry's fields:\n$(grep -A5 'google_pubsub_topic" "billing"' "$sc")"
+grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "604800s"' "$sc" || fail "each did not read the entry's fields, or the request point's default:\n$(grep -A5 'google_pubsub_topic" "billing"' "$sc")"
+# `each … when subscription`: only the entry that carries the field gets a subscription
+grep -q 'resource "google_pubsub_subscription" "orders"' "$sc" || fail "each … when did not write the entry that carries the field"
+grep -q 'resource "google_pubsub_subscription" "billing"' "$sc" && fail "each … when wrote an entry that does not carry the field"
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
 grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
 [ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"
@@ -296,7 +299,7 @@ assert names[(None, "folders")]["how"] == "map"
 assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments"}, r["interfaces"]
 assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
 q = [x for x in r["requests"] if x["param"] == "event_topics"]
-assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention"] and q[0]["entries"] == 2, r["requests"]
+assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention", "subscription"] and q[0]["entries"] == 2, r["requests"]
 PY
 # a project's request file, checked offline against the estate's request points
 "$satz" --config . check-request "$root/tests/smoke/requests/ok.satz" "$PWD/tmp/with-project.satz" > tmp/check-request.txt 2>&1 || fail "a fitting request file was refused:\n$(cat tmp/check-request.txt)"

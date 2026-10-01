@@ -34,10 +34,11 @@ params {
     "storage.googleapis.com",
   ]
   // A list of objects the `each` over `google_pubsub_topic` below writes one topic for,
-  // labelled by `name`.
+  // labelled by `name`. `billing` leaves `retention` out and takes the request point's
+  // default; only `orders` carries a `subscription`, so only it gets one.
   event_topics = [
-    { name = "orders" retention = "86400s" },
-    { name = "billing" retention = "604800s" },
+    { name = "orders" retention = "86400s" subscription = "orders-audit" },
+    { name = "billing" },
   ]
 }
 // ---------------------------------------------------------------------------
@@ -236,10 +237,12 @@ google_project {
 
 // --- `request`: what a project may add to a list, and each entry's shape — checked at
 //     every compile, and by `satz check-request` on a project's file before it is used.
+//     `defaults` fills a field an entry leaves out, before anything reads the list.
 request event_topics {
   key         = "name"
-  fields      = ["name", "retention"]
+  fields      = ["name", "retention", "subscription"]
   patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" }
+  defaults    = { retention = "604800s" }
   description = "A Pub/Sub topic in the infrastructure project"
 }
 
@@ -251,6 +254,16 @@ google_pubsub_topic {
     name                       = "{customer_shortname}-{each.name}"
     project                    = infra_project_name
     message_retention_duration = each.retention
+  }
+}
+
+// --- `each … when <field>`: the body only for the entries that carry the field with a
+//     value; `when not <field>` writes it for the others.
+google_pubsub_subscription {
+  each event_topics by name when subscription {
+    name    = "{each.subscription}"
+    project = infra_project_name
+    topic   = "${{google_pubsub_topic.{each.name}.id}}"
   }
 }
 
