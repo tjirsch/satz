@@ -2629,7 +2629,7 @@ pub(crate) async fn serve(
 
 #[cfg(test)]
 mod tests {
-    use super::{AdoptReport, Group, Level, ROWS_IN_RESULT, DOCS};
+    use super::{AdoptReport, Group, Level, ROWS_IN_RESULT};
     use crate::adopt::{AdoptRow, RowAction};
 
     /// A table the size a real estate produces, with rows the width real ones
