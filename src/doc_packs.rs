@@ -250,6 +250,138 @@ pub(crate) fn summary(h: &Header, rel: &Path) -> Result<String, BoxErr> {
 }
 
 // ---------------------------------------------------------------------------
+// What a pack is called, and what it leaves open
+// ---------------------------------------------------------------------------
+
+/// The file the library's history is read from: `## Breaking changes` per release, then
+/// the `## Changelog` table, one row per pack version.
+const CHANGELOG_FILE: &str = "CHANGELOG.md";
+
+/// The ids that predate the rule that a pack's id is its file name (ADR 0077): the path
+/// under `presets/`, and the id the file still carries. Each row leaves with its rename —
+/// `pack_ids` refuses a row whose pack carries another id, so the table only shrinks.
+pub(crate) const LEGACY_PACK_IDS: &[(&str, &str)] = &[
+    ("ci/verification-runner-grant.satz", "ci.verification_runner_grant"),
+    ("ci/verification-runner.satz", "ci.verification_runner"),
+    ("cis/CIS-GCP-Foundation-4.0.satz", "CIS_GCP_Foundation_4_0"),
+    ("cis/access-approval.satz", "cis_extensions.access_approval"),
+    ("cis/api-key-services-dry-run.satz", "cis_extensions.api_key_services_dry_run"),
+    ("cis/api-key-services.satz", "cis_extensions.api_key_services"),
+    ("cis/block-project-ssh-keys-dry-run.satz", "cis_extensions.block_project_ssh_keys_dry_run"),
+    ("cis/block-project-ssh-keys.satz", "cis_extensions.block_project_ssh_keys"),
+    ("cis/bucket-retention-dry-run.satz", "cis_extensions.bucket_retention_dry_run"),
+    ("cis/bucket-retention.satz", "cis_extensions.bucket_retention"),
+    ("cis/cloud-sql-dry-run.satz", "cis_extensions.cloud_sql_dry_run"),
+    ("cis/cloud-sql-iam-and-deletion-protection-dry-run.satz", "cis_extensions.cloud_sql_iam_and_deletion_protection_dry_run"),
+    ("cis/cloud-sql-iam-and-deletion-protection.satz", "cis_extensions.cloud_sql_iam_and_deletion_protection"),
+    ("cis/cloud-sql.satz", "cis_extensions.cloud_sql"),
+    ("cis/cmek.satz", "cis_extensions.cmek"),
+    ("cis/confidential-computing-dry-run.satz", "cis_extensions.confidential_computing_dry_run"),
+    ("cis/confidential-computing.satz", "cis_extensions.confidential_computing"),
+    ("cis/dns-logging.satz", "cis_extensions.dns_logging"),
+    ("cis/internet-ssh-rdp.satz", "cis_extensions.internet_ssh_rdp"),
+    ("cis/shielded-vm.satz", "cis_extensions.shielded_vm"),
+    ("exemptions/exemption-tag.satz", "exemptions.exemption_tag"),
+    ("integrations/microsoft-defender-for-cloud-cspm-role-default.satz", "integrations.microsoft_defender_for_cloud_cspm_role_default"),
+    ("integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz", "integrations.microsoft_defender_for_cloud_cspm_role_least_privilege"),
+    ("integrations/microsoft-defender-for-cloud-cspm.satz", "integrations.microsoft_defender_for_cloud_cspm"),
+    ("integrations/microsoft-defender-for-cloud.satz", "integrations.microsoft_defender_for_cloud"),
+    ("integrations/microsoft-sentinel-auditlogs.satz", "integrations.microsoft_sentinel_auditlogs"),
+    ("integrations/microsoft-sentinel-network-logs.satz", "integrations.microsoft_sentinel_network_logs"),
+    ("integrations/microsoft-sentinel.satz", "integrations.microsoft_sentinel"),
+    ("monitoring/organization-audit-logsink.satz", "monitoring.organization_audit_logsink"),
+    ("monitoring/organization-cis-log-alerts-central.satz", "monitoring.organization_cis_log_alerts_central"),
+];
+
+/// The id a pack at `rel` carries: its file stem, `-` written `_`.
+pub(crate) fn expected_pack_id(rel: &Path) -> String {
+    rel.file_stem().and_then(|s| s.to_str()).unwrap_or_default().replace('-', "_")
+}
+
+/// A pack's id is its file name (ADR 0077): `cis/cmek.satz` is `pack cmek`. The folder says
+/// where a pack lives and `library-groups.txt` its topic, and the id keys the changelog and
+/// names the page. `rel` may be a bare file name — `review-pack` sees a pack outside the
+/// library that way — so a legacy id is matched by file name.
+pub(crate) fn pack_id(rel: &Path, id: &str) -> Result<(), BoxErr> {
+    let want = expected_pack_id(rel);
+    if id == want {
+        return Ok(());
+    }
+    let name = rel.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    let legacy = LEGACY_PACK_IDS
+        .iter()
+        .any(|(p, i)| *i == id && Path::new(p).file_name().and_then(|s| s.to_str()) == Some(name));
+    if legacy {
+        return Ok(());
+    }
+    Err(format!(
+        "presets/{}: `pack {}` — a pack's id is its file name, so this one is `pack {}`; the folder says where it lives and library-groups.txt its topic",
+        rel.display(),
+        id,
+        want
+    )
+    .into())
+}
+
+/// Every pack's id against its file; two packs with one id, since the id keys the
+/// changelog and names the page; and every legacy row against the pack it names — a row
+/// whose pack carries another id now is refused, so the table empties as the renames land.
+/// (A row whose pack is gone is caught by `legacy_pack_ids_name_the_shipped_packs`, over the
+/// shipped library: a library in a test directory holds none of them.)
+fn pack_ids(all: &[(PathBuf, File, String)]) -> Vec<String> {
+    let mut errs = Vec::new();
+    let mut by_id: BTreeMap<&str, &Path> = BTreeMap::new();
+    for (rel, file, _) in all {
+        let id = file.estate.as_deref().unwrap_or_default();
+        if let Err(e) = pack_id(rel, id) {
+            errs.push(e.to_string());
+        }
+        if let Some(first) = by_id.insert(id, rel.as_path()) {
+            errs.push(format!(
+                "presets/{}: `pack {}` is presets/{}'s id too — the id keys the changelog and names the page, so two packs cannot share one",
+                rel.display(),
+                id,
+                first.display()
+            ));
+        }
+    }
+    for (path, legacy) in LEGACY_PACK_IDS {
+        if let Some((rel, file, _)) = all.iter().find(|(rel, _, _)| rel == Path::new(path)) {
+            let id = file.estate.as_deref().unwrap_or_default();
+            if id != *legacy {
+                errs.push(format!(
+                    "presets/{}: its id is `{}` now, not the legacy `{}` — take its row off LEGACY_PACK_IDS",
+                    rel.display(),
+                    id,
+                    legacy
+                ));
+            }
+        }
+    }
+    errs
+}
+
+/// The params an operator must supply and nothing asks for: every string param that
+/// defaults to `""` with no `question` on it in the same file — a `oneof` asks its options'
+/// params. A list or any other kind carries a value or a shape of its own.
+pub(crate) fn asks_its_open_params(file: &File) -> Vec<(String, usize)> {
+    let asked: BTreeSet<&str> = file
+        .questions
+        .iter()
+        .flat_map(|q| std::iter::once(q.subject.as_str()).chain(q.options.iter().map(|o| o.param.as_str())))
+        .collect();
+    file.params
+        .iter()
+        .filter(|(n, v, _)| is_empty_str(v) && !asked.contains(n.as_str()))
+        .map(|(n, _, line)| (n.clone(), *line))
+        .collect()
+}
+
+fn is_empty_str(v: &Value) -> bool {
+    matches!(v, Value::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(s) if s.is_empty())))
+}
+
+// ---------------------------------------------------------------------------
 // What a pack contributes
 // ---------------------------------------------------------------------------
 
@@ -560,22 +692,23 @@ fn cells(row: &str) -> Vec<String> {
     out
 }
 
-/// The pack history, read from the `## Changelog` table in `presets/README.md`.
+/// The pack history, read from the `## Changelog` table in `presets/CHANGELOG.md`.
 ///
 /// Two gates ride along, and both used to live in a shell loop in the smoke
 /// matrix: every row names a pack that exists, and every pack's current in-file
 /// version has a row. Here they also run under `cargo test`, and the message can
 /// name the line.
 fn changelog(presets_dir: &Path, all: &[(PathBuf, File, String)]) -> Result<Changelog, BoxErr> {
-    let path = presets_dir.join("README.md");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let path = presets_dir.join(CHANGELOG_FILE);
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {} — the library's history, one row per pack version, lives in this file", path.display(), e))?;
     let lines: Vec<&str> = text.lines().collect();
     let at = |n: usize, msg: &str| -> BoxErr { format!("{}:{}: {}", path.display(), n + 1, msg).into() };
 
     let start = lines
         .iter()
         .position(|l| l.trim() == "## Changelog")
-        .ok_or_else(|| -> BoxErr { format!("{}: no `## Changelog` section — the pack history lives at the foot of the preset library", path.display()).into() })?;
+        .ok_or_else(|| -> BoxErr { format!("{}: no `## Changelog` section — the pack history is the second half of this page, after `## Breaking changes`", path.display()).into() })?;
     let head = (start + 1..lines.len())
         .find(|&i| lines[i].trim_start().starts_with('|'))
         .ok_or_else(|| at(start, "the `## Changelog` section carries no table"))?;
@@ -621,7 +754,7 @@ fn changelog(presets_dir: &Path, all: &[(PathBuf, File, String)]) -> Result<Chan
     }
     if !missing.is_empty() {
         return Err(format!(
-            "{} pack version(s) with no row under `## Changelog` in presets/README.md — a bump and its reason ship together:\n  {}",
+            "{} pack version(s) with no row under `## Changelog` in presets/CHANGELOG.md — a bump and its reason ship together:\n  {}",
             missing.len(),
             missing.join("\n  ")
         )
@@ -1178,7 +1311,7 @@ fn render(
     for c in history {
         md.push_str(&format!("| {} | {} | {} |\n", c.version, c.date, c.change));
     }
-    md.push_str("\nThe whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.\n\n");
+    md.push_str("\nThe whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.\n\n");
     md.push_str("## Notes\n\n");
     md.push_str(&notes_region(existing));
     md.push('\n');
@@ -1223,9 +1356,9 @@ fn index(rows: &[Row], groups: &[Group], cats: &Catalogs) -> String {
     md.push_str(
         "One page per pristine pack, derived from the pack file by `satz doc-packs`, in the groups \
          and the order of `presets/library-groups.txt`. The library's conventions and its prose per \
-         group are [`presets/README.md`](../README.md); its version history is \
-         [the changelog](../README.md#changelog) at the foot of that page, repeated per pack under \
-         **History** on each page here.\n\n",
+         group are [`presets/README.md`](../README.md); its history — what each release refuses and \
+         one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack \
+         under **History** on each page here.\n\n",
     );
     let resources: usize = rows.iter().map(|r| r.resources).sum();
     let claims: usize = rows.iter().map(|r| r.claims).sum();
@@ -1326,8 +1459,20 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
             }
         }
     }
+    errs.extend(pack_ids(&all));
+    for (rel, file, _) in &all {
+        for (name, line) in asks_its_open_params(file) {
+            errs.push(format!(
+                "presets/{}:{}: `{}` defaults to `\"\"` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
+                rel.display(),
+                line,
+                name,
+                name
+            ));
+        }
+    }
     if !errs.is_empty() {
-        return Err(format!("{} pack header(s) need work:\n  {}", errs.len(), errs.join("\n  ")).into());
+        return Err(format!("{} pack(s) need work:\n  {}", errs.len(), errs.join("\n  ")).into());
     }
 
     let mut stale = Vec::new();
@@ -1534,24 +1679,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satz-changelog-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("p.satz"), "// A pack.\n\npack p version \"1.1\"\n").unwrap();
-        let readme = |rows: &str| format!("# satz library\n\nprose\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n{}", rows);
+        let page = |rows: &str| format!("# satz changelog\n\nprose\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n{}", rows);
 
-        std::fs::write(dir.join("README.md"), readme("| `p` | 1.1 | 2026-09-04 | first |\n")).unwrap();
+        std::fs::write(dir.join(CHANGELOG_FILE), page("| `p` | 1.1 | 2026-09-04 | first |\n")).unwrap();
         let all = packs(&dir).unwrap();
         let hist = changelog(&dir, &all).unwrap();
         assert_eq!(hist["p"].len(), 1);
         assert_eq!(hist["p"][0].date, "2026-09-04");
 
-        std::fs::write(dir.join("README.md"), readme("| `p` | 1.0 | 2026-09-04 | first |\n")).unwrap();
+        std::fs::write(dir.join(CHANGELOG_FILE), page("| `p` | 1.0 | 2026-09-04 | first |\n")).unwrap();
         let e = changelog(&dir, &all).unwrap_err().to_string();
         assert!(e.contains("`p` 1.1 has no changelog row"), "{}", e);
 
-        std::fs::write(dir.join("README.md"), readme("| `q` | 1.1 | 2026-09-04 | first |\n")).unwrap();
+        std::fs::write(dir.join(CHANGELOG_FILE), page("| `q` | 1.1 | 2026-09-04 | first |\n")).unwrap();
         let e = changelog(&dir, &all).unwrap_err().to_string();
         assert!(e.contains("not a pack in the library"), "{}", e);
 
-        std::fs::write(dir.join("README.md"), "# satz library\n\nno section\n").unwrap();
+        std::fs::write(dir.join(CHANGELOG_FILE), "# satz changelog\n\nno section\n").unwrap();
         assert!(changelog(&dir, &all).unwrap_err().to_string().contains("no `## Changelog` section"));
+        std::fs::remove_file(dir.join(CHANGELOG_FILE)).unwrap();
+        assert!(changelog(&dir, &all).unwrap_err().to_string().contains(CHANGELOG_FILE), "a missing file names itself");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1602,9 +1749,10 @@ mod tests {
         let docs = dir.join("docs");
         std::fs::create_dir_all(&docs).unwrap();
         std::fs::write(dir.join("p.satz"), "// A pack.\n\npack p version \"1.0\"\n").unwrap();
+        std::fs::write(dir.join("README.md"), "# satz library\n\nprose\n\n## Packs\n").unwrap();
         std::fs::write(
-            dir.join("README.md"),
-            "# satz library\n\nprose\n\n## Packs\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `p` | 1.0 | 2026-09-04 | first |\n",
+            dir.join(CHANGELOG_FILE),
+            "# satz changelog\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `p` | 1.0 | 2026-09-04 | first |\n",
         )
         .unwrap();
         std::fs::write(dir.join(GROUPS_FILE), "[Packs]\np.satz\n").unwrap();
@@ -1623,6 +1771,52 @@ mod tests {
         assert!(!ghost.exists(), "a write removes the orphan");
         assert!(docs.join("p.md").exists(), "and leaves the real pages alone");
         run(&dir, &docs, true).expect("clean again");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_packs_id_is_its_file_name_and_a_legacy_id_is_known_by_file() {
+        assert!(pack_id(Path::new("cis/x-y.satz"), "x_y").is_ok());
+        assert!(pack_id(Path::new("x-y.satz"), "x_y").is_ok(), "a bare file name, as review-pack sees it");
+        let e = pack_id(Path::new("cis/x-y.satz"), "cis.x_y").unwrap_err().to_string();
+        assert!(e.contains("`pack cis.x_y`") && e.contains("so this one is `pack x_y`"), "{}", e);
+        assert!(pack_id(Path::new("cis/dns-logging.satz"), "cis_extensions.dns_logging").is_ok(), "a legacy row");
+        assert!(pack_id(Path::new("dns-logging.satz"), "cis_extensions.dns_logging").is_ok(), "the same row, by file name");
+        assert!(pack_id(Path::new("dns-logging.satz"), "cis_extensions.cmek").is_err(), "another pack's legacy id");
+    }
+
+    #[test]
+    fn legacy_pack_ids_name_the_shipped_packs() {
+        // Every row names a pack that still carries that id: a renamed or deleted pack
+        // takes its row with it, so the table shrinks and never lists a ghost.
+        let presets = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        for (path, id) in LEGACY_PACK_IDS {
+            let src = std::fs::read_to_string(presets.join(path)).unwrap_or_else(|e| panic!("LEGACY_PACK_IDS names presets/{}, which is gone — take the row off: {}", path, e));
+            let file = satz::parse(&src).unwrap();
+            assert_eq!(file.estate.as_deref(), Some(*id), "presets/{} carries another id now — take its row off LEGACY_PACK_IDS", path);
+            assert_ne!(expected_pack_id(Path::new(path)), *id, "presets/{} conforms — its row is no longer legacy", path);
+        }
+    }
+
+    #[test]
+    fn a_param_an_operator_must_supply_is_asked() {
+        let src = "pack p version \"1.0\"\n\nparams {\n  a = \"\"\n  b = \"\"\n  c = []\n  d = \"x\"\n  m_s1 = true\n  m_s2 = false\n}\n\nquestion b {\n  prompt   = \"b?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n}\n\nquestion oneof m {\n  prompt   = \"m?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n  option m_s1 { label = \"one\" why = \"w\" }\n  option m_s2 { label = \"two\" why = \"w\" }\n}\n";
+        let file = satz::parse(src).unwrap();
+        assert_eq!(asks_its_open_params(&file), vec![("a".to_string(), 4)]);
+    }
+
+    #[test]
+    fn the_run_refuses_a_misnamed_pack_and_an_unasked_empty_param() {
+        let dir = std::env::temp_dir().join(format!("satz-packids-{}", std::process::id()));
+        let docs = dir.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(dir.join("foo-bar.satz"), "// A pack.\n\npack wrong version \"1.0\"\n\nparams {\n  open = \"\"\n}\n").unwrap();
+        std::fs::write(dir.join("README.md"), "# satz library\n\n## Packs\n").unwrap();
+        std::fs::write(dir.join(CHANGELOG_FILE), "# satz changelog\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `wrong` | 1.0 | 2026-10-01 | first |\n").unwrap();
+        std::fs::write(dir.join(GROUPS_FILE), "[Packs]\nfoo-bar.satz\n").unwrap();
+        let e = run(&dir, &docs, true).unwrap_err().to_string();
+        assert!(e.contains("so this one is `pack foo_bar`"), "{}", e);
+        assert!(e.contains("foo-bar.satz:6: `open` defaults to `\"\"`"), "{}", e);
         std::fs::remove_dir_all(&dir).ok();
     }
 

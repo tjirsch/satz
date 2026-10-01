@@ -121,7 +121,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-25 | gated on `interface_notice_pubsub`, the Pub/Sub option of the map's choice `interface_notice`; the header says the choice is where a further delivery form joins. The resources are unchanged |
 | 1.0 | 2026-09-25 | first version: tells the teams whose HCL reads the estate's interface when an exported value changes. A bucket, a Pub/Sub topic, the grant that lets Cloud Storage's service agent publish to it, and a storage notification in the infrastructure project; the object `interface.json` holds the exported values, rewritten only when one changes, so each apply that changes an export publishes one message. Exports `interface_topic` and `interface_object` |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

@@ -45,7 +45,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 1.0 | 2026-08-20 | organization budget with threshold alerts (`"import-id"` example) |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

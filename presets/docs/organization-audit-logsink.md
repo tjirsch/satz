@@ -123,7 +123,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-08-21 | claims for CIS 2.1/2.2 (both 4.0 and 5.0), the writer-identity bucket grant, retention lifecycle rules |
 | 1.0 | 2026-08-21 | org audit log sink → bucket |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

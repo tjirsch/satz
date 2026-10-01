@@ -134,7 +134,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-08-22 | notification channel param; alert policy display names carry the control id |
 | 1.0 | 2026-08-21 | first version |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

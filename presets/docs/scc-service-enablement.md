@@ -101,7 +101,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-12 | `scc_optional_services` (asked): `leave`, `all`, `none`, or the ones it names, for the two detectors outside the baseline — Web Security Scanner, which crawls the customer's web applications, and Artifact Analysis, billed per image scan. The script could only ever switch services ON, so an opt-in enabled by hand in the console stayed on for ever; `disable` is how an estate takes them back |
 | 1.0 | 2026-09-04 | first version: no resources, one `action` binding `scc/scc-enable-all.sh`. SCC service enablement and tier activation have no provider resource (7.14.1 ships 35 `google_scc_*`/`google_securityposture_*` types and none of them is enablement), so the estate declares the step and `satz run-actions` runs it with the org id the estate already carries. `phase = "before-apply"`; everything downstream of enablement stays for a later pack |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

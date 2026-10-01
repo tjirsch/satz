@@ -85,7 +85,7 @@ Every resource this pack contributes is a witness of a claim above.
 | 1.1 | 2026-09-30 | every claim states its measure without satz: `gcloud` (the commands that meet the control the way the claim's resources do), `gcloud_check` (the commands that show whether it is met) and `risk` (what goes wrong without it); `require` and `report-compliance` carry them in each control's `measures`. Nothing emitted changes |
 | 1.0 | 2026-09-11 | CIS 4.0 2.15 / 5.0 2.16, opt-in: Access Approval at the organisation for every supported service; asks for the notification addresses (blocking until named). Needs Access Transparency, which has no provider resource |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

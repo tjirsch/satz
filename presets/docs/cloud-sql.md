@@ -78,7 +78,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-09-04 | declares its two superseded legacy twins (`sql.restrictAuthorizedNetworks`, `sql.restrictPublicIp`) off |
 | 1.0 | 2026-09-04 | CIS 6.5 and 6.6/6.7 (renumbered in 5.0), opt-in: existing public-IP instances lose connectivity |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

@@ -99,7 +99,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-09-04 | declares its superseded legacy twin (`storage.retentionPolicySeconds`) off |
 | 1.0 | 2026-09-04 | CIS 4.0 2.3 / 5.0 2.4 as a `contributes`, opt-in: constrains EVERY bucket's retention duration, and locking stays a human decision |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

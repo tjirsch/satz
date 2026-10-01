@@ -71,7 +71,7 @@ Every resource this pack contributes is a witness of a claim above.
 | 1.1 | 2026-09-19 | a `notice`: once the pack is switched on, `satz adopt <estate> --execute --import` is to run before the apply, because a policy it declares may already be live and creating it stops on `409 POLICY_ALREADY_EXISTS`. The estate acknowledges it with `cis_require_shielded_vm_adopted = true`, which `adopt --execute --import` binds itself when it has run; `transpile --apply` and `bootstrap` refuse while it is open. The param is never emitted, so the plan does not move |
 | 1.0 | 2026-09-04 | CIS 4.8, opt-in: image support required, and the only constraint here with no managed form and no dry-run |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

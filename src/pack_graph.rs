@@ -312,6 +312,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
     });
     let graph = PackGraph { nodes, edges };
     findings.extend(check_notices(&graph, &by_path, &declared));
+    findings.extend(check_integrations(&graph, &declared));
     // the (pack, param) pairs a pack CONTRIBUTES to: check 6 holds a reader to the order
     // of the two `use` lines and a contribution to nothing, because it is merged into the
     // param before the walk rather than read out of the namespace during it
@@ -374,7 +375,30 @@ fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BT
     out
 }
 
-/// Checks 3, 4, 5, 6 and 8 over a built graph (1 and 2 are found while building it).
+/// Check 10: a vendor integration is opt-in (ADR 0077). A pack under `presets/integrations/`
+/// is switched on by the customer who runs that product, so its gate defaults to `false`;
+/// every other default is the map's to set, and is the pack's tier.
+fn check_integrations(g: &PackGraph, declared: &BTreeMap<&str, Vec<(&str, usize, &Value)>>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for n in g.nodes.iter().filter(|n| n.role == Role::Pack && n.path.starts_with("presets/integrations/")) {
+        let Some(gate) = &n.gate else { continue };
+        for (path, line, v) in declared.get(gate.as_str()).into_iter().flatten() {
+            if matches!(v, Value::Bool(true)) {
+                out.push(finding(
+                    10,
+                    format!(
+                        "{}:{} — `{}` defaults to `true`, and {} is a vendor integration: an integration is opt-in, the customer who runs it switches it on",
+                        path, line, gate, n.path
+                    ),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Checks 3, 4, 5, 6 and 8 over a built graph (1 and 2 are found while building it,
+/// 9 is `check_notices` and 10 `check_integrations`).
 /// There is no 7: it held that every block a line is placed in exists in the estate satz
 /// writes, and a line now stands at the top level or in a resource type map, which is
 /// written where the estate lacks it. The numbers a finding prints are not reused.
@@ -822,6 +846,17 @@ mod tests {
             "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/b.satz\" {\n  when     = use_b\n  requires = [\"presets/a.satz\"]\n}\n",
         );
         assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A), ("b.satz", B_READS_A)]), vec![8]);
+    }
+
+    #[test]
+    fn check_10_an_integration_on_by_default() {
+        let x = "pack x version \"1.0\"\n\nparams {\n  x_value = \"x\"\n}\n";
+        let offers = "offers \"presets/integrations/x.satz\" {\n  when = use_x\n}\n";
+        assert_eq!(checks(&[("estate-map.satz", &map("  use_x = true", offers)), ("integrations/x.satz", x)]), vec![10]);
+        assert!(checks(&[("estate-map.satz", &map("  use_x = false", offers)), ("integrations/x.satz", x)]).is_empty());
+        // the same default on a pack outside integrations/ is the map's tier for it
+        let plain = "offers \"presets/x.satz\" {\n  when = use_x\n}\n";
+        assert!(checks(&[("estate-map.satz", &map("  use_x = true", plain)), ("x.satz", x)]).is_empty());
     }
 
     #[test]

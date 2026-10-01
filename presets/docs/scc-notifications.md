@@ -109,7 +109,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-12 | the grant follows the publisher: `gcp-sa-scc-notification`, the identity the notification config reports, not the `security-center-api` agent. Measured on a live organisation — with the wrong agent the config publishes nothing and says nothing |
 | 1.0 | 2026-09-12 | first version: the notification chain downstream of enablement — a Pub/Sub topic, `google_scc_v2_organization_notification_config` (v2: the v1 API answers "This API is no longer available" on a live organisation) and `roles/securitycenter.notificationServiceAgent` for `service-org-<org>@security-center-api.iam.gserviceaccount.com` on that topic, without which the config publishes nothing. Asks the topic's project and the finding filter; sends active HIGH and CRITICAL findings by default. No claim — no catalog control covers SCC |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

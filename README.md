@@ -378,15 +378,17 @@ satz review-pack my-pack.satz --against C0example.satz --format text --out -
 
 It checks, in the order a pack fails them: it **parses**; it is **formatted** (`satz fmt
 <file>` is the whole fix); its **header** opens with a sentence saying what it is, which
-is what the pack index prints; it declares a **version** in-file and that version has a
-row in the library's `## Changelog`; it carries **no private data** — no token shaped like
+is what the pack index prints; its **id** is its file name, dashes as underscores; it
+declares a **version** in-file and that version has a row in `presets/CHANGELOG.md`; it
+carries **no private data** — no token shaped like
 an organisation, folder or project number, a directory id, a billing account, a GUID, a
 project id, an e-mail address, a domain or a repository URL that is not one of the
 documented example values (`docs/examples.md`); it declares **no membership** — presets define
 groups, humans grant membership; it runs **no legacy org-policy constraint beside its
 managed replacement** (`presets/managed-constraint-equivalents.txt`); every **resource
 type it emits has a row** in satz's prerequisite table, so the roles and the API it needs
-are known; and it **compiles**. A type `satz adopt` has no rule for (no `import_id:` or
+are known; it **compiles**; and every string param that defaults to `""` — a value
+the operator must supply — has a **question** in the pack. A type `satz adopt` has no rule for (no `import_id:` or
 `match_on:` in `import-config.yaml`) is a warning: once such an object exists — a console
 click, a partial apply — only `tofu import` by hand brings it under management. It also says what adopting the pack costs an estate — the
 roles and the APIs `satz update-prerequisites` would write — and names the questions a
@@ -796,7 +798,7 @@ entries do not fit where its `use` stands is refused, naming the entry. Its `par
 the map the `use` stands in
 ([§6.9](docs/language.md#69-use--composition)). What a release refuses that the one before
 it compiled, and the edit to make, is on
-[the library page](presets/README.md#breaking-changes).
+[the changelog page](presets/CHANGELOG.md#breaking-changes).
 
 Merge rules when several fragments declare the same thing:
 

@@ -68,7 +68,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-08-23 | `essential_contacts_email` param — a customer pins its contact without a fork; content pack |
 | 1.0 | 2026-08-20 | organization-wide essential contact, all categories |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

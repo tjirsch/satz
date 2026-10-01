@@ -146,7 +146,7 @@ Not every resource this pack contributes is a witness:
 | 1.1 | 2026-09-12 | ON by default (CIS pack 2.10), with the corrections a default-on pack needs. The pass list gains the three RFC1918 blocks beside the IAP range, because the deny matches `0.0.0.0/0` — every address, private ones included — and a hierarchical policy is read before the VPC rules: with IAP alone, SSH between two instances in one subnet was denied. IPv6 gets its own pass rule (IAP's `2600:2d00:1:7::/64` and `fc00::/7`), since a rule's sources may not mix families. Every rule now carries the control's whole protocol set — SSH on TCP 22 and SCTP 22, RDP on TCP 3389 and UDP 3389 — a TCP-only deny left UDP 3389 open. And the two DENY rules log: Google forbids logging on `goto_next`, so an accepted IAP session leaves no firewall record and only refusals do |
 | 1.0 | 2026-09-11 | CIS 3.6 and 3.7, opt-in: a hierarchical firewall policy on the organisation denies TCP 22 and 3389 from the IPv4 and IPv6 internet and passes the listed ranges (IAP by default) to the VPC rules |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

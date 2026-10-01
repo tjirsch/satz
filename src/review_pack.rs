@@ -136,15 +136,18 @@ pub(crate) fn review(
     let mut f: Vec<Finding> = Vec::new();
 
     // 1. it parses. Nothing below means anything if this fails, so the review stops.
-    if let Err(e) = satz_core::satz::parse(&src) {
-        f.push(at(&pack, None, Severity::Error, format!("does not parse: {}", e)));
-        return Ok(Review {
-            pack: pack.display().to_string(),
-            folded_into: String::new(),
-            emits: Vec::new(),
-            findings: f,
-        });
-    }
+    let file = match satz_core::satz::parse(&src) {
+        Ok(file) => file,
+        Err(e) => {
+            f.push(at(&pack, None, Severity::Error, format!("does not parse: {}", e)));
+            return Ok(Review {
+                pack: pack.display().to_string(),
+                folded_into: String::new(),
+                emits: Vec::new(),
+                findings: f,
+            });
+        }
+    };
 
     // 2. the layout is the library's (ADR 0017). `satz fmt <file>` is the whole fix.
     match satz_core::fmt::is_formatted(&src) {
@@ -175,6 +178,14 @@ pub(crate) fn review(
         }
     }
 
+    // 3b. the id is the file name (ADR 0077): the folder says where a pack lives, the
+    //     groups file its topic, and the id keys the changelog and names the page.
+    if let Some(Err(e)) = file.estate.as_deref().map(|id| crate::doc_packs::pack_id(&rel, id)) {
+        let text = e.to_string();
+        let message = text.split_once(": ").map(|(_, rest)| rest.to_string()).unwrap_or(text);
+        f.push(at(&pack, line_of(&src, "pack "), Severity::Error, message));
+    }
+
     // 4. the version in-file, and its row in the library's changelog. A pack outside a
     //    library has no changelog to be in, and is told so rather than failed.
     match declared_version(&src) {
@@ -187,8 +198,8 @@ pub(crate) fn review(
                 .to_string(),
         )),
         Some((name, version)) => {
-            let readme = Path::new(&runtime_config.presets_dir).join("README.md");
-            match std::fs::read_to_string(&readme) {
+            let changelog = Path::new(&runtime_config.presets_dir).join("CHANGELOG.md");
+            match std::fs::read_to_string(&changelog) {
                 Ok(text) => {
                     let row = text
                         .lines()
@@ -202,7 +213,7 @@ pub(crate) fn review(
                                 "version {} has no row in {}'s `## Changelog` — a version nobody can read the \
                                  history of is a version nobody can adopt",
                                 version,
-                                readme.display()
+                                changelog.display()
                             ),
                         ));
                     }
@@ -214,7 +225,7 @@ pub(crate) fn review(
                     format!(
                         "no `{}` to check the changelog row against — a pack contributed upstream needs one \
                          row per version there",
-                        readme.display()
+                        changelog.display()
                     ),
                 )),
             }
@@ -299,36 +310,34 @@ pub(crate) fn review(
     //    from applying anything until its operator has run that command and recorded it —
     //    a pack author blocking a customer's apply — so it says why, the way a `deviates`
     //    claim does, and the review says it out loud rather than listing it.
-    if let Ok(file) = crate::fsx::read_to_string(&pack).map_err(|e| e.to_string()).and_then(|t| satz_core::satz::parse(&t).map_err(|e| e.msg)) {
-        for n in &file.notices {
-            let blocks = n.severity == satz_core::satz::Severity::Error;
+    for n in &file.notices {
+        let blocks = n.severity == satz_core::satz::Severity::Error;
+        f.push(at(
+            &pack,
+            Some(n.line as u32),
+            if blocks { Severity::Warning } else { Severity::Info },
+            format!(
+                "notice `{}` [{}]: once the pack is on, `{}` is to run{} — the estate acknowledges it with `{} = true`",
+                n.param,
+                n.severity,
+                n.run,
+                if blocks { ", and every command that writes to the organisation refuses until then" } else { "" },
+                n.param
+            ),
+        ));
+        if blocks && n.text.trim().chars().count() < REASON {
             f.push(at(
                 &pack,
                 Some(n.line as u32),
-                if blocks { Severity::Warning } else { Severity::Info },
+                Severity::Error,
                 format!(
-                    "notice `{}` [{}]: once the pack is on, `{}` is to run{} — the estate acknowledges it with `{} = true`",
+                    "notice `{}`: `severity = error` refuses every adopting estate's apply, so its `text` states why \
+                     it must wait — a sentence, not a label ({} characters, {} are the bar)",
                     n.param,
-                    n.severity,
-                    n.run,
-                    if blocks { ", and every command that writes to the organisation refuses until then" } else { "" },
-                    n.param
+                    n.text.trim().chars().count(),
+                    REASON
                 ),
             ));
-            if blocks && n.text.trim().chars().count() < REASON {
-                f.push(at(
-                    &pack,
-                    Some(n.line as u32),
-                    Severity::Error,
-                    format!(
-                        "notice `{}`: `severity = error` refuses every adopting estate's apply, so its `text` states why \
-                         it must wait — a sentence, not a label ({} characters, {} are the bar)",
-                        n.param,
-                        n.text.trim().chars().count(),
-                        REASON
-                    ),
-                ));
-            }
         }
     }
 
@@ -349,6 +358,20 @@ pub(crate) fn review(
                 ),
             ));
         }
+    }
+
+    // 6b. a value the operator must supply is asked for (ADR 0077): a string param that
+    //     defaults to `""` with no `question` on it reaches the customer as a blank.
+    for (name, line) in crate::doc_packs::asks_its_open_params(&file) {
+        f.push(at(
+            &pack,
+            Some(line as u32),
+            Severity::Error,
+            format!(
+                "`{}` defaults to `\"\"` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
+                name, name
+            ),
+        ));
     }
 
     // 7. memberships stay OUT of presets: a pack defines groups, humans grant

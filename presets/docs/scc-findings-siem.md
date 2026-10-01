@@ -90,7 +90,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 1.0 | 2026-09-12 | first version: the SIEM's own pull subscription on the findings topic and `roles/pubsub.subscriber` for the identity it reads as — without that grant a connector authenticates and reads nothing. The identity is asked and has no default: defaulting it would tie SCC to one vendor's pack. Runs alongside the mailbox, each with its own subscription |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

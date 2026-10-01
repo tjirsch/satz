@@ -71,6 +71,7 @@ PAGES.append((ROOT / "README.md", "index.html", "satz"))
 for stem in SITE_DOCS:
     PAGES.append((ROOT / "docs" / f"{stem}.md", f"docs/{stem}.html", stem))
 PAGES.append((ROOT / "presets/README.md", "presets/index.html", "library"))
+PAGES.append((ROOT / "presets/CHANGELOG.md", "presets/changelog.html", "changelog"))
 PACK_PAGES: list[
     tuple[Path, str]
 ] = []  # derived per-pack pages: rendered, linked from the index, not in the nav
@@ -118,7 +119,8 @@ if sorted(_menu) != sorted(_pack_stems):
     raise SystemExit("\n".join(lines))
 
 # The menu, in reading order: what satz is, the language it is written in, the
-# library that ships with it, how you work with it, the machine interfaces, then
+# library that ships with it and its changelog, how you work with it, the machine
+# interfaces, then
 # the reference shelf. Every page is named here and nothing else is — an unlisted
 # page used to be appended alphabetically, which is how the menu drifted into a
 # directory listing. It is a failure now, like an unclassified doc above.
@@ -126,6 +128,7 @@ NAV_ORDER = [
     "satz",
     "language",
     "library",
+    "changelog",
     "workflows",
     "interview",
     "mcp",
@@ -190,13 +193,16 @@ TOC_CSS = """
   aside.side a.active, aside.side a.current { color: var(--accent); border-left-color: var(--accent); }
   aside.side a.lvl3 { padding-left: 1.7rem; font-size: .92em; color: var(--muted); }
   aside.side a.lvl3:hover, aside.side a.lvl3.active { color: var(--accent); }
-  /* A group header of the library: a label over the entries it holds. On the
-     library page it is the group's heading and links there; in a pack page's
-     library menu it is a label only. */
-  aside.side .grp { display: block; font-size: .74rem; font-weight: 600; letter-spacing: .05em;
-    text-transform: uppercase; color: var(--muted); padding: .9rem 0 .2rem .8rem; }
-  aside.side nav > .grp:first-child { padding-top: .2rem; }
-  aside.side a.grp:hover, aside.side a.grp.active { color: var(--accent); }
+  /* A group of the library folds: its title is the toggle and its entries show
+     when it is open. The script opens the group the reader is in; the others
+     show their title alone, so the column stays as short as the group list. */
+  aside.side details.grp { margin: 0; }
+  aside.side nav > details.grp + details.grp { margin-top: 0; }
+  aside.side details.grp > summary { font-size: .74rem; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted); padding: .7rem 0 .2rem .8rem; margin: 0; }
+  aside.side details.grp > summary:hover { color: var(--accent); }
+  aside.side nav > details.grp:first-child > summary { padding-top: .2rem; }
+  aside.side details.grp > nav { border-left: 0; margin-left: .4rem; }
   /* Narrow: the side column becomes collapsed blocks above the text (the script
      closes them on load), so a long list never buries the page it describes. */
   @media (max-width: 1180px) {
@@ -236,6 +242,12 @@ TOC_JS = r"""
     if (active) active.classList.remove("active");
     active = a;
     a.classList.add("active");
+    /* the group the reader is in is the one that is open */
+    var g = a.closest("details.grp");
+    if (g && !g.open) {
+      Array.prototype.forEach.call(toc.querySelectorAll("details.grp[open]"), function (d) { d.open = false; });
+      g.open = true;
+    }
     /* keep the mark visible in a long side column, without scrolling the page:
        only the aside's own scrollTop is touched */
     if (!narrow.matches && toc.open && side.scrollHeight > side.clientHeight) {
@@ -413,15 +425,29 @@ def toc_html(body: str, grouped: bool = False) -> str:
     )
     if len(heads) < TOC_MIN_HEADINGS:
         return ""
-    cls = (
-        {"2": "grp", "3": "lvl2", "4": "lvl3"}
-        if grouped
-        else {"2": "lvl2", "3": "lvl3"}
-    )
     items = []
-    for level, anchor, inner in heads:
-        label = html_escape(doc.plain_text(inner))
-        items.append(f'<a class="{cls[level]}" href="#{anchor}">{label}</a>')
+    if grouped:
+        # each h2 is a group that folds; its h3/h4 are the entries inside, and the
+        # script opens the group the reader is in. An h2 with nothing under it is a
+        # plain entry.
+        sections: list[tuple[str, str, list[str]]] = []
+        cls = {"3": "lvl2", "4": "lvl3"}
+        for level, anchor, inner in heads:
+            label = html_escape(doc.plain_text(inner))
+            if level == "2":
+                sections.append((anchor, label, []))
+            elif sections:
+                sections[-1][2].append(f'<a class="{cls[level]}" href="#{anchor}">{label}</a>')
+        for anchor, label, entries in sections:
+            if entries:
+                items.append(fold(label, entries, False))
+            else:
+                items.append(f'<a class="lvl2" href="#{anchor}">{label}</a>')
+    else:
+        cls = {"2": "lvl2", "3": "lvl3"}
+        for level, anchor, inner in heads:
+            label = html_escape(doc.plain_text(inner))
+            items.append(f'<a class="{cls[level]}" href="#{anchor}">{label}</a>')
     return (
         '<details class="toc" open><summary>On this page</summary><nav>'
         + "".join(items)
@@ -434,16 +460,29 @@ def library_html(current_rel: str) -> str:
     the order of `presets/library-groups.txt`, the current one marked."""
     items = ['<a href="index.html">All packs</a>']
     for title, stems in LIBRARY_GROUPS:
-        items.append(f'<span class="grp">{html_escape(title)}</span>')
+        entries = []
+        here = False
         for stem in stems:
-            cls = (
-                ' class="current"' if current_rel == f"presets/docs/{stem}.html" else ""
-            )
-            items.append(f'<a{cls} href="{stem}.html">{stem}</a>')
+            current = current_rel == f"presets/docs/{stem}.html"
+            here = here or current
+            cls = ' class="current"' if current else ""
+            entries.append(f'<a{cls} href="{stem}.html">{stem}</a>')
+        items.append(fold(html_escape(title), entries, here))
     return (
         '<details class="lib" open><summary>Library</summary><nav>'
         + "".join(items)
         + "</nav></details>\n"
+    )
+
+
+def fold(title: str, entries: list[str], is_open: bool) -> str:
+    """One group of the side column: its title is the toggle, its entries show when
+    it is open. Without the script a reader still opens it by hand."""
+    state = " open" if is_open else ""
+    return (
+        f'<details class="grp"{state}><summary>{title}</summary><nav>'
+        + "".join(entries)
+        + "</nav></details>"
     )
 
 

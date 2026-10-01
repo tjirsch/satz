@@ -95,7 +95,7 @@ _None — this pack proves no control by itself._
 | 1.1 | 2026-09-10 | five `question` blocks, one per group name, same reasoning. Nothing emitted changes |
 | 1.0 | 2026-09-02 | the S1 model in ONE typed file (groups + org grants) for a top-level `use` |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 

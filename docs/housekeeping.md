@@ -27,7 +27,7 @@ ships it).
 | `skills/<name>.skill` (the packaged form of `skills/<name>/`, for Cowork and the desktop app) | `scripts/build-skills.py` | any file of the skill's folder changes | smoke: `build-skills.py --check`, byte for byte |
 | `presets/pack-graph.json` | `satz pack-graph` | any pack or the map's `offers` entries change | smoke: `pack-graph --check`; `cargo test` (`the_shipped_pack_graph_is_current`) |
 | `presets/cis/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
-| `presets/README.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
+| `presets/CHANGELOG.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-packs --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
 | `src/prerequisites.rs` (the prerequisite table: roles and APIs per type) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`prerequisites_gate`); a changed role: **nothing** — run `scripts/check_prerequisites.py` |
 | `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | emission changes | `cargo test` (that is the gate) |
@@ -170,7 +170,7 @@ the packs that implement them.
   naming no pack, an empty group, and a group `presets/README.md` has no `## <group>`
   heading for or carries out of order. A new pack gets its line in the same commit; the
   index `presets/docs/README.md` and the site's side menu follow the file.
-- `presets/README.md` `## Changelog` — one row per pack version, by hand.
+- `presets/CHANGELOG.md` `## Changelog` — one row per pack version, by hand.
   `doc-packs` parses it and fails on three things: a pack
   version with no row, a row naming a pack that does not exist, and a table whose
   header or cell count has been reflowed.
@@ -179,6 +179,12 @@ the packs that implement them.
   leftover `Include …` instruction, or too long for a table cell. A pack whose shape
   does not decide how it is used — a bare list of labels with no claims — must state
   its own `use` line in the header; the error shows the line to add.
+- **A pack's id is its file name**, `-` written `_`, and unique in the library (ADR
+  0077): `doc-packs` and `review-pack` refuse any other. The ids that predate the rule
+  stand in `LEGACY_PACK_IDS` (`src/doc_packs.rs`), which refuses a row whose pack now
+  conforms, so the table only shrinks. A string param that defaults to `""` — a value
+  the operator must supply — has a `question` in the same file, or both commands
+  refuse the pack.
 
 ## The IaC role table
 
@@ -601,8 +607,8 @@ unreviewed, and cannot be silently left off it either. The smoke matrix runs the
 site build, so the check is enforced in CI.
 
 **The menu is a third list, gated the same way.** `NAV_ORDER` names every page in
-reading order — `satz`, `language`, `library`, `workflows`, `interview`, `mcp`,
-`examples`, `housekeeping`, `competitive`, `llms` — and the build fails on a page
+reading order — `satz`, `language`, `library`, `changelog`, `workflows`, `interview`,
+`mcp`, `examples`, `housekeeping`, `competitive`, `llms` — and the build fails on a page
 it does not name, or on a name that is not a page, so the menu stays a table of
 contents rather than a directory listing. A page's title is its menu word after
 `satz` (`# satz language`, `# satz library`), with no trailing explanation; what the
@@ -612,10 +618,12 @@ taken from the rendered heading, and a page without a `# ` title fails the build
 The 48 per-pack pages under `presets/docs/` are rendered and linked from the
 preset library, but carry no menu entry of their own — someone looking for a pack
 starts at the library. Each pack page's side column carries, beneath its own
-contents, the whole library: every pack page under its group header, in the order of
+contents, the whole library: every pack page under its group, in the order of
 `presets/library-groups.txt`, the page itself marked. The library page's contents
-column shows its `##` group headings as group headers with the sections under them.
-The build fails on a pack page in no group of that file and on an entry with no page.
+column shows its `##` group headings as groups with the sections under them. A group
+folds: the one that holds the current page, or the section the reader is in, is open,
+and the others show their title alone. The build fails on a pack page in no group of
+that file and on an entry with no page.
 
 An excluded doc stays in the repository and stays linkable — a link to one from a
 published page is rewritten to its GitHub blob URL rather than left as a `.md`

@@ -94,7 +94,7 @@ _None — this pack proves no control by itself._
 |---|---|---|
 | 1.0 | 2026-09-12 | first version: who gets told, for an organisation with no SIEM on the topic — a subscription (a topic without one drops every message), an e-mail channel and an alert policy that fires when findings reach the topic. Asks the address; its default is the central alert pack's `cis_central_email` by reference, and without that pack the compile stops rather than mailing a guessed address. The mail says findings arrived and links to them: the finding's text stays in the topic, the console and the export |
 
-The whole library's history: [the changelog](../README.md#changelog) in `presets/README.md`.
+The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `presets/CHANGELOG.md`.
 
 ## Notes
 
