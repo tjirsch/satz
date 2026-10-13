@@ -43,8 +43,8 @@ fail() { printf '\nSMOKE FAILED: %s\n' "$*" >&2; exit 1; }
 # First, on the clean tree: every Satz file in the repository is in its canonical
 # layout. Later steps write .satz files of their own under tests/smoke.
 step "fmt --check: every Satz file in the repository is formatted; --stdin round-trips"
-"$satz" fmt --check "$root/presets" "$root/tests" > tmp/fmt-check.txt 2>&1 \
-  || fail "satz fmt --check: run \`satz fmt presets tests\` and commit:\n$(cat tmp/fmt-check.txt)"
+"$satz" fmt --check "$root/presets" "$root/tests" "$root/examples" > tmp/fmt-check.txt 2>&1 \
+  || fail "satz fmt --check: run \`satz fmt presets tests examples\` and commit:\n$(cat tmp/fmt-check.txt)"
 grep -q 'fmt --check: OK' tmp/fmt-check.txt || fail "fmt --check did not report OK"
 "$satz" fmt --stdin < yaml/showcase.satz > tmp/fmt-stdin.satz || fail "fmt --stdin failed"
 cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an already formatted file"
@@ -278,6 +278,39 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 "$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>&1 || fail "the second transpile of the renamed showcase failed"
 [ -e $si/archive/CHANGES.md ] && fail "a transpile that changed nothing wrote a CHANGES.md"
 [ "$(grep -o 'sha256:[0-9a-f]*' $si/README.md)" = "$hash_before" ] || fail "the content hash depends on the previous state"
+
+step "examples: the organisation's estate compiles, and each example beside it compiles against its interface"
+# examples/acme/ is the organisation; every subfolder with a config.toml is one example,
+# a project estate that reads interfaces/common/ copied to its vendor/.
+ex="$root/examples/acme"
+rm -rf "$ex/hcl" "$ex/interfaces"
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile:\n$(cat tmp/example-org.txt)"
+[ -f "$ex/interfaces/common/core/satz/interface.satz" ] || fail "the example organisation wrote no common interface:\n$(cat tmp/example-org.txt)"
+examples=0
+for cfg in "$ex"/*/config.toml; do
+  [ -f "$cfg" ] || continue
+  d=$(dirname "$cfg"); n=$(basename "$d"); examples=$((examples + 1))
+  rm -rf "$d/hcl" "$d/vendor" && mkdir -p "$d/vendor" && cp -R "$ex/interfaces/common" "$d/vendor/common"
+  for e in "$d"/satz/*.satz; do
+    "$satz" --config "$d" transpile "$(basename "$e")" > "tmp/example-$n.txt" 2>&1 || fail "the example $n does not transpile:\n$(cat "tmp/example-$n.txt")"
+  done
+  if command -v tofu >/dev/null 2>&1; then
+    (cd "$d/hcl" && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the example $n does not validate"
+  fi
+done
+[ "$examples" -gt 0 ] || fail "examples/acme/ holds no example"
+# what the cost-centre example says it gives: the id by the naming scheme, the label, a
+# group per role, and the refusal of a cost centre that is not four digits
+cc="$ex/cost-centre-project"
+grep -q 'project_id = "acme-shop-prod"' "$cc/hcl/main.tf" || fail "the project id does not follow the naming scheme:\n$(cat "$cc/hcl/main.tf")"
+grep -q '"cost_centre" = "4711"' "$cc/hcl/main.tf" || fail "the cost centre label is missing:\n$(cat "$cc/hcl/main.tf")"
+for r in owner editor viewer; do
+  grep -q "member = \"group:acme-shop-prod-$r@example.com\"" "$cc/hcl/main.tf" || fail "the $r group is not granted:\n$(cat "$cc/hcl/main.tf")"
+done
+sed 's/name = "shop-dev" cost_centre = "4711"/name = "shop-dev" cost_centre = "47A1"/' "$cc/satz/workloads.satz" > "$cc/satz/tmp-bad.satz"
+"$satz" --config "$cc" transpile tmp-bad.satz --check > tmp/example-bad.txt 2>&1 && { rm -f "$cc/satz/tmp-bad.satz"; fail "a cost centre that is not four digits compiled"; }
+rm -f "$cc/satz/tmp-bad.satz"
+grep -q 'entry `shop-dev` has `cost_centre` = "47A1"' tmp/example-bad.txt || fail "the refusal does not name the entry and the value:\n$(cat tmp/example-bad.txt)"
 
 step "project onboarding: an entry of the pack's list, its interface out, and a project estate written from it"
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'

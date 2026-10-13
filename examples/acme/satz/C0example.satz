@@ -1,0 +1,199 @@
+// The organisation every example under examples/acme/ reads: the estate `satz init
+// --workload-folder-name Workloads` writes for Customer A of docs/examples.md, with
+// `presets/estate-core.satz` switched on. Every id and name in `params` is an example
+// value — replace each with your organisation's before anything is applied.
+//
+// What the examples read is at the end of this file and in the core pack: the exports
+// `workload_folder`, `customer_domain`, `customer_shortname` and `default_region`.
+// `satz transpile` writes them to interfaces/common/core/, which an example copies to
+// its own vendor/ folder.
+
+estate c0example
+
+params {
+  infra_folder_name        = "Infrastructure"
+  infra_project_name       = "acme-infra-001"
+  infra_bucket_name        = "acme-infra-state"
+  customer_id              = "C0example"
+  customer_organization_id = "123456789012"
+  customer_domain          = "example.com"
+  first_admin              = "admin"
+  customer_longname        = ""
+  customer_shortname       = "acme"
+  svc_iac_account          = "svc-iac-001"
+  svc_iac_users_group      = "svc-iac-users"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  deployment_engine        = "tofu"
+  deployment_mode          = "local" // switched by `satz migrate`
+  default_region           = "europe-west3"
+  default_zone             = "europe-west3-a"
+  // The compliance frameworks this customer is held to, as catalog ids from
+  // `presets/catalogs/`. Not what this estate claims — that comes from its packs.
+  compliance_frameworks    = ["cis-gcp-5.0"]
+  // The folder the audit archive's project is created in, read by
+  // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
+  // the folder: unbound, that pack creates its project under the organisation.
+  logsink_project_folder   = "google_folder.infra_folder.name"
+  // Where the customer's and the projects' folders live: "" is the organisation, a name one
+  // folder directly under it. The section at the end of this file publishes it as
+  // `workload_folder`; the compile refuses a name and a section that disagree.
+  workload_folder_name     = "Workloads"
+}
+
+// The day-0 params with their questions, and the core exports every interface carries.
+use "presets/estate-core.satz"
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+    gcs {
+      bucket = infra_bucket_name
+      prefix = "hcl/state"
+    }
+  }
+}
+
+providers {
+  "google" {
+    project               = infra_project_name
+    region                = default_region
+    alias                 = "google"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+  "google-beta" {
+    project               = infra_project_name
+    region                = default_region
+    alias                 = "google-beta"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+}
+
+google_cloud_identity_group {
+  svc_iac_users {
+    id           = "{svc_iac_users_group}@{customer_domain}"
+    display_name = "Service Account IaC Users"
+    description  = "Service account users allowed to impersonate the IaC service account"
+    owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
+    member       = ["user:{first_admin}@{customer_domain}"]
+  }
+}
+
+google_organization_iam_member {
+  // The IaC service account: read on every project (import, adopt, reports), and
+  // the roles this estate's resource types need — `satz update-prerequisites` adds the ones
+  // further packs bring. Granted at the organization, so every folder and project
+  // inherits them, hand-made ones included. The Groups Admin role in the Workspace
+  // admin console is needed as well; it is not an IAM role.
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/viewer",
+    "roles/browser",
+    "roles/iam.securityReviewer",
+    "roles/cloudasset.viewer",
+    "roles/serviceusage.serviceUsageConsumer",
+    "roles/resourcemanager.organizationAdmin",
+    "roles/orgpolicy.policyAdmin",
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectMover",
+    "roles/billing.projectManager",
+    "roles/serviceusage.serviceUsageAdmin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/storage.admin",
+  ]
+  "group:{svc_iac_users_group}@{customer_domain}" = [
+    "roles/serviceusage.serviceUsageConsumer",
+  ]
+}
+
+// The users group may become the IaC service account — that account only, not
+// every service account in the organization.
+google_service_account_iam_member {
+  service_account_id = "${{google_service_account.provisioner.name}}"
+  "group:{svc_iac_users_group}@{customer_domain}" = [
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+  ]
+}
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/billing.admin",
+  ]
+}
+
+google_folder {
+  infra_folder {
+    display_name = infra_folder_name
+    google_project {
+      infra {
+        project_id      = infra_project_name
+        billing_account = billing_account_infra
+        project_service = [
+          "cloudasset.googleapis.com",
+          "cloudbilling.googleapis.com",
+          "cloudidentity.googleapis.com",
+          "cloudresourcemanager.googleapis.com",
+          "iam.googleapis.com",
+          "iamcredentials.googleapis.com",
+          "logging.googleapis.com",
+          "orgpolicy.googleapis.com",
+          "securitycenter.googleapis.com",
+          "securitycentermanagement.googleapis.com",
+          "serviceusage.googleapis.com",
+          "essentialcontacts.googleapis.com",
+          "storage.googleapis.com",
+        ]
+        google_storage_bucket {
+          state {
+            "import-id"                 = infra_bucket_name
+            private                     = true
+            name                        = infra_bucket_name
+            location                    = default_region
+            force_destroy               = true
+            public_access_prevention    = "enforced"
+            uniform_bucket_level_access = true
+            versioning { enabled = true }
+            lifecycle_rule = [
+              {
+                action { type = "Delete" }
+                condition { num_newer_versions = 100 with_state = "ARCHIVED" }
+              },
+              {
+                action { type = "Delete" }
+                condition { days_since_noncurrent_time = 365 }
+              },
+            ]
+          }
+        }
+        google_service_account {
+          provisioner {
+            private      = true
+            account_id   = svc_iac_account
+            display_name = "Primary IaC Provisioner"
+          }
+        }
+      }
+    }
+  }
+}
+
+// The folder, published to the projects beside the estate (interfaces/). Its number
+// exists once the folder does, so the interfaces look it up.
+export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
+
+// ---- the workload folder: where the customer's and the projects' folders live -------
+// One folder directly under the organisation, `workload_folder_name`. Google refuses a
+// second folder of one name under one parent: a folder the customer already has is imported
+// (`satz adopt <estate> --execute --import`), and until it is, the apply stops on it.
+google_folder {
+  workload_folder {
+    display_name = workload_folder_name
+  }
+}
+
+// Published to the projects, whose folders take it as their parent. The folder's number
+// exists once the folder does, so the interfaces look it up.
+export "workload_folder" = "${{google_folder.workload_folder.name}}" description "Where the customer's and the projects' folders live: organizations/<id>, or folders/<number> for a folder directly under it"

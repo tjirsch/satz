@@ -1,0 +1,15 @@
+# A project beside the example organisation. Paths resolve against this file's
+# directory. `schema_dir` and `presets_dir` point into the satz repository so the
+# example compiles in place; in a repository of your own they are the `schemas/` and
+# `presets/` folders satz writes beside the estate.
+yaml_dir = "satz"
+hcl_dir = "hcl"
+interfaces_dir = "interfaces"
+include_dirs = [".", "satz"]
+schema_dir = "../../../tests/schemas"
+presets_dir = "../../../presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+auto_explode = ["google_project_service", ".*_iam_member"]
+validation_level = "warn"

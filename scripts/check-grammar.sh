@@ -74,7 +74,7 @@ PY
 
 # 2. every Satz file of this checkout
 
-files=$(find presets tests -name '*.satz' ! -name '*.diff.satz' | sort | sed "s|^|$root/|")
+files=$(find presets tests examples -name '*.satz' ! -name '*.diff.satz' | sort | sed "s|^|$root/|")
 [[ -n "$files" ]] || { echo "check-grammar: no .satz files found" >&2; exit 1; }
 
 # `parse -q` prints only the files with errors and exits non-zero on any.
