@@ -18,7 +18,7 @@ params {
   customer_organization_id = "123456789012"
   customer_domain          = "example.com"
   first_admin              = "admin"
-  customer_longname        = ""
+  customer_longname        = "Acme Corp."
   customer_shortname       = "acme"
   svc_iac_account          = "svc-iac-001"
   svc_iac_users_group      = "svc-iac-users"
