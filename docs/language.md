@@ -2284,6 +2284,11 @@ copied to `vendor/archive/`.)
   `main.tf`, through the provider the project's top-level resources carry, with the
   resource it reads back and the permission it needs in a comment above it. These are the
   data sources the HCL module reads.
+- The `terraform` and `providers` blocks read a static value the same way —
+  `region = "${{interface.default_region}}"` is the region in the provider and in every
+  provider satz derives from it. A looked-up value is refused at the block: a provider
+  is configured before any data source is read, and the lookup is read through that
+  provider. Bind such a value as a param, or read it in a resource.
 - Refused, each at the resource that writes it: an export no used file carries (listing
   those that are), a reference with no interface file used, a reference that is not
   `interface.<export>`, and a list or a map inside a longer string. A

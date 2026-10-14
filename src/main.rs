@@ -3036,6 +3036,14 @@ pub(crate) fn compile_tail(
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
+    // the same values in the `terraform` and `providers` blocks, which the providers file reads
+    let mut config = fe.config.clone();
+    if let Err(errors) = satz_core::pipeline::resolve_interface_in_config(&mut config, &fe.config_sites, &fe.interface_files) {
+        for e in errors {
+            f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
+        }
+        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
+    }
     let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     ctx.registry = Some(registry);
     let mut out = match crate::emitter::emit(&folded, &ctx) {
@@ -3078,7 +3086,7 @@ pub(crate) fn compile_tail(
     let providers_tf = if !mode_ok {
         None
     } else {
-        match crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &provider_sources, &provider_versions) {
+        match crate::emitter::emit_providers(&config, &folded, &fe.env, &provider_sources, &provider_versions) {
             Ok(t) => Some(t),
             Err(e) => {
                 f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
