@@ -55,6 +55,7 @@ providers {
   "google" {
     alias                 = "google"
     project               = quota_project
+    region                = "${{interface.default_region}}"
     user_project_override = true
     billing_project       = quota_project
   }

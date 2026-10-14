@@ -303,6 +303,7 @@ done
 # group per role, and the refusal of a cost centre that is not four digits
 cc="$ex/cost-centre-project"
 grep -q 'project_id = "acme-shop-prod"' "$cc/hcl/main.tf" || fail "the project id does not follow the naming scheme:\n$(cat "$cc/hcl/main.tf")"
+grep -q 'region = "europe-west3"' "$cc/hcl/providers.tf" && ! grep -q 'interface\.' "$cc/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$cc/hcl/providers.tf")"
 grep -q '"cost_centre" = "4711"' "$cc/hcl/main.tf" || fail "the cost centre label is missing:\n$(cat "$cc/hcl/main.tf")"
 for r in owner editor viewer; do
   grep -q "member = \"group:acme-shop-prod-$r@example.com\"" "$cc/hcl/main.tf" || fail "the $r group is not granted:\n$(cat "$cc/hcl/main.tf")"

@@ -616,6 +616,8 @@ pub struct FrontEnd {
     pub env: Env,
     /// Estate-level config blocks (terraform, providers), resolved.
     pub config: BTreeMap<String, serde_yaml::Value>,
+    /// Where each config block stands, `(file, line)`, for a finding about it.
+    pub config_sites: BTreeMap<String, (String, usize)>,
     /// Union of every included file's declared params (resolved values), first
     /// definition wins — the estate declares before its packs. Feeds tfvars
     /// emission.
@@ -1010,6 +1012,39 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
         }
     }
     Ok(needed)
+}
+
+/// Every `${interface.<export>}` in the estate's `terraform` and `providers` blocks, replaced
+/// as in a resource body: a whole-value reference by the value, one inside a longer string
+/// by its text. A value the central estate looks up is refused at the block: a provider is
+/// configured before any data source is read, and the lookup is read through that provider.
+pub fn resolve_interface_in_config(
+    config: &mut BTreeMap<String, serde_yaml::Value>,
+    sites: &BTreeMap<String, (String, usize)>,
+    files: &[UsedInterfaceFile],
+) -> Result<(), Vec<PipelineError>> {
+    let outputs: BTreeMap<&str, &satz::OfferedOutput> =
+        files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
+    let mut errors = Vec::new();
+    for (block, value) in config.iter_mut() {
+        let (file, line) = sites.get(block).cloned().unwrap_or_default();
+        let mut read = Vec::new();
+        let msg = match substitute_value(value, &outputs, files, &mut read) {
+            Err(m) => Some(m),
+            Ok(()) => read.iter().find(|name| {
+                let mut texts = Vec::new();
+                collect_strings(&outputs[name.as_str()].value, &mut texts);
+                texts.iter().any(|t| !data_addresses(t).is_empty())
+            }).map(|name| format!(
+                "`interface.{}` is a value the central estate looks up, and a provider is configured before any lookup is read — bind the value as a param, or read it in a resource",
+                name
+            )),
+        };
+        if let Some(m) = msg {
+            errors.push(PipelineError { file, line, msg: format!("{}: {}", block, m) });
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors) }
 }
 
 /// The `data.<type>.<label>` addresses a text reads inside `${…}`.
@@ -1429,6 +1464,7 @@ pub fn compile_estate_using(
         load,
         genv: env.clone(),
         config: BTreeMap::new(),
+        config_sites: BTreeMap::new(),
         hcl: Vec::new(),
         claims: Vec::new(),
         questions: Vec::new(),
@@ -1453,6 +1489,7 @@ pub fn compile_estate_using(
         tfvars.remove(&n.param);
     }
     let config = w.config;
+    let config_sites = w.config_sites;
     let walked_actions = w.actions;
     let walked_exports = w.exports;
     let walked_requests = w.requests;
@@ -1598,7 +1635,7 @@ pub fn compile_estate_using(
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
     let requests = resolve_requests(&declared_requests, &tfvars)?;
-    Ok(FrontEnd { fragments: all, env, config, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
+    Ok(FrontEnd { fragments: all, env, config, config_sites, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
 /// The interface files the estate uses, each once. The same file used twice is one; one
@@ -2310,7 +2347,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -2337,6 +2374,8 @@ struct Walk<'a> {
     /// Estate-level config blocks (terraform, providers) — resolved values,
     /// consumed by the providers/variables emitters.
     config: BTreeMap<String, serde_yaml::Value>,
+    /// Where each config block stands, `(file, line)`.
+    config_sites: BTreeMap<String, (String, usize)>,
     /// The `use` chain from the estate down to the file being walked — a path
     /// already on it is a cycle, reported with the chain instead of a stack
     /// overflow.
@@ -2711,6 +2750,7 @@ impl Walk<'_> {
                                 if self.config.contains_key(&k) {
                                     return perr(file_name, *line, format!("`{}` is declared twice — one block per estate", k));
                                 }
+                                self.config_sites.insert(k.clone(), (file_name.to_string(), *line));
                                 self.config.insert(k, resolved);
                             } else {
                                 // Silently dropping a block the author wrote means a
@@ -3808,6 +3848,30 @@ mod estate_channel_tests {
         assert_eq!(v["name"], serde_yaml::Value::String("x-{123456789012}".into()));
         assert_eq!(v["folder"], serde_yaml::Value::String("${data.google_active_folder.pay.name}".into()));
         assert_eq!(v["regions"], serde_yaml::Value::Sequence(vec!["europe-west3".into(), "europe-west4".into()]));
+    }
+
+    /// `${interface.x}` in the `providers` and `terraform` blocks: a static value becomes its
+    /// literal, and a value the central estate looks up is refused at the block's line.
+    #[test]
+    fn an_interface_reference_in_a_config_block_is_its_literal_and_a_lookup_is_refused() {
+        let run = |value: &str| {
+            let src = format!(
+                "estate p\nuse \"i/pay.satz\"\n\nproviders {{\n  google {{\n    alias  = \"google\"\n    region = \"{}\"\n  }}\n}}\n",
+                value
+            );
+            let mut fe = compile_estate("p.satz", &src, &Table, &project_load).unwrap();
+            assert_eq!(fe.config_sites["providers"], ("p.satz".to_string(), 4));
+            resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).map(|()| fe.config).map_err(|mut e| e.remove(0))
+        };
+        let config = run("${{interface.regions}}").unwrap();
+        assert_eq!(config["providers"]["google"]["region"], serde_yaml::Value::Sequence(vec!["europe-west3".into(), "europe-west4".into()]));
+        let config = run("org-${{interface.org_id}}").unwrap();
+        assert_eq!(config["providers"]["google"]["region"], serde_yaml::Value::String("org-123456789012".into()));
+        let e = run("${{interface.folder}}").unwrap_err();
+        assert_eq!((e.file.as_str(), e.line), ("p.satz", 4));
+        assert!(e.msg.starts_with("providers: `interface.folder` is a value the central estate looks up"), "{}", e.msg);
+        let e = run("${{interface.nope}}").unwrap_err();
+        assert!(e.msg.contains("no used interface file exports `nope`"), "{}", e.msg);
     }
 
     /// An export no used file carries, a malformed reference, a list inside a longer text,
