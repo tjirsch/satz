@@ -55,7 +55,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`, in t
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.7 | Organization-wide audit log sink into a GCS bucket — the compliance archive. | 5 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
+| [`monitoring.organization_audit_logsink`](organization-audit-logsink.md) | 1.8 | Organization-wide audit log sink into a GCS bucket — the compliance archive. | 5 | 6 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) | 1.7 | Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in 4.0. | 20 | 18 — cis-gcp 4.0, cis-gcp 5.0 |
 | [`project_cis_log_alerts`](project-cis-log-alerts.md) | 1.1 | CIS log metric filters and alert policies, per project. | 17 | — |
 | [`essential_contacts_organization`](essential-contacts-organization.md) | 1.4 | One organization-level Essential Contact, subscribed to every notification category Google routes. | 1 | — |
@@ -83,7 +83,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`, in t
 | [`scc_findings_siem`](scc-findings-siem.md) | 1.0 | Security Command Center findings, pulled off the topic by an external SIEM. | 2 | — |
 | [`scc_export`](scc-export.md) | 1.1 | Security Command Center findings, exported to BigQuery as they are raised — where findings are KEPT, as opposed to where they are sent. | 4 | — |
 | [`sa_security_audit`](sa-security-audit.md) | 1.1 | A read-only security-audit service account, with the group that may impersonate it. | 4 | — |
-| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.6 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
+| [`integrations.microsoft_defender_for_cloud`](microsoft-defender-for-cloud.md) | 0.7 | Microsoft Defender for Cloud — GCP onboarding, the foundation. | 6 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm`](microsoft-defender-for-cloud-cspm.md) | 0.1 | Microsoft Defender for Cloud — the CSPM plan. | 5 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_default`](microsoft-defender-for-cloud-cspm-role-default.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, DEFAULT access mode. | 1 | — |
 | [`integrations.microsoft_defender_for_cloud_cspm_role_least_privilege`](microsoft-defender-for-cloud-cspm-role-least-privilege.md) | 0.1 | Microsoft Defender for Cloud — the CSPM custom role, LEAST PRIVILEGE mode. | 1 | — |

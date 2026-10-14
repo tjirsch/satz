@@ -51,3 +51,12 @@ google_project_iam_member {
     member  = "group:gcp-auditors@example.com"
   }
 }
+
+// A folder of the project's own under the central estate's folder: its parent is the
+// same lookup the Google project above reads.
+google_folder {
+  archive_team {
+    display_name = "archive-team"
+    parent       = "${{interface.infra_folder}}"
+  }
+}

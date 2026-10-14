@@ -5,7 +5,7 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.7"
+pack monitoring.organization_audit_logsink version "1.8"
 
 params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"
@@ -43,6 +43,7 @@ question logsink_project_folder {
   why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
   reversal = edit
   blast    = low
+  empty    = "the organisation itself; the project is created directly under it"
 }
 
 question logsink_bucket_name {

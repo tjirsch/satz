@@ -604,7 +604,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
                     }
                     // a top-level folder whose parent is another folder outside
                     // this estate (a partial import) says so explicitly
-                    (None, Some(p)) => hcl::Expression::from(p.to_string()),
+                    (None, Some(p)) => crate::emit_shared::parse_expr(p),
                     (None, None) => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
                 };
                 if let Some(id) = attr_import(attrs) {
