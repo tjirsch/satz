@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// are its business, not this test's.
 fn tracked_satz_files(root: &Path) -> Vec<PathBuf> {
     let out = std::process::Command::new("git")
-        .args(["ls-files", "-z", "--", "presets", "tests"])
+        .args(["ls-files", "-z", "--", "presets", "tests", "examples"])
         .current_dir(root)
         .output()
         .expect("git ls-files: the corpus is defined as the tracked files, so git must run");

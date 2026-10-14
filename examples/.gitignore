@@ -1,0 +1,6 @@
+# what satz and tofu write when an example is run
+hcl/
+interfaces/
+vendor/
+*.tfstate
+*.tfstate.backup

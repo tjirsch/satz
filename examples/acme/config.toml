@@ -1,0 +1,15 @@
+# The example organisation's estate. Paths resolve against this file's directory.
+# `presets_dir`, `schema_dir` and the last entry of `include_dirs` point into the satz
+# repository so the example compiles in place; in an estate of your own they are the
+# `presets/` and `schemas/` folders `satz init` and `satz get-presets` write beside it.
+yaml_dir = "satz"
+hcl_dir = "hcl"
+interfaces_dir = "interfaces"
+include_dirs = [".", "satz", "../.."]
+schema_dir = "../../tests/schemas"
+presets_dir = "../../presets"
+tf_tool = "tofu"
+google_providers = ["google", "google-beta"]
+provider_version = "7.14.1"
+auto_explode = ["google_project_service", ".*_iam_member"]
+validation_level = "warn"

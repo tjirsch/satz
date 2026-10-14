@@ -206,3 +206,47 @@ estate implements and which it declines.
 
 **A new language feature gets its example here first**: the reference cites this
 file, and CI compiles it.
+
+## An organisation and the projects beside it
+
+`examples/` holds estates that show one use of satz each. `examples/acme/` is one
+organisation — the estate `satz init --workload-folder-name Workloads` writes, with
+`presets/estate-core.satz` in use — and each subfolder of it is one example: a project
+that reads the organisation through `interfaces/common/` copied to its `vendor/`.
+`examples/README.md` gives the commands and names the values to replace.
+
+`examples/acme/cost-centre-project/satz/workloads.satz` creates Google projects from a
+list:
+
+```
+google_project {
+  each workload_projects by name {
+    name            = "{each.name}"
+    project_id      = "${{interface.customer_shortname}}-{each.name}"
+    folder_id       = "${{interface.workload_folder}}"
+    billing_account = billing_account
+    labels          = { cost_centre = each.cost_centre }
+    // The grants below are calls to this API, billed to the project itself.
+    project_service = ["cloudresourcemanager.googleapis.com"]
+    google_project_iam_member {
+      "group:${{interface.customer_shortname}}-{each.name}-owner@${{interface.customer_domain}}" = [
+        "roles/owner",
+      ]
+      "group:${{interface.customer_shortname}}-{each.name}-editor@${{interface.customer_domain}}" = [
+        "roles/editor",
+      ]
+      "group:${{interface.customer_shortname}}-{each.name}-viewer@${{interface.customer_domain}}" = [
+        "roles/viewer",
+      ]
+    }
+  }
+}
+```
+
+The entry `{ name = "shop-prod" cost_centre = "4711" }` is the Google project
+`acme-shop-prod` under the organisation's workload folder, labelled `cost_centre =
+"4711"`, with `roles/owner`, `roles/editor` and `roles/viewer` granted to the groups
+`acme-shop-prod-owner`, `-editor` and `-viewer` at `example.com`. The groups exist in the
+directory before the apply and are not declared. A `request` point on the list holds
+`name` to `<application>-<stage>` and `cost_centre` to four digits, and the compile
+refuses an entry that matches neither, naming the entry and the value.
