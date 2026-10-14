@@ -40,7 +40,7 @@
 // that onboards it another way adds that account to `allowed_policy_member_subjects`
 // itself, or the managed §1.1 constraint refuses the grant.
 
-pack integrations.microsoft_defender_for_cloud version "0.6"
+pack integrations.microsoft_defender_for_cloud version "0.7"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
@@ -96,6 +96,7 @@ question mdc_mgmt_project_folder {
   why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit."
   reversal = edit
   blast    = low
+  empty    = "the organisation itself; the project is created directly under it"
 }
 
 question mdc_plan_cspm {

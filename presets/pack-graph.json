@@ -129,7 +129,7 @@
     },
     {
       "path": "presets/monitoring/organization-audit-logsink.satz",
-      "version": "1.7",
+      "version": "1.8",
       "role": "pack",
       "gate": "use_audit_logsink",
       "gate_declared_in": "presets/estate-map.satz",
@@ -481,7 +481,7 @@
     },
     {
       "path": "presets/integrations/microsoft-defender-for-cloud.satz",
-      "version": "0.6",
+      "version": "0.7",
       "role": "pack",
       "gate": "use_defender",
       "gate_declared_in": "presets/estate-map.satz",
@@ -958,7 +958,7 @@
       "params": [
         "mdc_plan_cspm"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:108"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:109"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz",
@@ -969,7 +969,7 @@
         "mdc_cspm_default_access",
         "mdc_cspm_least_privilege"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:108"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:109"
     },
     {
       "from": "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege.satz",
@@ -989,7 +989,7 @@
       "params": [
         "mdc_plan_cspm"
       ],
-      "at": "presets/integrations/microsoft-defender-for-cloud.satz:108"
+      "at": "presets/integrations/microsoft-defender-for-cloud.satz:109"
     },
     {
       "from": "presets/integrations/microsoft-sentinel.satz",

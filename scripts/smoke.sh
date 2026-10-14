@@ -239,6 +239,7 @@ mkdir -p project/vendor && cp -R "$si" project/vendor/archive
 pm=project/hcl/main.tf
 grep -q 'project = "corp-archive-001"' "$pm" || fail "a static value is not its literal:\n$(cat $pm)"
 grep -q 'folder_id = "${data.google_active_folder.infra.name}"' "$pm" || fail "a looked-up value is not its data address:\n$(cat $pm)"
+grep -q 'parent = "${data.google_active_folder.infra.name}"' "$pm" || fail "a folder's looked-up parent is not its data address:\n$(cat $pm)"
 [ "$(grep -c '^data "google_active_folder" "infra"' "$pm")" = 1 ] || fail "the lookup is not one data block:\n$(cat $pm)"
 [ -e project/interfaces ] && fail "a project that exports nothing wrote interfaces/"
 "$satz" --config project/config.toml packs archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz packs failed on the project:\n$(cat tmp/project-packs.txt)"

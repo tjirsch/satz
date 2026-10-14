@@ -1016,6 +1016,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `monitoring.organization_audit_logsink` | 1.8 | 2026-10-14 | `logsink_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
+| `integrations.microsoft_defender_for_cloud` | 0.7 | 2026-10-14 | `mdc_mgmt_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
 | `project_onboarding` | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |
 | `project_onboarding` | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
 | `estate_map` | 2.8 | 2026-10-02 | `use_budget` asks for budgets on projects and folders too, and no longer speaks of a placeholder id; nothing on or off changes |
