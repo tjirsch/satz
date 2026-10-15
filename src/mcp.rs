@@ -379,6 +379,12 @@ pub(crate) struct InterviewReport {
     /// `init` would have named it. `git mv` to this and set the `estate` line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rename_to: Option<String>,
+    /// What this call did about a commented-out `use "presets/estate-core.satz"` line —
+    /// the one `satz init` writes without `--interview`: switched on, by a session that may
+    /// write, or why it was left (no library in `presets_dir`, or no `write`). Absent when
+    /// the line is active or not there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub core: Option<String>,
     /// The notices this call's answers opened, by switching a pack on: the command each
     /// names, to run now, and the param that acknowledges it — answered `true` through
     /// `answers` once it has run. Shown once: a later call returns only what it opens.
@@ -1417,6 +1423,35 @@ impl SatzMcp {
             }
             created = true;
         }
+        // Nobody to ask over MCP: a commented-out core line is switched on when the session
+        // may write, and the report says what happened either way.
+        let core_line = match crate::fsx::read_to_string(&estate) {
+            Ok(src) => crate::template::estate_core_commented(&src),
+            Err(e) => return Ok(Err(refused(format!("{}: {}", estate.display(), e)))),
+        };
+        let core = match core_line {
+            None => None,
+            Some(line) if !std::path::Path::new(&open.runtime.presets_dir).join("estate-core.satz").exists() => Some(format!(
+                "`use \"presets/estate-core.satz\"` is commented out (line {}) and the library is not here: \
+                 `satz get-presets` fetches it, and the next call switches the line on",
+                line
+            )),
+            Some(line) if self.permits(Group::Write, SERVES).is_err() => Some(format!(
+                "`use \"presets/estate-core.satz\"` is commented out (line {}): the day-0 questions and the core \
+                 exports are not in use, and this session may not write — a session with `write` switches the line on",
+                line
+            )),
+            Some(line) => {
+                if let Err(e) = crate::template::use_estate_core(&estate) {
+                    return Ok(Err(refused(format!("interview: {}: {}", estate.display(), e))));
+                }
+                Some(format!(
+                    "switched on `use \"presets/estate-core.satz\"` (line {}): the day-0 params with their questions, \
+                     and the core exports every interface carries",
+                    line
+                ))
+            }
+        };
         let mut written = 0;
         let mut notices = Vec::new();
         let mut contributes = Vec::new();
@@ -1461,7 +1496,7 @@ impl SatzMcp {
             // The summary stays whole: it describes the estate, not the filter.
             report.questions.retain(|q| q.state == "unanswered");
         }
-        Ok(Ok(Json(InterviewReport { created, written, rename_to, notices, contributes, report })))
+        Ok(Ok(Json(InterviewReport { created, written, rename_to, core, notices, contributes, report })))
     }
 
     #[tool(

@@ -492,6 +492,51 @@ pub(crate) fn run(
             ),
         )?;
     }
+    // An estate `init` wrote without `--interview` carries the core line commented out:
+    // the day-0 questions and the core exports are not in use. The run offers to switch it
+    // on once the library is here, and does so without asking under --accept-defaults or
+    // when the input has ended, because then there is nobody to ask.
+    let src = crate::fsx::read_to_string(estate).map_err(|e| e.to_string())?;
+    if let Some(line) = crate::template::estate_core_commented(&src) {
+        if !presets_dir.join("estate-core.satz").exists() {
+            w(
+                out,
+                &format!(
+                    "  `use \"presets/estate-core.satz\"` is commented out (line {}) and the library is not here: \
+                     `satz get-presets` fetches it, and the next run switches the line on\n",
+                    line
+                ),
+            )?;
+        } else {
+            let yes = if accept_defaults {
+                true
+            } else {
+                w(
+                    out,
+                    &format!(
+                        "\n`use \"presets/estate-core.satz\"` — the day-0 params with their questions, and the core \
+                         exports every interface carries — is commented out (line {}).\nSwitch it on? [Y/n]\n> ",
+                        line
+                    ),
+                )?;
+                out.flush().map_err(|e| e.to_string())?;
+                let mut answer = String::new();
+                if input.read_line(&mut answer).map_err(|e| e.to_string())? == 0 {
+                    w(out, "(end of input — nobody to ask)\n")?;
+                    true
+                } else {
+                    !matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no")
+                }
+            };
+            if yes {
+                crate::template::use_estate_core(estate).map_err(|e| e.to_string())?;
+                w(out, &format!("  switched on `use \"presets/estate-core.satz\"` in {} (line {})\n", estate.display(), line))?;
+                report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
+            } else {
+                w(out, "  left commented out: the day-0 questions and the core exports stay out of the estate\n")?;
+            }
+        }
+    }
     if report.questions.is_empty() {
         w(out, "  nothing to ask: no pack this estate uses declares a question.\n")?;
         return Ok(());
@@ -1150,6 +1195,86 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         assert_eq!(std::fs::read_to_string(&estate).unwrap(), "estate e\n\nparams {\n}\n\nuse \"asks.satz\"\n");
         let gate = crate::questions::require_complete(&estate, &cfg, "bootstrap").unwrap_err();
         assert!(gate.contains("bootstrap refused") && gate.contains("shortname (needs a value)"), "{}", gate);
+    }
+
+    /// An estate `init` wrote without `--interview`: the core line commented out, the
+    /// library beside it. One question in the pack stands for the day-0 ones.
+    fn init_written(name: &str, with_library: bool) -> (PathBuf, ToolConfig) {
+        let dir = std::env::temp_dir().join(format!("satz-iv-core-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("presets")).unwrap();
+        if with_library {
+            std::fs::write(
+                dir.join("presets/estate-core.satz"),
+                "// The day-0 questions.\npack estate_core version \"1.0\"\n\nparams {\n  customer_longname = \"\"\n}\n\n\
+                 question customer_longname { prompt = \"Display name\" reversal = edit blast = none }\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.join("e.satz"), "estate e\n\nparams {\n}\n\n// use \"presets/estate-core.satz\"\n").unwrap();
+        let mut cfg: ToolConfig = toml::from_str("").unwrap();
+        cfg.include_dirs = vec![dir.to_string_lossy().into_owned()];
+        cfg.presets_dir = dir.join("presets").to_string_lossy().into_owned();
+        (dir.join("e.satz"), cfg)
+    }
+
+    fn core_active(estate: &Path) -> bool {
+        std::fs::read_to_string(estate).unwrap().contains("\nuse \"presets/estate-core.satz\"\n")
+    }
+
+    #[test]
+    fn the_commented_core_line_is_offered_and_a_yes_switches_it_on() {
+        let (estate, cfg) = init_written("yes", true);
+        let mut input = std::io::Cursor::new("y\nAcme Corp.\n");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("is commented out (line 6).\nSwitch it on? [Y/n]"), "{}", text);
+        assert!(text.contains("switched on `use \"presets/estate-core.satz\"` in"), "{}", text);
+        assert!(core_active(&estate), "{}", std::fs::read_to_string(&estate).unwrap());
+        assert!(text.contains("✓ customer_longname = \"Acme Corp.\""), "the pack's question is asked once it is on: {}", text);
+    }
+
+    #[test]
+    fn a_no_leaves_the_core_line_commented_and_says_so() {
+        let (estate, cfg) = init_written("no", true);
+        let mut input = std::io::Cursor::new("n\n");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("left commented out") && text.contains("nothing to ask"), "{}", text);
+        assert!(!core_active(&estate));
+    }
+
+    #[test]
+    fn accept_defaults_and_an_ended_input_switch_the_core_line_on_without_a_question() {
+        let (estate, cfg) = init_written("defaults", true);
+        let mut input = std::io::Cursor::new("");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, true, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("Switch it on?") && text.contains("switched on `use"), "{}", text);
+        assert!(core_active(&estate));
+
+        let (estate, cfg) = init_written("eof", true);
+        let mut input = std::io::Cursor::new("");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("Switch it on?") && text.contains("nobody to ask") && text.contains("switched on `use"), "{}", text);
+        assert!(core_active(&estate));
+    }
+
+    #[test]
+    fn without_the_library_the_core_line_stays_and_get_presets_is_named() {
+        let (estate, cfg) = init_written("nolib", false);
+        let mut input = std::io::Cursor::new("y\n");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("the library is not here") && text.contains("`satz get-presets` fetches it"), "{}", text);
+        assert!(!text.contains("Switch it on?"), "{}", text);
+        assert!(!core_active(&estate));
     }
 
     #[test]
