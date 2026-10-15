@@ -216,7 +216,7 @@ organisation — the estate `satz init --workload-folder-name Workloads` writes,
 that reads the organisation through `interfaces/common/` copied to its `vendor/`.
 `examples/README.md` gives the commands and names the values to replace.
 
-`examples/acme/project-template/satz/template.satz` is one Google project as a
+`examples/acme/simple-project/satz/simple-project.satz` is one Google project as a
 **template**: its `inputs { application stage cost_centre }` are what a reader binds.
 
 ```

@@ -2,7 +2,7 @@
 // the customer's naming scheme, a four-digit cost centre as a label, and the owner, editor
 // and viewer roles granted to three groups named after the project. One file, used two ways.
 //
-// AS HCL. `satz transpile template.satz` writes hcl/ with the three inputs below as
+// AS HCL. `satz transpile simple-project.satz` writes hcl/ with the three inputs below as
 // variables: `variables.tf` declares them, `terraform.tfvars` carries the example values,
 // `main.tf` reads `var.<name>`, and `interface.tf` holds the organisation's values. A team
 // that works in OpenTofu alone takes hcl/, edits `terraform.tfvars` (or passes `-var`), and
@@ -10,7 +10,7 @@
 //
 // AS SATZ. A thin estate binds the inputs in its `params { }` and uses this file — the
 // example beside this one, examples/acme/shop-dev/ — and compiles to the same HCL with the
-// bound values in `terraform.tfvars`. `satz transpile template.satz --input stage=test`
+// bound values in `terraform.tfvars`. `satz transpile simple-project.satz --input stage=test`
 // binds one for a run.
 //
 // The plan runs as the team's own account, in the team's own project, with the state in
@@ -19,7 +19,7 @@
 // customer's directory — synced from Microsoft Entra ID — before the apply, which fails on
 // a group that does not.
 
-estate project_template
+estate simple_project
 
 inputs {
   // the application the project serves: lowercase letters, digits and `-`
