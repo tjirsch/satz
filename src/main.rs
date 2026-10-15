@@ -2576,6 +2576,11 @@ Thumbs.db
 /// through it (transpile, require, report-compliance, adopt, import --into).
 struct PipelineBOut {
     main_tf: String,
+    /// `interface.tf` of a project estate: what it read from the central estate's
+    /// interface as `local.interface.<export>`, with the lookups. Empty otherwise.
+    interface_tf: String,
+    /// what the references in `providers_tf` stand for, for the billing check
+    names: crate::prerequisites::Names,
     /// What `main_tf` contains, as structure (resource blocks only — the raw
     /// `hcl { … }` passthrough is text appended afterwards and is not in it,
     /// which is exactly the "opaque to the proof layer" contract). Every
@@ -2902,6 +2907,8 @@ fn pipeline_b_compile_using(
     Ok(PipelineBOut {
         actions: fe.actions,
         main_tf: append_hcl_passthrough(out.main_tf, &fe.hcl),
+        interface_tf: out.interface_tf,
+        names: out.names,
         manifest: out.manifest,
         providers_tf,
         variables_tf: crate::emitter::emit_variables(&fe.tfvars, &descriptions),
@@ -3026,9 +3033,10 @@ pub(crate) fn compile_tail(
         return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
     // A project reads a central estate's values as `${{interface.<export>}}`: replaced
-    // before the emitter, which then writes a literal or the lookup's data address.
-    let lookups = match satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files) {
-        Ok(l) => l,
+    // before the emitter, which then writes a literal or the lookup's data address — and,
+    // beside each value, its rendering `local.interface.<export>` for the text.
+    let mut read = match satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files) {
+        Ok(r) => r,
         Err(errors) => {
             for e in errors {
                 f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
@@ -3038,12 +3046,23 @@ pub(crate) fn compile_tail(
     };
     // the same values in the `terraform` and `providers` blocks, which the providers file reads
     let mut config = fe.config.clone();
-    if let Err(errors) = satz_core::pipeline::resolve_interface_in_config(&mut config, &fe.config_sites, &fe.interface_files) {
-        for e in errors {
-            f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
+    let config_rendering = match satz_core::pipeline::resolve_interface_in_config(&mut config, &fe.config_sites, &fe.interface_files) {
+        Ok(r) => r,
+        Err(errors) => {
+            for e in errors {
+                f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
+            }
+            return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
-        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
-    }
+    };
+    read.extend(config_rendering.read.iter().cloned());
+    let locals = match satz_core::pipeline::interface_locals(&read, &fe.interface_files) {
+        Ok(l) => l,
+        Err(e) => {
+            f.push(Finding::new(Severity::Error, Kind::InterfaceUse, e.msg).located(e.file, e.line as u32));
+            return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
+        }
+    };
     let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
     ctx.registry = Some(registry);
     let mut out = match crate::emitter::emit(&folded, &ctx) {
@@ -3070,7 +3089,18 @@ pub(crate) fn compile_tail(
         }
     }
     if !fe.interface_files.is_empty() {
-        out.main_tf.push_str(&crate::emitter::interface_lookups_tf(&lookups, &fe.interface_files));
+        out.interface_tf = crate::emitter::interface_tf(&locals, &fe.interface_files);
+        out.names = locals
+            .values
+            .iter()
+            .filter_map(|(name, v)| match v {
+                serde_yaml::Value::String(s) if !s.contains("${") => Some((name, s)),
+                _ => None,
+            })
+            .flat_map(|(name, s)| {
+                [satz_core::pipeline::INTERFACE_LOCAL, satz_core::pipeline::INTERFACE_STATIC_LOCAL].map(|root| (format!("{}.{}", root, name), s.clone()))
+            })
+            .collect();
         f.extend(crate::consumer::check_project(&out.manifest, &fe.interface_files));
     }
     written_reference_findings(&folded, &out.manifest, &mut f);
@@ -3081,20 +3111,36 @@ pub(crate) fn compile_tail(
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     // a mode with no backend is already the finding at its line; the providers are not
-    // emitted without one. The prerequisite check reads them: they name the project
-    // each provider bills its calls to.
-    let providers_tf = if !mode_ok {
-        None
+    // emitted without one. The prerequisite check reads the text built from the judged
+    // values: it names the project each provider bills its calls to. The file on disk is
+    // the rendering — a central estate's value as `local.interface.<export>` — where the
+    // estate read one.
+    let (providers_judged, providers_written) = if !mode_ok {
+        (None, None)
     } else {
-        match crate::emitter::emit_providers(&config, &folded, &fe.env, &provider_sources, &provider_versions) {
+        let judged = match crate::emitter::emit_providers(&config, &folded, &fe.env, &provider_sources, &provider_versions, None) {
             Ok(t) => Some(t),
             Err(e) => {
                 f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
                 None
             }
-        }
+        };
+        let written = if judged.is_some() && (config_rendering.providers.is_some() || crate::emitter::has_rendering(&folded)) {
+            let view = config_rendering.providers.as_ref().and_then(|v| v.as_mapping());
+            match crate::emitter::emit_providers(&config, &folded, &fe.env, &provider_sources, &provider_versions, Some(view)) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    f.push(Finding::new(Severity::Error, Kind::Providers, format!("emit_providers: {}", e)));
+                    None
+                }
+            }
+        } else {
+            judged.clone()
+        };
+        (judged, written)
     };
-    prerequisite_findings(&out.manifest, providers_tf.as_deref(), &fe.env, estate, estate_arg, estate_src, level, &mut f);
+    let providers_tf = providers_written;
+    prerequisite_findings(&out.manifest, providers_judged.as_deref(), &out.names, &fe.env, estate, estate_arg, estate_src, level, &mut f);
     f.extend(pack_findings);
     f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_arg, estate_src, crate::notices::Doing::Reading));
     match graph {
@@ -3466,6 +3512,7 @@ fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
 fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
     providers_tf: Option<&str>,
+    names: &crate::prerequisites::Names,
     env: &satz_core::pipeline::Env,
     estate: &Path,
     estate_arg: &str,
@@ -3477,7 +3524,7 @@ fn prerequisite_findings(
     let Some(sev) = crate::findings::at_level(level) else { return };
     let get = |k: &str| env.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let update = "satz update-prerequisites <estate>";
-    match providers_tf.map(crate::prerequisites::Billing::parse) {
+    match providers_tf.map(|t| crate::prerequisites::Billing::parse(t, names)) {
         // the finding that stopped the emission is already there
         None => f.push(Finding::new(
             Severity::Info,
@@ -3812,7 +3859,7 @@ pub(crate) fn prerequisites_report(
     let granted = crate::prerequisites::granted(&out.manifest, &sa);
     let missing = crate::prerequisites::missing(&needs, &granted);
     let infra = params.get("infra_project_name").cloned().unwrap_or_default();
-    let billing = crate::prerequisites::Billing::parse(&out.providers_tf)?;
+    let billing = crate::prerequisites::Billing::parse(&out.providers_tf, &out.names)?;
     let check = crate::prerequisites::apis(&out.manifest, &billing);
     let missing_apis = check.missing();
     Ok(PrerequisitesReport {
@@ -4041,6 +4088,7 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     let mut written = Vec::new();
     for (name, content) in [
         ("main.tf", stamped.as_str()),
+        ("interface.tf", out.interface_tf.as_str()),
         ("providers.tf", out.providers_tf.as_str()),
         ("variables.tf", out.variables_tf.as_str()),
         ("terraform.tfvars", out.tfvars.as_str()),
@@ -4596,11 +4644,19 @@ fn api_preflight_steps(billing: &crate::prerequisites::Billing, manifest: &crate
         .collect()
 }
 
-/// The project each provider in the emitted `providers.tf` bills to.
+/// The project each provider in the emitted `providers.tf` bills to. A project estate's
+/// providers read `interface.tf` and `terraform.tfvars`, which stand beside the file.
 fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, String> {
     let path = hcl_dir.join("providers.tf");
+    let mut names = crate::prerequisites::Names::new();
+    if let Ok(text) = std::fs::read_to_string(hcl_dir.join("interface.tf")) {
+        names.extend(crate::prerequisites::names_in_interface_tf(&text));
+    }
+    if let Ok(text) = std::fs::read_to_string(hcl_dir.join("terraform.tfvars")) {
+        names.extend(crate::prerequisites::names_in_tfvars(&text));
+    }
     match std::fs::read_to_string(&path) {
-        Ok(text) => crate::prerequisites::Billing::parse(&text).map_err(|e| format!("{}: {}", path.display(), e)),
+        Ok(text) => crate::prerequisites::Billing::parse(&text, &names).map_err(|e| format!("{}: {}", path.display(), e)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
         Err(e) => Err(format!("{}: {}", path.display(), e)),
     }
@@ -6094,8 +6150,9 @@ mod corpus {
             folded.conflicts()
         );
         // a project case reads interface files, the way `compile_tail` does
-        let lookups = satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files)
+        let read = satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files)
             .unwrap_or_else(|e| panic!("{}: interface references refused: {:?}", name, e.iter().map(|x| &x.msg).collect::<Vec<_>>()));
+        let locals = satz_core::pipeline::interface_locals(&read, &fe.interface_files).unwrap_or_else(|e| panic!("{}: {}", name, e.msg));
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         // Same as production: without the registry the emitter drops
         // schema-derived detail (it once silently lost every alert policy's
@@ -6103,7 +6160,7 @@ mod corpus {
         ctx.registry = Some(&reg);
         let mut out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
         if !fe.interface_files.is_empty() {
-            out.main_tf.push_str(&crate::emitter::interface_lookups_tf(&lookups, &fe.interface_files));
+            out.interface_tf = crate::emitter::interface_tf(&locals, &fe.interface_files);
             let findings = crate::consumer::check_project(&out.manifest, &fe.interface_files);
             assert!(findings.is_empty(), "{}: a project case is held to its interface: {:?}", name, findings.iter().map(|f| &f.message).collect::<Vec<_>>());
         }
@@ -6113,6 +6170,11 @@ mod corpus {
             sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n"),
             sorted_lines(&out.imports_tf).join("\n")
         );
+        // a project case's interface.tf is emission too
+        if !out.interface_tf.is_empty() {
+            snapshot.push_str("\n---interface.tf---\n");
+            snapshot.push_str(&sorted_lines(&out.interface_tf).join("\n"));
+        }
         // The interface is emission too, in its files' own order: a case that exports
         // nothing keeps its snapshot.
         if !fe.exports.is_empty() {
@@ -7097,7 +7159,7 @@ mod prerequisite_findings_speak {
         let env: satz_core::pipeline::Env =
             params.iter().map(|(k, v)| ((*k).to_string(), serde_yaml::Value::from(*v))).collect();
         let mut f = Vec::new();
-        crate::prerequisite_findings(manifest, providers_tf, &env, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
+        crate::prerequisite_findings(manifest, providers_tf, &Default::default(), &env, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
         f
     }
 
@@ -7204,6 +7266,7 @@ mod prerequisite_findings_speak {
         crate::prerequisite_findings(
             &manifest(),
             Some(&providers(&[])),
+            &Default::default(),
             &BTreeMap::new(),
             Path::new("estate.satz"),
             "estate.satz",
@@ -7427,6 +7490,7 @@ provider "google" {
              provider \"google\" {\n  alias = \"project_data\"\n  billing_project = \"corp-data-001\"\n}\n\
              provider \"google\" {\n  alias = \"project_logs\"\n  billing_project = \"corp-logs-001\"\n}\n\
              provider \"google\" {\n  alias = \"project_empty\"\n  billing_project = \"corp-empty-001\"\n}\n",
+            &Default::default(),
         )
         .unwrap();
         let mut manifest = crate::manifest::Manifest::parse(
@@ -7654,14 +7718,14 @@ google_cloud_identity_group {
         use satz_core::algebra::GrantEdge;
         let mut edges = std::collections::BTreeSet::new();
         for id in ["one", "two"] {
-            edges.insert(GrantEdge { member: "user:x@example.com".into(), role: "roles/viewer".into(), condition: String::new(), import_id: id.into() });
+            edges.insert(GrantEdge { member: "user:x@example.com".into(), role: "roles/viewer".into(), import_id: id.into(), ..Default::default() });
         }
         let err = crate::emitter::reconciled_edges(&edges).unwrap_err();
         assert!(err.contains("two different import-ids"), "{}", err);
 
         let mut merged = std::collections::BTreeSet::new();
-        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), condition: String::new(), import_id: String::new() });
-        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), condition: String::new(), import_id: "x".into() });
+        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), ..Default::default() });
+        merged.insert(GrantEdge { member: "u".into(), role: "r".into(), import_id: "x".into(), ..Default::default() });
         let got = crate::emitter::reconciled_edges(&merged).unwrap();
         assert_eq!(got.len(), 1, "with and without an id is one binding");
         assert_eq!(got[0].import_id, "x");
@@ -7876,9 +7940,9 @@ mod init_template {
         // by, on the project every call is billed to. A fresh estate that warns on
         // its first transpile is a scaffold that was never finished.
         let providers_tf =
-            crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &std::collections::HashMap::new(), &std::collections::HashMap::new())
+            crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &std::collections::HashMap::new(), &std::collections::HashMap::new(), None)
                 .expect("the template's providers.tf emits");
-        let billing = crate::prerequisites::Billing::parse(&providers_tf).expect("the template's providers.tf parses");
+        let billing = crate::prerequisites::Billing::parse(&providers_tf, &Default::default()).expect("the template's providers.tf parses");
         assert_eq!(billing.default_project().map(str::to_string), get("infra_project_name"), "the template bills to its infra project");
         let check = crate::prerequisites::apis(&out.manifest, &billing);
         assert!(check.unbilled.is_empty(), "the template has resources no project is billed for: {:?}", check.unbilled);

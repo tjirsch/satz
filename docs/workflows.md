@@ -964,8 +964,9 @@ Every interface has the same two forms, with the same values:
   }
   ```
 
-  A static value becomes its literal; a looked-up one becomes the same `data` source the
-  module reads, written once into the project's `main.tf` ([language
+  Every value the estate reads lands in `interface.tf` of its emitted `hcl/` — a static
+  one as its literal, a looked-up one as the same `data` source the module reads — as
+  `local.interface.<export>`, which `main.tf` and `providers.tf` reference ([language
   §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
   An export no used file carries is refused at the line that reads it.
 
@@ -1069,6 +1070,14 @@ needs read permission on what it looks up; the README names the permission per l
 project without it fails its own plan, and the central estate's state is not involved. An
 interface holds only the lookups its own values read.
 
+A project written in Satz gets both through `interface.tf` in its emitted `hcl/`:
+`locals { interface = { … } }` holding every value it read, and the `data` blocks the
+looked-up ones need. `main.tf` reads `local.interface.<export>`, `providers.tf` reads
+`local.interface_static.<export>` (the values satz knows — a provider cannot wait for a
+lookup it runs), and neither carries a value of the organisation itself, so that file is
+the one place the organisation stands in the project's HCL — and the one file that changes
+when the project is pointed at another organisation.
+
 ### Writing to shared infrastructure
 
 A project changes something the central estate owns in one of two ways, and never by
@@ -1141,8 +1150,9 @@ attaches to:
 **A project written in HCL: `satz check-consumer <dir> [<estate>]`**, offline: it reads
 the `.tf` files under the project's directory and compiles the central estate in memory.
 A value reads the estate when it is `module.<name>.<output>` of a module whose `source`
-ends in `<interface>/hcl`, or a literal equal to a value the estate publishes or an
-identity it writes; anything else is the project's own. Each finding names the project's
+ends in `<interface>/hcl`, `local.interface.<export>` or `local.interface_static.<export>`
+as the `interface.tf` a project estate's transpile writes names it, or a literal equal to a
+value the estate publishes or an identity it writes; anything else is the project's own. Each finding names the project's
 file and line, and any finding exits 1. A project runs it in its CI against a checkout of
 the estate; an agent runs `satz_check_consumer`.
 

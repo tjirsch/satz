@@ -110,6 +110,14 @@ fn res_ctx(path: &[String], ctx: &EmitCtx, folded: &Folded) -> crate::emit_share
 pub(crate) struct EmitOut {
     pub main_tf: String,
     pub imports_tf: String,
+    /// What a project estate read from the central estate's interface, as
+    /// `local.interface.<export>` with the lookups those values need (`interface_tf`);
+    /// empty for every other estate. The compile fills it after the emission.
+    pub interface_tf: String,
+    /// What the references in the written `providers.tf` stand for (`local.interface.<x>`
+    /// → the static value), for the check that reads the project each provider bills to.
+    /// The compile fills it with `interface_tf`.
+    pub names: crate::prerequisites::Names,
     /// The emitted resources as structure — built from the same blocks
     /// `main_tf` renders, so consumers never parse the text back.
     pub manifest: crate::manifest::Manifest,
@@ -517,6 +525,12 @@ pub(crate) fn reconciled_edges(
                 by_identity.insert(key, e.clone());
             }
             Some(existing) => {
+                if existing.rendered_member.is_empty() {
+                    existing.rendered_member = e.rendered_member.clone();
+                }
+                if existing.rendered_role.is_empty() {
+                    existing.rendered_role = e.rendered_role.clone();
+                }
                 if existing.import_id.is_empty() {
                     existing.import_id = e.import_id.clone();
                 } else if !e.import_id.is_empty() && existing.import_id != e.import_id {
@@ -545,292 +559,35 @@ fn without_private(entity: &Entity) -> Result<(Option<Entity>, bool), String> {
     Ok((Some(e), private))
 }
 
-pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
-    let mut blocks: Vec<hcl::Block> = Vec::new();
-    let mut imports: Vec<hcl::Block> = Vec::new();
-    // An empty `"import-id"` adopts nothing: a pack that writes one from a list entry
-    // (`"import-id" = each.import_id`, defaulted to `""`) creates the entries that name none.
-    let attr_import = |attrs: &serde_yaml::Mapping| -> Option<String> {
-        attrs
-            .get(serde_yaml::Value::String("import-id".into()))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-    };
+/// The blocks one pass of the emitter builds, before ordering.
+struct Built {
+    blocks: Vec<hcl::Block>,
+    imports: Vec<hcl::Block>,
+    /// (address, file, line): where each directly-declared block came from, so
+    /// `adopt --write` can put a resolved id back into the source.
+    origins: Vec<(String, String, u32)>,
+    /// (address, `project` | `folder`): a resource outside the scope its type takes
+    unscoped: Vec<(String, &'static str)>,
+    /// the addresses of the resources marked `private = true`
+    private: Vec<String>,
+}
 
-    // (address, file, line): where each directly-declared block came from, so
-    // `adopt --write` can put a resolved id back into the source.
-    let mut origins: Vec<(String, String, u32)> = Vec::new();
-    // (address, `project` | `folder`): a resource outside the scope its type takes
-    let mut unscoped: Vec<(String, &'static str)> = Vec::new();
-    // the addresses of the resources marked `private = true`
-    let mut private: Vec<String> = Vec::new();
-    for (addr, slot) in &folded.slots {
-        let entity = match slot {
-            Slot::Ok(e) => e,
-            Slot::Bottom(c) => {
-                return Err(format!(
-                    "conflict at {}.{} ({} candidates)",
-                    c.addr.tf_type,
-                    c.addr.label,
-                    c.candidates.len()
-                ))
-            }
-        };
-        // `private` is satz's, and never an attribute: taken off the body before any arm
-        // reads it
-        let (stripped, is_private) = without_private(entity).map_err(|e| format!("{}.{}: {}", addr.tf_type, addr.label, e))?;
-        let entity = stripped.as_ref().unwrap_or(entity);
-        let path = &entity.node_path;
-        let alias = alias_for(path);
-        let first_block = blocks.len();
-        match (addr.tf_type.as_str(), &entity.body) {
-            ("google_folder", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
-                let display_name = attrs
-                    .get(serde_yaml::Value::String("display_name".into()))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&addr.label);
-                let explicit_parent = attrs.get(serde_yaml::Value::String("parent".into())).and_then(|v| v.as_str());
-                let parent = match (last_with_prefix(path, "folder:"), explicit_parent) {
-                    (Some(f), None) => crate::emit_shared::traversal_expr(&format!(
-                        "google_folder.{}.name",
-                        f.replace('-', "_")
-                    )),
-                    (Some(f), Some(p)) => {
-                        return Err(format!(
-                            "folder `{}`: `parent = \"{}\"` is declared, but the folder is nested under `{}` — the parent is the nesting; remove the attribute",
-                            addr.label, p, f
-                        ))
-                    }
-                    // a top-level folder whose parent is another folder outside
-                    // this estate (a partial import) says so explicitly
-                    (None, Some(p)) => crate::emit_shared::parse_expr(p),
-                    (None, None) => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
-                };
-                if let Some(id) = attr_import(attrs) {
-                    imports.push(import_block(&format!("google_folder.{}", addr.label.replace('-', "_")), &id));
-                }
-                // Attributes the block builder does not place itself. Nested
-                // resources are separate entities by now; a `folder`/`project`
-                // or `google_*` key here would be one the fold left behind, not
-                // an attribute.
-                let mut extra: Vec<(String, serde_yaml::Value)> = attrs
-                    .iter()
-                    .filter_map(|(k, v)| k.as_str().map(|k| (k.to_string(), v.clone())))
-                    .filter(|(k, _)| {
-                        !matches!(k.as_str(), "display_name" | "parent" | "labels" | "lifecycle" | "import-id" | "folder" | "project")
-                            && !k.starts_with("google_")
-                    })
-                    .collect();
-                extra.sort_by(|a, b| a.0.cmp(&b.0));
-                blocks.push(crate::emit_shared::folder_block(
-                    &addr.label.replace('-', "_"),
-                    display_name,
-                    parent,
-                    Some(&alias),
-                    attrs.get(serde_yaml::Value::String("labels".into())),
-                    attrs
-                        .get(serde_yaml::Value::String("lifecycle".into()))
-                        .and_then(|v| crate::emit_shared::lifecycle_block(v, &|_| None)),
-                    &extra,
-                ));
-            }
-            ("google_cloud_identity_group", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
-                // Hoisted to customer scope: the walk emits these with the root alias.
-                if let Some(id) = attr_import(attrs) {
-                    imports.push(import_block(
-                        &crate::emit_shared::group_resource_address(&addr.label),
-                        &id,
-                    ));
-                }
-                blocks.push(crate::emit_shared::group_block(
-                    &addr.label,
-                    attrs,
-                    &ctx.customer_id,
-                    &ctx.customer_domain,
-                    Some("google.google"),
-                    crate::emit_shared::group_lifecycle(attrs),
-                ));
-                blocks.extend(crate::emit_shared::membership_blocks(
-                    &addr.label,
-                    attrs,
-                    Some("google.google"),
-                ));
-                for (member_raw, id) in crate::emit_shared::group_member_import_ids(attrs) {
-                    imports.push(import_block(
-                        &crate::emit_shared::membership_resource_address(&addr.label, &member_raw),
-                        &id,
-                    ));
-                }
-            }
-            ("google_organization_iam_member", Body::Grant(edges)) => {
-                for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e)?;
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
-                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
-                    blocks.push(crate::emit_shared::iam_member_block(
-                        "google_organization_iam_member",
-                        &label,
-                        &e.role,
-                        crate::emit_shared::string_to_hcl_expr(&e.member),
-                        "org_id",
-                        crate::emit_shared::string_to_hcl_expr(&ctx.org_id),
-                        cond_block,
-                        Some("google.google"),
-                    ));
-                    if !e.import_id.is_empty() {
-                        imports.push(import_block(&format!("google_organization_iam_member.{}", label), &e.import_id));
-                    }
-                }
-            }
-            (BILLING_ID_TYPE, _) => {} // consumed below, never emitted
-            ("google_billing_account_iam_member", Body::Grant(edges)) => {
-                // Explicit pin from a fragment wins; else the conventional variable.
-                let pinned = folded
-                    .slots
-                    .get(&satz_core::Address { tf_type: BILLING_ID_TYPE.into(), label: "billing_account_id".into() })
-                    .and_then(|s| match s {
-                        Slot::Ok(e) => match &e.body {
-                            Body::Attrs(v) => v.as_str().map(|x| x.to_string()),
-                            _ => None,
-                        },
-                        _ => None,
-                    });
-                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str());
-                let Some(billing_id) = pinned.as_deref().or(fallback) else {
-                    return Err(
-                        "google_billing_account_iam_member: no billing account to bind on — pin `billing_account_id` in the estate or bind the `billing_account_infra` param"
-                            .to_string(),
-                    );
-                };
-                for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e)?;
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
-                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
-                    blocks.push(crate::emit_shared::iam_member_block(
-                        "google_billing_account_iam_member",
-                        &label,
-                        &e.role,
-                        crate::emit_shared::string_to_hcl_expr(&e.member),
-                        "billing_account_id",
-                        crate::emit_shared::string_to_hcl_expr(billing_id),
-                        cond_block,
-                        Some("google.google"),
-                    ));
-                    if !e.import_id.is_empty() {
-                        imports.push(import_block(&format!("google_billing_account_iam_member.{}", label), &e.import_id));
-                    }
-                }
-            }
-            // Node-scoped grant maps (project_iam_member inside a project, …):
-            // the label carries the structural path before the separator.
-            (t, Body::Grant(edges)) => {
-                // The address prefix is either an explicit scope pin
-                // (`service_account_id=projects/p/serviceAccounts/x@y`) or the
-                // structural path the grant was written in.
-                let prefix = addr.label.split_once(GRANT_SCOPE_SEP).map(|(p, _)| p);
-                let pin = prefix.and_then(scope_pin_of);
-                let grant_path: Vec<String> = match (&pin, prefix) {
-                    (Some(_), _) => path.clone(),
-                    (None, Some(p)) => p.split('/').map(|s| s.to_string()).collect(),
-                    (None, None) => path.clone(),
-                };
-                let rc = res_ctx(&grant_path, ctx, folded);
-                let galias = alias_for(&grant_path);
-                let (id_attr, parent) = if let Some((attr, value)) = &pin {
-                    if let Some(schema) = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s) {
-                        if !schema.block.attributes.contains_key(attr.as_str()) {
-                            return Err(format!(
-                                "{}: `{}` is not an attribute of this type — its scope attribute is one of: {}",
-                                t,
-                                attr,
-                                scope_attr_candidates(schema).join(", ")
-                            ));
-                        }
-                    }
-                    (attr.as_str(), Some(value.clone()))
-                } else if t.contains("project") {
-                    ("project", rc.project_ref.clone().or(rc.project_id.clone()))
-                } else if t.contains("folder") {
-                    ("folder", rc.folder_ref.clone())
-                } else {
-                    // a bucket / service-account / … scoped grant has no scope
-                    // to inherit from the node path; the map form used to emit
-                    // an `id = ""` block that could never plan
-                    return Err(format!(
-                        "{}: the member map form (`\"member\" = [roles…]`) needs the scope written in the map for this type; \
-                         add its scope attribute beside the members (`bucket = …`, `service_account_id = …`), or write `{}` as a labelled resource",
-                        t, t
-                    ));
-                };
-                let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
-                let parent_expr = crate::emit_shared::parse_expr(parent.as_deref().unwrap_or(""));
-                for e in reconciled_edges(edges)? {
-                    let cond = edge_condition(&e)?;
-                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), scope_key);
-                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
-                    blocks.push(crate::emit_shared::iam_member_block(
-                        t,
-                        &label,
-                        &e.role,
-                        crate::emit_shared::string_to_hcl_expr(&e.member),
-                        id_attr,
-                        parent_expr.clone(),
-                        cond_block,
-                        Some(&galias),
-                    ));
-                    if !e.import_id.is_empty() {
-                        imports.push(import_block(&format!("{}.{}", t, label), &e.import_id));
-                    }
-                }
-            }
-            ("google_project", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
-                if let Some(id) = attr_import(attrs) {
-                    imports.push(import_block(&format!("google_project.{}", addr.label.replace('-', "_")), &id));
-                }
-                emit_project(&mut blocks, &mut imports, addr, attrs, path, ctx)?;
-            }
-            (t, Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
-                let schema = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s);
-                let rc = res_ctx(path, ctx, folded);
-                let crate::emit_shared::ResourceBlock { block, import_id, label, needs_scope } = crate::emit_shared::single_resource_block(
-                    t,
-                    &addr.label,
-                    attrs,
-                    schema,
-                    &rc,
-                    Some(&alias),
-                    &|_| None,
-                )
-                .map_err(|e| e.to_string())?;
-                if let Some(id) = import_id {
-                    imports.push(import_block(&format!("{}.{}", t, label), &id));
-                }
-                if let Some(scope) = needs_scope {
-                    unscoped.push((format!("{}.{}", t, label), scope));
-                }
-                blocks.push(block);
-            }
-            (t, _) => return Err(format!("emitter has no rule for {} yet (label {})", t, addr.label)),
-        }
-        // The entity's own block is the first one its arm pushed; blocks after
-        // it (memberships, services, exploded grants) are derived and have no
-        // line of their own, so they point at the line they derive from — the
-        // group, the project, the grant map's member line. `adopt --execute`
-        // rewrites the list entry it finds there into the object form.
-        if is_private {
-            if let Some(a) = blocks.get(first_block).and_then(block_address) {
-                private.push(a);
-            }
-        }
-        if let Some(span) = entity.provenance.first() {
-            for b in &blocks[first_block..] {
-                if let Some(a) = block_address(b) {
-                    origins.push((a, span.file.clone(), span.line));
-                }
-            }
-        }
-    }
+/// Whether any entity is written other than it is judged: a project estate that read a
+/// central estate's value through its interface.
+pub(crate) fn has_rendering(folded: &Folded) -> bool {
+    folded.slots.values().any(|s| match s {
+        Slot::Ok(e) => e.rendering.is_some() || matches!(&e.body, Body::Grant(edges) if edges.iter().any(|x| !x.rendered_member.is_empty() || !x.rendered_role.is_empty())),
+        Slot::Bottom(_) => false,
+    })
+}
+
+/// main.tf + imports.tf from the folded estate. The blocks are built from the bodies the
+/// fold judged — the manifest, the findings and `imports.tf` read those — and, where an
+/// entity carries a rendering, built once more from it for the text: the same addresses in
+/// the same order, with the real pass's `depends_on`, and `local.interface.<export>` where a
+/// value came from a central estate's interface.
+pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
+    let Built { mut blocks, imports, origins, unscoped, private } = build(folded, ctx, false)?;
 
     // Two blocks with one Terraform address is invalid HCL, and the IAM member
     // label is a hash of member+role+condition — distinct scopes that grant the
@@ -901,7 +658,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             scope,
         })
         .collect();
-    let main_tf = render_main_tf(blocks, &manifest)?;
+    let written = if has_rendering(folded) { aligned(build(folded, ctx, true)?.blocks, &blocks)? } else { blocks };
+    let main_tf = render_main_tf(written, &manifest)?;
     // dedup rendered import blocks, like the walk
     let mut import_body = hcl::Body::builder();
     let mut seen = std::collections::HashSet::new();
@@ -912,7 +670,357 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         }
     }
     let imports_tf = hcl::to_string(&import_body.build()).map_err(|e| e.to_string())?;
-    Ok(EmitOut { main_tf, imports_tf, manifest, missing_required, wrong_shapes, unscoped })
+    Ok(EmitOut { main_tf, imports_tf, interface_tf: String::new(), names: Default::default(), manifest, missing_required, wrong_shapes, unscoped })
+}
+
+/// The rendering pass's blocks in the real pass's order, each carrying the real block's
+/// `depends_on`: the ordering is decided on the judged values (a `depends_on` names an
+/// address the manifest resolved), and the rendering only changes how a value is written.
+/// The two passes build the same addresses, or the emitter has a decision that read a
+/// rendered value — refused rather than written.
+fn aligned(rendered: Vec<hcl::Block>, real: &[hcl::Block]) -> Result<Vec<hcl::Block>, String> {
+    let mut by_address: std::collections::BTreeMap<String, hcl::Block> = std::collections::BTreeMap::new();
+    for b in rendered {
+        let Some(a) = block_address(&b) else { return Err("the rendering pass built a block without an address".to_string()) };
+        by_address.insert(a, b);
+    }
+    let mut out = Vec::with_capacity(real.len());
+    for r in real {
+        let Some(a) = block_address(r) else { return Err("the real pass built a block without an address".to_string()) };
+        let Some(mut b) = by_address.remove(&a) else {
+            return Err(format!("the rendering pass did not build `{}`, which the real pass did — a decision read a rendered value", a));
+        };
+        let real_deps = r.body.0.iter().find_map(|st| match st {
+            hcl::Structure::Attribute(x) if x.key() == "depends_on" => Some(x.clone()),
+            _ => None,
+        });
+        b.body.0.retain(|st| !matches!(st, hcl::Structure::Attribute(x) if x.key() == "depends_on"));
+        if let Some(d) = real_deps {
+            b.body.0.push(hcl::Structure::Attribute(d));
+        }
+        out.push(b);
+    }
+    if let Some((extra, _)) = by_address.into_iter().next() {
+        return Err(format!("the rendering pass built `{}`, which the real pass did not — a decision read a rendered value", extra));
+    }
+    Ok(out)
+}
+
+/// One pass over the folded estate. `rendered` reads each entity's rendering for the
+/// values it writes; every decision — a label, a parent, a scope, what is a block — is read
+/// from the body in both passes.
+fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String> {
+    let mut blocks: Vec<hcl::Block> = Vec::new();
+    let mut imports: Vec<hcl::Block> = Vec::new();
+    // An empty `"import-id"` adopts nothing: a pack that writes one from a list entry
+    // (`"import-id" = each.import_id`, defaulted to `""`) creates the entries that name none.
+    let attr_import = |attrs: &serde_yaml::Mapping| -> Option<String> {
+        attrs
+            .get(serde_yaml::Value::String("import-id".into()))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+
+    let mut origins: Vec<(String, String, u32)> = Vec::new();
+    let mut unscoped: Vec<(String, &'static str)> = Vec::new();
+    let mut private: Vec<String> = Vec::new();
+    for (addr, slot) in &folded.slots {
+        let entity = match slot {
+            Slot::Ok(e) => e,
+            Slot::Bottom(c) => {
+                return Err(format!(
+                    "conflict at {}.{} ({} candidates)",
+                    c.addr.tf_type,
+                    c.addr.label,
+                    c.candidates.len()
+                ))
+            }
+        };
+        // `private` is satz's, and never an attribute: taken off the body before any arm
+        // reads it
+        let (stripped, is_private) = without_private(entity).map_err(|e| format!("{}.{}: {}", addr.tf_type, addr.label, e))?;
+        let entity = stripped.as_ref().unwrap_or(entity);
+        // the values as written, where they differ from the values as judged
+        let view: Option<&serde_yaml::Mapping> =
+            if rendered { entity.rendering.as_ref().and_then(|r| r.attrs.as_ref()).and_then(|v| v.as_mapping()) } else { None };
+        let scope_view: Option<&str> = if rendered { entity.rendering.as_ref().and_then(|r| r.scope.as_deref()) } else { None };
+        let path = &entity.node_path;
+        let alias = alias_for(path);
+        let first_block = blocks.len();
+        match (addr.tf_type.as_str(), &entity.body) {
+            ("google_folder", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
+                let pick = |k: &str| view.and_then(|m| m.get(serde_yaml::Value::String(k.into()))).or_else(|| attrs.get(serde_yaml::Value::String(k.into())));
+                let display_name = match pick("display_name") {
+                    Some(v) => crate::emit_shared::render_value(v, &|_| None).unwrap_or_else(|| hcl::Expression::from(addr.label.clone())),
+                    None => hcl::Expression::from(addr.label.clone()),
+                };
+                let explicit_parent = attrs.get(serde_yaml::Value::String("parent".into())).and_then(|v| v.as_str());
+                let parent = match (last_with_prefix(path, "folder:"), explicit_parent) {
+                    (Some(f), None) => crate::emit_shared::traversal_expr(&format!(
+                        "google_folder.{}.name",
+                        f.replace('-', "_")
+                    )),
+                    (Some(f), Some(p)) => {
+                        return Err(format!(
+                            "folder `{}`: `parent = \"{}\"` is declared, but the folder is nested under `{}` — the parent is the nesting; remove the attribute",
+                            addr.label, p, f
+                        ))
+                    }
+                    // a top-level folder whose parent is another folder outside
+                    // this estate (a partial import) says so explicitly
+                    (None, Some(p)) => match pick("parent") {
+                        Some(v) if view.is_some() => crate::emit_shared::render_value(v, &|_| None).unwrap_or_else(|| hcl::Expression::from(p.to_string())),
+                        _ => hcl::Expression::from(p.to_string()),
+                    },
+                    (None, None) => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
+                };
+                if let Some(id) = attr_import(attrs) {
+                    imports.push(import_block(&format!("google_folder.{}", addr.label.replace('-', "_")), &id));
+                }
+                // Attributes the block builder does not place itself. Nested
+                // resources are separate entities by now; a `folder`/`project`
+                // or `google_*` key here would be one the fold left behind, not
+                // an attribute.
+                let mut extra: Vec<(String, serde_yaml::Value)> = attrs
+                    .iter()
+                    .filter_map(|(k, _)| k.as_str().map(|k| (k.to_string(), pick(k).cloned().unwrap_or(serde_yaml::Value::Null))))
+                    .filter(|(k, _)| {
+                        !matches!(k.as_str(), "display_name" | "parent" | "labels" | "lifecycle" | "import-id" | "folder" | "project")
+                            && !k.starts_with("google_")
+                    })
+                    .collect();
+                extra.sort_by(|a, b| a.0.cmp(&b.0));
+                blocks.push(crate::emit_shared::folder_block(
+                    &addr.label.replace('-', "_"),
+                    display_name,
+                    parent,
+                    Some(&alias),
+                    pick("labels"),
+                    attrs
+                        .get(serde_yaml::Value::String("lifecycle".into()))
+                        .and_then(|v| crate::emit_shared::lifecycle_block(v, &|_| None)),
+                    &extra,
+                ));
+            }
+            // A group's address and memberships derive from its body, so a group is
+            // written as judged in both passes: a value it read from an interface is
+            // its literal in main.tf.
+            ("google_cloud_identity_group", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
+                // Hoisted to customer scope: the walk emits these with the root alias.
+                if let Some(id) = attr_import(attrs) {
+                    imports.push(import_block(
+                        &crate::emit_shared::group_resource_address(&addr.label),
+                        &id,
+                    ));
+                }
+                blocks.push(crate::emit_shared::group_block(
+                    &addr.label,
+                    attrs,
+                    &ctx.customer_id,
+                    &ctx.customer_domain,
+                    Some("google.google"),
+                    crate::emit_shared::group_lifecycle(attrs),
+                ));
+                blocks.extend(crate::emit_shared::membership_blocks(
+                    &addr.label,
+                    attrs,
+                    Some("google.google"),
+                ));
+                for (member_raw, id) in crate::emit_shared::group_member_import_ids(attrs) {
+                    imports.push(import_block(
+                        &crate::emit_shared::membership_resource_address(&addr.label, &member_raw),
+                        &id,
+                    ));
+                }
+            }
+            ("google_organization_iam_member", Body::Grant(edges)) => {
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e)?;
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
+                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
+                    blocks.push(crate::emit_shared::iam_member_block(
+                        "google_organization_iam_member",
+                        &label,
+                        written_role(&e, rendered),
+                        crate::emit_shared::string_to_hcl_expr(written_member(&e, rendered)),
+                        "org_id",
+                        crate::emit_shared::string_to_hcl_expr(&ctx.org_id),
+                        cond_block,
+                        Some("google.google"),
+                    ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("google_organization_iam_member.{}", label), &e.import_id));
+                    }
+                }
+            }
+            (BILLING_ID_TYPE, _) => {} // consumed below, never emitted
+            ("google_billing_account_iam_member", Body::Grant(edges)) => {
+                // Explicit pin from a fragment wins; else the conventional variable.
+                let pin_entity = folded
+                    .slots
+                    .get(&satz_core::Address { tf_type: BILLING_ID_TYPE.into(), label: "billing_account_id".into() })
+                    .and_then(|s| match s {
+                        Slot::Ok(e) => Some(e),
+                        _ => None,
+                    });
+                let pinned = pin_entity.and_then(|e| match &e.body {
+                    Body::Attrs(v) => v.as_str().map(|x| x.to_string()),
+                    _ => None,
+                });
+                let fallback = ctx.billing_fallback.as_ref().and_then(|v| v.as_str());
+                let Some(billing_id) = pinned.as_deref().or(fallback) else {
+                    return Err(
+                        "google_billing_account_iam_member: no billing account to bind on — pin `billing_account_id` in the estate or bind the `billing_account_infra` param"
+                            .to_string(),
+                    );
+                };
+                let billing_expr = match pin_entity.and_then(|e| e.rendering.as_ref()).and_then(|r| r.attrs.as_ref()) {
+                    Some(v) if rendered && pinned.is_some() => crate::emit_shared::render_value(v, &|_| None).unwrap_or_else(|| crate::emit_shared::string_to_hcl_expr(billing_id)),
+                    _ => crate::emit_shared::string_to_hcl_expr(billing_id),
+                };
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e)?;
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), "");
+                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
+                    blocks.push(crate::emit_shared::iam_member_block(
+                        "google_billing_account_iam_member",
+                        &label,
+                        written_role(&e, rendered),
+                        crate::emit_shared::string_to_hcl_expr(written_member(&e, rendered)),
+                        "billing_account_id",
+                        billing_expr.clone(),
+                        cond_block,
+                        Some("google.google"),
+                    ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("google_billing_account_iam_member.{}", label), &e.import_id));
+                    }
+                }
+            }
+            // Node-scoped grant maps (project_iam_member inside a project, …):
+            // the label carries the structural path before the separator.
+            (t, Body::Grant(edges)) => {
+                // The address prefix is either an explicit scope pin
+                // (`service_account_id=projects/p/serviceAccounts/x@y`) or the
+                // structural path the grant was written in.
+                let prefix = addr.label.split_once(GRANT_SCOPE_SEP).map(|(p, _)| p);
+                let pin = prefix.and_then(scope_pin_of);
+                let grant_path: Vec<String> = match (&pin, prefix) {
+                    (Some(_), _) => path.clone(),
+                    (None, Some(p)) => p.split('/').map(|s| s.to_string()).collect(),
+                    (None, None) => path.clone(),
+                };
+                let rc = res_ctx(&grant_path, ctx, folded);
+                let galias = alias_for(&grant_path);
+                let (id_attr, parent) = if let Some((attr, value)) = &pin {
+                    if let Some(schema) = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s) {
+                        if !schema.block.attributes.contains_key(attr.as_str()) {
+                            return Err(format!(
+                                "{}: `{}` is not an attribute of this type — its scope attribute is one of: {}",
+                                t,
+                                attr,
+                                scope_attr_candidates(schema).join(", ")
+                            ));
+                        }
+                    }
+                    (attr.as_str(), Some(value.clone()))
+                } else if t.contains("project") {
+                    ("project", rc.project_ref.clone().or(rc.project_id.clone()))
+                } else if t.contains("folder") {
+                    ("folder", rc.folder_ref.clone())
+                } else {
+                    // a bucket / service-account / … scoped grant has no scope
+                    // to inherit from the node path; the map form used to emit
+                    // an `id = ""` block that could never plan
+                    return Err(format!(
+                        "{}: the member map form (`\"member\" = [roles…]`) needs the scope written in the map for this type; \
+                         add its scope attribute beside the members (`bucket = …`, `service_account_id = …`), or write `{}` as a labelled resource",
+                        t, t
+                    ));
+                };
+                let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
+                let parent_expr = match (scope_view, &pin) {
+                    (Some(written), Some(_)) => crate::emit_shared::reference_expr(written),
+                    _ => crate::emit_shared::parse_expr(parent.as_deref().unwrap_or("")),
+                };
+                for e in reconciled_edges(edges)? {
+                    let cond = edge_condition(&e)?;
+                    let label = crate::emit_shared::iam_member_label(&e.member, &e.role, cond.as_ref(), scope_key);
+                    let cond_block = cond.as_ref().and_then(|cv| crate::emit_shared::render_block("condition", cv, None, &|_| None));
+                    blocks.push(crate::emit_shared::iam_member_block(
+                        t,
+                        &label,
+                        written_role(&e, rendered),
+                        crate::emit_shared::string_to_hcl_expr(written_member(&e, rendered)),
+                        id_attr,
+                        parent_expr.clone(),
+                        cond_block,
+                        Some(&galias),
+                    ));
+                    if !e.import_id.is_empty() {
+                        imports.push(import_block(&format!("{}.{}", t, label), &e.import_id));
+                    }
+                }
+            }
+            ("google_project", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
+                if let Some(id) = attr_import(attrs) {
+                    imports.push(import_block(&format!("google_project.{}", addr.label.replace('-', "_")), &id));
+                }
+                emit_project(&mut blocks, &mut imports, addr, attrs, view, path, ctx)?;
+            }
+            (t, Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
+                let schema = ctx.registry.and_then(|r| r.find_resource(t)).map(|(_, s)| s);
+                let rc = res_ctx(path, ctx, folded);
+                let crate::emit_shared::ResourceBlock { block, import_id, label, needs_scope } = crate::emit_shared::single_resource_block(
+                    t,
+                    &addr.label,
+                    attrs,
+                    view,
+                    schema,
+                    &rc,
+                    Some(&alias),
+                    &|_| None,
+                )
+                .map_err(|e| e.to_string())?;
+                if let Some(id) = import_id {
+                    imports.push(import_block(&format!("{}.{}", t, label), &id));
+                }
+                if let Some(scope) = needs_scope {
+                    unscoped.push((format!("{}.{}", t, label), scope));
+                }
+                blocks.push(block);
+            }
+            (t, _) => return Err(format!("emitter has no rule for {} yet (label {})", t, addr.label)),
+        }
+        // The entity's own block is the first one its arm pushed; blocks after
+        // it (memberships, services, exploded grants) are derived and have no
+        // line of their own, so they point at the line they derive from — the
+        // group, the project, the grant map's member line. `adopt --execute`
+        // rewrites the list entry it finds there into the object form.
+        if is_private {
+            if let Some(a) = blocks.get(first_block).and_then(block_address) {
+                private.push(a);
+            }
+        }
+        if let Some(span) = entity.provenance.first() {
+            for b in &blocks[first_block..] {
+                if let Some(a) = block_address(b) {
+                    origins.push((a, span.file.clone(), span.line));
+                }
+            }
+        }
+    }
+    Ok(Built { blocks, imports, origins, unscoped, private })
+}
+
+/// The member as it is written: its rendering in the rendering pass when it has one.
+fn written_member(e: &satz_core::algebra::GrantEdge, rendered: bool) -> &str {
+    if rendered && !e.rendered_member.is_empty() { &e.rendered_member } else { &e.member }
+}
+
+fn written_role(e: &satz_core::algebra::GrantEdge, rendered: bool) -> &str {
+    if rendered && !e.rendered_role.is_empty() { &e.rendered_role } else { &e.role }
 }
 
 /// `main.tf` as text: the blocks as `hcl` renders a body of them, one blank line
@@ -957,21 +1065,28 @@ fn emit_project(
     imports: &mut Vec<hcl::Block>,
     addr: &satz_core::Address,
     attrs: &serde_yaml::Mapping,
+    view: Option<&serde_yaml::Mapping>,
     path: &[String],
     ctx: &EmitCtx,
 ) -> Result<(), String> {
     let get = |k: &str| attrs.get(serde_yaml::Value::String(k.into()));
+    // the value as written: the rendering's where the entity has one
+    let pick = |k: &str| view.and_then(|m| m.get(serde_yaml::Value::String(k.into()))).or_else(|| get(k));
     let project_id = get("project_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("google_project.{} has no project_id", addr.label))?;
     let resource_name = addr.label.replace('-', "_");
+    let written = |k: &str| pick(k).and_then(|v| crate::emit_shared::render_value(v, &|_| None));
     let mut b = hcl::Block::builder("resource")
         .add_label("google_project")
         .add_label(resource_name.as_str())
-        .add_attribute(hcl::Attribute::new("project_id", project_id.to_owned()))
+        .add_attribute(hcl::Attribute::new("project_id", written("project_id").unwrap_or_else(|| hcl::Expression::from(project_id.to_owned()))))
         .add_attribute(hcl::Attribute::new(
             "name",
-            get("name").and_then(|v| v.as_str()).unwrap_or(project_id).to_owned(),
+            match get("name").and_then(|v| v.as_str()) {
+                Some(_) => written("name").unwrap_or_else(|| hcl::Expression::from(project_id.to_owned())),
+                None => written("project_id").unwrap_or_else(|| hcl::Expression::from(project_id.to_owned())),
+            },
         ));
     // The project itself carries the enclosing context's alias (the per-project
     // alias applies to resources INSIDE the project, not the project block).
@@ -979,8 +1094,10 @@ fn emit_project(
     if let Ok(expr) = outer_alias.parse::<hcl::Expression>() {
         b = b.add_attribute(("provider", expr));
     }
-    if let Some(ba) = get("billing_account").and_then(|v| v.as_str()) {
-        b = b.add_attribute(hcl::Attribute::new("billing_account", ba.to_owned()));
+    if get("billing_account").and_then(|v| v.as_str()).is_some() {
+        if let Some(val) = written("billing_account") {
+            b = b.add_attribute(hcl::Attribute::new("billing_account", val));
+        }
     } else if let Some(ba) = ctx.billing_fallback.as_ref() {
         if let Some(val) = crate::emit_shared::render_value(ba, &|_| None) {
             b = b.add_attribute(hcl::Attribute::new("billing_account", val));
@@ -998,9 +1115,10 @@ fn emit_project(
     // (`google_folder.shared.name`), anything else a literal id.
     for k in ["org_id", "folder_id"] {
         let Some(v) = stated(k) else { continue };
-        if let Some(s) = v.as_str() {
+        let w = pick(k).unwrap_or(v);
+        if let Some(s) = w.as_str() {
             b = b.add_attribute(hcl::Attribute::new(k, crate::emit_shared::parse_expr(s)));
-        } else if let Some(val) = crate::emit_shared::render_value(v, &|_| None) {
+        } else if let Some(val) = crate::emit_shared::render_value(w, &|_| None) {
             b = b.add_attribute(hcl::Attribute::new(k, val));
         }
     }
@@ -1026,13 +1144,14 @@ fn emit_project(
         ) {
             continue;
         }
+        let w = pick(k).unwrap_or(v);
         let is_block = matches!(v, serde_yaml::Value::Mapping(_) | serde_yaml::Value::Sequence(_))
             && !matches!(k, "labels" | "metadata" | "annotations");
         if is_block {
-            if let Some(nb) = crate::emit_shared::render_block(k, v, None, &|_| None) {
+            if let Some(nb) = crate::emit_shared::render_block(k, w, None, &|_| None) {
                 b = b.add_block(nb);
             }
-        } else if let Some(val) = crate::emit_shared::render_value(v, &|_| None) {
+        } else if let Some(val) = crate::emit_shared::render_value(w, &|_| None) {
             b = b.add_attribute(hcl::Attribute::new(k, val));
         }
     }
@@ -1077,6 +1196,25 @@ fn emit_project(
         }
     }
     Ok(())
+}
+
+/// A project's rendered id as its provider alias reads it: over the static local, like
+/// every value a provider reads — a project id is written by the estate, never looked up.
+fn static_rooted(v: &serde_yaml::Value) -> serde_yaml::Value {
+    use satz_core::pipeline::{INTERFACE_LOCAL, INTERFACE_STATIC_LOCAL};
+    match v {
+        serde_yaml::Value::String(s) => serde_yaml::Value::String(s.replace(&format!("${{{}.", INTERFACE_LOCAL), &format!("${{{}.", INTERFACE_STATIC_LOCAL))),
+        serde_yaml::Value::Tagged(t) => {
+            let mut t = t.clone();
+            if let serde_yaml::Value::String(s) = &mut t.value {
+                if let Some(rest) = s.strip_prefix(&format!("{}.", INTERFACE_LOCAL)) {
+                    *s = format!("{}.{}", INTERFACE_STATIC_LOCAL, rest);
+                }
+            }
+            serde_yaml::Value::Tagged(t)
+        }
+        other => other.clone(),
+    }
 }
 
 /// The estate's `deployment_mode`, which selects the backend `providers.tf` carries:
@@ -1127,28 +1265,37 @@ pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
 /// `region = default_region` arrives here as the bound value). Every
 /// per-project alias carries it, and an estate whose provider names no region
 /// gets aliases that name none.
-fn google_provider_region(config: &std::collections::BTreeMap<String, serde_yaml::Value>) -> Option<String> {
-    config
-        .get("providers")?
-        .as_mapping()?
-        .get(serde_yaml::Value::String("google".into()))?
-        .as_mapping()?
-        .get(serde_yaml::Value::String("region".into()))?
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+fn google_provider_region(
+    config: &std::collections::BTreeMap<String, serde_yaml::Value>,
+    view: Option<&serde_yaml::Mapping>,
+) -> Option<hcl::Expression> {
+    let google = |m: &serde_yaml::Mapping| m.get(serde_yaml::Value::String("google".into()))?.as_mapping()?.get(serde_yaml::Value::String("region".into())).cloned();
+    let real = google(config.get("providers")?.as_mapping()?)?;
+    if real.as_str().is_some_and(|s| s.is_empty()) {
+        return None;
+    }
+    let written = view.and_then(google).unwrap_or(real);
+    crate::emit_shared::render_value(&written, &|_| None)
 }
 
 /// providers.tf from the estate config + folded projects: terraform block
 /// (mode-matched backend, required_providers), root providers, one alias per
 /// project — the same shapes the walk emits, from the same shared builders.
+///
+/// `rendering` is the pass that writes the file: the `providers` block's rendering, when
+/// a central estate's value was spliced into it, and each project's rendering for its
+/// alias. `None` builds the text from the judged values, which the prerequisite check
+/// reads.
 pub(crate) fn emit_providers(
     config: &std::collections::BTreeMap<String, serde_yaml::Value>,
     folded: &Folded,
     env: &Env,
     provider_sources: &std::collections::HashMap<String, String>,
     provider_versions: &std::collections::HashMap<String, String>,
+    rendering: Option<Option<&serde_yaml::Mapping>>,
 ) -> Result<String, String> {
+    let rendered = rendering.is_some();
+    let providers_view: Option<&serde_yaml::Mapping> = rendering.flatten();
     let mode = deployment_mode(env)?;
     let deps = crate::emit_shared::GoogleProviderDeps {
         infra_project: env.get("infra_project_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -1158,7 +1305,7 @@ pub(crate) fn emit_providers(
         } else {
             None
         },
-        region: google_provider_region(config),
+        region: google_provider_region(config, providers_view),
     };
 
     let mut blocks: Vec<hcl::Block> = Vec::new();
@@ -1245,31 +1392,36 @@ pub(crate) fn emit_providers(
     if let Some(providers) = providers_cfg {
         for (p_name, p_val) in providers {
             let Some(p_name) = p_name.as_str() else { continue };
+            let p_view = providers_view.and_then(|v| v.get(serde_yaml::Value::String(p_name.into())));
             match p_val {
                 serde_yaml::Value::Sequence(seq) => {
-                    for item in seq {
+                    for (i, item) in seq.iter().enumerate() {
                         if let serde_yaml::Value::Mapping(m) = item {
-                            blocks.push(crate::emit_shared::provider_block_from_map(p_name, m, &deps, &|_| None));
+                            let view = p_view.and_then(|v| v.as_sequence()).and_then(|s| s.get(i)).and_then(|v| v.as_mapping());
+                            blocks.push(crate::emit_shared::provider_block_from_map(p_name, m, view, &deps, &|_| None));
                         }
                     }
                 }
                 serde_yaml::Value::Mapping(m) => {
-                    blocks.push(crate::emit_shared::provider_block_from_map(p_name, m, &deps, &|_| None));
+                    blocks.push(crate::emit_shared::provider_block_from_map(p_name, m, p_view.and_then(|v| v.as_mapping()), &deps, &|_| None));
                 }
                 _ => {}
             }
         }
     }
 
-    // one alias per project entity
+    // one alias per project entity, its project written as the project's own is
     for (addr, slot) in &folded.slots {
         if addr.tf_type != "google_project" {
             continue;
         }
         if let Slot::Ok(e) = slot {
             if let Body::Attrs(serde_yaml::Value::Mapping(m)) = &e.body {
-                if let Some(pid) = m.get(serde_yaml::Value::String("project_id".into())).and_then(|v| v.as_str()) {
-                    blocks.push(crate::emit_shared::project_provider_block(&addr.label, pid, &deps));
+                let key = serde_yaml::Value::String("project_id".into());
+                if let Some(pid) = m.get(&key).and_then(|v| v.as_str()) {
+                    let written = e.rendering.as_ref().filter(|_| rendered).and_then(|r| r.attrs.as_ref()).and_then(|v| v.as_mapping()).and_then(|v| v.get(&key));
+                    let project = written.map(static_rooted).and_then(|v| crate::emit_shared::render_value(&v, &|_| None)).unwrap_or_else(|| hcl::Expression::from(pid.to_string()));
+                    blocks.push(crate::emit_shared::project_provider_block(&addr.label, project, &deps));
                 }
             }
         }
@@ -1326,21 +1478,57 @@ pub(crate) fn emit_variables(
     hcl::to_string(&body.build()).unwrap_or_default()
 }
 
-/// The `data` blocks a project estate's values read from the interface files it uses, once
-/// each, in the order the lookups need one another — the same data sources the HCL form of
+/// `interface.tf` of a project estate: what it read from the central estate's interface,
+/// as `locals { interface = { <export> = … } }` — a literal, or a reference to the `data`
+/// block that reads the value back — and then the `data` blocks those values need, once
+/// each, in the order the lookups need one another: the same data sources the HCL form of
 /// the interface reads, through the provider the estate's top-level resources are written
 /// with. Each carries the resource of the central estate it reads back and the read
-/// permission the project's plan needs.
-pub(crate) fn interface_lookups_tf(lookups: &[satz_core::satz::OfferedLookup], files: &[satz_core::pipeline::UsedInterfaceFile]) -> String {
+/// permission the project's plan needs. `main.tf` and `providers.tf` read the local; a
+/// copy of the file with another organisation's values re-targets them.
+pub(crate) fn interface_tf(locals: &satz_core::pipeline::InterfaceLocals, files: &[satz_core::pipeline::UsedInterfaceFile]) -> String {
+    use satz_core::pipeline::{INTERFACE_LOCAL, INTERFACE_STATIC_LOCAL};
+    if locals.values.is_empty() {
+        return String::new();
+    }
     let mut out = String::new();
-    for l in lookups {
+    let from: Vec<String> = files.iter().map(|f| format!("`{}` ({})", f.interface.estate, f.file)).collect();
+    out.push_str(&format!(
+        "# The values this estate reads from the central estate {}, as `{}.<export>`.\n\
+         # `{}` holds the ones satz knows, which the providers read: a provider is\n\
+         # configured before any data source is read. A value only the cloud knows is read back by the\n\
+         # `data` blocks below and reaches `{}` alone.\n",
+        from.join(", "),
+        INTERFACE_LOCAL,
+        INTERFACE_STATIC_LOCAL,
+        INTERFACE_LOCAL
+    ));
+    let mut known = hcl::Object::new();
+    let mut looked_up = hcl::Object::new();
+    for (name, value) in &locals.values {
+        if let Some(expr) = reference_value(value) {
+            if satz_core::pipeline::reads_lookup(value) { looked_up.insert(object_key(name), expr) } else { known.insert(object_key(name), expr) };
+        }
+    }
+    let static_ref = crate::emit_shared::traversal_expr(INTERFACE_STATIC_LOCAL);
+    let interface = if looked_up.is_empty() {
+        static_ref
+    } else {
+        hcl::Expression::FuncCall(Box::new(hcl::FuncCall::builder("merge").arg(static_ref).arg(hcl::Expression::Object(looked_up)).build()))
+    };
+    let locals_block = hcl::Block::builder("locals")
+        .add_attribute((INTERFACE_STATIC_LOCAL.trim_start_matches("local."), hcl::Expression::Object(known)))
+        .add_attribute((INTERFACE_LOCAL.trim_start_matches("local."), interface))
+        .build();
+    out.push_str(&hcl::to_string(&hcl::Body::builder().add_block(locals_block).build()).expect("a locals block of expressions renders"));
+    for l in &locals.lookups {
         let from = files.iter().find(|f| f.interface.lookups.iter().any(|x| x.address == l.address));
         let (source, label) = l.source_and_label();
         // through the provider every resource at the top of the estate is written with
         let provider: hcl::Expression = alias_for(&[]).parse().expect("a provider alias is a traversal");
         let mut b = hcl::Block::builder("data").add_label(source).add_label(label).add_attribute(("provider", provider));
         for (k, v) in &l.arguments {
-            b = b.add_attribute((k.as_str(), crate::emit_shared::string_to_hcl_expr(v)));
+            b = b.add_attribute((k.as_str(), crate::emit_shared::reference_expr(v)));
         }
         out.push('\n');
         out.push_str(&format!(
@@ -1353,6 +1541,34 @@ pub(crate) fn interface_lookups_tf(lookups: &[satz_core::satz::OfferedLookup], f
         out.push_str(&hcl::to_string(&hcl::Body::builder().add_block(b.build()).build()).expect("a data block of string arguments renders"));
     }
     out
+}
+
+/// An object key as HCL writes one by hand: bare when it is an identifier, quoted otherwise.
+fn object_key(name: &str) -> hcl::ObjectKey {
+    match hcl::Identifier::new(name) {
+        Ok(id) => hcl::ObjectKey::Identifier(id),
+        Err(_) => hcl::ObjectKey::from(name.to_string()),
+    }
+}
+
+/// An interface value as the local's expression: text that is one `${data.…}` reference
+/// is the bare traversal, text with a reference inside a template, a list or a map of
+/// them element by element, a scalar its literal.
+fn reference_value(v: &serde_yaml::Value) -> Option<hcl::Expression> {
+    match v {
+        serde_yaml::Value::String(s) => Some(crate::emit_shared::reference_expr(s)),
+        serde_yaml::Value::Sequence(items) => Some(hcl::Expression::Array(items.iter().filter_map(reference_value).collect())),
+        serde_yaml::Value::Mapping(m) => {
+            let mut object = hcl::Object::new();
+            for (k, val) in m {
+                if let (Some(k), Some(expr)) = (k.as_str(), reference_value(val)) {
+                    object.insert(object_key(k), expr);
+                }
+            }
+            Some(hcl::Expression::Object(object))
+        }
+        other => crate::emit_shared::render_value(other, &|_| None),
+    }
 }
 
 /// tfvars from the front-end's accumulated params: kebab-cased names, scalar
@@ -1419,6 +1635,7 @@ mod backend_identity_tests {
             env,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .expect("providers.tf emits")
     }
@@ -1493,6 +1710,7 @@ mod backend_identity_tests {
             &bound("boot".into()),
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap_err();
         assert!(e.contains("\"boot\""), "{}", e);
@@ -1527,6 +1745,7 @@ mod backend_identity_tests {
                 &env,
                 &HashMap::new(),
                 &HashMap::new(),
+                None,
             );
             assert_eq!(emitted, Err(e));
         }
@@ -1576,6 +1795,7 @@ mod project_alias_tests {
                     body: Body::Attrs(body),
                     provenance: Vec::new(),
                     node_path: Vec::new(),
+                    rendering: None,
                 }),
             );
         }
@@ -1590,7 +1810,7 @@ mod project_alias_tests {
     }
 
     fn providers_tf(region: &str, projects: &[(&str, &str)]) -> String {
-        emit_providers(&config(region), &folded_projects(projects), &env(), &HashMap::new(), &HashMap::new())
+        emit_providers(&config(region), &folded_projects(projects), &env(), &HashMap::new(), &HashMap::new(), None)
             .expect("providers.tf emits")
     }
 
@@ -1653,6 +1873,7 @@ mod project_alias_tests {
             &env(),
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .expect("providers.tf emits");
         assert!(
@@ -1700,6 +1921,7 @@ mod project_alias_tests {
             &env,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .expect("providers.tf emits");
         assert!(
@@ -2096,7 +2318,7 @@ mod grant_condition_tests {
             member: "group:gcp-viewers@example.com".into(),
             role: "roles/viewer".into(),
             condition: condition.into(),
-            import_id: String::new(),
+            ..Default::default()
         }
     }
 
@@ -2135,8 +2357,7 @@ mod billing_grant_tests {
         let edge = satz_core::algebra::GrantEdge {
             member: "group:gcp-billing-admins@example.com".into(),
             role: "roles/billing.admin".into(),
-            condition: String::new(),
-            import_id: String::new(),
+            ..Default::default()
         };
         let entity = satz_core::algebra::Entity {
             addr: addr.clone(),
@@ -2144,6 +2365,7 @@ mod billing_grant_tests {
             body: Body::Grant(BTreeSet::from([edge])),
             provenance: Vec::new(),
             node_path: Vec::new(),
+            rendering: None,
         };
         Folded { slots: BTreeMap::from([(addr, Slot::Ok(entity))]) }
     }
@@ -2211,27 +2433,47 @@ mod reset_comment_tests {
 }
 
 #[cfg(test)]
-mod interface_lookup_tests {
+mod interface_tf_tests {
+    use satz_core::pipeline::InterfaceLocals;
     use satz_core::satz::OfferedLookup;
 
-    /// A lookup a project reads is one `data` block, with its arguments as the interface
-    /// file writes them — a key that reads another lookup a template of its address — and
-    /// the provider the estate's top-level resources carry.
-    #[test]
-    fn a_lookup_is_one_data_block_through_the_estate_s_provider() {
-        let l = |label: &str, parent: &str| OfferedLookup {
+    fn lookup(label: &str, parent: &str) -> OfferedLookup {
+        OfferedLookup {
             address: format!("data.google_active_folder.{}", label),
             reads: format!("google_folder.{}", label),
             permission: "resourcemanager.folders.list on the parent".into(),
             arguments: vec![("display_name".into(), label.to_uppercase()), ("parent".into(), parent.into())],
             line: 1,
+        }
+    }
+
+    /// `interface.tf`: the values read as one local — a static value its literal, a list a
+    /// list, a looked-up value the bare address of its `data` block, a reference inside
+    /// text a template — then one `data` block per lookup with its arguments as the
+    /// interface file writes them (a key that reads another lookup the bare address) and
+    /// the provider the estate's top-level resources carry.
+    #[test]
+    fn the_values_are_one_local_and_each_lookup_one_data_block() {
+        let locals = InterfaceLocals {
+            values: vec![
+                ("domain".into(), serde_yaml::Value::String("example.com".into())),
+                ("folder".into(), serde_yaml::Value::String("${data.google_active_folder.pay.name}".into())),
+                ("path".into(), serde_yaml::Value::String("x/${data.google_active_folder.pay.name}/y".into())),
+                ("regions".into(), serde_yaml::Value::Sequence(vec!["europe-west3".into(), "europe-west4".into()])),
+            ],
+            lookups: vec![lookup("infra", "organizations/123456789012"), lookup("pay", "${data.google_active_folder.infra.name}")],
         };
-        let tf = super::interface_lookups_tf(&[l("infra", "organizations/123456789012"), l("pay", "${data.google_active_folder.infra.name}")], &[]);
-        let body = hcl::parse(&tf).expect("the data blocks are HCL");
-        let blocks: Vec<&hcl::Block> = body.blocks().collect();
-        assert_eq!(blocks.len(), 2, "{}", tf);
-        assert!(tf.contains("data \"google_active_folder\" \"pay\" {") && tf.contains("parent = \"${data.google_active_folder.infra.name}\""), "{}", tf);
+        let tf = super::interface_tf(&locals, &[]);
+        let body = hcl::parse(&tf).expect("interface.tf is HCL");
+        assert_eq!(body.blocks().count(), 3, "{}", tf);
+        // the values satz knows in one local, every value in the other — the lookups merged in
+        assert!(tf.contains("  interface_static = {\n    domain = \"example.com\"\n    regions = [\n      \"europe-west3\",\n      \"europe-west4\"\n    ]\n  }\n"), "a dotted literal stays a string, and no lookup is here:\n{}", tf);
+        assert!(tf.contains("  interface = merge(local.interface_static, { folder = data.google_active_folder.pay.name, path = \"x/${data.google_active_folder.pay.name}/y\" })\n"), "{}", tf);
+        let only_known = InterfaceLocals { values: vec![("domain".into(), serde_yaml::Value::String("example.com".into()))], lookups: Vec::new() };
+        assert!(super::interface_tf(&only_known, &[]).contains("  interface = local.interface_static\n"), "nothing looked up, nothing merged");
+        assert!(tf.contains("data \"google_active_folder\" \"pay\" {") && tf.contains("parent = data.google_active_folder.infra.name"), "{}", tf);
         assert!(tf.contains("provider = google.google"), "{}", tf);
         assert!(tf.contains("# reads back google_folder.pay"), "{}", tf);
+        assert!(super::interface_tf(&InterfaceLocals::default(), &[]).is_empty(), "nothing read, no file");
     }
 }

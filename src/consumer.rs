@@ -307,6 +307,10 @@ fn node_args<'b>(b: &'b ConsumerBlock, target: Option<&str>) -> Vec<(&'b str, &'
 pub(crate) fn check(blocks: &[ConsumerBlock], interface: Option<&Interface>, manifest: &Manifest) -> Vec<Finding> {
     let facts = Facts::of_estate(interface.map(|i| i.estate.as_str()).unwrap_or_default(), interface, manifest);
     let mut readers = BTreeMap::new();
+    // the `interface.tf` a project estate's transpile writes reads every export as
+    // `local.interface.<export>`; HCL a team keeps beside it reads the same local
+    readers.insert("local.interface".to_string(), (0..facts.outputs.len()).collect());
+    readers.insert("local.interface_static".to_string(), (0..facts.outputs.len()).collect());
     if let Some(i) = interface {
         let known = i.modules();
         for b in blocks.iter().filter(|b| b.kind == "module") {

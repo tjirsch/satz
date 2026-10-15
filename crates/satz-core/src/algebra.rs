@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// One grant edge: (member, role, canonicalized condition). Grants form a set —
 /// their merge is union, and no conflict state exists.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GrantEdge {
     pub member: String,
     pub role: String,
@@ -21,6 +21,26 @@ pub struct GrantEdge {
     /// the binding's identity: the emitter reconciles an edge declared with
     /// and without an id into one resource, and refuses two different ids.
     pub import_id: String,
+    /// How the member is written to HCL when a central estate's interface gave part of
+    /// it: the text with the reference where the fold holds the literal. Empty when the
+    /// member is written as it is. Not part of the binding's identity, like `import_id`:
+    /// the label hashes `member`, and the emitter reconciles the two.
+    pub rendered_member: String,
+    /// The same for the role.
+    pub rendered_role: String,
+}
+
+/// How an entity's body is written to HCL where that differs from what the fold judges:
+/// a reference in place of a value a central estate's interface gave. Every check reads
+/// the body; only the emission reads this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rendering {
+    /// The attribute body in the same shape, strings differing only where a value was
+    /// spliced: a whole value as an `!expr`-tagged expression, text with the reference
+    /// inside it.
+    pub attrs: Option<serde_yaml::Value>,
+    /// A grant map's scope pin as it is written, when the pin read an interface value.
+    pub scope: Option<String>,
 }
 
 /// A resource body in canonical form. Canonical equality — not byte equality — is
@@ -45,6 +65,9 @@ pub struct Entity {
     /// for `Scope::Node` types — a project must reference its parent folder at
     /// emission. Intrinsic-scope types ignore it; ⊕ keeps the first occurrence's.
     pub node_path: Vec<String>,
+    /// How the body is written where that differs from the body (a central estate's
+    /// value as a reference). `None` when it is written as it is; ⊕ keeps the first.
+    pub rendering: Option<Rendering>,
 }
 
 /// A conflict is a value, not an early error: merge is total, compilation fails
@@ -117,12 +140,14 @@ fn merge_slot(class: MergeClass, a: Slot, b: Slot) -> Slot {
                 ga.extend(gb);
                 ea.body = Body::Grant(ga);
                 ea.provenance.extend(eb.provenance);
+                ea.rendering = ea.rendering.take().or(eb.rendering);
                 Slot::Ok(ea)
             }
             MergeClass::Entity => {
                 // Flat lattice: canonical-equal is idempotent, different is ⊥.
                 if ea.body == eb.body {
                     ea.provenance.extend(eb.provenance);
+                    ea.rendering = ea.rendering.take().or(eb.rendering);
                     Slot::Ok(ea)
                 } else {
                     Slot::Bottom(Conflict {
@@ -246,7 +271,7 @@ mod laws {
                 // deterministic body from seed via a tiny strategy sample
                 let body = if kind == 0 {
                     let mut s = BTreeSet::new();
-                    if seed % 3 != 0 { s.insert(GrantEdge{member: format!("m{}", seed % 2), role: format!("r{}", seed % 3), condition: String::new(), import_id: String::new()}); }
+                    if seed % 3 != 0 { s.insert(GrantEdge{member: format!("m{}", seed % 2), role: format!("r{}", seed % 3), ..Default::default()}); }
                     Body::Grant(s)
                 } else {
                     Body::Attrs(serde_yaml::Value::Number(((seed % 3) as u64).into()))
@@ -257,6 +282,7 @@ mod laws {
                     scope: TestTable.scope(tf_type),
                     body,
                     provenance: vec![Span { file: format!("f{}", seed % 5), line: seed }],
+                    rendering: None,
                 };
                 // last-in-fragment wins within one fragment (a fragment is a map)
                 f.entities.insert(addr, entity);
