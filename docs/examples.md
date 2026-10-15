@@ -31,6 +31,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 | organisation id | `123456789012` | `222222222222` | `333333333333` | `444444444444` |
 | billing account | `012345-6789AB-CDEF01` | `0B0B0B-0B0B0B-0B0B02` | `0C0C0C-0C0C0C-0C0C03` | `0D0D0D-0D0D0D-0D0D04` |
 | infra project | `acme-infra-001` | `bolt-infra-001` | `cedar-infra-001` | `delta-infra-001` |
+| a team's deployer project (`presets/workload-deployer.satz`, team `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop` | – | – | – |
 | log project | `acme-log-001` | `bolt-log-001` | `cedar-log-001` | `delta-log-001` |
 | audit bucket | `acme-organization-audit-bucket` | `bolt-organization-audit-bucket` | `cedar-organization-audit-bucket` | `delta-organization-audit-bucket` |
 | folder id (for `import-id` examples) | `123456789` | `222222222` | `333333333` | `444444444` |
@@ -215,44 +216,43 @@ organisation — the estate `satz init --workload-folder-name Workloads` writes,
 that reads the organisation through `interfaces/common/` copied to its `vendor/`.
 `examples/README.md` gives the commands and names the values to replace.
 
-`examples/acme/cost-centre-project/satz/workloads.satz` creates Google projects from a
-list:
+`examples/acme/project-template/satz/template.satz` is one Google project as a
+**template**: its `inputs { application stage cost_centre }` are what a reader binds.
 
 ```
+inputs {
+  // the application the project serves: lowercase letters, digits and `-`
+  application = "shop"
+  // the stage: dev, test or prod
+  stage       = "dev"
+  // the four-digit cost centre the project is billed to
+  cost_centre = "4711"
+}
+
+use "vendor/common/core/satz/interface.satz"
+
 google_project {
-  each workload_projects by name {
-    name            = "{each.name}"
-    project_id      = "${{interface.customer_shortname}}-{each.name}"
+  project {
+    name            = "{application}-{stage}"
+    project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
     folder_id       = "${{interface.workload_folder}}"
     billing_account = billing_account
-    labels          = { cost_centre = each.cost_centre }
-    // The grants below are calls to this API, billed to the project itself.
+    labels          = { cost_centre = cost_centre }
     project_service = ["cloudresourcemanager.googleapis.com"]
     google_project_iam_member {
-      "group:${{interface.customer_shortname}}-{each.name}-owner@${{interface.customer_domain}}" = [
-        "roles/owner",
-      ]
-      "group:${{interface.customer_shortname}}-{each.name}-editor@${{interface.customer_domain}}" = [
-        "roles/editor",
-      ]
-      "group:${{interface.customer_shortname}}-{each.name}-viewer@${{interface.customer_domain}}" = [
-        "roles/viewer",
-      ]
+      owner {
+        role   = "roles/owner"
+        member = "group:${{interface.customer_shortname}}-{application}-{stage}-owner@${{interface.customer_domain}}"
+      }
     }
   }
 }
 ```
 
-The entry `{ name = "shop-prod" cost_centre = "4711" }` is the Google project
-`acme-shop-prod` under the organisation's workload folder, labelled `cost_centre =
-"4711"`, with `roles/owner`, `roles/editor` and `roles/viewer` granted to the groups
-`acme-shop-prod-owner`, `-editor` and `-viewer` at `example.com`. The groups exist in the
-directory before the apply and are not declared. A `request` point on the list holds
-`name` to `<application>-<stage>` and `cost_centre` to four digits, and the compile
-refuses an entry that matches neither, naming the entry and the value.
-
-`examples/acme/project-template/satz/template.satz` is one Google project as a
-**template**: its `inputs { application stage cost_centre }` are what a reader binds.
+With the example values it is the Google project `acme-shop-dev` under the organisation's
+workload folder, labelled `cost_centre = "4711"`, with `roles/owner` (and, in the file,
+`roles/editor` and `roles/viewer`) granted to groups named after the project at
+`example.com`; the groups exist in the directory before the apply and are not declared.
 Compiled as it stands it is the HCL team's form — `variables.tf` declares the inputs,
 `terraform.tfvars` carries the example values, `main.tf` reads `var.<name>` and
 `interface.tf` holds the organisation's values, so the team edits `terraform.tfvars` and

@@ -4,6 +4,8 @@ satz compiles an estate — written in a language whose resource types and attri
 It also bootstraps a new Google Cloud organization, imports an existing one from Terraform state or from the live organization, and migrates Terraform state between backends.
 
 > **📖 Documentation: <https://tjirsch.github.io/satz/>** — this README, the
+> [tutorials](https://tjirsch.github.io/satz/docs/tutorials.html) (an organisation from
+> scratch; projects beside it, the Satz way and the HCL way), the
 > [language reference](https://tjirsch.github.io/satz/docs/language.html) and the
 > [preset pack pages](https://tjirsch.github.io/satz/presets/docs/index.html), searchable,
 > rebuilt on every release. Also: `satz open-readme`, or `satz <command> --html-help`.

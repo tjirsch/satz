@@ -13,8 +13,11 @@
 // bound values in `terraform.tfvars`. `satz transpile template.satz --input stage=test`
 // binds one for a run.
 //
-// The groups are not declared here: they exist in the customer's directory — synced from
-// Microsoft Entra ID — before the apply, which fails on a group that does not.
+// The plan runs as the team's own account, in the team's own project, with the state in
+// the team's own bucket — the three things `presets/workload-deployer.satz` creates for a
+// team in the organisation's estate. The groups are not declared here: they exist in the
+// customer's directory — synced from Microsoft Entra ID — before the apply, which fails on
+// a group that does not.
 
 estate project_template
 
@@ -28,28 +31,33 @@ inputs {
 }
 
 params {
-  // The billing account the project is linked to. An example value: replace it.
-  billing_account = "012345-6789AB-CDEF01"
-  // The Google project the provider bills its own calls to — the organisation's
-  // infrastructure project, where its estate enables the APIs creating a project needs.
-  // An example value: replace it.
-  quota_project   = "acme-infra-001"
-  deployment_mode = "local"
+  // The team's identity, as the organisation's workload-deployer pack created it for the
+  // team `shop`: the project the plan is billed to and the state lives in, the account the
+  // plan runs as, the state bucket. Example values: replace them with your team's.
+  infra_project_name = "acme-deploy-shop"
+  svc_iac_account    = "svc-deploy-shop"
+  infra_bucket_name  = "acme-deploy-shop-state"
+  // The billing account the new project is linked to. An example value: replace it.
+  billing_account    = "012345-6789AB-CDEF01"
+  deployment_mode    = "cloud"
 }
 
 terraform {
   backend {
-    local { path = "terraform.tfstate" }
+    gcs {
+      bucket = infra_bucket_name
+      prefix = "hcl/state"
+    }
   }
 }
 
 providers {
   "google" {
     alias                 = "google"
-    project               = quota_project
+    project               = infra_project_name
     region                = "${{interface.default_region}}"
     user_project_override = true
-    billing_project       = quota_project
+    billing_project       = infra_project_name
   }
 }
 

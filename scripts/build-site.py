@@ -37,6 +37,9 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 # That way a new doc cannot slip onto the site unnoticed, and cannot be silently
 # left off it either.
 SITE_DOCS: list[str] = [
+    "tutorials",
+    "tutorial-organisation",
+    "tutorial-projects",
     "language",
     "workflows",
     "interview",
@@ -126,6 +129,7 @@ if sorted(_menu) != sorted(_pack_stems):
 # directory listing. It is a failure now, like an unclassified doc above.
 NAV_ORDER = [
     "satz",
+    "tutorials",
     "language",
     "library",
     "changelog",
@@ -138,7 +142,19 @@ NAV_ORDER = [
     "llms",
 ]
 
-_labels = {label for _, _, label in PAGES}
+# The tutorials are one category: `tutorials` is its page in the menu, and each
+# tutorial is a page under it — reached from the index and from the side column,
+# in this order, never from the menu itself. A tutorial page not listed here is a
+# page the menu cannot reach, which the check below names.
+TUTORIALS: list[tuple[str, str]] = [
+    ("tutorial-organisation", "An organisation from scratch"),
+    ("tutorial-projects", "Projects beside the organisation"),
+]
+_tutorial_stems = {stem for stem, _ in TUTORIALS}
+if not _tutorial_stems <= set(SITE_DOCS):
+    raise SystemExit("build-site: every tutorial is a published doc: " + ", ".join(sorted(_tutorial_stems - set(SITE_DOCS))))
+
+_labels = {label for _, _, label in PAGES} - _tutorial_stems
 if _labels != set(NAV_ORDER):
     lines = ["build-site: the navigation names every page, in a decided order."]
     for label in sorted(_labels - set(NAV_ORDER)):
@@ -153,9 +169,13 @@ def nav_html(current_rel: str) -> str:
     up = "../" * depth
     items = []
     by_label = {label: rel for _, rel, label in PAGES}
+    # a tutorial page lights its category
+    current_label = next((label for _, rel, label in PAGES if rel == current_rel), "")
+    if current_label in _tutorial_stems:
+        current_label = "tutorials"
     for label in NAV_ORDER:
         rel = by_label[label]
-        cls = ' class="current"' if rel == current_rel else ""
+        cls = ' class="current"' if label == current_label else ""
         items.append(f'<a{cls} href="{up}{rel}">{label}</a>')
     items.append('<a href="https://github.com/tjirsch/satz">GitHub</a>')
     return (
@@ -486,11 +506,25 @@ def fold(title: str, entries: list[str], is_open: bool) -> str:
     )
 
 
+def tutorials_html(current_rel: str) -> str:
+    """A tutorial page's category menu: the index and every tutorial, in order, the
+    current one marked."""
+    items = ['<a href="tutorials.html">All tutorials</a>']
+    for stem, title in TUTORIALS:
+        current = current_rel == f"docs/{stem}.html"
+        cls = ' class="current"' if current else ""
+        items.append(f'<a{cls} href="{stem}.html">{html_escape(title)}</a>')
+    return '<details class="lib" open><summary>Tutorials</summary><nav>' + "".join(items) + "</nav></details>\n"
+
+
 def side_html(body: str, rel: str, is_pack: bool) -> str:
-    """The side column: the page's own contents, and on a pack page the library."""
+    """The side column: the page's own contents, on a pack page the library, on a
+    tutorial page the tutorials."""
     parts = toc_html(body, grouped=rel == LIBRARY_PAGE)
     if is_pack:
         parts += library_html(rel)
+    if rel in {f"docs/{stem}.html" for stem, _ in TUTORIALS} or rel == "docs/tutorials.html":
+        parts += tutorials_html(rel)
     return f'<aside class="side">\n{parts}</aside>\n' if parts else ""
 
 
