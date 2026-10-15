@@ -1,10 +1,10 @@
-# The project `shop-dev`, an instance of the template beside it (examples/acme/project-template/)
+# The project `shop-dev`, an instance of the template beside it (examples/acme/simple-project/)
 # the Satz way: this estate binds the template's inputs and uses the template. Paths resolve
 # against this file's directory; `include_dirs` reaches the template.
 yaml_dir = "satz"
 hcl_dir = "hcl"
 interfaces_dir = "interfaces"
-include_dirs = [".", "satz", "../project-template/satz"]
+include_dirs = [".", "satz", "../simple-project/satz"]
 schema_dir = "../../../tests/schemas"
 presets_dir = "../../../presets"
 tf_tool = "tofu"

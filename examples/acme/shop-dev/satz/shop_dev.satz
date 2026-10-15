@@ -11,4 +11,4 @@ params {
   cost_centre = "4711"
 }
 
-use "template.satz"
+use "simple-project.satz"

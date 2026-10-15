@@ -75,7 +75,7 @@ Every transpile of the organisation writes the current `interfaces/`; the team t
 
 ## 3. The template
 
-[`examples/acme/project-template/satz/template.satz`](../examples/acme/project-template/satz/template.satz)
+[`examples/acme/simple-project/satz/simple-project.satz`](../examples/acme/simple-project/satz/simple-project.satz)
 is one Google project as a template. Read it top to bottom:
 
 ```
@@ -155,7 +155,7 @@ shop-dev/
 ```
 
 [`examples/acme/shop-dev/config.toml`](../examples/acme/shop-dev/config.toml) is the
-configuration (`include_dirs = [".", "satz", "../project-template/satz"]`; `satz
+configuration (`include_dirs = [".", "satz", "../simple-project/satz"]`; `satz
 update-schema` fetches `schemas/`), and the estate is the whole instance:
 
 ```
@@ -167,7 +167,7 @@ params {
   cost_centre = "4711"
 }
 
-use "template.satz"
+use "simple-project.satz"
 ```
 
 A using document's `params { }` binds a template's inputs as it binds any param. Then:
@@ -216,7 +216,7 @@ A team that works in OpenTofu alone never runs satz. Someone runs it once — th
 platform team, or the team on a machine that has it — and hands over `hcl/`:
 
 ```bash
-satz --config examples/acme/project-template transpile template.satz
+satz --config examples/acme/simple-project transpile simple-project.satz
 ```
 
 The five files are the ones of step 4, with the example values in `terraform.tfvars`.

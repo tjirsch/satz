@@ -581,7 +581,7 @@ google_project {
 }
 ```
 
-(`tests/smoke/yaml/showcase.satz`; the template `examples/acme/project-template/`.)
+(`tests/smoke/yaml/showcase.satz`; the template `examples/acme/simple-project/`.)
 
 An input is a param with one more meaning: it is the contract of a template, bound by
 whoever instantiates it. It is declared like a param, in the same namespace (a name in
@@ -601,7 +601,7 @@ variable holds; an object is refused. The value in the block is the example valu
   team working in OpenTofu alone edits `terraform.tfvars`, or passes `-var`, and the HCL
   follows; the Satz file is unchanged.
 - **Bound two ways.** A using document's `params { … }` binds a pack's input as it binds
-  any param — a thin estate, `params { cost_centre = "4711" } use "template.satz"`, is the
+  any param — a thin estate, `params { cost_centre = "4711" } use "simple-project.satz"`, is the
   committed form. `satz transpile <template> --input cost_centre=4711` (repeatable;
   `--plan` and `--apply` run on the result) binds one for the run, winning over every
   file: a string is taken as written, a number, a bool or a list read as Satz writes one
