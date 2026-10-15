@@ -1,0 +1,85 @@
+// A template for one Google project under the organisation's workload folder: the id by
+// the customer's naming scheme, a four-digit cost centre as a label, and the owner, editor
+// and viewer roles granted to three groups named after the project. One file, used two ways.
+//
+// AS HCL. `satz transpile template.satz` writes hcl/ with the three inputs below as
+// variables: `variables.tf` declares them, `terraform.tfvars` carries the example values,
+// `main.tf` reads `var.<name>`, and `interface.tf` holds the organisation's values. A team
+// that works in OpenTofu alone takes hcl/, edits `terraform.tfvars` (or passes `-var`), and
+// runs `tofu plan`; the project's id, name, label and groups follow.
+//
+// AS SATZ. A thin estate binds the inputs in its `params { }` and uses this file — the
+// example beside this one, examples/acme/shop-dev/ — and compiles to the same HCL with the
+// bound values in `terraform.tfvars`. `satz transpile template.satz --input stage=test`
+// binds one for a run.
+//
+// The groups are not declared here: they exist in the customer's directory — synced from
+// Microsoft Entra ID — before the apply, which fails on a group that does not.
+
+estate project_template
+
+inputs {
+  // the application the project serves: lowercase letters, digits and `-`
+  application = "shop"
+  // the stage: dev, test or prod
+  stage       = "dev"
+  // the four-digit cost centre the project is billed to
+  cost_centre = "4711"
+}
+
+params {
+  // The billing account the project is linked to. An example value: replace it.
+  billing_account = "012345-6789AB-CDEF01"
+  // The Google project the provider bills its own calls to — the organisation's
+  // infrastructure project, where its estate enables the APIs creating a project needs.
+  // An example value: replace it.
+  quota_project   = "acme-infra-001"
+  deployment_mode = "local"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+providers {
+  "google" {
+    alias                 = "google"
+    project               = quota_project
+    region                = "${{interface.default_region}}"
+    user_project_override = true
+    billing_project       = quota_project
+  }
+}
+
+// The organisation's values, read from the interface file: `${{interface.<export>}}`.
+use "vendor/common/core/satz/interface.satz"
+
+google_project {
+  project {
+    name            = "{application}-{stage}"
+    project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
+    folder_id       = "${{interface.workload_folder}}"
+    billing_account = billing_account
+    labels          = { cost_centre = cost_centre }
+    // The grants below are calls to this API, billed to the project itself.
+    project_service = ["cloudresourcemanager.googleapis.com"]
+    // One grant per role, each a resource of its own: a group's name reads the inputs, and
+    // a member that reads an input is a value, never a key.
+    google_project_iam_member {
+      owner {
+        role   = "roles/owner"
+        member = "group:${{interface.customer_shortname}}-{application}-{stage}-owner@${{interface.customer_domain}}"
+      }
+      editor {
+        role   = "roles/editor"
+        member = "group:${{interface.customer_shortname}}-{application}-{stage}-editor@${{interface.customer_domain}}"
+      }
+      viewer {
+        role   = "roles/viewer"
+        member = "group:${{interface.customer_shortname}}-{application}-{stage}-viewer@${{interface.customer_domain}}"
+      }
+    }
+  }
+}
