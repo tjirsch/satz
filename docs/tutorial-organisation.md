@@ -75,7 +75,7 @@ satz questions C0example.satz --format text --out -
 
 lists each question of the core pack with its answer. Without `--interview`, `init`
 writes the core line commented and no menu: `satz get-presets` then `satz merge-presets`
-write the menu, and the core line is made active by hand.
+write the menu, and `satz interview` offers to switch the core line on.
 
 Commit the directory. From here every change to the organisation is a change to this
 file, and `tofu`'s state is the only other thing that moves.

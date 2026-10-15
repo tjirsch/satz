@@ -102,8 +102,11 @@ order is a path:
    it also writes the section that publishes `workload_folder`, as `init` does; an
    answer whose form differs from the section the estate already carries is refused,
    because the projects' folders sit under it. The pack emits
-   nothing. An estate written by `init` does not use it and does not need to: given
-   its flags, `init` has answered everything.
+   nothing. An estate `init` wrote with its flags has every one of them answered;
+   `init --interview` switches the pack on and asks the rest, and an estate written
+   without `--interview` carries the line commented out — `satz interview` offers to
+   switch it on, because the pack also declares the core exports every interface
+   carries.
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
    first is the CIS baseline (`use_cis_baseline`, on by default): the estate exists
    for its thirty organisation policies, and it is asked because they reach the
@@ -196,6 +199,12 @@ library proposes, so a skeleton that has answered nothing compiles clean at ever
 validation level. `satz packs` lists every pack with its answer, the library's default,
 its line and what it needs.
 
+An estate `init` wrote without `--interview` has `use "presets/estate-core.satz"`
+commented out. The run says so and asks whether to switch it on: Enter, `--accept-defaults`
+and an input that has ended switch it on, `n` leaves it, and the run prints what it did
+either way. While the library is not in `presets/` the line stays and the run names
+`satz get-presets`.
+
 Then the interview:
 
 ```
@@ -261,6 +270,10 @@ Its arguments:
 | `create` | write the estate first if it does not exist, as `--create` does. Needs `write` |
 | `answers` | `{subject: value}` to write before reporting — a param's value, or for a `oneof` the chosen option's param name — or `none` for a choice that is not required. Each must name a question the estate asks; one refused answer means nothing is written. Needs `write` |
 | `accept_defaults` | also write every default the report offers. Needs `write` |
+
+The report's `core` says what the call did about a commented-out
+`use "presets/estate-core.satz"` line — the one `satz init` writes without
+`--interview`: a session with `write` switches it on; otherwise why it was left.
 
 The loop an agent runs:
 

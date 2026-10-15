@@ -469,15 +469,24 @@ pub(crate) fn pack_line(path: &str, gate: Option<&str>) -> String {
 /// `false` when the line is already active, or the estate never mentions the pack —
 /// the interview then says what it finds.
 pub(crate) fn use_estate_core(estate: &Path) -> Result<bool, Box<dyn std::error::Error>> {
-    const COMMENTED: &str = "// use \"presets/estate-core.satz\"";
     let before = crate::fsx::read_to_string(estate)?;
-    let Some(line) = before.lines().find(|l| l.trim() == COMMENTED) else {
+    let Some(line) = before.lines().find(|l| l.trim() == COMMENTED_CORE) else {
         return Ok(false);
     };
     let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
     let after = before.replacen(line, &format!("{}use \"presets/estate-core.satz\"", indent), 1);
     crate::fsx::write_edited_satz(estate, &before, &after)?;
     Ok(true)
+}
+
+const COMMENTED_CORE: &str = "// use \"presets/estate-core.satz\"";
+
+/// Where `use "presets/estate-core.satz"` stands commented out in an estate `init` wrote:
+/// its line, 1-based, or `None` when the line is active or not there. `satz interview`
+/// offers to switch it on, because the pack declares the day-0 questions and the core
+/// exports every interface carries.
+pub(crate) fn estate_core_commented(src: &str) -> Option<usize> {
+    src.lines().position(|l| l.trim() == COMMENTED_CORE).map(|i| i + 1)
 }
 
 /// The estate an INTERVIEW starts from: the day-0 scaffold, and every pack commented out.
@@ -583,7 +592,8 @@ params {{
 // The day-0 params and their questions: init binds what it derived above, and this pack
 // declares the rest, each with its question. It stays commented until the library is
 // fetched, so the estate compiles with nothing downloaded — `satz init --interview`
-// fetches it, switches it on, and asks what init could not derive.
+// fetches it, switches it on, and asks what init could not derive; `satz interview`
+// offers to switch it on once `satz get-presets` has fetched the library.
 // use "presets/estate-core.satz"
 
 {menu}google_essential_contacts_contact {{
@@ -776,6 +786,7 @@ pub(crate) mod tests {
         }
         // the day-0 pack is the exception: it is not in the menu at all
         assert!(sk.contains("\nuse \"presets/estate-core.satz\"\n"), "estate-core is the one pack a day-0 file uses");
+        assert_eq!(estate_core_commented(&sk), None, "the skeleton's core line is active");
     }
 
     /// Whether any `use` sits in these items, at any depth.
