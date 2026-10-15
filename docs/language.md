@@ -798,7 +798,7 @@ Refused, at the `each` line: a list param no file declares, a param that is no l
 entry that is no object, one without the field or whose field is no label (a letter,
 then letters, digits, `_` and `-`), two entries with one label, `{each.x}` of a field the
 entry lacks or of a list or an object inside a string, a `use` or a second `each` inside
-the body, `each` in a resource body or in a grant map, `when` with no field after it, and
+the body, `each` in a resource body, `when` with no field after it, and
 `{each.x}` outside an `each`.
 At the top level of a file `each` writes interfaces, not resources (§6.17). A label an `each` writes that the map also writes by hand is
 one address declared twice. `each` without `by`, or `each { … }`, is a label named
@@ -938,6 +938,24 @@ one, and a scope on a type that already has one (`org_id` on an organisation
 grant, `project` on a map inside a project) is refused.
 `google_billing_account_iam_member` is the exception: its `billing_account_id` is estate-wide, pinned once and defaulting to
 `billing_account_infra`, not per-map.
+
+**`each` inside a grant map** writes one map per entry of a list param: the scope
+attribute and the member keys read the entry (`{each.<field>}` in a key or a string, a bare
+`each.<field>` as a value), and a list param stands for the roles. The grants take their
+addresses from the scope and the members, so two entries that name one scope and one member
+merge into one grant; the entry's label names nothing. The showcase grants a group on every
+topic of `event_topics` with one map:
+
+```
+google_pubsub_topic_iam_member {
+  each event_topics by name {
+    topic = "${{google_pubsub_topic.{each.name}.id}}"
+    "group:gcp-developers@{customer_domain}" = [
+      "roles/pubsub.subscriber",
+    ]
+  }
+}
+```
 
 The same grant as a **labelled resource** is equally valid, and is the form to
 use for a single edge or when the scope differs per member:

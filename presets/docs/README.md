@@ -3,13 +3,13 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**48 packs · 231 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**49 packs · 237 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`estate_map`](estate-map.md) | 2.8 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 2.9 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`estate_core`](estate-core.md) | 2.4 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
 
 ## Security groups and exemptions
@@ -71,6 +71,7 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`, in t
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`project_onboarding`](project-onboarding.md) | 1.1 | The projects on the estate, one entry of `projects` each. | 1 | — |
+| [`workload_deployer`](workload-deployer.md) | 1.0 | One deployer identity per customer team. | 6 | — |
 | [`interface_notice`](interface-notice.md) | 1.2 | Tells the projects that read this estate's interface when an exported value changes: one Pub/Sub message per apply that changes one. | 5 | — |
 
 ## Security operations and integrations

@@ -3167,6 +3167,18 @@ impl Walk<'_> {
     /// keeps its own channel: its account is estate-wide, pinned once as a
     /// synthetic entity (idempotent, conflicting pins = ⊥) with a fallback to
     /// `billing_account_infra`, not per-map like every other scope.
+    /// Whether a body under a grant map is a grant map itself: any key in it is a member
+    /// (`<type>:<value>`). A labelled grant resource carries `role` and `member` instead.
+    fn holds_members(&self, body: &[Entry], file_name: &str) -> Result<bool, PipelineError> {
+        for e in body {
+            let Entry::Attr { key, line, .. } = e else { continue };
+            if !is_scope_attr_key(&resolve_key(key, &self.genv, file_name, *line)?) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn collect_scope_pin(
         &mut self,
         rt: &ResolvedType,
@@ -3273,6 +3285,13 @@ impl Walk<'_> {
                 for e in &expanded {
                     self.belongs(map_position(rt), e, file_name)?;
                     match e {
+                        // an `each` in a grant map wrote this body from one entry: members
+                        // with their roles, and the entry's scope — a grant map of its own,
+                        // whose addresses the members and the scope give, not the entry's name
+                        Entry::Map { key: _, name: None, body, line } if rt.class == MergeClass::Grant && self.holds_members(body, file_name)? => {
+                            self.resource_map(rt, None, body, file_name, own, *line, path, pin)?;
+                            continue;
+                        }
                         Entry::Map { key, name: None, body, line } => {
                             v.push((resolve_key(key, &self.genv, file_name, *line)?, body.as_slice(), *line))
                         }
@@ -3969,6 +3988,41 @@ mod estate_channel_tests {
         assert!(e.msg.contains("is an object"), "{}", e.msg);
         let e = compile_estate("t.satz", &estate.replace("owner = \"a\"", "other = 1"), &Table, &load).err().expect("refused");
         assert!(e.msg.contains("no field `owner`"), "{}", e.msg);
+    }
+
+    /// `each` inside a grant map writes one map per entry: the member keys read the entry, a
+    /// list param stands for the roles, and the grants take their addresses from the members.
+    #[test]
+    fn each_inside_a_grant_map_writes_one_map_per_entry() {
+        let src = "estate t\nparams {\n  teams = [{ name = \"a\" group = \"a@example.com\" }, { name = \"b\" group = \"b@example.com\" }]\n  roles = [\"roles/browser\"]\n}\ngoogle_organization_iam_member {\n  each teams by name {\n    \"serviceAccount:svc-{each.name}@x.iam.gserviceaccount.com\" = roles\n    \"group:{each.group}\" = [\n      \"roles/viewer\",\n    ]\n  }\n}\n";
+        let fe = compile_estate("t.satz", src, &Table, &|p| Err(format!("no load: {}", p))).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let mut grants: Vec<(String, Vec<String>)> = folded
+            .slots
+            .iter()
+            .filter_map(|(a, s)| match s {
+                crate::algebra::Slot::Ok(e) if a.tf_type == "google_organization_iam_member" => match &e.body {
+                    Body::Grant(edges) => Some((a.label.clone(), edges.iter().map(|x| format!("{} {}", x.member, x.role)).collect())),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        grants.sort();
+        assert_eq!(
+            grants,
+            [
+                ("group:a@example.com".to_string(), vec!["group:a@example.com roles/viewer".to_string()]),
+                ("group:b@example.com".to_string(), vec!["group:b@example.com roles/viewer".to_string()]),
+                ("serviceAccount:svc-a@x.iam.gserviceaccount.com".to_string(), vec!["serviceAccount:svc-a@x.iam.gserviceaccount.com roles/browser".to_string()]),
+                ("serviceAccount:svc-b@x.iam.gserviceaccount.com".to_string(), vec!["serviceAccount:svc-b@x.iam.gserviceaccount.com roles/browser".to_string()]),
+            ]
+        );
+        // a body of `role` and `member` is a labelled grant resource, as before
+        let src = "estate t\nparams {\n  teams = [{ name = \"a\" }]\n}\ngoogle_organization_iam_member {\n  each teams by name {\n    org_id = \"123456789012\"\n    role   = \"roles/browser\"\n    member = \"serviceAccount:svc-{each.name}@x.iam.gserviceaccount.com\"\n  }\n}\n";
+        let fe = compile_estate("t.satz", src, &Table, &|p| Err(format!("no load: {}", p))).unwrap();
+        let folded = fold_fragments(&Table, &fe.fragments);
+        assert!(folded.slots.contains_key(&Address { tf_type: "google_organization_iam_member".into(), label: "a".into() }), "{:?}", folded.slots.keys().collect::<Vec<_>>());
     }
 
     const IFACE: &str = "interface \"pay\"\n\ncentral {\n  estate        = \"central\"\n  organizations = [\"organizations/123456789012\"]\n}\n\noutput \"org_id\" {\n  value = \"123456789012\"\n}\n\noutput \"folder\" {\n  value   = \"${{data.google_active_folder.pay.name}}\"\n  attach  = [\"google_folder_iam_member\"]\n  targets = [\"google_folder.pay\"]\n}\n\noutput \"regions\" {\n  value = [\"europe-west3\", \"europe-west4\"]\n}\n\nlookup \"data.google_active_folder.pay\" {\n  reads      = \"google_folder.pay\"\n  permission = \"resourcemanager.folders.list on the parent\"\n  arguments {\n    display_name = \"Pay\"\n    parent       = \"${{data.google_active_folder.infra.name}}\"\n  }\n}\n\nlookup \"data.google_active_folder.infra\" {\n  reads      = \"google_folder.infra\"\n  permission = \"resourcemanager.folders.list on the parent\"\n  arguments {\n    display_name = \"Infrastructure\"\n    parent       = \"organizations/123456789012\"\n  }\n}\n";
@@ -5047,10 +5101,6 @@ google_storage_bucket {
         refused(
             &with("  xs = [ { name = \"a\" } ]", "google_folder {\n  f {\n    display_name = \"F\"\n    each xs by name {\n      display_name = \"x\"\n    }\n  }\n}\n"),
             "the body of a `google_folder`",
-        );
-        refused(
-            &with("  xs = [ { name = \"a\" } ]", "google_organization_iam_member {\n  each xs by name {\n    x = \"y\"\n  }\n}\n"),
-            "a grant map",
         );
         refused(&with("  xs = [ { name = \"a\" } ]", "google_storage_bucket {\n  b {\n    each xs by name {\n      name = \"x\"\n    }\n  }\n}\n"), "inside a resource body");
         // `{each.x}` outside an `each`

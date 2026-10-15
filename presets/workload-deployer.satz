@@ -1,0 +1,182 @@
+// One deployer identity per customer team. A Google project of the team's own holds the
+// service account its pipelines run as and the bucket its states live in, and the account
+// holds the roles it needs to roll out folders and Google projects under the workload folder
+// — nothing more.
+//
+//   use "presets/workload-deployer.satz" when use_workload_deployer
+//
+// A team rolls out many Google projects and folders with templates of its own, in OpenTofu or
+// in Satz, each with its own state; it never runs as the organisation's IaC account. One entry
+// of `workload_deployers`, `{ name = "platform" group = "gcp-project-admins@example.com" }`,
+// is one team — bound in the estate, or requested by the team as `contributes_workload_deployers`
+// in a small pack of its own, checked with `satz check-request` and vendored by pull request.
+// `name` is lowercase letters, digits and `-`, starting with a letter; `group` is the address
+// of the group that may become the account; `folder` is the parent the team creates under,
+// `google_folder.workload_folder.name` unless the entry names another.
+//
+// PER ENTRY. The team's infrastructure project `{customer_shortname}-deploy-<name>` under
+// `deployer_project_folder`, billed to the infrastructure billing account, with the APIs a
+// deployer's calls need. Inside it the account `svc-deploy-<name>` and the state bucket
+// `{customer_shortname}-deploy-<name>-state`, which the account may write; the group reads the
+// project and may become the account — that account only.
+//
+// WHAT THE ACCOUNT MAY DO. On the parent folder, `deployer_folder_roles`: create and manage
+// folders and Google projects under it, set their IAM and enable their APIs. On the billing
+// account, `deployer_billing_roles`: link a new project to it. On the organisation,
+// `deployer_organization_roles` — `roles/browser` and nothing else by default: the interface
+// looks the workload folder up by its name among the organisation's folders, and that listing
+// needs `resourcemanager.folders.list` on the organisation; without it the team's plan stops at
+// the lookup. The three lists are params, so a customer changes the set without a fork.
+//
+// MORE PARENT FOLDERS. A team that creates under several folders gets one entry of
+// `workload_deployer_folders` per further parent, `{ name = "platform-shared" deployer = "platform"
+// folder = "google_folder.shared.name" }`, which grants `deployer_folder_roles` on that folder
+// to the team's account.
+//
+// WHO RUNS WHAT. The team's pipeline impersonates `svc-deploy-<name>` and keeps its state in
+// the team's bucket; the organisation's state is never read — a looked-up value asks the
+// Google API for the live resource. The account's address is the pattern above; the pack
+// exports no interface.
+//
+// NO CLAIM. The teams' identities are workloads, not controls: this pack witnesses nothing.
+
+pack workload_deployer version "1.0"
+
+params {
+  // One entry per team, `{ name group folder }`: the name, the group that may become the
+  // account, and the parent folder the team creates under (the workload folder when left out).
+  workload_deployers        = []
+  // Further parent folders, one entry per team and folder: `{ name deployer folder }`.
+  workload_deployer_folders = []
+  // The folder the teams' infrastructure projects are created in. Empty is the organisation;
+  // a folder the estate declares is named by reference, `google_folder.<label>.name`, one that
+  // already exists by its id.
+  deployer_project_folder   = ""
+  // What the account holds on the parent folder(s): folders and Google projects under it,
+  // their IAM, and the APIs it enables on them.
+  deployer_folder_roles = [
+    "roles/resourcemanager.folderAdmin",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+  ]
+  // What the account holds on the organisation: the read the workload-folder lookup needs.
+  deployer_organization_roles = [
+    "roles/browser",
+  ]
+  // What the account holds on the infrastructure billing account: linking a new project.
+  deployer_billing_roles = [
+    "roles/billing.user",
+  ]
+  // What the team's group holds on the account: becoming it, and nothing else.
+  deployer_group_roles = [
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+  ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question deployer_project_folder {
+  prompt    = "The folder the teams' infrastructure projects are created in — the infrastructure folder as `google_folder.infra_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why       = "It decides the policies the teams' projects inherit. Changing it afterwards moves every live team project between parents."
+  reversal  = edit
+  blast     = low
+  recommend = "google_folder.infra_folder.name"
+  empty     = "the organisation itself"
+}
+
+// ---- what a team may ask for ----------------------------------------------------------
+
+request workload_deployers {
+  key         = "name"
+  fields      = ["name", "group", "folder"]
+  patterns    = { name = "[a-z][a-z0-9-]*" group = "[^@: ]+@[^@: ]+" }
+  defaults    = { folder = "google_folder.workload_folder.name" }
+  description = "A team that rolls out folders and Google projects: its name, the address of the group that may become its account, and the folder it creates under"
+}
+
+request workload_deployer_folders {
+  key         = "name"
+  fields      = ["name", "deployer", "folder"]
+  patterns    = { name = "[a-z][a-z0-9-]*" deployer = "[a-z][a-z0-9-]*" }
+  description = "A further parent folder a team creates under: the entry's name, the team's name, and the folder"
+}
+
+// ---- per team: its infrastructure project, account and state bucket -------------------
+
+google_project {
+  each workload_deployers by name {
+    name            = "deploy-{each.name}"
+    project_id      = "{customer_shortname}-deploy-{each.name}"
+    folder_id       = deployer_project_folder
+    billing_account = billing_account_infra
+    project_service = [
+      "cloudbilling.googleapis.com",
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+    google_service_account {
+      "deploy_{each.name}" {
+        account_id   = "svc-deploy-{each.name}"
+        display_name = "Deployer of the team {each.name}"
+      }
+    }
+    google_storage_bucket {
+      "deploy_{each.name}_state" {
+        name                        = "{customer_shortname}-deploy-{each.name}-state"
+        location                    = default_region
+        force_destroy               = true
+        public_access_prevention    = "enforced"
+        uniform_bucket_level_access = true
+        versioning { enabled = true }
+      }
+    }
+    // The team reads its project; the account writes its states.
+    google_project_iam_member {
+      "group:{each.group}" = [
+        "roles/viewer",
+      ]
+    }
+    google_storage_bucket_iam_member {
+      bucket = "{customer_shortname}-deploy-{each.name}-state"
+      "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = [
+        "roles/storage.objectAdmin",
+      ]
+    }
+    // The team may become its account — that account only.
+    google_service_account_iam_member {
+      service_account_id   = "${{google_service_account.deploy_{each.name}.name}}"
+      "group:{each.group}" = deployer_group_roles
+    }
+  }
+}
+
+// ---- what each account may do: on its parent folder(s), the billing account, the organisation
+
+google_folder_iam_member {
+  each workload_deployers by name {
+    folder                                                                                                  = "{each.folder}"
+    "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = deployer_folder_roles
+  }
+  each workload_deployer_folders by name {
+    folder                                                                                                          = "{each.folder}"
+    "serviceAccount:svc-deploy-{each.deployer}@{customer_shortname}-deploy-{each.deployer}.iam.gserviceaccount.com" = deployer_folder_roles
+  }
+}
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  each workload_deployers by name {
+    "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = deployer_billing_roles
+  }
+}
+
+google_organization_iam_member {
+  each workload_deployers by name {
+    "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = deployer_organization_roles
+  }
+}
