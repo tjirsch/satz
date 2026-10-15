@@ -3,7 +3,8 @@
 // input is the whole value, inside a template where text holds it; the provider alias of a
 // project whose id reads one reads it too. `variables.tf` declares each input by its name
 // with the comment above it as its description; `terraform.tfvars` carries the bound value.
-// Snapshot-gated.
+// A body that reads an input and a central estate's value carries both renderings: the
+// project below stands under the interface's folder. Snapshot-gated.
 
 estate corpus_inputs
 
@@ -33,10 +34,13 @@ terraform {
   }
 }
 
+use "interface.satz"
+
 google_project {
   work {
     name            = "{workload}-{stage}"
     project_id      = "{customer_shortname}-{workload}-{stage}"
+    folder_id       = "${{interface.infra_folder}}"
     billing_account = billing_account_infra
     labels          = { cost_centre = cost_centre stage = stage }
     google_pubsub_topic {

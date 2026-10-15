@@ -1036,7 +1036,10 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                     ));
                     continue;
                 }
-                let mut twin = v.clone();
+                // the twin an input left (`var.<name>` where the input stands) is the one
+                // the interface values are rendered into; a body that read none starts
+                // from the judged body
+                let mut twin = e.rendering.as_ref().and_then(|r| r.attrs.clone()).unwrap_or_else(|| v.clone());
                 match substitute_value(v, &outputs, files, &mut read) {
                     Ok(true) => {
                         render_interface_value(&mut twin, INTERFACE_LOCAL);
