@@ -257,6 +257,23 @@ google_pubsub_topic {
   }
 }
 
+// --- `inputs`: a template's contract — a param a reader binds (the using estate's `params`,
+//     or `satz transpile --input <name>=<value>`), which every check reads as its value and
+//     the HCL reads as `var.<name>`; the value here is the example.
+inputs {
+  // how long the showcase's own topic keeps a message
+  showcase_retention = "86400s"
+}
+
+google_pubsub_topic {
+  showcase {
+    name                       = "{customer_shortname}-showcase"
+    project                    = infra_project_name
+    message_retention_duration = showcase_retention
+    labels                     = { retention = "{showcase_retention}" }
+  }
+}
+
 // --- `each … when <field>`: the body only for the entries that carry the field with a
 //     value; `when not <field>` writes it for the others.
 google_pubsub_subscription {

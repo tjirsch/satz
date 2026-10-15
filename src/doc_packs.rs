@@ -1018,6 +1018,15 @@ fn render(
         }
         md.push('\n');
     }
+    if !file.inputs.is_empty() {
+        md.push_str("## Inputs\n\n");
+        md.push_str("The template's contract: a param the using estate binds in its `params { }` or `satz transpile --input <name>=<value>` binds, which the HCL reads as `var.<name>`; the default is the example value.\n\n");
+        md.push_str("| input | example | description |\n|---|---|---|\n");
+        for i in &file.inputs {
+            md.push_str(&format!("| `{}` | `{}` | {} |\n", i.name, value_text(&i.value).replace('|', "\\|"), i.description.as_deref().unwrap_or("")));
+        }
+        md.push('\n');
+    }
     // A SECTION, not a column on the params table: a column rewrites all 25
     // generated pages, a section touches only packs that declare a question.
     if !file.questions.is_empty() {

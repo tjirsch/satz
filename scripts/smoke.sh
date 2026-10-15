@@ -327,6 +327,19 @@ sed 's/name = "shop-dev" cost_centre = "4711"/name = "shop-dev" cost_centre = "4
 rm -f "$cc/satz/tmp-bad.satz"
 grep -q 'entry `shop-dev` has `cost_centre` = "47A1"' tmp/example-bad.txt || fail "the refusal does not name the entry and the value:\n$(cat tmp/example-bad.txt)"
 
+step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
+ih=tmp/inputs-hcl
+"$satz" --config . transpile yaml/showcase.satz --output "$PWD/$ih" > tmp/inputs.txt 2>&1 || fail "the showcase does not transpile:\n$(cat tmp/inputs.txt)"
+grep -q 'variable "showcase_retention" {' $ih/variables.tf || fail "the input is not declared by its name:\n$(cat $ih/variables.tf)"
+grep -q 'description = "how long the showcase.s own topic keeps a message"' $ih/variables.tf || fail "the input's comment is not its description:\n$(cat $ih/variables.tf)"
+grep -q 'message_retention_duration = var.showcase_retention' $ih/main.tf || fail "the whole value does not read the variable bare:\n$(grep -n retention $ih/main.tf)"
+grep -q '"retention" = "${var.showcase_retention}"' $ih/main.tf || fail "the value inside text does not read the variable as a template:\n$(grep -n retention $ih/main.tf)"
+grep -q '^showcase_retention = "86400s"' $ih/terraform.tfvars || fail "the example value is not in terraform.tfvars:\n$(cat $ih/terraform.tfvars)"
+"$satz" --config . transpile yaml/showcase.satz --input showcase_retention=600s --print-variables --check > tmp/input.txt 2>&1 || fail "--input refused a declared input:\n$(cat tmp/input.txt)"
+grep -q '^showcase_retention = "600s"' tmp/input.txt || fail "--input did not bind the value for the run:\n$(cat tmp/input.txt)"
+"$satz" --config . transpile yaml/showcase.satz --input nope=1 --check > tmp/input-bad.txt 2>&1 && fail "--input bound a name no file declares as an input"
+grep -q 'no file of the estate declares `nope` in an `inputs` block' tmp/input-bad.txt && grep -q '`showcase_retention`' tmp/input-bad.txt || fail "the refusal does not list the inputs:\n$(cat tmp/input-bad.txt)"
+
 step "project onboarding: an entry of the pack's list, its interface out, and a project estate written from it"
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
 import sys

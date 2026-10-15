@@ -13,6 +13,18 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.92.0
+
+**`inputs` is a statement.** A top-level block labelled `inputs` is read as a template's
+contract — `inputs { <name> = <value> }`, params a reader binds and the HCL reads as
+`var.<name>` ([language §6.3](../docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds))
+— and no longer as a resource map of that name. No provider type is called `inputs`, so no
+estate held one; a resource map keyed `"inputs"` in quotes, which never resolved to a type,
+is refused as it was. Nothing moves in any plan.
+
+**`each` inside a grant map writes one grant map per entry** (presets 2026-10-15): a form
+that was refused compiles — nothing an estate held is refused, and nothing moves.
+
 ### v0.91.0
 
 **`presets/organization-budget.satz` asks four questions, and its budget is written from

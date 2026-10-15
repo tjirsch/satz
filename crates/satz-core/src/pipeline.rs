@@ -115,6 +115,15 @@ fn resolve_str(parts: &[StrPart], env: &Env, file: &str, line: usize) -> Result<
                 Some(serde_yaml::Value::String(s)) => out.push_str(s),
                 Some(serde_yaml::Value::Number(n)) => out.push_str(&n.to_string()),
                 Some(serde_yaml::Value::Bool(b)) => out.push_str(if *b { "true" } else { "false" }),
+                // an input in the rendering environment: the variable, inside the text
+                Some(serde_yaml::Value::Tagged(t)) if t.tag == "!expr" => match &t.value {
+                    serde_yaml::Value::String(e) => {
+                        out.push_str("${");
+                        out.push_str(e);
+                        out.push('}');
+                    }
+                    other => return perr(file, line, format!("param '{}' is not a scalar ({:?}) — cannot interpolate", name, other)),
+                },
                 Some(v) => {
                     return perr(file, line, format!("param '{}' is not a scalar ({:?}) — cannot interpolate", name, v))
                 }
@@ -143,6 +152,58 @@ fn resolve_value(v: &Value, env: &Env, file: &str, line: usize) -> Result<serde_
         ),
         Value::Obj(entries) => serde_yaml::Value::Mapping(resolve_obj(entries, env, file)?),
     })
+}
+
+/// An expression as a value: `!expr`-tagged text, which the emitter writes bare and
+/// `resolve_str` writes as `${…}` inside text.
+pub fn expr_value(expr: &str) -> serde_yaml::Value {
+    serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new("expr"), value: serde_yaml::Value::String(expr.to_string()) }))
+}
+
+/// The first of `names` a value reads — a bare reference, an interpolation in a string,
+/// anywhere inside a list or an object.
+fn reads_any(v: &Value, names: &[&str]) -> Option<String> {
+    match v {
+        Value::Ref(r) => names.contains(&r.as_str()).then(|| r.clone()),
+        Value::Str(parts) => parts.iter().find_map(|p| match p {
+            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
+            _ => None,
+        }),
+        Value::Num(_) | Value::Bool(_) => None,
+        Value::List(items) => items.iter().find_map(|i| reads_any(i, names)),
+        Value::Obj(entries) => entries.iter().find_map(|e| match e {
+            Entry::Attr { key, value, .. } => reads_key(key, names).or_else(|| reads_any(value, names)),
+            Entry::Map { key, body, .. } => reads_key(key, names).or_else(|| reads_any(&Value::Obj(body.clone()), names)),
+            _ => None,
+        }),
+    }
+}
+
+fn reads_key(k: &Key, names: &[&str]) -> Option<String> {
+    match k {
+        Key::Ident(_) => None,
+        Key::Str(parts) => parts.iter().find_map(|p| match p {
+            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
+            _ => None,
+        }),
+    }
+}
+
+/// A key the rendering holds and the judged body does not, at any depth: a key that read
+/// an input. `None` when the keys agree.
+fn key_differs(real: &serde_yaml::Value, twin: &serde_yaml::Value) -> Option<String> {
+    let (serde_yaml::Value::Mapping(a), serde_yaml::Value::Mapping(b)) = (real, twin) else { return None };
+    for (k, v) in b {
+        match a.get(k) {
+            None => return k.as_str().map(|x| x.to_string()),
+            Some(av) => {
+                if let Some(d) = key_differs(av, v) {
+                    return Some(d);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, PipelineError> {
@@ -584,7 +645,23 @@ fn resolve_obj(entries: &[Entry], env: &Env, file: &str) -> Result<serde_yaml::M
 
 /// Build the file's param environment: `outer` (the user of this file) wins over
 /// the file's own defaults; params may reference earlier params of either origin.
+/// A param that read an input would carry the example value where the HCL reads a
+/// variable: refused, before the params are resolved (an input is resolved after them).
+fn refuse_params_reading_inputs(file: &File, file_name: &str) -> Result<(), PipelineError> {
+    let input_names: Vec<&str> = file.inputs.iter().map(|i| i.name.as_str()).collect();
+    if input_names.is_empty() {
+        return Ok(());
+    }
+    for (name, v, line) in &file.params {
+        if let Some(read) = reads_any(v, &input_names) {
+            return perr(file_name, *line, format!("param `{}` reads the input `{}` — a param is a value the compile fixes, an input a variable the plan reads; make `{}` an input too, or write the value", name, read, name));
+        }
+    }
+    Ok(())
+}
+
 fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineError> {
+    refuse_params_reading_inputs(file, file_name)?;
     let mut env = outer.clone();
     // Params may reference each other regardless of declaration order — the same
     // dependency-ordered resolution the YAML emitter uses.
@@ -606,7 +683,27 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
         let resolved = resolve_value(v, &env, file_name, *line)?;
         env.insert(name.clone(), resolved);
     }
+    // An input is a param the using document binds, resolved after the params it may
+    // read, the binding winning as for any param.
+    for i in &file.inputs {
+        if env.contains_key(&i.name) {
+            continue;
+        }
+        let resolved = resolve_value(&i.value, &env, file_name, i.line)?;
+        env.insert(i.name.clone(), resolved);
+    }
     Ok(env)
+}
+
+/// One `inputs { … }` entry as the compile sees it: the value as bound, and where it is
+/// declared. What `satz transpile --input` binds and `variables.tf` declares.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredInput {
+    pub name: String,
+    pub value: serde_yaml::Value,
+    pub file: String,
+    pub line: usize,
+    pub description: Option<String>,
 }
 
 /// Front-end result for an estate: its fragments and its resolved parameter
@@ -618,6 +715,11 @@ pub struct FrontEnd {
     pub config: BTreeMap<String, serde_yaml::Value>,
     /// Where each config block stands, `(file, line)`, for a finding about it.
     pub config_sites: BTreeMap<String, (String, usize)>,
+    /// The `providers` block as it is written when an input is read in it: the same
+    /// mapping with `var.<input>` where the value stands. Empty when none is read.
+    pub config_rendering: BTreeMap<String, serde_yaml::Value>,
+    /// Every input the estate and its used files declare, by name.
+    pub inputs: Vec<DeclaredInput>,
     /// Union of every included file's declared params (resolved values), first
     /// definition wins — the estate declares before its packs. Feeds tfvars
     /// emission.
@@ -934,7 +1036,10 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                     ));
                     continue;
                 }
-                let mut twin = v.clone();
+                // the twin an input left (`var.<name>` where the input stands) is the one
+                // the interface values are rendered into; a body that read none starts
+                // from the judged body
+                let mut twin = e.rendering.as_ref().and_then(|r| r.attrs.clone()).unwrap_or_else(|| v.clone());
                 match substitute_value(v, &outputs, files, &mut read) {
                     Ok(true) => {
                         render_interface_value(&mut twin, INTERFACE_LOCAL);
@@ -1154,6 +1259,7 @@ pub fn resolve_interface_in_config(
     config: &mut BTreeMap<String, serde_yaml::Value>,
     sites: &BTreeMap<String, (String, usize)>,
     files: &[UsedInterfaceFile],
+    prior: &BTreeMap<String, serde_yaml::Value>,
 ) -> Result<ConfigRendering, Vec<PipelineError>> {
     let outputs: BTreeMap<&str, &satz::OfferedOutput> =
         files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
@@ -1162,7 +1268,8 @@ pub fn resolve_interface_in_config(
     for (block, value) in config.iter_mut() {
         let (file, line) = sites.get(block).cloned().unwrap_or_default();
         let mut read = Vec::new();
-        let mut twin = value.clone();
+        // the block as written so far — an input's rendering, when one is read in it
+        let mut twin = prior.get(block).cloned().unwrap_or_else(|| value.clone());
         let msg = match substitute_value(value, &outputs, files, &mut read) {
             Err(m) => Some(m),
             Ok(changed) => {
@@ -1177,7 +1284,7 @@ pub fn resolve_interface_in_config(
                         name
                     )),
                     None => {
-                        if changed && block == "providers" {
+                        if (changed || prior.contains_key(block)) && block == "providers" {
                             render_interface_value(&mut twin, INTERFACE_STATIC_LOCAL);
                             out.providers = Some(twin);
                         }
@@ -1596,6 +1703,21 @@ pub fn compile_estate_using(
     types: &dyn TypeResolver,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<FrontEnd, PipelineError> {
+    compile_estate_bound(file_name, src, extra_uses, &[], types, load)
+}
+
+/// `compile_estate_using` with inputs bound from outside — `satz transpile --input
+/// <name>=<value>`, the outermost document: it wins over every file's binding. A name no
+/// file declares in an `inputs` block is refused, listing the inputs; a value is read by
+/// the input's kind — a string as written, a number, a bool, a list in Satz syntax.
+pub fn compile_estate_bound(
+    file_name: &str,
+    src: &str,
+    extra_uses: &[&str],
+    bindings: &[(String, String)],
+    types: &dyn TypeResolver,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<FrontEnd, PipelineError> {
     let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
     for path in extra_uses {
@@ -1611,8 +1733,12 @@ pub fn compile_estate_using(
             ),
         );
     }
-    let (seed, contributions, deferred) = seed_or_deferred(&file, file_name, load);
-    let env = build_env(&file, &seed, file_name)?;
+    let (seed, contributions, declared_inputs, deferred) = seed_or_deferred(&file, file_name, load);
+    let mut outer = bind_inputs(&file, &declared_inputs, bindings, file_name)?;
+    for (k, v) in seed {
+        outer.entry(k).or_insert(v);
+    }
+    let env = build_env(&file, &outer, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
     let mut w = Walk {
@@ -1621,6 +1747,8 @@ pub fn compile_estate_using(
         genv: env.clone(),
         config: BTreeMap::new(),
         config_sites: BTreeMap::new(),
+        config_rendering: BTreeMap::new(),
+        inputs: BTreeMap::new(),
         hcl: Vec::new(),
         claims: Vec::new(),
         questions: Vec::new(),
@@ -1632,6 +1760,7 @@ pub fn compile_estate_using(
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
     };
+    w.note_inputs(&file, file_name)?;
     for r in &file.requests {
         w.fill_defaults(r, file_name)?;
     }
@@ -1791,7 +1920,9 @@ pub fn compile_estate_using(
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
     let requests = resolve_requests(&declared_requests, &tfvars)?;
-    Ok(FrontEnd { fragments: all, env, config, config_sites, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
+    let inputs = w.inputs.into_values().collect();
+    let config_rendering = w.config_rendering;
+    Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
 /// The interface files the estate uses, each once. The same file used twice is one; one
@@ -2095,10 +2226,11 @@ pub fn estate_params(
 ) -> Result<Env, PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let (seed, _, deferred) = seed_or_deferred(&file, file_name, load);
+    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, load);
     let mut env = build_env(&file, &seed, file_name)?;
     let mut sink = Vec::new();
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink)?;
+    let mut inputs = Vec::new();
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs)?;
     if let Some(e) = deferred {
         return Err(e);
     }
@@ -2183,23 +2315,88 @@ fn seed_or_deferred(
     file: &File,
     file_name: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
-) -> (Env, Vec<Contribution>, Option<PipelineError>) {
+) -> (Env, Vec<Contribution>, Vec<RawInput>, Option<PipelineError>) {
     match contribution_seed(file, file_name, load) {
-        Ok((seed, records)) => (seed, records, None),
-        Err(e) => (Env::new(), Vec::new(), Some(e)),
+        Ok((seed, records, inputs)) => (seed, records, inputs, None),
+        Err(e) => (Env::new(), Vec::new(), Vec::new(), Some(e)),
     }
+}
+
+/// The bindings `--input` gives, each read by the kind of the input it names: a string
+/// as written, a number, a bool, a list in Satz syntax. Refused: a name no file declares
+/// as an input, a value that is no number, bool or list where one is declared.
+fn bind_inputs(file: &File, used: &[RawInput], bindings: &[(String, String)], file_name: &str) -> Result<Env, PipelineError> {
+    let mut env = Env::new();
+    if bindings.is_empty() {
+        return Ok(env);
+    }
+    let declared: Vec<(&str, &Value)> = file
+        .inputs
+        .iter()
+        .map(|i| (i.name.as_str(), &i.value))
+        .chain(used.iter().map(|i| (i.name.as_str(), &i.value)))
+        .collect();
+    for (name, text) in bindings {
+        let Some((_, default)) = declared.iter().find(|(n, _)| n == name) else {
+            let mut names: Vec<&str> = declared.iter().map(|(n, _)| *n).collect();
+            names.sort();
+            names.dedup();
+            return perr(
+                file_name,
+                0,
+                format!(
+                    "--input {}: no file of the estate declares `{}` in an `inputs` block — {}",
+                    name,
+                    name,
+                    if names.is_empty() { "it declares none".to_string() } else { format!("the inputs are {}", names.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", ")) }
+                ),
+            );
+        };
+        let value = match default {
+            Value::Str(_) | Value::Ref(_) => serde_yaml::Value::String(text.clone()),
+            Value::Num(_) => match serde_yaml::from_str::<serde_yaml::Value>(text) {
+                Ok(v @ serde_yaml::Value::Number(_)) => v,
+                _ => return perr(file_name, 0, format!("--input {}={}: `{}` is a number, and `{}` is none", name, text, name, text)),
+            },
+            Value::Bool(_) => match text.as_str() {
+                "true" => serde_yaml::Value::Bool(true),
+                "false" => serde_yaml::Value::Bool(false),
+                _ => return perr(file_name, 0, format!("--input {}={}: `{}` is a bool, `true` or `false`", name, text, name)),
+            },
+            Value::List(_) => {
+                let parsed = satz::parse(&format!("estate b\nparams {{ v = {} }}\n", text)).ok().and_then(|f| f.params.into_iter().next()).map(|(_, v, _)| v);
+                match parsed {
+                    Some(v @ Value::List(_)) => resolve_value(&v, &Env::new(), file_name, 0)?,
+                    _ => return perr(file_name, 0, format!("--input {}={}: `{}` is a list, written as Satz writes one, `[\"a\", \"b\"]`", name, text, name)),
+                }
+            }
+            Value::Obj(_) => return perr(file_name, 0, format!("--input {}: `{}` is an object, which no input is", name, name)),
+        };
+        env.insert(name.clone(), value);
+    }
+    Ok(env)
+}
+
+/// An input a used file declares, as written: what a binding is checked against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawInput {
+    pub name: String,
+    pub value: Value,
+    pub file: String,
+    pub line: usize,
 }
 
 fn contribution_seed(
     file: &File,
     file_name: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
-) -> Result<(Env, Vec<Contribution>), PipelineError> {
+) -> Result<(Env, Vec<Contribution>, Vec<RawInput>), PipelineError> {
     let mut raw = Vec::new();
+    let mut inputs = Vec::new();
     let mut env = build_env(file, &Env::new(), file_name)?;
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw)?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs)?;
     if raw.is_empty() {
-        return Ok((Env::new(), Vec::new()));
+        return Ok((Env::new(), Vec::new(), inputs));
     }
     let mut seed = Env::new();
     let mut records = Vec::new();
@@ -2235,7 +2432,7 @@ fn contribution_seed(
         };
         records.push(Contribution { param: r.param, pack: r.pack, file: r.file, line: r.line, values, applied });
     }
-    Ok((seed, records))
+    Ok((seed, records, inputs))
 }
 
 /// Depth cap for the `use` recursion. It cannot fire for a real estate — the
@@ -2263,7 +2460,7 @@ pub fn estate_questions(
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let (seed, _, deferred) = seed_or_deferred(&file, file_name, load);
+    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, load);
     let mut env = build_env(&file, &seed, file_name)?;
     let mut out = (Vec::new(), Vec::new());
     if !file.questions.is_empty() {
@@ -2347,6 +2544,7 @@ fn collect_questions(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_params(
     items: &[Entry],
     file_name: &str,
@@ -2354,6 +2552,7 @@ fn collect_params(
     env: &mut Env,
     depth: usize,
     contributions: &mut Vec<RawContribution>,
+    inputs: &mut Vec<RawInput>,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
         return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
@@ -2369,6 +2568,9 @@ fn collect_params(
                     }
                     if !env.contains_key(p) {
                         return perr(file_name, *line, format!("use … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the pack", p, p));
+                    }
+                    if inputs.iter().any(|i| &i.name == p) {
+                        return perr(file_name, *line, format!("use … when {}: `{}` is an input — a gate decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", p, p, p));
                     }
                     if !truthy(env.get(p)) {
                         continue;
@@ -2389,9 +2591,16 @@ fn collect_params(
                     let resolved = resolve_value(v, env, path, *pline)?;
                     env.insert(name.clone(), resolved);
                 }
-                collect_params(&used.items, path, load, env, depth + 1, contributions)?;
+                for i in &used.inputs {
+                    inputs.push(RawInput { name: i.name.clone(), value: i.value.clone(), file: path.clone(), line: i.line });
+                    if !env.contains_key(&i.name) {
+                        let resolved = resolve_value(&i.value, env, path, i.line)?;
+                        env.insert(i.name.clone(), resolved);
+                    }
+                }
+                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs)?;
             }
-            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions)?,
+            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs)?,
         }
     }
     Ok(())
@@ -2503,7 +2712,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -2532,6 +2741,10 @@ struct Walk<'a> {
     config: BTreeMap<String, serde_yaml::Value>,
     /// Where each config block stands, `(file, line)`.
     config_sites: BTreeMap<String, (String, usize)>,
+    /// The `providers` block as written where an input is read in it.
+    config_rendering: BTreeMap<String, serde_yaml::Value>,
+    /// Every input declared so far, by name — what is rendered as `var.<name>`.
+    inputs: BTreeMap<String, DeclaredInput>,
     /// The `use` chain from the estate down to the file being walked — a path
     /// already on it is a cycle, reported with the chain instead of a stack
     /// overflow.
@@ -2605,7 +2818,7 @@ impl Walk<'_> {
                     return perr(file_name, *line, format!("`each {} by {} {{ … }}` inside a resource body — it stands directly inside a resource type map", list, key))
                 }
             };
-            let key = resolve_key(key, &self.genv, file_name, line)?;
+            let key = self.key_text(key, file_name, line)?;
             if path.is_empty() && satz_body_key(tf_type, &key) {
                 continue;
             }
@@ -2724,6 +2937,7 @@ impl Walk<'_> {
     }
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        refuse_params_reading_inputs(file, file_name)?;
         for (name, v, line) in satz::sort_params_by_deps(&file.params) {
             if satz::contribution_target(name).is_some() {
                 continue; // merged into its target before the walk, never a value of its own
@@ -2737,7 +2951,126 @@ impl Walk<'_> {
             let resolved = resolve_value(v, &self.genv, file_name, *line)?;
             self.genv.insert(name.clone(), resolved);
         }
+        self.note_inputs(file, file_name)
+    }
+
+    /// The file's inputs: into the namespace like params (the using document's binding
+    /// wins), and noted by name, so every value that reads one is rendered as the variable.
+    fn note_inputs(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        for i in &file.inputs {
+            if !self.genv.contains_key(&i.name) {
+                let resolved = resolve_value(&i.value, &self.genv, file_name, i.line)?;
+                self.genv.insert(i.name.clone(), resolved);
+            }
+            let value = self.genv.get(&i.name).cloned().unwrap_or(serde_yaml::Value::Null);
+            self.inputs.entry(i.name.clone()).or_insert(DeclaredInput { name: i.name.clone(), value, file: file_name.to_string(), line: i.line, description: i.description.clone() });
+        }
+        self.refuse_input_reads(file, file_name)
+    }
+
+    /// What an input may not decide, each refused at its line: a request point (a list the
+    /// estate owns), an action's args (it runs with fixed values), a suppression (it names
+    /// a resource), an export (an interface carries values, not variables). A question on
+    /// an input is the parser's refusal: a question travels with its param's file.
+    fn refuse_input_reads(&self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        if self.inputs.is_empty() {
+            return Ok(());
+        }
+        let names: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
+        for r in &file.requests {
+            if names.contains(&r.param.as_str()) {
+                return perr(file_name, r.line, format!("request {}: `{}` is an input — a request point is a list param the estate owns, and an input is a variable the plan reads; make `{}` a param", r.param, r.param, r.param));
+            }
+        }
+        for a in &file.actions {
+            for arg in &a.args {
+                if let Some(n) = reads_any(&Value::Str(arg.clone()), &names) {
+                    return perr(file_name, a.line, format!("action \"{}\" reads the input `{}` in its args — an action runs with the values the compile fixed; make `{}` a param", a.name, n, n));
+                }
+            }
+        }
+        for x in &file.suppressions {
+            let parts: Vec<&Vec<StrPart>> = std::iter::once(&x.label).chain(x.role.iter()).collect();
+            for p in parts {
+                if let Some(n) = reads_any(&Value::Str(p.clone()), &names) {
+                    return perr(file_name, x.line, format!("suppress {}: reads the input `{}` — a suppression names a resource, which no variable names; make `{}` a param", x.tf_type, n, n));
+                }
+            }
+        }
+        let exports = file.exports.iter().chain(file.interfaces.iter().flat_map(|i| i.exports.iter()));
+        for e in exports {
+            if let satz::ExportValue::Value(v) = &e.value {
+                if let Some(n) = reads_any(v, &names) {
+                    return perr(file_name, e.line, format!("export \"{}\" reads the input `{}` — an interface carries values, not variables; make `{}` a param", e.name, n, n));
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// The namespace with every input as its variable: what a body is resolved against a
+    /// second time for its rendering.
+    fn render_env(&self) -> Env {
+        let mut env = self.genv.clone();
+        for name in self.inputs.keys() {
+            env.insert(name.clone(), expr_value(&format!("var.{}", name)));
+        }
+        env
+    }
+
+    /// A key's text. A key that reads an input is refused: a key is a name — a label, a
+    /// member, an attribute — and a variable names nothing.
+    fn key_text(&self, key: &Key, file_name: &str, line: usize) -> Result<String, PipelineError> {
+        if !self.inputs.is_empty() {
+            let names: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
+            if let Some(n) = reads_key(key, &names) {
+                return perr(file_name, line, format!("input `{}` is read in a key — a key is a name, and an input is a variable the plan reads; write a literal, or make `{}` a param", n, n));
+            }
+        }
+        resolve_key(key, &self.genv, file_name, line)
+    }
+
+    /// A body's rendering beside its judged form: `None` when no input is read, the twin
+    /// otherwise. A key that differs read an input; one of satz's own keys that differs
+    /// reads an input where satz reads, not the plan — both refused.
+    fn rendering_of(&self, real: &serde_yaml::Mapping, twin: serde_yaml::Mapping, tf_type: &str, file_name: &str, line: usize) -> Result<Option<Rendering>, PipelineError> {
+        if twin == *real {
+            return Ok(None);
+        }
+        let (real_v, twin_v) = (serde_yaml::Value::Mapping(real.clone()), serde_yaml::Value::Mapping(twin));
+        if let Some(k) = key_differs(&real_v, &twin_v) {
+            return perr(file_name, line, format!("an input is read in the key `{}` — a key is a name, and an input is a variable the plan reads; write a literal, or make it a param", k));
+        }
+        let serde_yaml::Value::Mapping(twin) = twin_v else { unreachable!() };
+        for (k, v) in real {
+            let Some(ks) = k.as_str() else { continue };
+            if satz_body_key(tf_type, ks) && twin.get(k) != Some(v) {
+                return perr(file_name, line, format!("`{}` reads an input — it is read by satz, not by the plan; make it a param", ks));
+            }
+        }
+        Ok(Some(Rendering { attrs: Some(serde_yaml::Value::Mapping(twin)), scope: None }))
+    }
+
+    /// The rendering of a node's own entries (a folder's, a project's), resolved the way
+    /// `split_body` resolved them.
+    fn rendering_of_entries(&self, entries: &[&Entry], real: &serde_yaml::Mapping, tf_type: &str, file_name: &str, line: usize) -> Result<Option<Rendering>, PipelineError> {
+        if self.inputs.is_empty() {
+            return Ok(None);
+        }
+        let renv = self.render_env();
+        let mut twin = serde_yaml::Mapping::new();
+        for e in entries {
+            match e {
+                Entry::Attr { key, value, line } => {
+                    twin.insert(serde_yaml::Value::String(resolve_key(key, &renv, file_name, *line)?), resolve_value(value, &renv, file_name, *line)?);
+                }
+                Entry::Map { key, body, line, .. } => {
+                    twin.insert(serde_yaml::Value::String(resolve_key(key, &renv, file_name, *line)?), serde_yaml::Value::Mapping(resolve_obj(body, &renv, file_name)?));
+                }
+                _ => {}
+            }
+        }
+        self.rendering_of(real, twin, tf_type, file_name, line)
     }
 }
 
@@ -2754,6 +3087,9 @@ impl Walk<'_> {
                 line,
                 format!("use … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the pack", param, param),
             );
+        }
+        if self.inputs.contains_key(param) {
+            return perr(file_name, line, format!("use … when {}: `{}` is an input — a gate decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", param, param, param));
         }
         Ok(truthy(self.genv.get(param)))
     }
@@ -2781,6 +3117,9 @@ impl Walk<'_> {
                 Some(w) => format!("each {} by {} when {}{}", list, key, if w.not { "not " } else { "" }, w.field),
                 None => format!("each {} by {}", list, key),
             };
+            if self.inputs.contains_key(list) {
+                return perr(file_name, *line, format!("`{}`: `{}` is an input — an `each` decides labels at compile time, and an input is a variable the plan reads; make `{}` a param", what, list, list));
+            }
             for (label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
                 if let Some(w) = when {
                     if carries(fields, &w.field) == w.not {
@@ -2883,7 +3222,7 @@ impl Walk<'_> {
                     all.push(child_own);
                 }
                 Entry::Map { key, name, body, line } => {
-                    let k = resolve_key(key, &self.genv, file_name, *line)?;
+                    let k = self.key_text(key, file_name, *line)?;
                     // Folders and projects are STRUCTURAL — they open a scope
                     // rather than merely declaring a resource — but they are not
                     // magic bare words. Satz has no keyword resource types: the
@@ -2905,6 +3244,16 @@ impl Walk<'_> {
                                 let resolved = serde_yaml::Value::Mapping(resolve_obj(body, &self.genv, file_name)?);
                                 if self.config.contains_key(&k) {
                                     return perr(file_name, *line, format!("`{}` is declared twice — one block per estate", k));
+                                }
+                                // a provider reads an input as the variable; a backend takes none
+                                if !self.inputs.is_empty() {
+                                    let twin = serde_yaml::Value::Mapping(resolve_obj(body, &self.render_env(), file_name)?);
+                                    if twin != resolved {
+                                        if k == "terraform" {
+                                            return perr(file_name, *line, "`terraform` reads an input — a backend takes no variable; bind the value as a param");
+                                        }
+                                        self.config_rendering.insert(k.clone(), twin);
+                                    }
                                 }
                                 self.config_sites.insert(k.clone(), (file_name.to_string(), *line));
                                 self.config.insert(k, resolved);
@@ -2943,12 +3292,12 @@ impl Walk<'_> {
                     self.belongs(FOLDER_MAP, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
-                            let fname = resolve_key(key, &self.genv, file_name, *line)?;
+                            let fname = self.key_text(key, file_name, *line)?;
                             self.folder_node(&fname, body, file_name, own, all, *line, path)?;
                         }
                         Entry::Map { key, name: Some(n), body, line } => {
-                            let fname = resolve_key(n, &self.genv, file_name, *line)?;
-                            let _ = resolve_key(key, &self.genv, file_name, *line)?;
+                            let fname = self.key_text(n, file_name, *line)?;
+                            let _ = self.key_text(key, file_name, *line)?;
                             self.folder_node(&fname, body, file_name, own, all, *line, path)?;
                         }
                         // `google_folder { use "…" }` — the pack's items are folder-map
@@ -2994,7 +3343,7 @@ impl Walk<'_> {
                 Ok(())
             }
             Some(n) => {
-                let fname = resolve_key(n, &self.genv, file_name, line)?;
+                let fname = self.key_text(n, file_name, line)?;
                 self.folder_node(&fname, body, file_name, own, all, line, path)
             }
         }
@@ -3014,12 +3363,13 @@ impl Walk<'_> {
         // The folder itself is a Node-scoped entity. Entries whose key names a
         // resource type (or `folder`/`project`/`use`) are children; everything
         // else — attrs, labels-style maps — is folder body.
-        let (attrs, children) = self.split_body(body, file_name, "google_folder", fname)?;
+        let (attrs, children, rendering) = self.split_body(body, file_name, "google_folder", fname, line)?;
         insert_entity(
             own,
             Address { tf_type: "google_folder".to_string(), label: fname.to_string() },
             Scope::Node,
             Body::Attrs(serde_yaml::Value::Mapping(attrs)),
+            rendering,
             file_name,
             line,
             path,
@@ -3036,7 +3386,8 @@ impl Walk<'_> {
         file_name: &str,
         node: &'static str,
         label: &str,
-    ) -> Result<(serde_yaml::Mapping, Vec<Entry>), PipelineError> {
+        line: usize,
+    ) -> Result<(serde_yaml::Mapping, Vec<Entry>, Option<Rendering>), PipelineError> {
         let mut attrs = serde_yaml::Mapping::new();
         let mut children = Vec::new();
         // The node's own keys — what is left once the children are routed away — are
@@ -3048,7 +3399,7 @@ impl Walk<'_> {
                 Entry::Attr { key, value, line } => {
                     own_entries.push(e);
                     attrs.insert(
-                        serde_yaml::Value::String(resolve_key(key, &self.genv, file_name, *line)?),
+                        serde_yaml::Value::String(self.key_text(key, file_name, *line)?),
                         resolve_value(value, &self.genv, file_name, *line)?,
                     );
                 }
@@ -3061,7 +3412,7 @@ impl Walk<'_> {
                     return perr(file_name, *line, "an `each` reached the walk in the body of a folder or a project")
                 }
                 Entry::Map { key, line, .. } => {
-                    let k = resolve_key(key, &self.genv, file_name, *line)?;
+                    let k = self.key_text(key, file_name, *line)?;
                     // Routing, not validation. A key that resolves only in its
                     // `google_`-prefixed form is still ROUTED to the children —
                     // where `items` rejects it by name with the exact
@@ -3092,8 +3443,9 @@ impl Walk<'_> {
                 }
             }
         }
-        self.check_body(node, own_entries, file_name)?;
-        Ok((attrs, children))
+        self.check_body(node, own_entries.iter().copied(), file_name)?;
+        let rendering = self.rendering_of_entries(&own_entries, &attrs, node, file_name, line)?;
+        Ok((attrs, children, rendering))
     }
 
     /// `google_project { name {…} }` — structural like folder: the project entity's body
@@ -3112,7 +3464,7 @@ impl Walk<'_> {
     ) -> Result<(), PipelineError> {
         let expanded: Vec<Entry>;
         let named: Vec<(String, &[Entry], usize)> = match name {
-            Some(n) => vec![(resolve_key(n, &self.genv, file_name, line)?, body, line)],
+            Some(n) => vec![(self.key_text(n, file_name, line)?, body, line)],
             None => {
                 expanded = self.expand_each(body, Position::NodeMap { node: "google_project" }, file_name)?;
                 let mut v = Vec::new();
@@ -3120,7 +3472,7 @@ impl Walk<'_> {
                     self.belongs(Position::NodeMap { node: "google_project" }, e, file_name)?;
                     match e {
                         Entry::Map { key, name: None, body, line } => {
-                            v.push((resolve_key(key, &self.genv, file_name, *line)?, body.as_slice(), *line))
+                            v.push((self.key_text(key, file_name, *line)?, body.as_slice(), *line))
                         }
                         other => {
                             let l = match other {
@@ -3135,7 +3487,7 @@ impl Walk<'_> {
             }
         };
         for (pname, pbody, pline) in named {
-            let (mut attrs, children) = self.split_body(pbody, file_name, "google_project", &pname)?;
+            let (mut attrs, children, mut rendering) = self.split_body(pbody, file_name, "google_project", &pname, pline)?;
             // project_service may arrive as an Attr list (already in attrs) or as
             // a Map — split_body routed non-resource maps into attrs already.
             if !attrs.contains_key(serde_yaml::Value::String("project_id".into())) {
@@ -3143,12 +3495,16 @@ impl Walk<'_> {
                     serde_yaml::Value::String("project_id".into()),
                     serde_yaml::Value::String(pname.clone()),
                 );
+                if let Some(serde_yaml::Value::Mapping(twin)) = rendering.as_mut().and_then(|r| r.attrs.as_mut()) {
+                    twin.insert(serde_yaml::Value::String("project_id".into()), serde_yaml::Value::String(pname.clone()));
+                }
             }
             insert_entity(
                 own,
                 Address { tf_type: "google_project".to_string(), label: pname.to_string() },
                 Scope::Node,
                 Body::Attrs(serde_yaml::Value::Mapping(attrs)),
+                rendering,
                 file_name,
                 pline,
                 path,
@@ -3172,7 +3528,7 @@ impl Walk<'_> {
     fn holds_members(&self, body: &[Entry], file_name: &str) -> Result<bool, PipelineError> {
         for e in body {
             let Entry::Attr { key, line, .. } = e else { continue };
-            if !is_scope_attr_key(&resolve_key(key, &self.genv, file_name, *line)?) {
+            if !is_scope_attr_key(&self.key_text(key, file_name, *line)?) {
                 return Ok(true);
             }
         }
@@ -3194,11 +3550,14 @@ impl Walk<'_> {
         let mut pin: Option<(ScopePin, usize)> = None;
         for e in body {
             let Entry::Attr { key, value, line } = e else { continue };
-            let key = resolve_key(key, &self.genv, file_name, *line)?;
+            let key = self.key_text(key, file_name, *line)?;
             if !is_scope_attr_key(&key) {
                 continue;
             }
             let value = resolve_value(value, &self.genv, file_name, *line)?;
+            if !self.inputs.is_empty() && resolve_value(e_value_of(e), &self.render_env(), file_name, *line)? != value {
+                return perr(file_name, *line, format!("`{}` reads an input — a binding's address derives from its scope, and an input is a variable the plan reads; make it a param", key));
+            }
             let Some(value) = value.as_str() else {
                 return perr(
                     file_name,
@@ -3212,6 +3571,7 @@ impl Walk<'_> {
                     Address { tf_type: BILLING_ID_TYPE.to_string(), label: "billing_account_id".to_string() },
                     Scope::Billing,
                     Body::Attrs(serde_yaml::Value::String(value.to_string())),
+                    None,
                     file_name,
                     *line,
                     path,
@@ -3278,7 +3638,7 @@ impl Walk<'_> {
         let pin = own_pin.as_ref().or(pin);
         let expanded: Vec<Entry>;
         let named: Vec<(String, &[Entry], usize)> = match name {
-            Some(n) => vec![(resolve_key(n, &self.genv, file_name, line)?, body, line)],
+            Some(n) => vec![(self.key_text(n, file_name, line)?, body, line)],
             None => {
                 expanded = self.expand_each(body, map_position(rt), file_name)?;
                 let mut v = Vec::new();
@@ -3293,15 +3653,18 @@ impl Walk<'_> {
                             continue;
                         }
                         Entry::Map { key, name: None, body, line } => {
-                            v.push((resolve_key(key, &self.genv, file_name, *line)?, body.as_slice(), *line))
+                            v.push((self.key_text(key, file_name, *line)?, body.as_slice(), *line))
                         }
                         Entry::Attr { key, value, line } if rt.class == MergeClass::Grant => {
-                            let member = resolve_key(key, &self.genv, file_name, *line)?;
+                            let member = self.key_text(key, file_name, *line)?;
                             // Scope attributes were consumed by the pre-pass.
                             if is_scope_attr_key(&member) {
                                 continue;
                             }
                             let roles = resolve_value(value, &self.genv, file_name, *line)?;
+                            if !self.inputs.is_empty() && resolve_value(value, &self.render_env(), file_name, *line)? != roles {
+                                return perr(file_name, *line, format!("`{}`: its roles read an input — a binding's address derives from its role, and an input is a variable the plan reads; make it a param", member));
+                            }
                             insert_grant(own, rt, &member, &roles, file_name, *line, path, pin)?;
                             continue;
                         }
@@ -3347,12 +3710,19 @@ impl Walk<'_> {
         };
         for (label, entries, line) in named {
             self.check_body(&rt.tf_type, entries, file_name)?;
-            let body = Body::Attrs(serde_yaml::Value::Mapping(resolve_obj(entries, &self.genv, file_name)?));
+            let real = resolve_obj(entries, &self.genv, file_name)?;
+            let rendering = if self.inputs.is_empty() {
+                None
+            } else {
+                let twin = resolve_obj(entries, &self.render_env(), file_name)?;
+                self.rendering_of(&real, twin, &rt.tf_type, file_name, line)?
+            };
             insert_entity(
                 own,
                 Address { tf_type: rt.tf_type.clone(), label },
                 rt.scope.clone(),
-                body,
+                Body::Attrs(serde_yaml::Value::Mapping(real)),
+                rendering,
                 file_name,
                 line,
                 path,
@@ -3388,6 +3758,14 @@ impl ScopePin {
     /// `suppress` addresses one with `"<attr>=<value>::<member>"`.
     fn prefix(&self) -> String {
         format!("{}={}", self.attr, self.value)
+    }
+}
+
+/// The value of an attribute entry; the scope-pin loop holds the entry, not the value.
+fn e_value_of(e: &Entry) -> &Value {
+    match e {
+        Entry::Attr { value, .. } => value,
+        _ => unreachable!("the scope-pin loop reads attribute entries only"),
     }
 }
 
@@ -3520,6 +3898,7 @@ fn insert_entity(
     addr: Address,
     scope: Scope,
     body: Body,
+    rendering: Option<Rendering>,
     file: &str,
     line: usize,
     node_path: &[String],
@@ -3541,7 +3920,7 @@ fn insert_entity(
         None => {
             own.entities.insert(
                 addr.clone(),
-                Entity { addr, scope, body, provenance: vec![span], node_path: node_path.to_vec(), rendering: None },
+                Entity { addr, scope, body, provenance: vec![span], node_path: node_path.to_vec(), rendering },
             );
         }
     }
@@ -3670,7 +4049,7 @@ params {
         #[test]
         fn a_target_nobody_declares_is_dropped_and_named_in_the_record() {
             let file = satz::parse("estate e\nuse \"one.satz\"\n").unwrap();
-            let (seed, records) = contribution_seed(&file, "main.satz", &load).unwrap();
+            let (seed, records, _) = contribution_seed(&file, "main.satz", &load).unwrap();
             assert!(seed.is_empty(), "nothing to add to, so nothing is added");
             assert_eq!(records.len(), 1);
             assert_eq!((records[0].param.as_str(), records[0].applied), ("subjects", false));
@@ -4073,7 +4452,7 @@ mod estate_channel_tests {
             );
             let mut fe = compile_estate("p.satz", &src, &Table, &project_load).unwrap();
             assert_eq!(fe.config_sites["providers"], ("p.satz".to_string(), 4));
-            resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).map(|_| fe.config).map_err(|mut e| e.remove(0))
+            resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files, &BTreeMap::new()).map(|_| fe.config).map_err(|mut e| e.remove(0))
         };
         let config = run("${{interface.regions}}").unwrap();
         assert_eq!(config["providers"]["google"]["region"], serde_yaml::Value::Sequence(vec!["europe-west3".into(), "europe-west4".into()]));
@@ -4082,7 +4461,7 @@ mod estate_channel_tests {
         // the rendering reads the static local: a provider cannot read a local that holds a lookup it runs
         let src = "estate p\nuse \"i/pay.satz\"\n\nproviders {\n  google {\n    alias  = \"google\"\n    region = \"org-${{interface.org_id}}\"\n  }\n}\n";
         let mut fe = compile_estate("p.satz", src, &Table, &project_load).unwrap();
-        let r = resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).unwrap();
+        let r = resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files, &BTreeMap::new()).unwrap();
         assert_eq!(r.read, ["org_id"]);
         assert_eq!(r.providers.unwrap()["google"]["region"], serde_yaml::Value::String("org-${local.interface_static.org_id}".into()));
         let e = run("${{interface.folder}}").unwrap_err();
@@ -4137,6 +4516,68 @@ mod estate_channel_tests {
             })
             .unwrap_err();
         assert!(e.contains("in a label — a label is a Terraform resource name"), "{}", e);
+    }
+
+    /// An input is a param for everything that judges — the using document's binding wins,
+    /// a `--input` binding wins over it — and the rendering twin writes it as `var.<name>`:
+    /// bare where the input is the whole value, inside a template where text holds it. A
+    /// `providers` block that reads one gets its rendering; a `terraform` block is refused.
+    #[test]
+    fn an_input_is_judged_as_its_value_and_written_as_its_variable() {
+        let pack = "pack t version \"1.0\"\ninputs {\n  // the stage\n  stage = \"dev\"\n  size  = 3\n}\ngoogle_org_policy_policy {\n  a {\n    name   = \"x-{stage}\"\n    folder = \"${{google_folder.f.name}}\"\n    count  = size\n  }\n}\n";
+        let load = |p: &str| -> Result<String, String> { if p == "t.satz" { Ok(pack.into()) } else { Err(format!("no load: {}", p)) } };
+        let thin = "estate e\nparams {\n  stage = \"prod\"\n}\nuse \"t.satz\"\n\nproviders {\n  google {\n    alias  = \"google\"\n    region = \"{stage}-region\"\n  }\n}\n";
+        let fe = compile_estate("e.satz", thin, &Table, &load).unwrap();
+        let input = |n: &str| fe.inputs.iter().find(|i| i.name == n).unwrap().clone();
+        assert_eq!(input("stage").value, serde_yaml::Value::String("prod".into()), "the using document's binding wins");
+        assert_eq!(input("stage").description.as_deref(), Some("the stage"));
+        assert_eq!(input("size").value, serde_yaml::Value::Number(3.into()));
+        let folded = fold_fragments(&Table, &fe.fragments);
+        let crate::algebra::Slot::Ok(e) = &folded.slots[&Address { tf_type: "google_org_policy_policy".into(), label: "a".into() }] else { panic!() };
+        let Body::Attrs(judged) = &e.body else { panic!() };
+        assert_eq!(judged["name"], serde_yaml::Value::String("x-prod".into()), "judged as the bound value");
+        let twin = e.rendering.clone().unwrap().attrs.unwrap();
+        assert_eq!(twin["name"], serde_yaml::Value::String("x-${var.stage}".into()));
+        assert_eq!(twin["count"], expr_value("var.size"), "a whole value is the variable, bare");
+        assert_eq!(twin["folder"], judged["folder"], "a value that reads no input is as judged");
+        assert_eq!(fe.config_rendering["providers"]["google"]["region"], serde_yaml::Value::String("${var.stage}-region".into()));
+        // a binding from outside wins over the file's, read by the input's kind
+        let bind = |pairs: &[(&str, &str)]| -> Vec<(String, String)> { pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() };
+        let fe = compile_estate_bound("e.satz", thin, &[], &bind(&[("stage", "test"), ("size", "9")]), &Table, &load).unwrap();
+        assert_eq!(fe.inputs.iter().find(|i| i.name == "stage").unwrap().value, serde_yaml::Value::String("test".into()));
+        assert_eq!(fe.inputs.iter().find(|i| i.name == "size").unwrap().value, serde_yaml::Value::Number(9.into()));
+        let e = compile_estate_bound("e.satz", thin, &[], &bind(&[("size", "big")]), &Table, &load).map(|_| ()).unwrap_err();
+        assert!(e.msg.contains("`size` is a number, and `big` is none"), "{}", e.msg);
+        let e = compile_estate_bound("e.satz", thin, &[], &bind(&[("nope", "1")]), &Table, &load).map(|_| ()).unwrap_err();
+        assert!(e.msg.contains("no file of the estate declares `nope`") && e.msg.contains("`size`, `stage`"), "{}", e.msg);
+        let e = compile_estate("e.satz", "estate e\ninputs {\n  b = \"x\"\n}\nterraform {\n  backend {\n    local { path = \"{b}.tfstate\" }\n  }\n}\n", &Table, &load).map(|_| ()).unwrap_err();
+        assert!(e.msg.contains("`terraform` reads an input"), "{}", e.msg);
+    }
+
+    /// Where an input decides structure it is refused at its line: a key or label, a grant's
+    /// member, roles or scope, an `each` list, a `when` gate, an export, a question, a
+    /// request point, an action's args, a suppression, one of satz's own keys, and a param
+    /// that reads one.
+    #[test]
+    fn an_input_that_decides_structure_is_refused() {
+        let refused = |body: &str, expect: &str| {
+            let src = format!("estate e\ninputs {{\n  x = \"v\"\n  xs = [\"a\"]\n}}\nparams {{\n  gate = true\n}}\n{}", body);
+            let e = compile_estate("e.satz", &src, &Table, &|p| Err(format!("no load: {}", p))).map(|_| ()).unwrap_err();
+            assert!(e.msg.contains(expect), "{}\n--- expected: {}", e.msg, expect);
+        };
+        refused("google_org_policy_policy {\n  \"p-{x}\" {\n    name = \"n\"\n  }\n}\n", "input `x` is read in a key");
+        refused("google_org_policy_policy {\n  a {\n    name = \"n\"\n    labels = { \"{x}\" = \"1\" }\n  }\n}\n", "read in the key");
+        refused("google_organization_iam_member {\n  \"group:{x}@example.com\" = [\n    \"roles/viewer\",\n  ]\n}\n", "input `x` is read in a key");
+        refused("google_organization_iam_member {\n  \"group:a@example.com\" = xs\n}\n", "its roles read an input");
+        refused("google_org_policy_policy {\n  each xs by name {\n    name = \"n\"\n  }\n}\n", "`xs` is an input — an `each` decides labels");
+        refused("use \"p.satz\" when x\n", "`x` is an input — a gate decides");
+        refused("export \"a\" = x\n", "export \"a\" reads the input `x`");
+        refused("question x {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n", "question x: `x` is an input");
+        refused("request xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", "request xs: `xs` is an input");
+        refused("action \"a\" {\n  reason = \"r\"\n  run    = \"a.sh\"\n  args   = [\"{x}\"]\n}\n", "action \"a\" reads the input `x`");
+        refused("suppress google_org_policy_policy \"{x}\"\n", "suppress google_org_policy_policy: reads the input `x`");
+        refused("google_org_policy_policy {\n  a {\n    name        = \"n\"\n    \"import-id\" = x\n  }\n}\n", "`import-id` reads an input");
+        refused("params {\n  y = \"{x}\"\n}\n", "param `y` reads the input `x`");
     }
 
     /// An export no used file carries, a malformed reference, a list inside a longer text,

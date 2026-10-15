@@ -65,6 +65,9 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
         for (n, v, line) in &f.params {
             declared.entry(n.as_str()).or_default().push((path.as_str(), *line, v));
         }
+        for i in &f.inputs {
+            declared.entry(i.name.as_str()).or_default().push((path.as_str(), i.line, &i.value));
+        }
     }
 
     // ---- nodes -------------------------------------------------------------

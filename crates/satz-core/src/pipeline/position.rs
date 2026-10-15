@@ -96,6 +96,7 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("estate", "names the file", Used::Header),
     ("export", "joins the estate's interface, the outputs customer HCL reads", Used::Absorbed),
     ("hcl", "passes through to main.tf beside the resources", Used::Absorbed),
+    ("inputs", "goes to the estate's parameter namespace as the template's contract, each a variable of the HCL", Used::Absorbed),
     ("interface", "joins one project's interface, interfaces/<name>/, or — as a header — names a generated interface file", Used::Absorbed),
     ("notice", "joins the estate's notices", Used::Absorbed),
     ("offers", "goes to the pack graph", Used::Absorbed),
@@ -116,12 +117,13 @@ fn statement(k: &str) -> Option<&'static (&'static str, &'static str, Used)> {
 /// the parser keeps one.
 pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usize>)> {
     let header = |pack: bool| (file.estate.is_some() && file.is_pack == pack).then_some(None);
-    let found: [(&'static str, Option<Option<usize>>); 15] = [
+    let found: [(&'static str, Option<Option<usize>>); 16] = [
         ("action", file.actions.first().map(|a| Some(a.line))),
         ("claim", file.claims.first().map(|c| Some(c.line))),
         ("estate", header(false)),
         ("export", file.exports.first().map(|x| Some(x.line))),
         ("hcl", file.hcl_blocks.first().map(|h| Some(h.line))),
+        ("inputs", file.inputs.first().map(|i| Some(i.line))),
         ("interface", file.interfaces.first().map(|i| Some(i.line)).or(file.interface_file.as_ref().map(|i| Some(i.line)))),
         ("notice", file.notices.first().map(|n| Some(n.line))),
         ("offers", file.offers.first().map(|o| Some(o.line))),
