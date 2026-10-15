@@ -920,8 +920,10 @@ impl Interface {
     fn module_versions_tf(&self) -> String {
         let mut out = String::from("terraform {\n  required_providers {\n    google = {\n");
         out.push_str(&format!("      source  = {}\n", hcl_string(&self.google_source)));
+        // at least the estate's: an exact pin would hold every consumer to the estate's
+        // provider upgrades, and the module needs nothing a later provider lacks
         if let Some(v) = &self.google_version {
-            out.push_str(&format!("      version = {}\n", hcl_string(v)));
+            out.push_str(&format!("      version = {}\n", hcl_string(&format!(">= {}", v))));
         }
         out.push_str("    }\n  }\n}\n");
         out
@@ -1025,7 +1027,7 @@ impl Interface {
             "It needs the `google` provider ({}{}) in the calling configuration. A lookup runs through that\n\
              provider, with the caller's credentials, and needs the read permission its row names.\n\n",
             self.google_source,
-            self.google_version.as_deref().map(|v| format!(" {}", v)).unwrap_or_default()
+            self.google_version.as_deref().map(|v| format!(", {} or later", v)).unwrap_or_default()
         ));
         s.push_str("From a project estate written in Satz, use the file at the top level and name a value by its\n");
         s.push_str("export:\n\n");

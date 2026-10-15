@@ -308,14 +308,97 @@ fn provider_of(r: &crate::manifest::EmittedResource) -> String {
         .unwrap_or_else(|| r.tf_type.split('_').next().unwrap_or_default().to_string())
 }
 
+/// What a reference in the emitted `providers.tf` stands for, by the text it is written
+/// as: `local.interface.<export>` for a static value `interface.tf` holds (a looked-up value
+/// stands for nothing before the plan), `var.<name>` for a value `terraform.tfvars` binds.
+/// A project estate's providers are written with these references, and the check needs
+/// the project each one bills to by name.
+pub(crate) type Names = BTreeMap<String, String>;
+
+/// The names `interface.tf` gives: `local.interface_static.<export>` and
+/// `local.interface.<export>` for every value of the static local, which is written as a
+/// string.
+pub(crate) fn names_in_interface_tf(text: &str) -> Names {
+    let mut out = Names::new();
+    let Ok(body) = hcl::parse(text) else { return out };
+    for b in body.blocks().filter(|b| b.identifier() == "locals") {
+        for a in b.body.attributes().filter(|a| a.key() == "interface_static") {
+            let hcl::Expression::Object(o) = &a.expr else { continue };
+            for (k, v) in o {
+                let key = match k {
+                    hcl::ObjectKey::Identifier(i) => i.to_string(),
+                    hcl::ObjectKey::Expression(hcl::Expression::String(s)) => s.clone(),
+                    _ => continue,
+                };
+                if let hcl::Expression::String(s) = v {
+                    out.insert(format!("local.interface_static.{}", key), s.clone());
+                    out.insert(format!("local.interface.{}", key), s.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The names `terraform.tfvars` gives: `var.<name>` for every string it binds.
+pub(crate) fn names_in_tfvars(text: &str) -> Names {
+    let mut out = Names::new();
+    let Ok(body) = hcl::parse(text) else { return out };
+    for a in body.attributes() {
+        if let hcl::Expression::String(s) = &a.expr {
+            out.insert(format!("var.{}", a.key()), s.clone());
+        }
+    }
+    out
+}
+
+/// The text of a bare reference, `local.interface.x` or `var.x`; `None` for anything else.
+fn reference_text(expr: &hcl::Expression) -> Option<String> {
+    match expr {
+        hcl::Expression::Variable(v) => Some(v.to_string()),
+        hcl::Expression::Traversal(t) => {
+            let mut s = reference_text(&t.expr)?;
+            for op in &t.operators {
+                let hcl::TraversalOperator::GetAttr(i) = op else { return None };
+                s.push('.');
+                s.push_str(i.as_str());
+            }
+            Some(s)
+        }
+        _ => None,
+    }
+}
+
+/// What an attribute's value names, through `names`: a string itself, a bare reference
+/// what it stands for, a template its text with every `${…}` it holds replaced — or `None`
+/// when any part stands for nothing.
+fn resolved(expr: &hcl::Expression, names: &Names) -> Option<String> {
+    match expr {
+        hcl::Expression::String(s) => (!s.is_empty()).then(|| s.clone()),
+        hcl::Expression::Variable(_) | hcl::Expression::Traversal(_) => names.get(&reference_text(expr)?).cloned(),
+        hcl::Expression::TemplateExpr(t) => {
+            let hcl::TemplateExpr::QuotedString(s) = &**t else { return None };
+            let mut out = String::new();
+            let mut rest = s.as_str();
+            while let Some(i) = rest.find("${") {
+                out.push_str(&rest[..i]);
+                let after = &rest[i + 2..];
+                let end = after.find('}')?;
+                out.push_str(names.get(after[..end].trim())?);
+                rest = &after[end + 1..];
+            }
+            out.push_str(rest);
+            (!out.is_empty()).then_some(out)
+        }
+        _ => None,
+    }
+}
+
 impl Billing {
-    /// From the blocks of an emitted `providers.tf`.
-    pub(crate) fn from_blocks<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>) -> Self {
+    /// From the blocks of an emitted `providers.tf`, the references read through `names`.
+    pub(crate) fn from_blocks<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>, names: &Names) -> Self {
         let literal = |b: &hcl::Block, key: &str| -> Option<String> {
-            b.body.attributes().find(|a| a.key() == key).and_then(|a| match &a.expr {
-                hcl::Expression::String(s) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            })
+            b.body.attributes().find(|a| a.key() == key).and_then(|a| resolved(&a.expr, names))
         };
         let mut by_provider = BTreeMap::new();
         for b in blocks {
@@ -333,9 +416,9 @@ impl Billing {
     }
 
     /// From the text of an emitted `providers.tf`.
-    pub(crate) fn parse(providers_tf: &str) -> Result<Self, String> {
+    pub(crate) fn parse(providers_tf: &str, names: &Names) -> Result<Self, String> {
         let body = hcl::parse(providers_tf).map_err(|e| format!("the emitted providers.tf: {}", e))?;
-        Ok(Self::from_blocks(body.blocks()))
+        Ok(Self::from_blocks(body.blocks(), names))
     }
 
     /// The project the default `google` provider bills to — the infrastructure
@@ -1449,7 +1532,7 @@ mod tests {
     /// project node — whatever project the resource itself names.
     #[test]
     fn each_api_is_judged_on_the_project_its_provider_bills_to() {
-        let billing = Billing::parse(PROVIDERS).unwrap();
+        let billing = Billing::parse(PROVIDERS, &Names::new()).unwrap();
         assert_eq!(billing.default_project(), Some("corp-infra-001"));
         assert_eq!(billing.projects().into_iter().collect::<Vec<_>>(), ["corp-data-001", "corp-infra-001"]);
         let m = manifest(

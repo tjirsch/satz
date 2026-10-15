@@ -11,7 +11,7 @@
 //! byte-parity with the walk emitter is increment I1+ and is gated by the
 //! differential harness, not by this module's tests.
 
-use crate::algebra::{fold, Body, Entity, Folded, Fragment, GrantEdge, TypeTable};
+use crate::algebra::{fold, Body, Entity, Folded, Fragment, GrantEdge, TypeTable, Rendering};
 use crate::satz::{self, Entry, File, Key, StrPart, Value};
 use crate::{Address, MergeClass, Scope, Span};
 use std::collections::BTreeMap;
@@ -893,16 +893,27 @@ pub fn written_references(folded: &Folded) -> Vec<WrittenRef> {
 /// written `"${{interface.<export>}}"` in Satz.
 pub const INTERFACE_ROOT: &str = "interface";
 
+/// The local `interface.tf` holds every value the estate read in, which `main.tf` reads as
+/// `local.interface.<export>`.
+pub const INTERFACE_LOCAL: &str = "local.interface";
+
+/// The local that holds the values satz knows and none the cloud looks up, which the
+/// `providers` block reads: a provider is configured before any data source is read, and
+/// a lookup runs through that provider, so a local that holds one is a cycle there.
+pub const INTERFACE_STATIC_LOCAL: &str = "local.interface_static";
+
 /// Every `${interface.<export>}` in the folded estate, replaced by what the used interface
 /// files say it is: a whole-value reference by the value itself (a list stays a list), one
 /// inside a longer string by its text. A value the central estate looks up is text over
-/// `${data.<type>.<label>.<attr>}`; the lookups those need — and the ones their arguments
-/// read — are returned in dependency order, for the emitter to write once each.
+/// `${data.<type>.<label>.<attr>}`. The body is what every check judges; beside it, each
+/// entity that read a value gets its rendering — the same body with `local.interface.<export>`
+/// where the value was spliced — which is what the emitter writes, `interface.tf` holding the
+/// local. Returned are the exports read, sorted, for [`interface_locals`].
 ///
-/// An export no used file carries, a reference that is not `interface.<export>`, and a
-/// list or object spliced into a longer string are refused, each at the resource that
-/// writes it.
-pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceFile]) -> Result<Vec<satz::OfferedLookup>, Vec<PipelineError>> {
+/// An export no used file carries, a reference that is not `interface.<export>`, a list or
+/// object spliced into a longer string, and a reference in a resource's label are refused,
+/// each at the resource that writes it.
+pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceFile]) -> Result<Vec<String>, Vec<PipelineError>> {
     let outputs: BTreeMap<&str, &satz::OfferedOutput> =
         files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let mut errors: Vec<PipelineError> = Vec::new();
@@ -915,13 +926,29 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
         let mut fail = |msg: String| errors.push(PipelineError { file: file.clone(), line: line as usize, msg: format!("{}: {}", site, msg) });
         match &mut e.body {
             Body::Attrs(v) => {
-                if let Err(m) = substitute_value(v, &outputs, files, &mut read) {
-                    fail(m);
+                // a label is a Terraform resource name: a value has no place in it
+                if e.addr.label.contains(&format!("${{{}.", INTERFACE_ROOT)) {
+                    fail(format!(
+                        "`${{{}.<export>}}` in a label — a label is a Terraform resource name and takes no interface value; write a literal label and read the value in the body",
+                        INTERFACE_ROOT
+                    ));
+                    continue;
+                }
+                let mut twin = v.clone();
+                match substitute_value(v, &outputs, files, &mut read) {
+                    Ok(true) => {
+                        render_interface_value(&mut twin, INTERFACE_LOCAL);
+                        e.rendering = Some(Rendering { attrs: Some(twin), scope: None });
+                    }
+                    Ok(false) => {}
+                    Err(m) => fail(m),
                 }
             }
             Body::Grant(edges) => {
                 let mut out = std::collections::BTreeSet::new();
                 for mut ed in std::mem::take(edges) {
+                    let rendered_member = render_interface_text(&ed.member, INTERFACE_LOCAL);
+                    let rendered_role = render_interface_text(&ed.role, INTERFACE_LOCAL);
                     for text in [&mut ed.member, &mut ed.role, &mut ed.condition] {
                         match substitute_text(text, &outputs, files, &mut read) {
                             Ok(Some(t)) => *text = t,
@@ -929,18 +956,23 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                             Err(m) => fail(m),
                         }
                     }
+                    ed.rendered_member = rendered_member.unwrap_or_default();
+                    ed.rendered_role = rendered_role.unwrap_or_default();
                     out.insert(ed);
                 }
                 *edges = out;
             }
         }
         // a grant map's scope (`project = "${{interface.project_id}}"`) and member live in
-        // its label, which is where the emitter reads the scope from: replaced there too
+        // its label, which is where the emitter reads the scope from: replaced there too,
+        // and the pin's rendering kept beside the entity
         if matches!(e.body, Body::Grant(_)) {
+            let scope = pin_value_of_label(&e.addr.label).and_then(|v| render_interface_text(&v, INTERFACE_LOCAL));
             match substitute_text(&e.addr.label, &outputs, files, &mut read) {
                 Ok(Some(label)) => {
                     e.addr.label = label;
                     relabel.push(e.addr.clone());
+                    e.rendering = Some(Rendering { attrs: None, scope });
                 }
                 Ok(None) => {}
                 Err(m) => fail(m),
@@ -969,9 +1001,93 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
             folded.slots.insert(key, slot);
         }
     }
-    // the lookups the values read, then the ones their arguments read, each once
+    read.sort();
+    Ok(read)
+}
+
+/// The scope pin a grant map's label carries, `<attr>=<value>` before the separator: its
+/// value. `None` for a structural prefix and for an organisation grant.
+fn pin_value_of_label(label: &str) -> Option<String> {
+    let (prefix, _) = label.split_once(GRANT_SCOPE_SEP)?;
+    let (_, value) = prefix.split_once('=')?;
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// The rendering of one text: every `${interface.<export>}` in it written
+/// `${<root>.<export>}`, or `None` when it reads none. Run on the text before it is
+/// substituted; what the references name was judged by the substitution.
+fn render_interface_text(s: &str, root: &str) -> Option<String> {
+    let opener = format!("${{{}", INTERFACE_ROOT);
+    if !s.contains(&opener) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find("${") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let Some(end) = after.find('}') else {
+            out.push_str(&rest[i..]);
+            return Some(out);
+        };
+        let inner = after[..end].trim();
+        match inner.strip_prefix(INTERFACE_ROOT).and_then(|r| r.strip_prefix('.')) {
+            Some(name) => out.push_str(&format!("${{{}.{}}}", root, name)),
+            None => out.push_str(&rest[i..i + 2 + end + 1]),
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// A value's rendering: a whole-value reference becomes the expression `<root>.<export>`
+/// (an `!expr`-tagged string, which the emitter writes bare, so a list stays a list), text
+/// with a reference inside keeps its shape.
+fn render_interface_value(v: &mut serde_yaml::Value, root: &str) {
+    match v {
+        serde_yaml::Value::String(s) => {
+            if let Some(name) = whole_interface_reference(s) {
+                let expr = format!("{}.{}", root, name);
+                *v = serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new("expr"), value: serde_yaml::Value::String(expr) }));
+            } else if let Some(t) = render_interface_text(s, root) {
+                *s = t;
+            }
+        }
+        serde_yaml::Value::Sequence(items) => items.iter_mut().for_each(|i| render_interface_value(i, root)),
+        serde_yaml::Value::Mapping(m) => m.iter_mut().for_each(|(_, val)| render_interface_value(val, root)),
+        _ => {}
+    }
+}
+
+/// Whether a value the interface gives is one the cloud looks up: it reads a `data` block.
+pub fn reads_lookup(v: &serde_yaml::Value) -> bool {
+    let mut texts = Vec::new();
+    collect_strings(v, &mut texts);
+    texts.iter().any(|t| !data_addresses(t).is_empty())
+}
+
+/// What `interface.tf` holds for a project estate: each export the estate read with its
+/// value — a literal, or text over `${data.<type>.<label>.<attr>}` for a value the central
+/// estate looks up — and the lookups those values need, with the ones their arguments
+/// read, in dependency order, once each.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct InterfaceLocals {
+    pub values: Vec<(String, serde_yaml::Value)>,
+    pub lookups: Vec<satz::OfferedLookup>,
+}
+
+/// The locals for the exports `read` (as [`resolve_interface_references`] and
+/// [`resolve_interface_in_config`] return them). A lookup a value reads that no used file
+/// carries, and lookups that read each other in a cycle, are refused at the export's line.
+pub fn interface_locals(read: &[String], files: &[UsedInterfaceFile]) -> Result<InterfaceLocals, PipelineError> {
+    let outputs: BTreeMap<&str, &satz::OfferedOutput> =
+        files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let lookups: BTreeMap<&str, &satz::OfferedLookup> =
         files.iter().flat_map(|f| f.interface.lookups.iter().map(|l| (l.address.as_str(), l))).collect();
+    let mut names: Vec<&str> = read.iter().map(|s| s.as_str()).collect();
+    names.sort();
+    names.dedup();
     let mut needed: Vec<satz::OfferedLookup> = Vec::new();
     fn visit(
         address: &str,
@@ -998,53 +1114,90 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
         needed.push((*l).clone());
         Ok(())
     }
-    for export in &read {
-        let o = outputs[export.as_str()];
+    let mut values = Vec::new();
+    for export in names {
+        let Some(o) = outputs.get(export) else {
+            return Err(PipelineError { file: String::new(), line: 0, msg: format!("`interface.{}` was read, and no used interface file exports it", export) });
+        };
         let mut texts = Vec::new();
         collect_strings(&o.value, &mut texts);
         for t in texts {
             for d in data_addresses(t) {
                 if let Err(msg) = visit(&d, &lookups, &mut needed, &mut Vec::new()) {
                     let file = files.iter().find(|f| f.interface.outputs.iter().any(|x| x.name == *export)).map(|f| f.file.clone()).unwrap_or_default();
-                    return Err(vec![PipelineError { file, line: o.line, msg }]);
+                    return Err(PipelineError { file, line: o.line, msg });
                 }
             }
         }
+        values.push((export.to_string(), o.value.clone()));
     }
-    Ok(needed)
+    Ok(InterfaceLocals { values, lookups: needed })
+}
+
+/// What [`resolve_interface_in_config`] leaves beside the substituted blocks: the
+/// `providers` block as it is written when a value was spliced into it, and the exports
+/// read.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConfigRendering {
+    pub providers: Option<serde_yaml::Value>,
+    pub read: Vec<String>,
 }
 
 /// Every `${interface.<export>}` in the estate's `terraform` and `providers` blocks, replaced
 /// as in a resource body: a whole-value reference by the value, one inside a longer string
 /// by its text. A value the central estate looks up is refused at the block: a provider is
 /// configured before any data source is read, and the lookup is read through that provider.
+/// The `providers` block gets a rendering like an entity's, over `local.interface_static`
+/// for the same reason; the `terraform` block is written as substituted, because a backend
+/// takes no named value.
 pub fn resolve_interface_in_config(
     config: &mut BTreeMap<String, serde_yaml::Value>,
     sites: &BTreeMap<String, (String, usize)>,
     files: &[UsedInterfaceFile],
-) -> Result<(), Vec<PipelineError>> {
+) -> Result<ConfigRendering, Vec<PipelineError>> {
     let outputs: BTreeMap<&str, &satz::OfferedOutput> =
         files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let mut errors = Vec::new();
+    let mut out = ConfigRendering::default();
     for (block, value) in config.iter_mut() {
         let (file, line) = sites.get(block).cloned().unwrap_or_default();
         let mut read = Vec::new();
+        let mut twin = value.clone();
         let msg = match substitute_value(value, &outputs, files, &mut read) {
             Err(m) => Some(m),
-            Ok(()) => read.iter().find(|name| {
-                let mut texts = Vec::new();
-                collect_strings(&outputs[name.as_str()].value, &mut texts);
-                texts.iter().any(|t| !data_addresses(t).is_empty())
-            }).map(|name| format!(
-                "`interface.{}` is a value the central estate looks up, and a provider is configured before any lookup is read — bind the value as a param, or read it in a resource",
-                name
-            )),
+            Ok(changed) => {
+                let looked_up = read.iter().find(|name| {
+                    let mut texts = Vec::new();
+                    collect_strings(&outputs[name.as_str()].value, &mut texts);
+                    texts.iter().any(|t| !data_addresses(t).is_empty())
+                });
+                match looked_up {
+                    Some(name) => Some(format!(
+                        "`interface.{}` is a value the central estate looks up, and a provider is configured before any lookup is read — bind the value as a param, or read it in a resource",
+                        name
+                    )),
+                    None => {
+                        if changed && block == "providers" {
+                            render_interface_value(&mut twin, INTERFACE_STATIC_LOCAL);
+                            out.providers = Some(twin);
+                        }
+                        out.read.extend(read);
+                        None
+                    }
+                }
+            }
         };
         if let Some(m) = msg {
             errors.push(PipelineError { file, line, msg: format!("{}: {}", block, m) });
         }
     }
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        out.read.sort();
+        out.read.dedup();
+        Ok(out)
+    } else {
+        Err(errors)
+    }
 }
 
 /// The `data.<type>.<label>` addresses a text reads inside `${…}`.
@@ -1067,36 +1220,39 @@ fn data_addresses(text: &str) -> Vec<String> {
     out
 }
 
-/// One value with its `${interface.…}` references replaced.
+/// One value with its `${interface.…}` references replaced; `true` when it held any.
 fn substitute_value(
     v: &mut serde_yaml::Value,
     outputs: &BTreeMap<&str, &satz::OfferedOutput>,
     files: &[UsedInterfaceFile],
     read: &mut Vec<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    let mut changed = false;
     match v {
         serde_yaml::Value::String(s) => {
             if let Some(name) = whole_interface_reference(s) {
                 let o = interface_output(name, outputs, files)?;
                 note_read(read, name);
                 *v = o.value.clone();
+                changed = true;
             } else if let Some(t) = substitute_text(s, outputs, files, read)? {
                 *s = t;
+                changed = true;
             }
         }
         serde_yaml::Value::Sequence(items) => {
             for i in items {
-                substitute_value(i, outputs, files, read)?;
+                changed |= substitute_value(i, outputs, files, read)?;
             }
         }
         serde_yaml::Value::Mapping(m) => {
             for (_, val) in m.iter_mut() {
-                substitute_value(val, outputs, files, read)?;
+                changed |= substitute_value(val, outputs, files, read)?;
             }
         }
         _ => {}
     }
-    Ok(())
+    Ok(changed)
 }
 
 fn note_read(read: &mut Vec<String>, name: &str) {
@@ -3300,7 +3456,7 @@ fn insert_grant(
             }
             other => return perr(file_name, line, format!("grant role must be a string or a conditional mapping, got {:?}", other)),
         };
-        edges.insert(GrantEdge { member: member.to_string(), role, condition, import_id });
+        edges.insert(GrantEdge { member: member.to_string(), role, condition, import_id, ..Default::default() });
     }
     // An explicit scope namespaces the address, so two maps pinning different
     // scopes never merge into one grant; otherwise a Node-scoped grant is
@@ -3332,7 +3488,7 @@ fn insert_grant(
         None => {
             own.entities.insert(
                 addr.clone(),
-                Entity { addr, scope: rt.scope.clone(), body: Body::Grant(edges), provenance: vec![span], node_path: path.to_vec() },
+                Entity { addr, scope: rt.scope.clone(), body: Body::Grant(edges), provenance: vec![span], node_path: path.to_vec(), rendering: None },
             );
         }
     }
@@ -3366,7 +3522,7 @@ fn insert_entity(
         None => {
             own.entities.insert(
                 addr.clone(),
-                Entity { addr, scope, body, provenance: vec![span], node_path: node_path.to_vec() },
+                Entity { addr, scope, body, provenance: vec![span], node_path: node_path.to_vec(), rendering: None },
             );
         }
     }
@@ -3840,8 +3996,10 @@ mod estate_channel_tests {
         .unwrap();
         assert_eq!(fe.interface_files.len(), 2, "two files that agree are both used");
         let mut folded = fold_fragments(&Table, &fe.fragments);
-        let lookups = resolve_interface_references(&mut folded, &fe.interface_files).unwrap();
-        let addrs: Vec<&str> = lookups.iter().map(|l| l.address.as_str()).collect();
+        let read = resolve_interface_references(&mut folded, &fe.interface_files).unwrap();
+        assert_eq!(read, ["folder", "org_id", "regions"], "the exports read, sorted");
+        let locals = interface_locals(&read, &fe.interface_files).unwrap();
+        let addrs: Vec<&str> = locals.lookups.iter().map(|l| l.address.as_str()).collect();
         assert_eq!(addrs, ["data.google_active_folder.infra", "data.google_active_folder.pay"], "each once, what is read first");
         let crate::algebra::Slot::Ok(e) = folded.slots.values().next().unwrap() else { panic!() };
         let Body::Attrs(v) = &e.body else { panic!() };
@@ -3861,17 +4019,70 @@ mod estate_channel_tests {
             );
             let mut fe = compile_estate("p.satz", &src, &Table, &project_load).unwrap();
             assert_eq!(fe.config_sites["providers"], ("p.satz".to_string(), 4));
-            resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).map(|()| fe.config).map_err(|mut e| e.remove(0))
+            resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).map(|_| fe.config).map_err(|mut e| e.remove(0))
         };
         let config = run("${{interface.regions}}").unwrap();
         assert_eq!(config["providers"]["google"]["region"], serde_yaml::Value::Sequence(vec!["europe-west3".into(), "europe-west4".into()]));
         let config = run("org-${{interface.org_id}}").unwrap();
         assert_eq!(config["providers"]["google"]["region"], serde_yaml::Value::String("org-123456789012".into()));
+        // the rendering reads the static local: a provider cannot read a local that holds a lookup it runs
+        let src = "estate p\nuse \"i/pay.satz\"\n\nproviders {\n  google {\n    alias  = \"google\"\n    region = \"org-${{interface.org_id}}\"\n  }\n}\n";
+        let mut fe = compile_estate("p.satz", src, &Table, &project_load).unwrap();
+        let r = resolve_interface_in_config(&mut fe.config, &fe.config_sites, &fe.interface_files).unwrap();
+        assert_eq!(r.read, ["org_id"]);
+        assert_eq!(r.providers.unwrap()["google"]["region"], serde_yaml::Value::String("org-${local.interface_static.org_id}".into()));
         let e = run("${{interface.folder}}").unwrap_err();
         assert_eq!((e.file.as_str(), e.line), ("p.satz", 4));
         assert!(e.msg.starts_with("providers: `interface.folder` is a value the central estate looks up"), "{}", e.msg);
         let e = run("${{interface.nope}}").unwrap_err();
         assert!(e.msg.contains("no used interface file exports `nope`"), "{}", e.msg);
+    }
+
+    /// Beside the judged body, an entity that read a value carries its rendering: the same
+    /// body with `local.interface.<export>` — an `!expr` where the whole value was read, a
+    /// template where text held it — and none where nothing was read. A grant's member
+    /// keeps its rendering on the edge, the member itself the literal the label hashes. A
+    /// reference in a resource's label is refused.
+    #[test]
+    fn an_entity_that_read_a_value_carries_its_rendering_beside_the_judged_body() {
+        let fe = compile_estate(
+            "p.satz",
+            "estate p\nuse \"i/pay.satz\"\ngoogle_org_policy_policy {\n  a {\n    name    = \"x-${{interface.org_id}}\"\n    folder  = \"${{interface.folder}}\"\n    regions = \"${{interface.regions}}\"\n  }\n  b {\n    name = \"plain\"\n  }\n}\ngoogle_organization_iam_member {\n  \"group:ops@${{interface.org_id}}\" = [\n    \"roles/viewer\",\n  ]\n}\n",
+            &Table,
+            &project_load,
+        )
+        .unwrap();
+        let mut folded = fold_fragments(&Table, &fe.fragments);
+        resolve_interface_references(&mut folded, &fe.interface_files).unwrap();
+        let entity = |label: &str| match &folded.slots[&Address { tf_type: "google_org_policy_policy".into(), label: label.into() }] {
+            crate::algebra::Slot::Ok(e) => e.clone(),
+            _ => panic!("ok"),
+        };
+        let a = entity("a");
+        let twin = a.rendering.expect("a read three values").attrs.expect("an attribute body");
+        let expr = |name: &str| serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new("expr"), value: serde_yaml::Value::String(format!("local.interface.{}", name)) }));
+        assert_eq!(twin["name"], serde_yaml::Value::String("x-${local.interface.org_id}".into()), "text keeps its shape");
+        assert_eq!(twin["folder"], expr("folder"), "a whole value is the expression, a lookup too");
+        assert_eq!(twin["regions"], expr("regions"), "a list is the expression, not the list");
+        let Body::Attrs(judged) = &a.body else { panic!() };
+        assert_eq!(judged["folder"], serde_yaml::Value::String("${data.google_active_folder.pay.name}".into()), "the body is judged as before");
+        assert!(entity("b").rendering.is_none(), "an entity that read nothing is written as it is");
+        let grant = folded.slots.values().find_map(|s| match s {
+            crate::algebra::Slot::Ok(e) if e.addr.tf_type == "google_organization_iam_member" => Some(e.clone()),
+            _ => None,
+        }).unwrap();
+        let Body::Grant(edges) = &grant.body else { panic!() };
+        let edge = edges.iter().next().unwrap();
+        assert_eq!((edge.member.as_str(), edge.rendered_member.as_str()), ("group:ops@123456789012", "group:ops@${local.interface.org_id}"));
+        assert_eq!(edge.rendered_role, "", "a role that read nothing has no rendering");
+        let e = compile_estate("p.satz", "estate p\nuse \"i/pay.satz\"\ngoogle_org_policy_policy {\n  \"p-${{interface.org_id}}\" {\n    name = \"x\"\n  }\n}\n", &Table, &project_load)
+            .map_err(|e| e.msg)
+            .and_then(|fe| {
+                let mut folded = fold_fragments(&Table, &fe.fragments);
+                resolve_interface_references(&mut folded, &fe.interface_files).map(|_| ()).map_err(|e| e[0].msg.clone())
+            })
+            .unwrap_err();
+        assert!(e.contains("in a label — a label is a Terraform resource name"), "{}", e);
     }
 
     /// An export no used file carries, a malformed reference, a list inside a longer text,

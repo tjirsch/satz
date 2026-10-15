@@ -159,7 +159,7 @@ pub(crate) fn group_lifecycle(attrs: &serde_yaml::Mapping) -> Option<hcl::Block>
 /// and lifecycle.
 pub(crate) fn folder_block(
     resource_name: &str,
-    display_name: &str,
+    display_name: hcl::Expression,
     parent_expr: hcl::Expression,
     provider_alias: Option<&str>,
     labels: Option<&serde_yaml::Value>,
@@ -169,7 +169,7 @@ pub(crate) fn folder_block(
     let mut builder = hcl::Block::builder("resource")
         .add_label("google_folder")
         .add_label(resource_name)
-        .add_attribute(("display_name", display_name.to_owned()))
+        .add_attribute(hcl::Attribute::new("display_name", display_name))
         .add_attribute(hcl::Attribute::new("parent", parent_expr));
     // Every other attribute the folder declares (`deletion_protection`, `tags`,
     // …), rendered like any resource's — the fixed set above was defect #33.
@@ -185,12 +185,14 @@ pub(crate) fn folder_block(
     }
     if let Some(serde_yaml::Value::Mapping(labels_map)) = labels {
         let mut sorted: Vec<_> =
-            labels_map.iter().filter_map(|(k, v)| k.as_str().zip(v.as_str())).collect();
+            labels_map.iter().filter_map(|(k, v)| k.as_str().zip(render_value(v, &|_| None))).collect();
         sorted.sort_by_key(|(k, _)| *k);
         if !sorted.is_empty() {
-            let map: hcl::Map<String, hcl::Value> =
-                sorted.into_iter().map(|(k, v)| (k.to_string(), hcl::Value::from(v.to_string()))).collect();
-            builder = builder.add_attribute(("labels", hcl::Value::from(map)));
+            let mut object = hcl::Object::new();
+            for (k, v) in sorted {
+                object.insert(hcl::ObjectKey::from(k.to_string()), v);
+            }
+            builder = builder.add_attribute(("labels", hcl::Expression::Object(object)));
         }
     }
     if let Some(lc) = lifecycle_block {
@@ -364,6 +366,19 @@ pub(crate) fn parse_expr(s: &str) -> hcl::Expression {
     hcl::Expression::from(s.to_string())
 }
 
+/// A value that may be a reference: text that is one `${…}` and nothing else is the
+/// bare expression inside it (`data.google_active_folder.x.name`,
+/// `local.interface.folder`), text with a reference inside a template, anything else a
+/// string — a dotted literal (`example.com`) is no traversal here.
+pub(crate) fn reference_expr(s: &str) -> hcl::Expression {
+    if let Some(inner) = s.strip_prefix("${").and_then(|r| r.strip_suffix('}')) {
+        if !inner.contains('}') && !inner.contains("${") {
+            return parse_expr(inner.trim());
+        }
+    }
+    string_to_hcl_expr(s)
+}
+
 /// Provider *reference* (`google-beta`, `google.google-beta`) as an unquoted
 /// identifier/traversal; quoted-string fallback for non-identifier segments.
 pub(crate) fn provider_ref_expr(s: &str) -> hcl::Expression {
@@ -447,6 +462,7 @@ pub(crate) fn single_resource_block(
 tf_type: &str,
 res_name: &str,
 attrs: &serde_yaml::Mapping,
+view: Option<&serde_yaml::Mapping>,
 resource_schema: Option<&crate::schema::ResourceSchema>,
 ctx: &ResCtx,
 provider_alias: Option<&str>,
@@ -605,6 +621,9 @@ resolve: ValueResolver,
 
     for (k, v) in &final_attrs {
         if let serde_yaml::Value::String(k_str) = k {
+            // the value as written: the view's where the entity has a rendering; every
+            // decision below reads `attrs` and `final_attrs`, the judged values
+            let v = view.and_then(|m| m.get(k)).unwrap_or(v);
             // Skip fields that were handled specially, but only if they were auto-injected
             // If they were explicitly provided in the YAML, we should process them
             let was_explicitly_provided = attrs.contains_key(k);
@@ -808,21 +827,21 @@ pub(crate) struct GoogleProviderDeps {
     /// The `region` of the estate's default `google` provider, which every
     /// per-project alias carries as well. `None` when the estate's provider
     /// block names none, and then no alias names one either.
-    pub region: Option<String>,
+    pub region: Option<hcl::Expression>,
 }
 
 pub(crate) fn configure_google_provider(
     mut builder: hcl::BlockBuilder,
-    project_id: Option<String>,
+    project: Option<hcl::Expression>,
     has_billing_project: bool,
     has_user_project_override: bool,
     deps: &GoogleProviderDeps,
 ) -> hcl::BlockBuilder {
     let infra_project = deps.infra_project.as_deref();
-    if let Some(pid) = project_id {
+    if let Some(project) = project {
         if !has_billing_project {
-            let billing_pid = infra_project.unwrap_or(&pid);
-            builder = builder.add_attribute(("billing_project", billing_pid.to_string()));
+            let billing = infra_project.map(|p| hcl::Expression::from(p.to_string())).unwrap_or(project);
+            builder = builder.add_attribute(("billing_project", billing));
         }
         if !has_user_project_override {
             builder = builder.add_attribute(("user_project_override", true));
@@ -841,25 +860,29 @@ pub(crate) fn configure_google_provider(
     builder
 }
 
-/// One root provider block from a config mapping (the walk's provider loop body).
+/// One root provider block from a config mapping (the walk's provider loop body). `view`
+/// is the mapping as written where a central estate's value was spliced into it: the
+/// values come from it, the decisions from `map`.
 pub(crate) fn provider_block_from_map(
     p_name: &str,
     map: &serde_yaml::Mapping,
+    view: Option<&serde_yaml::Mapping>,
     deps: &GoogleProviderDeps,
     resolve: ValueResolver,
 ) -> hcl::Block {
     let mut builder = hcl::Block::builder("provider").add_label(p_name);
     let mut has_alias = false;
-    let mut project_id = None;
+    let mut project: Option<hcl::Expression> = None;
     let mut has_billing_project = false;
     let mut has_user_project_override = false;
     for (k, v) in map {
         if let serde_yaml::Value::String(k_str) = k {
+            let written = view.and_then(|m| m.get(k)).unwrap_or(v);
             if k_str == "alias" { has_alias = true; }
-            if k_str == "project" { project_id = v.as_str().map(|s| s.to_string()); }
+            if k_str == "project" && v.as_str().is_some() { project = render_value(written, resolve); }
             if k_str == "billing_project" { has_billing_project = true; }
             if k_str == "user_project_override" { has_user_project_override = true; }
-            if let Some(val) = render_value(v, resolve) {
+            if let Some(val) = render_value(written, resolve) {
                 builder = builder.add_attribute((k_str.as_str(), val));
             }
         }
@@ -868,7 +891,7 @@ pub(crate) fn provider_block_from_map(
         builder = builder.add_attribute(("alias", p_name));
     }
     if p_name == "google" || p_name == "google-beta" {
-        builder = configure_google_provider(builder, project_id, has_billing_project, has_user_project_override, deps);
+        builder = configure_google_provider(builder, project, has_billing_project, has_user_project_override, deps);
     }
     builder.build()
 }
@@ -891,15 +914,15 @@ pub(crate) fn provider_block_from_map(
 /// created somewhere the estate never said.
 pub(crate) fn project_provider_block(
     project_key: &str,
-    project_id: &str,
+    project: hcl::Expression,
     deps: &GoogleProviderDeps,
 ) -> hcl::Block {
     let p_alias = format!("project_{}", project_key.replace('-', "_"));
     let mut builder = hcl::Block::builder("provider")
         .add_label("google")
         .add_attribute(("alias", p_alias))
-        .add_attribute(("project", project_id.to_string()))
-        .add_attribute(("billing_project", project_id.to_string()))
+        .add_attribute(hcl::Attribute::new("project", project.clone()))
+        .add_attribute(hcl::Attribute::new("billing_project", project))
         .add_attribute(("user_project_override", true));
     if let Some(sa_email) = &deps.impersonate {
         builder = builder.add_attribute(("impersonate_service_account", sa_email.clone()));

@@ -1,14 +1,10 @@
-      "europe-west3",
-      "europe-west4"
-    "project_number" = "${data.google_project.payments.number}"
-    ]
-    allowed_persistence_regions = [
+    "project_number" = local.interface.payments_number
+    allowed_persistence_regions = local.interface.regions
     google_service_account.app
   ]
   account_id = "payments-app"
   depends_on = [
-  description = "Runs in corp-payments-001, under ${data.google_active_folder.infra_folder.name}"
-  display_name = "Infrastructure"
+  description = "Runs in ${local.interface.payments_project}, under ${local.interface.infra_folder}"
   display_name = "Payments application"
   labels = {
   location = "europe-west3"
@@ -17,15 +13,11 @@
   message_storage_policy {
   name = "acme-payments-data"
   name = "payments-events"
-  parent = "organizations/123456789012"
-  project = "corp-payments-001"
-  project = "corp-payments-001"
-  project = "corp-payments-001"
-  project = "corp-payments-001"
-  project = "corp-payments-001"
-  project_id = "corp-payments-001"
-  provider = google.google
-  provider = google.google
+  project = local.interface.payments_project
+  project = local.interface.payments_project
+  project = local.interface.payments_project
+  project = local.interface.payments_project
+  project = local.interface.payments_project
   provider = google.google
   provider = google.google
   provider = google.google
@@ -35,17 +27,11 @@
   role = "roles/viewer"
   }
   }
-# reads back google_folder.infra_folder of the estate `corpus_central` (interface.satz); needs resourcemanager.folders.list on the parent
-# reads back google_project.payments of the estate `corpus_central` (interface.satz); needs resourcemanager.projects.get
-data "google_active_folder" "infra_folder" {
-data "google_project" "payments" {
 resource "google_project_iam_member" "app_objects" {
 resource "google_project_iam_member" "iam_group_payments_readers_example_com_ebed1a1b27be0c95" {
 resource "google_pubsub_topic" "events" {
 resource "google_service_account" "app" {
 resource "google_storage_bucket" "data" {
-}
-}
 }
 }
 }
@@ -58,3 +44,30 @@ customer-organization-id = "123456789012"
 customer-shortname = "acme"
 default-region = "europe-west3"
 ---imports---
+
+---interface.tf---
+      "europe-west3",
+      "europe-west4"
+    ]
+    payments_project = "corp-payments-001"
+    regions = [
+  display_name = "Infrastructure"
+  interface = merge(local.interface_static, { infra_folder = data.google_active_folder.infra_folder.name, payments_number = data.google_project.payments.number })
+  interface_static = {
+  parent = "organizations/123456789012"
+  project_id = "corp-payments-001"
+  provider = google.google
+  provider = google.google
+  }
+# The values this estate reads from the central estate `corpus_central` (interface.satz), as `local.interface.<export>`.
+# `data` blocks below and reaches `local.interface` alone.
+# `local.interface_static` holds the ones satz knows, which the providers read: a provider is
+# configured before any data source is read. A value only the cloud knows is read back by the
+# reads back google_folder.infra_folder of the estate `corpus_central` (interface.satz); needs resourcemanager.folders.list on the parent
+# reads back google_project.payments of the estate `corpus_central` (interface.satz); needs resourcemanager.projects.get
+data "google_active_folder" "infra_folder" {
+data "google_project" "payments" {
+locals {
+}
+}
+}

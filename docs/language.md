@@ -2277,21 +2277,36 @@ copied to `vendor/archive/`.)
 - The file is `use`d at the top level of a file, without `as`; `when` gates it like a
   pack line. Used anywhere else it is refused. Its exports are then reachable under the
   root `interface.`.
-- A static value becomes its literal: a whole-value `"${{interface.regions}}"` is the
-  list itself, and one inside a longer string is its text. A looked-up value becomes the
-  data source's address — `folder_id = "${data.google_active_folder.infra.name}"` — and
-  the `data` block, with the ones its arguments read, is written once into the project's
-  `main.tf`, through the provider the project's top-level resources carry, with the
-  resource it reads back and the permission it needs in a comment above it. These are the
-  data sources the HCL module reads.
+- A static value is its literal: a whole-value `"${{interface.regions}}"` is the list
+  itself, and one inside a longer string is its text. A looked-up value is the data
+  source's address, `${data.google_active_folder.infra.name}`. These are the values the
+  compile judges — the manifest, the prerequisite check and the interface rules read
+  them. What it writes is `interface.tf` beside `main.tf`: `locals { interface = {
+  <export> = … } }` with every value the estate read — a static one as its literal, a
+  looked-up one as the bare address of its `data` block — in two locals, `interface_static`
+  with the values satz knows and `interface`, which merges the looked-up ones in — and
+  then the `data` blocks those values need, once each, through the provider the project's
+  top-level resources carry,
+  with the resource each reads back and the permission it needs in a comment above it
+  (the same data sources the HCL module reads). `main.tf` reads the local: `folder_id =
+  local.interface.infra_folder` for a whole value, `project_id =
+  "${local.interface.customer_shortname}-shop"` inside text. It carries no value of the
+  central estate, so an `interface.tf` written for another organisation re-targets it.
+  A Cloud Identity group is the exception: its address derives from its body, so a group
+  writes the literal.
 - The `terraform` and `providers` blocks read a static value the same way —
-  `region = "${{interface.default_region}}"` is the region in the provider and in every
-  provider satz derives from it. A looked-up value is refused at the block: a provider
-  is configured before any data source is read, and the lookup is read through that
-  provider. Bind such a value as a param, or read it in a resource.
+  `region = "${{interface.default_region}}"` is `region =
+  local.interface_static.default_region` in the provider and in every provider satz
+  derives from it, and a project whose id reads the interface gets an alias that reads it
+  too. The providers read the static local: a provider is configured before any data
+  source is read, and the lookups run through that provider, so a local that holds one
+  would be a cycle there. For the same reason a looked-up value is refused at the block —
+  bind it as a param, or read it in a resource. The `terraform` block writes the value
+  itself, because a backend takes no named value.
 - Refused, each at the resource that writes it: an export no used file carries (listing
   those that are), a reference with no interface file used, a reference that is not
-  `interface.<export>`, and a list or a map inside a longer string. A
+  `interface.<export>`, a list or a map inside a longer string, and a reference in a
+  resource's label, which is a Terraform resource name. A
   `${{interface.<export>}}` inside an `hcl { }` block is refused at the block: the
   passthrough is emitted verbatim, and nothing in it is replaced. One export name from
   two used files is one value when both carry the same, and an error naming both files

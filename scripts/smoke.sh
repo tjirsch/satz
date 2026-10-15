@@ -237,10 +237,16 @@ step "project: a Satz estate takes interfaces/archive/ whole and reads the showc
 mkdir -p project/vendor && cp -R "$si" project/vendor/archive
 "$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project.txt)"
 pm=project/hcl/main.tf
-grep -q 'project = "corp-archive-001"' "$pm" || fail "a static value is not its literal:\n$(cat $pm)"
-grep -q 'folder_id = "${data.google_active_folder.infra.name}"' "$pm" || fail "a looked-up value is not its data address:\n$(cat $pm)"
-grep -q 'parent = "${data.google_active_folder.infra.name}"' "$pm" || fail "a folder's looked-up parent is not its data address:\n$(cat $pm)"
-[ "$(grep -c '^data "google_active_folder" "infra"' "$pm")" = 1 ] || fail "the lookup is not one data block:\n$(cat $pm)"
+pi=project/hcl/interface.tf
+# what the compile judges is in interface.tf, what main.tf reads is the local
+grep -q 'archive_project_id = "corp-archive-001"' "$pi" || fail "a static value is not its literal in interface.tf:\n$(cat $pi)"
+grep -q 'infra_folder = data.google_active_folder.infra.name' "$pi" || fail "a looked-up value is not its data address in interface.tf:\n$(cat $pi)"
+[ "$(grep -c '^data "google_active_folder" "infra"' "$pi")" = 1 ] || fail "the lookup is not one data block in interface.tf:\n$(cat $pi)"
+grep -q 'project = local.interface.archive_project_id' "$pm" || fail "a static value is not read as the local:\n$(cat $pm)"
+grep -q 'folder_id = local.interface.infra_folder' "$pm" || fail "a looked-up value is not read as the local:\n$(cat $pm)"
+grep -q 'parent = local.interface.infra_folder' "$pm" || fail "a folder's looked-up parent is not read as the local:\n$(cat $pm)"
+grep -q '"central" = local.interface.customer_domain' "$pm" || fail "a whole value inside a map is not the bare local:\n$(cat $pm)"
+grep -q 'corp-archive-001\|^data ' "$pm" && fail "main.tf carries the central estate's value or a lookup:\n$(cat $pm)"
 [ -e project/interfaces ] && fail "a project that exports nothing wrote interfaces/"
 "$satz" --config project/config.toml packs archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz packs failed on the project:\n$(cat tmp/project-packs.txt)"
 grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'vendor/archive/archive/satz/interface.satz' || fail "satz packs does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
@@ -248,6 +254,8 @@ sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && 
 if command -v tofu >/dev/null 2>&1; then
   (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's root module does not validate"
 fi
+# the HCL the project estate wrote reads the estate as `local.interface.<export>`, which check-consumer judges like a module's output
+"$satz" --config . check-consumer project/hcl yaml/showcase.satz > tmp/project-consumer.txt 2>&1 || fail "check-consumer refused the HCL a project estate wrote:\n$(cat tmp/project-consumer.txt)"
 # an attachment off an attach point is refused at the project's own compile
 cp project/satz/archive.satz project/satz/tmp-forbidden.satz
 cat >> project/satz/tmp-forbidden.satz <<'SATZ'
@@ -303,11 +311,16 @@ done
 # what the cost-centre example says it gives: the id by the naming scheme, the label, a
 # group per role, and the refusal of a cost centre that is not four digits
 cc="$ex/cost-centre-project"
-grep -q 'project_id = "acme-shop-prod"' "$cc/hcl/main.tf" || fail "the project id does not follow the naming scheme:\n$(cat "$cc/hcl/main.tf")"
-grep -q 'region = "europe-west3"' "$cc/hcl/providers.tf" && ! grep -q 'interface\.' "$cc/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$cc/hcl/providers.tf")"
+grep -q 'project_id = "${local.interface.customer_shortname}-shop-prod"' "$cc/hcl/main.tf" || fail "the project id does not follow the naming scheme over the local:\n$(cat "$cc/hcl/main.tf")"
+# a provider reads the static local: the lookup it runs cannot be among what it reads
+grep -q 'region = local.interface_static.default_region' "$cc/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$cc/hcl/providers.tf")"
+grep -q 'project = "${local.interface_static.customer_shortname}-shop-prod"' "$cc/hcl/providers.tf" || fail "the project's alias does not read the project id over the local:\n$(cat "$cc/hcl/providers.tf")"
+grep -q 'local.interface\.' "$cc/hcl/providers.tf" && fail "a provider reads the local that holds the lookup it runs:\n$(cat "$cc/hcl/providers.tf")"
+grep -q 'customer_shortname = "acme"' "$cc/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$cc/hcl/interface.tf" && grep -q 'workload_folder = data.google_active_folder.workload_folder.name' "$cc/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$cc/hcl/interface.tf")"
+grep -q ' = "acme' "$cc/hcl/main.tf" && fail "main.tf carries the organisation's value:\n$(cat "$cc/hcl/main.tf")"
 grep -q '"cost_centre" = "4711"' "$cc/hcl/main.tf" || fail "the cost centre label is missing:\n$(cat "$cc/hcl/main.tf")"
 for r in owner editor viewer; do
-  grep -q "member = \"group:acme-shop-prod-$r@example.com\"" "$cc/hcl/main.tf" || fail "the $r group is not granted:\n$(cat "$cc/hcl/main.tf")"
+  grep -q "member = \"group:\${local.interface.customer_shortname}-shop-prod-$r@\${local.interface.customer_domain}\"" "$cc/hcl/main.tf" || fail "the $r group is not granted over the local:\n$(cat "$cc/hcl/main.tf")"
 done
 sed 's/name = "shop-dev" cost_centre = "4711"/name = "shop-dev" cost_centre = "47A1"/' "$cc/satz/workloads.satz" > "$cc/satz/tmp-bad.satz"
 "$satz" --config "$cc" transpile tmp-bad.satz --check > tmp/example-bad.txt 2>&1 && { rm -f "$cc/satz/tmp-bad.satz"; fail "a cost centre that is not four digits compiled"; }
