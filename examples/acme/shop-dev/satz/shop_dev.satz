@@ -1,0 +1,14 @@
+// The project `shop-dev` as a Satz team writes it: the template's inputs bound here, the
+// template used. This file is the whole instance — the template carries the resources, the
+// providers and the organisation's interface — and it compiles to the HCL the template
+// compiles to, with these values in `terraform.tfvars`.
+
+estate shop_dev
+
+params {
+  application = "shop"
+  stage       = "dev"
+  cost_centre = "4711"
+}
+
+use "template.satz"

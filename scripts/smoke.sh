@@ -322,6 +322,17 @@ grep -q '"cost_centre" = "4711"' "$cc/hcl/main.tf" || fail "the cost centre labe
 for r in owner editor viewer; do
   grep -q "member = \"group:\${local.interface.customer_shortname}-shop-prod-$r@\${local.interface.customer_domain}\"" "$cc/hcl/main.tf" || fail "the $r group is not granted over the local:\n$(cat "$cc/hcl/main.tf")"
 done
+# the template: inputs as variables in the HCL team's form, bound values in the Satz team's,
+# one main.tf for both
+pt="$ex/project-template"; sd="$ex/shop-dev"
+grep -q 'variable "cost_centre" {' "$pt/hcl/variables.tf" && grep -q 'description = "the four-digit cost centre the project is billed to"' "$pt/hcl/variables.tf" || fail "the template does not declare its inputs:\n$(cat "$pt/hcl/variables.tf")"
+grep -q 'project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/main.tf" || fail "the template's project id does not read the inputs and the organisation:\n$(cat "$pt/hcl/main.tf")"
+grep -q '"cost_centre" = var.cost_centre' "$pt/hcl/main.tf" || fail "the template's label does not read the input bare:\n$(cat "$pt/hcl/main.tf")"
+grep -q 'project = "${local.interface_static.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/providers.tf" || fail "the template's provider alias does not read the inputs:\n$(cat "$pt/hcl/providers.tf")"
+grep -q '^cost_centre = "4711"' "$pt/hcl/terraform.tfvars" && grep -q '^cost_centre = "4711"' "$sd/hcl/terraform.tfvars" || fail "the example value is not in both tfvars"
+cmp -s <(sed 1d "$pt/hcl/main.tf") <(sed 1d "$sd/hcl/main.tf") || fail "the thin estate's main.tf differs from the template's:\n$(diff "$pt/hcl/main.tf" "$sd/hcl/main.tf")"
+"$satz" --config "$pt" transpile template.satz --input stage=test --print-variables --check > tmp/template-input.txt 2>&1 || fail "--input refused the template's input:\n$(cat tmp/template-input.txt)"
+grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind the template's input:\n$(cat tmp/template-input.txt)"
 sed 's/name = "shop-dev" cost_centre = "4711"/name = "shop-dev" cost_centre = "47A1"/' "$cc/satz/workloads.satz" > "$cc/satz/tmp-bad.satz"
 "$satz" --config "$cc" transpile tmp-bad.satz --check > tmp/example-bad.txt 2>&1 && { rm -f "$cc/satz/tmp-bad.satz"; fail "a cost centre that is not four digits compiled"; }
 rm -f "$cc/satz/tmp-bad.satz"

@@ -250,3 +250,14 @@ The entry `{ name = "shop-prod" cost_centre = "4711" }` is the Google project
 directory before the apply and are not declared. A `request` point on the list holds
 `name` to `<application>-<stage>` and `cost_centre` to four digits, and the compile
 refuses an entry that matches neither, naming the entry and the value.
+
+`examples/acme/project-template/satz/template.satz` is one Google project as a
+**template**: its `inputs { application stage cost_centre }` are what a reader binds.
+Compiled as it stands it is the HCL team's form — `variables.tf` declares the inputs,
+`terraform.tfvars` carries the example values, `main.tf` reads `var.<name>` and
+`interface.tf` holds the organisation's values, so the team edits `terraform.tfvars` and
+runs `tofu` without satz. `examples/acme/shop-dev/satz/shop_dev.satz` is the Satz team's
+form of the same template: a thin estate binding the inputs in its `params { }` and
+`use`-ing the template, which compiles to the same `main.tf`. The grants are labelled
+resources rather than a member map: a group name that reads an input is a value, and an
+input is never a key.
