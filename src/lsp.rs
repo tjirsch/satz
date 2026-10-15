@@ -337,7 +337,7 @@ impl Server {
                                     }
                                 }
                             }
-                            if k != "params" && k != "terraform" && k != "providers" && k != "interface" {
+                            if k != "params" && k != "inputs" && k != "terraform" && k != "providers" && k != "interface" {
                                 push_types(&mut items, registry.as_deref(), "1");
                             }
                         }
@@ -799,6 +799,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("estate", "the header of an estate: `estate NAME`"),
     ("pack", "the header of a pack: `pack NAME version \"x.y\"`"),
     ("params", "the values this file binds; a pack's are defaults, an estate's are the answers"),
+    ("inputs", "a template's contract: params a reader binds — the using estate, or `satz transpile --input` — and the HCL reads as `var.<name>`"),
     ("use", "include a pack: `use \"path\" [as TYPE] [when PARAM]`"),
     ("claim", "what a control this file satisfies: `claim FRAMEWORK VERSION CONTROL implements|contributes|deviates { … }`"),
     ("question", "what a customer decides, so a param can be filled: `question [oneof] PARAM { … }`"),

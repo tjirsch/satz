@@ -1,0 +1,29 @@
+    "cost_centre" = var.cost_centre
+    "stage" = var.stage
+  billing_account = "012345-6789AB-CDEF01"
+  labels = {
+  message_retention_duration = "${var.retention}d"
+  name = "${var.workload}-${var.stage}"
+  name = "${var.workload}-events"
+  org_id = "123456789012"
+  project = google_project.work.project_id
+  project_id = "acme-${var.workload}-${var.stage}"
+  provider = google.google
+  provider = google.project_work
+  }
+resource "google_project" "work" {
+resource "google_pubsub_topic" "events" {
+}
+}
+---tfvars---
+billing-account-infra = "012345-6789AB-CDEF01"
+cost_centre = "4711"
+customer-domain = "example.com"
+customer-id = "C0example"
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+default-region = "europe-west3"
+retention = 7
+stage = "dev"
+workload = "shop"
+---imports---

@@ -44,6 +44,10 @@ pub struct ToolConfig {
     pub auto_explode: Vec<String>,
     #[serde(default = "default_validation_level")]
     pub validation_level: String,
+    /// What `satz transpile --input <name>=<value>` binds for this run: the template's
+    /// inputs, the outermost document. Never read from the file.
+    #[serde(skip)]
+    pub inputs: Vec<(String, String)>,
     #[serde(default)]
     pub import_config: Option<String>,
     /// What this estate has said "seen, move on" to: `[[silence]]` tables, each naming
@@ -243,6 +247,7 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
             provider_version: default_version(),
             auto_explode: default_auto_explode(),
             validation_level: default_validation_level(),
+            inputs: Vec::new(),
             import_config: None,
             silence: Vec::new(),
             dir: None,

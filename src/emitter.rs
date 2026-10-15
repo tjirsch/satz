@@ -1460,18 +1460,23 @@ pub(crate) fn variable_type(v: &serde_yaml::Value) -> &'static str {
 /// asking about is worth describing in the generated `variables.tf`, and the
 /// prompt is already the one-line human sentence for it. `why` stays out — it is
 /// prose, and belongs on the pack's page rather than in every estate.
+///
+/// An input is a variable the resources read, `var.<name>`, so it keeps its name as
+/// written; its description is the comment above it in the `inputs` block.
 pub(crate) fn emit_variables(
     tfvars: &Env,
     descriptions: &std::collections::BTreeMap<String, String>,
+    inputs: &[satz_core::pipeline::DeclaredInput],
 ) -> String {
     let mut body = hcl::Body::builder();
     for (name, v) in tfvars {
         let ty = variable_type(v);
-        let mut blk = hcl::Block::builder("variable")
-            .add_label(name.replace('_', "-"))
-            .add_attribute(("type", ty.parse::<hcl::Expression>().unwrap()));
-        if let Some(d) = descriptions.get(name) {
-            blk = blk.add_attribute(("description", d.clone()));
+        let input = inputs.iter().find(|i| &i.name == name);
+        let label = if input.is_some() { name.clone() } else { name.replace('_', "-") };
+        let mut blk = hcl::Block::builder("variable").add_label(label).add_attribute(("type", ty.parse::<hcl::Expression>().unwrap()));
+        let description = input.and_then(|i| i.description.clone()).or_else(|| descriptions.get(name).cloned());
+        if let Some(d) = description {
+            blk = blk.add_attribute(("description", d));
         }
         body = body.add_block(blk.build());
     }
@@ -1572,8 +1577,9 @@ fn reference_value(v: &serde_yaml::Value) -> Option<hcl::Expression> {
 }
 
 /// tfvars from the front-end's accumulated params: kebab-cased names, scalar
-/// renderings matching the walk's output.
-pub(crate) fn emit_tfvars(env: &Env) -> String {
+/// renderings matching the walk's output. An input keeps its name: the variable the
+/// resources read, with the value bound — the example value until a reader binds one.
+pub(crate) fn emit_tfvars(env: &Env, inputs: &[satz_core::pipeline::DeclaredInput]) -> String {
     let mut out = String::new();
     for (name, v) in env {
         let rendered = match v {
@@ -1589,7 +1595,7 @@ pub(crate) fn emit_tfvars(env: &Env) -> String {
                 None => continue,
             },
         };
-        out.push_str(&format!("{} = {}\n", name.replace('_', "-"), rendered));
+        out.push_str(&format!("{} = {}\n", if inputs.iter().any(|i| &i.name == name) { name.clone() } else { name.replace('_', "-") }, rendered));
     }
     out
 }
@@ -2429,6 +2435,34 @@ mod reset_comment_tests {
         let bare: String = text.lines().filter(|l| !l.starts_with('#')).map(|l| format!("{l}\n")).collect();
         assert_eq!(bare, hcl::to_string(&body).unwrap());
         assert_eq!(crate::manifest::Manifest::parse(&text), manifest);
+    }
+}
+
+#[cfg(test)]
+mod inputs_emission_tests {
+    use satz_core::pipeline::{DeclaredInput, Env};
+
+    fn input(name: &str, value: serde_yaml::Value, description: Option<&str>) -> DeclaredInput {
+        DeclaredInput { name: name.into(), value, file: "t.satz".into(), line: 1, description: description.map(str::to_string) }
+    }
+
+    /// An input is declared by its name as written, typed by its value, described by its
+    /// comment; a param stays kebab-cased, described by its question. The tfvars carry both.
+    #[test]
+    fn an_input_keeps_its_name_in_variables_and_tfvars() {
+        let mut env: Env = Env::new();
+        env.insert("cost_centre".into(), serde_yaml::Value::String("4711".into()));
+        env.insert("retention_days".into(), serde_yaml::Value::Number(7.into()));
+        env.insert("customer_domain".into(), serde_yaml::Value::String("example.com".into()));
+        let inputs = vec![input("cost_centre", serde_yaml::Value::String("4711".into()), Some("the cost centre")), input("retention_days", serde_yaml::Value::Number(7.into()), None)];
+        let mut descriptions = std::collections::BTreeMap::new();
+        descriptions.insert("customer_domain".to_string(), "The domain".to_string());
+        let vars = super::emit_variables(&env, &descriptions, &inputs);
+        assert!(vars.contains("variable \"cost_centre\" {\n  type = string\n  description = \"the cost centre\"\n}"), "{}", vars);
+        assert!(vars.contains("variable \"retention_days\" {\n  type = number\n}"), "{}", vars);
+        assert!(vars.contains("variable \"customer-domain\" {\n  type = string\n  description = \"The domain\"\n}"), "{}", vars);
+        let tfvars = super::emit_tfvars(&env, &inputs);
+        assert!(tfvars.contains("cost_centre = \"4711\"\n") && tfvars.contains("retention_days = 7\n") && tfvars.contains("customer-domain = \"example.com\"\n"), "{}", tfvars);
     }
 }
 

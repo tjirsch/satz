@@ -402,6 +402,7 @@ file    := [ header ] { item }
 header  := ("estate" | "pack") IDENT [ "version" STRING ]
          | "interface" STRING                          # a generated interface file (§6.17)
 item    := "params" "{" { param } "}"
+         | "inputs" "{" { param } "}"
          | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
          | "question" [ "oneof" ] IDENT "{" { question-entry } "}"
@@ -562,6 +563,63 @@ params {
   ]
 }
 ```
+
+#### `inputs` — a template's contract, the values a reader binds
+
+```
+inputs {
+  // the four-digit cost centre the project is billed to
+  cost_centre = "4711"
+  stage       = "dev"
+}
+
+google_project {
+  shop {
+    project_id = "${{interface.customer_shortname}}-shop-{stage}"
+    labels     = { cost_centre = cost_centre }
+  }
+}
+```
+
+(`tests/smoke/yaml/showcase.satz`; the template `examples/acme/project-template/`.)
+
+An input is a param with one more meaning: it is the contract of a template, bound by
+whoever instantiates it. It is declared like a param, in the same namespace (a name in
+both blocks is refused), and holds a string, a number, a bool or a list of them — what a
+variable holds; an object is refused. The value in the block is the example value.
+
+- **For everything that judges, an input is its value.** The fold, the manifest, the
+  prerequisite check and the interface rules read the bound value — the example until a
+  reader binds one — so a template compiles and checks as it stands.
+- **The emission writes the variable.** `variables.tf` declares `variable "<name>"`, its
+  name as written and its description the comment lines directly above the input, with
+  the type its value has; `terraform.tfvars` carries the bound value as `<name> = …`; and
+  every resource that reads the input reads `var.<name>` — bare where the input is the
+  whole value (`labels = { cost_centre = var.cost_centre }`), inside a template where text
+  holds it (`project_id = "${local.interface_static.customer_shortname}-shop-${var.stage}"`).
+  A `google_project` whose id reads an input gets a provider alias that reads it too. A
+  team working in OpenTofu alone edits `terraform.tfvars`, or passes `-var`, and the HCL
+  follows; the Satz file is unchanged.
+- **Bound two ways.** A using document's `params { … }` binds a pack's input as it binds
+  any param — a thin estate, `params { cost_centre = "4711" } use "template.satz"`, is the
+  committed form. `satz transpile <template> --input cost_centre=4711` (repeatable;
+  `--plan` and `--apply` run on the result) binds one for the run, winning over every
+  file: a string is taken as written, a number, a bool or a list read as Satz writes one
+  (`--input regions='["europe-west3"]'`), checked against the input's kind. A name no file
+  declares in an `inputs` block is refused, listing the inputs.
+- **An input decides no structure.** Refused, each at its line: an input read in a key or
+  a label (a Terraform resource name), in a grant's member, role or scope (a binding's
+  address derives from them), as the list of an `each` or the param of a `when` (they
+  decide what the estate holds), in an `export` (an interface carries values), in a
+  `question` (a reader binds an input, nobody is asked), in a `request` point, in an
+  `action`'s args, in a `suppress`, in one of satz's own keys (`"import-id"`, `private`,
+  `lifecycle`, `provider`, `project_service` — satz reads those, not the plan), in the
+  `terraform` block (a backend takes no variable), and by a param (`x = "{cost_centre}"`:
+  the param would fix the example value where the HCL reads the variable). The `providers`
+  block may read one.
+- **A pack's inputs are its contract** in the canonical form: an input's default or its
+  being an input moving is a pack change, and the pack's page lists its inputs with their
+  examples and descriptions.
 
 ### 6.4 Blocks, entries and resources
 

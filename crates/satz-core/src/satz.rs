@@ -632,6 +632,9 @@ pub struct File {
     /// orthogonal: multiple internal revisions may implement the same standard).
     pub version: Option<String>,
     pub params: Vec<(String, Value, usize)>,
+    /// `inputs { … }` — a template's contract: params the using document or the command
+    /// line binds and the emitter writes as variables, in source order
+    pub inputs: Vec<InputDecl>,
     pub items: Vec<Entry>,
     pub claims: Vec<ClaimDecl>,
     pub suppressions: Vec<Suppression>,
@@ -653,6 +656,16 @@ pub struct File {
     /// the file is a generated interface file (`interface "<name>"` as its header); it
     /// carries this and nothing else
     pub interface_file: Option<InterfaceFile>,
+}
+
+/// One entry of `inputs { … }`: a param that is the template's contract. The default is
+/// the example value; the comment lines directly above it are its description.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InputDecl {
+    pub name: String,
+    pub value: Value,
+    pub line: usize,
+    pub description: Option<String>,
 }
 
 /// A control claim as language syntax:
@@ -2284,7 +2297,29 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "export", "hcl", "interface", "notice", "offers", "pack", "params", "private", "question", "request", "suppress", "use"];
+    &["action", "claim", "estate", "export", "hcl", "inputs", "interface", "notice", "offers", "pack", "params", "private", "question", "request", "suppress", "use"];
+
+/// The comment lines directly above `line` (1-based), markers stripped and joined with a
+/// space — an input's description. `None` when the line above is no comment.
+fn comment_above(src: &str, line: usize) -> Option<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut texts = Vec::new();
+    let mut i = line.checked_sub(2)?;
+    loop {
+        let t = lines.get(i)?.trim();
+        let Some(text) = t.strip_prefix("//").or_else(|| t.strip_prefix('#')) else { break };
+        texts.push(text.trim().to_string());
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    if texts.is_empty() {
+        return None;
+    }
+    texts.reverse();
+    Some(texts.join(" "))
+}
 
 pub fn parse(src: &str) -> Result<File, SatzError> {
     let src = lf(src);
@@ -2357,9 +2392,52 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                                     ),
                                 );
                             }
+                            if let Some(i) = file.inputs.iter().find(|i| i.name == name) {
+                                return err(line, format!("params: `{}` is also an input (line {}) — a name is one or the other; delete the one that is not meant", name, i.line));
+                            }
                             file.params.push((name, v, line));
                         }
                         other => return err(line, format!("params: expected name or '}}', found {:?}", other)),
+                    }
+                }
+            }
+            Some(Tok::Ident(id)) if id == "inputs" => {
+                p.next();
+                p.expect(Tok::LBrace, "'{' after inputs")?;
+                loop {
+                    let line = p.line();
+                    match p.peek() {
+                        Some(Tok::RBrace) => {
+                            p.next();
+                            break;
+                        }
+                        Some(Tok::Ident(_)) => {
+                            let name = match p.next().unwrap() {
+                                Tok::Ident(n) => n,
+                                _ => unreachable!(),
+                            };
+                            p.expect(Tok::Eq, "'=' in input")?;
+                            let v = p.value()?;
+                            let scalar = |v: &Value| matches!(v, Value::Str(_) | Value::Num(_) | Value::Bool(_) | Value::Ref(_));
+                            let shape = match &v {
+                                v if scalar(v) => None,
+                                Value::List(items) if items.iter().all(scalar) => None,
+                                Value::List(_) => Some("a list of lists or objects"),
+                                Value::Obj(_) => Some("an object"),
+                                _ => None,
+                            };
+                            if let Some(shape) = shape {
+                                return err(line, format!("inputs: `{}` is {} — an input is a string, a number, a bool or a list of them, what a variable holds; bind an object as a param", name, shape));
+                            }
+                            if let Some(first) = file.inputs.iter().find(|i| i.name == name) {
+                                return err(line, format!("inputs: `{}` is declared twice — line {} and line {}; delete the one that is not meant", name, first.line, line));
+                            }
+                            if let Some((_, _, first)) = file.params.iter().find(|(n, _, _)| n == &name) {
+                                return err(line, format!("inputs: `{}` is also a param (line {}) — a name is one or the other; delete the one that is not meant", name, first));
+                            }
+                            file.inputs.push(InputDecl { name, value: v, line, description: comment_above(&src, line) });
+                        }
+                        other => return err(line, format!("inputs: expected name or '}}', found {:?}", other)),
                     }
                 }
             }
@@ -2633,7 +2711,15 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
 
     let declared: std::collections::BTreeSet<&str> =
         file.params.iter().map(|(n, _, _)| n.as_str()).collect();
+    let inputs: std::collections::BTreeSet<&str> = file.inputs.iter().map(|i| i.name.as_str()).collect();
     for q in &file.questions {
+        // an input is bound by whoever instantiates the template; nobody is asked
+        let asked = std::iter::once(q.subject.as_str()).chain(q.options.iter().map(|o| o.param.as_str()));
+        for p in asked {
+            if inputs.contains(p) {
+                return err(q.line, format!("question {}: `{}` is an input — the reader binds it, nobody is asked; make `{}` a param", q.subject, p, p));
+            }
+        }
         if q.oneof {
             for o in &q.options {
                 if !declared.contains(o.param.as_str()) {
@@ -3099,6 +3185,7 @@ pub fn canonical_parts(file: &File) -> Canonical {
         .iter()
         .filter(|(n, _, _)| !file.notices.iter().any(|x| &x.param == n))
         .map(|(n, v, _)| (n.clone(), canon_value(v)))
+        .chain(file.inputs.iter().map(|i| (i.name.clone(), canon_value(&i.value))))
         .collect();
     let mut body = String::new();
     match (&file.estate, file.is_pack) {
@@ -3120,6 +3207,9 @@ pub fn canonical_parts(file: &File) -> Canonical {
     for e in &file.items {
         canon_entry(e, &mut body);
         body.push('\n');
+    }
+    for i in &file.inputs {
+        body.push_str(&format!("input({})\n", i.name));
     }
     for c in &file.claims {
         body.push_str(&format!(
@@ -3999,6 +4089,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "estate" => "estate e\n".into(),
         "pack" => "pack p version \"1.0\"\n".into(),
         "params" => "estate e\nparams { a = \"1\" }\n".into(),
+        "inputs" => "estate e\ninputs { a = \"1\" }\n".into(),
         "use" => "estate e\nuse \"p.satz\"\n".into(),
         "hcl" => "estate e\nhcl {\n  # raw\n}\n".into(),
         "claim" => "estate e\nclaim \"f\" \"1\" \"1.1\" implements {\n  resources = [\"google_x.y\"]\n}\n".into(),
@@ -4014,6 +4105,38 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
         "interface" => "estate e\ninterface \"team-a\" {\n  export \"a\" = \"1\"\n}\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
+    }
+}
+
+#[cfg(test)]
+mod inputs_tests {
+    use super::*;
+
+    /// `inputs { … }` parses like `params`: the comment above an entry is its description, a
+    /// scalar or a list of scalars is its value; an object, a name twice, and a name that is
+    /// also a param are refused naming both lines.
+    #[test]
+    fn inputs_parse_like_params_with_the_comment_as_the_description() {
+        let f = parse("estate t\n\ninputs {\n  // the four-digit cost centre\n  // the project is billed to\n  cost_centre = \"4711\"\n  stage       = \"dev\"\n  retention   = 7\n  regions     = [\"europe-west3\"]\n}\n").unwrap();
+        let names: Vec<&str> = f.inputs.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["cost_centre", "stage", "retention", "regions"]);
+        assert_eq!(f.inputs[0].description.as_deref(), Some("the four-digit cost centre the project is billed to"));
+        assert_eq!(f.inputs[1].description, None, "a blank or code line above is no description");
+        assert_eq!(f.inputs[0].line, 6);
+        let e = parse("estate t\ninputs {\n  x = { a = 1 }\n}\n").unwrap_err();
+        assert!(e.msg.contains("`x` is an object") && e.msg.contains("bind an object as a param"), "{}", e.msg);
+        let e = parse("estate t\ninputs {\n  x = [[1]]\n}\n").unwrap_err();
+        assert!(e.msg.contains("a list of lists or objects"), "{}", e.msg);
+        let e = parse("estate t\ninputs {\n  x = \"1\"\n  x = \"2\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("`x` is declared twice — line 3 and line 4"), "{}", e.msg);
+        let e = parse("estate t\nparams {\n  x = \"1\"\n}\ninputs {\n  x = \"2\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("inputs: `x` is also a param (line 3)"), "{}", e.msg);
+        let e = parse("estate t\ninputs {\n  x = \"2\"\n}\nparams {\n  x = \"1\"\n}\n").unwrap_err();
+        assert!(e.msg.contains("params: `x` is also an input (line 3)"), "{}", e.msg);
+        // the canonical form carries an input as a value of the contract and as structure
+        let c = canonical_parts(&f);
+        assert!(c.params.iter().any(|(n, _)| n == "cost_centre"), "{:?}", c.params);
+        assert!(c.body.contains("input(cost_centre)\n"), "{}", c.body);
     }
 }
 

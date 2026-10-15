@@ -208,6 +208,11 @@ pub(crate) enum Commands {
         /// the estate either transpiles or the error says why
         #[arg(long)]
         check: bool,
+        /// Bind an input of the template for this run, `<name>=<value>` (repeatable): the
+        /// value a reader gives, winning over every file's binding; a number, a bool or a
+        /// list is read as Satz writes one, a string as written
+        #[arg(long = "input", value_name = "NAME=VALUE")]
+        inputs: Vec<String>,
         /// `json` prints the compile as data on stdout — the estate, the addresses it
         /// emits, the files written and every finding, silenced ones included — and
         /// nothing on stderr but the version line. A refused compile prints the same
@@ -1174,8 +1179,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     org_write::refuse(&cmd_choice, &tool_config, &runtime_config)?;
 
     match cmd_choice {
-        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check, format } => {
-
+        Commands::Transpile { input, output, schema_dir, print_variables, plan, apply, scan, check, inputs, format } => {
+            runtime_config.inputs = parse_inputs(&inputs)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             if let Some(sd) = &schema_dir {
                 runtime_config.schema_dir = if Path::new(sd).is_absolute() {
@@ -2827,7 +2832,7 @@ fn pipeline_b_compile_using(
         Err(format!("use \"{}\": file not found", p))
     };
     let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
-    let fe = match satz_core::pipeline::compile_estate_using(&input_path.to_string_lossy(), &src, extra_uses, &resolver, &loader) {
+    let fe = match satz_core::pipeline::compile_estate_bound(&input_path.to_string_lossy(), &src, extra_uses, &runtime_config.inputs, &resolver, &loader) {
         Ok(fe) => fe,
         // An `unknown param` is most often a pack whose provider is off: the pack graph
         // names it beside the parser's error, inside the typed error so the location
@@ -2911,8 +2916,8 @@ fn pipeline_b_compile_using(
         names: out.names,
         manifest: out.manifest,
         providers_tf,
-        variables_tf: crate::emitter::emit_variables(&fe.tfvars, &descriptions),
-        tfvars: crate::emitter::emit_tfvars(&fe.tfvars),
+        variables_tf: crate::emitter::emit_variables(&fe.tfvars, &descriptions, &fe.inputs),
+        tfvars: crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs),
         imports_tf: out.imports_tf,
         interface,
         exports: fe.exports,
@@ -3046,7 +3051,7 @@ pub(crate) fn compile_tail(
     };
     // the same values in the `terraform` and `providers` blocks, which the providers file reads
     let mut config = fe.config.clone();
-    let config_rendering = match satz_core::pipeline::resolve_interface_in_config(&mut config, &fe.config_sites, &fe.interface_files) {
+    let config_rendering = match satz_core::pipeline::resolve_interface_in_config(&mut config, &fe.config_sites, &fe.interface_files, &fe.config_rendering) {
         Ok(r) => r,
         Err(errors) => {
             for e in errors {
@@ -4644,6 +4649,16 @@ fn api_preflight_steps(billing: &crate::prerequisites::Billing, manifest: &crate
         .collect()
 }
 
+/// `--input <name>=<value>`, split at the first `=`; a value without one is refused.
+fn parse_inputs(args: &[String]) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+    args.iter()
+        .map(|a| match a.split_once('=') {
+            Some((n, v)) if !n.is_empty() => Ok((n.to_string(), v.to_string())),
+            _ => Err(format!("--input {}: written `<name>=<value>` — the input's name, `=`, the value", a).into()),
+        })
+        .collect()
+}
+
 /// The project each provider in the emitted `providers.tf` bills to. A project estate's
 /// providers read `interface.tf` and `terraform.tfvars`, which stand beside the file.
 fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, String> {
@@ -6167,7 +6182,7 @@ mod corpus {
         let mut snapshot = format!(
             "{}\n---tfvars---\n{}\n---imports---\n{}",
             sorted_lines(&out.main_tf).join("\n"),
-            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars)).join("\n"),
+            sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs)).join("\n"),
             sorted_lines(&out.imports_tf).join("\n")
         );
         // a project case's interface.tf is emission too
@@ -6333,7 +6348,7 @@ google_org_policy_policy {
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
-        Ok((out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars), fe))
+        Ok((out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs), fe))
     }
 
     fn emit(estate: &str) -> (String, String, satz_core::pipeline::FrontEnd) {
@@ -6761,6 +6776,13 @@ mod manifest_gate {
             for (addr, legacy) in &legacy_attrs {
                 let got = &got_attrs[addr];
                 for (k, v) in legacy {
+                    // DELIBERATE divergence (ADR 0079): the text is the rendering — an
+                    // input as `var.<name>`, a central estate's value as
+                    // `local.interface.<export>` — while the manifest holds the value the
+                    // fold judged. The scanner reads the rendering; the manifest never does.
+                    if v.contains("${var.") || v.contains("${local.interface") {
+                        continue;
+                    }
                     // DELIBERATE divergence from the text scanner (R9): a value
                     // that is nothing but one interpolation is a REFERENCE, so
                     // the manifest files it under `refs`. The scanner could only

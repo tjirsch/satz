@@ -47,6 +47,8 @@ google_folder {
 }
 ```
 
+`inputs { … }` declares a template's contract: params a reader binds — the using estate's `params { }`, or `satz transpile <template> --input <name>=<value>` — which every check reads as their value and the HCL reads as `var.<name>` (`variables.tf` declares them, `terraform.tfvars` carries the bound value). An input decides no structure: not a label, a grant's member or scope, an `each` list, a `when` gate, an export, a question or satz's own keys ([language §6.3](language.md#inputs--a-templates-contract-the-values-a-reader-binds)).
+
 A **pack** is the same language with a different header — `pack monitoring.logsink
 version "1.2"` — and no `terraform` block. Packs are the reusable half; estates use
 them.

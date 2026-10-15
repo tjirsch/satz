@@ -1,0 +1,49 @@
+// Corpus case: a template's inputs. Every check reads an input as its bound value — the
+// example until a reader binds one — and the emission writes `var.<name>`: bare where the
+// input is the whole value, inside a template where text holds it; the provider alias of a
+// project whose id reads one reads it too. `variables.tf` declares each input by its name
+// with the comment above it as its description; `terraform.tfvars` carries the bound value.
+// Snapshot-gated.
+
+estate corpus_inputs
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  customer_shortname       = "acme"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  default_region           = "europe-west3"
+}
+
+inputs {
+  // the workload the project serves
+  workload    = "shop"
+  // dev, test or prod
+  stage       = "dev"
+  // the four-digit cost centre the project is billed to
+  cost_centre = "4711"
+  // how many days a topic keeps a message
+  retention   = 7
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_project {
+  work {
+    name            = "{workload}-{stage}"
+    project_id      = "{customer_shortname}-{workload}-{stage}"
+    billing_account = billing_account_infra
+    labels          = { cost_centre = cost_centre stage = stage }
+    google_pubsub_topic {
+      events {
+        name                       = "{workload}-events"
+        message_retention_duration = "{retention}d"
+      }
+    }
+  }
+}

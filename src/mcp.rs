@@ -286,6 +286,18 @@ pub(crate) struct EstateArg {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct TranspileArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// The template's inputs bound for this run, name → value as text, what `satz transpile
+    /// --input <name>=<value>` binds: a number, a bool or a list read as Satz writes one, a
+    /// string as written. A name no file declares as an input is refused
+    #[serde(default)]
+    pub inputs: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct CheckConsumerArgs {
     /// The project's configuration: a directory of `.tf` files under the server's root,
     /// relative to it or absolute
@@ -1671,7 +1683,7 @@ impl SatzMcp {
     )]
     async fn transpile_check(
         &self,
-        Parameters(args): Parameters<EstateArg>,
+        Parameters(args): Parameters<TranspileArgs>,
     ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
         const SERVES: Option<&str> = Some("transpile");
         if let Err(r) = self.permits(Group::Read, SERVES) {
@@ -1681,7 +1693,9 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+        let mut runtime = open.runtime.clone();
+        runtime.inputs = args.inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        match crate::pipeline_b_generate(&estate, &open.tool, &runtime) {
             Ok(out) => Ok(Ok(Json(CompileSummary {
                 estate: estate.display().to_string(),
                 addresses: out.manifest.addresses().into_iter().collect(),
@@ -1810,7 +1824,7 @@ impl SatzMcp {
     )]
     async fn transpile(
         &self,
-        Parameters(args): Parameters<EstateArg>,
+        Parameters(args): Parameters<TranspileArgs>,
     ) -> Result<Result<Json<CompileSummary>, CallToolResult>, McpError> {
         const SERVES: Option<&str> = Some("transpile");
         if let Err(r) = self.permits(Group::Write, SERVES) {
@@ -1820,7 +1834,9 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        let out = match crate::pipeline_b_generate(&estate, &open.tool, &open.runtime) {
+        let mut runtime = open.runtime.clone();
+        runtime.inputs = args.inputs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let out = match crate::pipeline_b_generate(&estate, &open.tool, &runtime) {
             Ok(out) => out,
             Err(e) => {
                 return Ok(Err(refused_with_findings("transpile", &estate, e.as_ref())));
