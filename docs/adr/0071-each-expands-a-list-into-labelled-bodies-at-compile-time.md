@@ -64,3 +64,14 @@ contributed to a list, whatever the entries become.
   entry; the canonical form carries it, so pack drift sees it.
 - An entry's label is part of what the estate publishes when an `all` export reaches its
   type: renaming it is a breaking change for the projects that read it.
+
+## Amendment (2026-10-15): `each` inside a grant map
+
+`each <list> by <field> { … }` inside a grant map — the member → roles form of §6.5 — writes
+one grant map per entry: the body's scope attribute and member keys read the entry, and the
+grants take their addresses from the scope and the members, never from the entry's label. A
+grant on every team's folder, or every topic, is then written once: the deployer pack
+(`presets/workload-deployer.satz`) grants `deployer_folder_roles` to each team's account on
+the folder its entry names. A body that carries `role` and `member` instead of member keys
+is still a labelled grant resource, as before. The position rule that refused `each` in a
+grant map is gone; nothing an estate held is refused.

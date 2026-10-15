@@ -1016,6 +1016,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `workload_deployer` | 1.0 | 2026-10-15 | first version: one deployer identity per customer team — per entry of the request point `workload_deployers`, `{ name group folder }`, the team's infrastructure Google project under `deployer_project_folder`, inside it the account `svc-deploy-<name>` and the state bucket, `deployer_folder_roles` on the entry's folder and on each entry of `workload_deployer_folders`, `deployer_billing_roles` on the billing account, `deployer_organization_roles` (`roles/browser`, for the interface's lookups) on the organisation, and `deployer_group_roles` for the team's group on the account alone |
+| `estate_map` | 2.9 | 2026-10-15 | offers `workload-deployer` on `use_workload_deployer`, off by default, with its question; nothing already on changes |
 | `monitoring.organization_audit_logsink` | 1.8 | 2026-10-14 | `logsink_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
 | `integrations.microsoft_defender_for_cloud` | 0.7 | 2026-10-14 | `mdc_mgmt_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
 | `project_onboarding` | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |

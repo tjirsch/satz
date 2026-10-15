@@ -1315,6 +1315,66 @@ adds to a project's interface with a block of the same name in its own file — 
 
 Nothing in the pack bills while idle.
 
+### workload-deployer.satz
+
+One deployer identity per customer team: a Google project of the team's own holding the
+service account its pipelines run as and the bucket its states live in, and the roles that
+account needs to roll out folders and Google projects under the workload folder — nothing
+more. A team then never runs as the organisation's IaC account.
+
+**Use** — the teams' projects land in the folder `deployer_project_folder` names, so the line
+stands at the top level:
+
+```
+params {
+  use_workload_deployer   = true
+  deployer_project_folder = "google_folder.infra_folder.name"
+  workload_deployers = [
+    { name = "platform" group = "gcp-project-admins@example.com" },
+  ]
+}
+
+use "presets/workload-deployer.satz" when use_workload_deployer
+```
+
+**Requests.** A team asks for its identity with a small pack of its own, checked with `satz
+check-request <file> <estate>` and vendored into the estate by pull request:
+
+| request point | key | fields |
+|---|---|---|
+| `workload_deployers` | `name` | `name` (the team's name — lowercase letters, digits and `-`, starting with a letter), `group` (the address of the group that may become the account, `<name>@<domain>`), `folder` (the parent the team creates under; `google_folder.workload_folder.name` when left out) |
+| `workload_deployer_folders` | `name` | `name`, `deployer` (the team's name), `folder` — one entry per further parent folder a team creates under |
+
+**Per entry** `platform`:
+
+| resource | what |
+|---|---|
+| `google_project.platform` | `{customer_shortname}-deploy-platform` under `deployer_project_folder`, billed to `billing_account_infra`, with the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs |
+| `google_service_account.deploy_platform` | `svc-deploy-platform`, the account the team's pipelines impersonate |
+| `google_storage_bucket.deploy_platform_state` | `{customer_shortname}-deploy-platform-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
+| the account's grants | `deployer_folder_roles` on the entry's folder (and on each further folder of `workload_deployer_folders`), `deployer_billing_roles` on the billing account, `deployer_organization_roles` on the organisation |
+| the group's grants | `roles/viewer` on the project; `deployer_group_roles` on the account alone |
+
+The one organisation-level right, `roles/browser`, is what the interface's lookups need: the
+workload folder is looked up by its name among the organisation's folders, and that listing
+needs `resourcemanager.folders.list` on the organisation. Without it the team's plan stops at
+the lookup.
+
+**Overridable defaults:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `workload_deployers` | `[]` | the teams, bound in the estate or filled by requests |
+| `workload_deployer_folders` | `[]` | further parent folders per team |
+| `deployer_project_folder` | `""` | the folder the teams' projects are created in, asked; empty is the organisation, the infrastructure folder is `"google_folder.infra_folder.name"` |
+| `deployer_folder_roles` | folderAdmin, projectCreator, projectIamAdmin, serviceUsageAdmin | what the account holds on its parent folder(s) |
+| `deployer_organization_roles` | `["roles/browser"]` | what it holds on the organisation |
+| `deployer_billing_roles` | `["roles/billing.user"]` | what it holds on the billing account |
+| `deployer_group_roles` | tokenCreator, serviceAccountUser | what the team's group holds on the account |
+
+The account's address is the pattern `svc-deploy-<name>@{customer_shortname}-deploy-<name>.iam.gserviceaccount.com`;
+the pack exports no interface. Nothing in the pack bills while idle.
+
 ### interface-notice.satz
 
 Tells the projects that read the estate's interface when an exported value changes.

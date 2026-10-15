@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.8"
+pack estate_map version "2.9"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -48,6 +48,7 @@ params {
   use_billing_export            = false
   use_shared_network            = false
   use_project_onboarding        = false
+  use_workload_deployer         = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -135,6 +136,13 @@ question use_shared_network {
 question use_project_onboarding {
   prompt   = "Onboard projects from this estate: per project a Google project with its own IaC service account and state bucket, and the interface the project's estate reads?"
   why      = "A project — a team's estate beside this one, in its own repository — is then one entry of `projects`, requested by pull request, and `satz init --project` writes its estate from the interface. Turning it off later destroys every onboarded project's Google project, with everything the project built in it."
+  reversal = recreate
+  blast    = high
+}
+
+question use_workload_deployer {
+  prompt   = "Give each customer team that rolls out folders and projects its own deployer identity: an infrastructure project of its own with the service account its pipelines run as and the bucket its states live in, and the roles that account needs under the workload folder?"
+  why      = "A team then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds the roles the estate grants it — on its parent folder, on the billing account, and the one read on the organisation the interface lookups need. Turning it off later destroys every team's project, with its state bucket and every state in it."
   reversal = recreate
   blast    = high
 }
@@ -309,6 +317,11 @@ offers "presets/billing-export.satz" {
 offers "presets/project-onboarding.satz" {
   when  = use_project_onboarding
   phase = "once the estate runs as the service account — the projects' own estates run as their own accounts"
+}
+
+offers "presets/workload-deployer.satz" {
+  when  = use_workload_deployer
+  phase = "once the estate runs as the service account and the workload folder exists — the teams' accounts are granted on it"
 }
 
 offers "presets/shared-network.satz" {

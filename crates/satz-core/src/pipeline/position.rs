@@ -239,14 +239,10 @@ fn relocation_advice(node: &str, label: &str) -> String {
 /// resource that really is called `params` is written.
 pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> Option<Misfit> {
     match entry {
-        // `each` writes labelled bodies, so it stands where labels do
+        // `each` writes labelled bodies, so it stands where labels do — and in a grant
+        // map, where an entry's body is a grant map of its own
         Entry::Each { list, key, line, .. } => match pos {
-            Position::ResourceMap { grant: false, .. } | Position::NodeMap { .. } => None,
-            Position::ResourceMap { grant: true, .. } => Some(Misfit {
-                line: *line,
-                what: format!("`each {} by {} {{ … }}` inside {}, a grant map, whose entries are members with their roles", list, key, pos.written()),
-                fix: "A grant map takes a list param as a member's roles, or write the grant as a labelled resource".to_string(),
-            }),
+            Position::ResourceMap { .. } | Position::NodeMap { .. } => None,
             Position::File | Position::NodeBody { .. } => Some(Misfit {
                 line: *line,
                 what: format!("`each {} by {} {{ … }}` stands at {} — it writes one labelled body per entry, so it stands where labels do", list, key, pos.written()),
