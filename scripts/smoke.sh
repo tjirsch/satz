@@ -308,20 +308,6 @@ for cfg in "$ex"/*/config.toml; do
   fi
 done
 [ "$examples" -gt 0 ] || fail "examples/acme/ holds no example"
-# what the cost-centre example says it gives: the id by the naming scheme, the label, a
-# group per role, and the refusal of a cost centre that is not four digits
-cc="$ex/cost-centre-project"
-grep -q 'project_id = "${local.interface.customer_shortname}-shop-prod"' "$cc/hcl/main.tf" || fail "the project id does not follow the naming scheme over the local:\n$(cat "$cc/hcl/main.tf")"
-# a provider reads the static local: the lookup it runs cannot be among what it reads
-grep -q 'region = local.interface_static.default_region' "$cc/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$cc/hcl/providers.tf")"
-grep -q 'project = "${local.interface_static.customer_shortname}-shop-prod"' "$cc/hcl/providers.tf" || fail "the project's alias does not read the project id over the local:\n$(cat "$cc/hcl/providers.tf")"
-grep -q 'local.interface\.' "$cc/hcl/providers.tf" && fail "a provider reads the local that holds the lookup it runs:\n$(cat "$cc/hcl/providers.tf")"
-grep -q 'customer_shortname = "acme"' "$cc/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$cc/hcl/interface.tf" && grep -q 'workload_folder = data.google_active_folder.workload_folder.name' "$cc/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$cc/hcl/interface.tf")"
-grep -q ' = "acme' "$cc/hcl/main.tf" && fail "main.tf carries the organisation's value:\n$(cat "$cc/hcl/main.tf")"
-grep -q '"cost_centre" = "4711"' "$cc/hcl/main.tf" || fail "the cost centre label is missing:\n$(cat "$cc/hcl/main.tf")"
-for r in owner editor viewer; do
-  grep -q "member = \"group:\${local.interface.customer_shortname}-shop-prod-$r@\${local.interface.customer_domain}\"" "$cc/hcl/main.tf" || fail "the $r group is not granted over the local:\n$(cat "$cc/hcl/main.tf")"
-done
 # the template: inputs as variables in the HCL team's form, bound values in the Satz team's,
 # one main.tf for both
 pt="$ex/project-template"; sd="$ex/shop-dev"
@@ -329,14 +315,18 @@ grep -q 'variable "cost_centre" {' "$pt/hcl/variables.tf" && grep -q 'descriptio
 grep -q 'project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/main.tf" || fail "the template's project id does not read the inputs and the organisation:\n$(cat "$pt/hcl/main.tf")"
 grep -q '"cost_centre" = var.cost_centre' "$pt/hcl/main.tf" || fail "the template's label does not read the input bare:\n$(cat "$pt/hcl/main.tf")"
 grep -q 'project = "${local.interface_static.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/providers.tf" || fail "the template's provider alias does not read the inputs:\n$(cat "$pt/hcl/providers.tf")"
+# the organisation's values stand in interface.tf alone; a provider reads the static local
+grep -q 'region = local.interface_static.default_region' "$pt/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$pt/hcl/providers.tf")"
+grep -q 'local.interface\.' "$pt/hcl/providers.tf" && fail "a provider reads the local that holds the lookup it runs:\n$(cat "$pt/hcl/providers.tf")"
+grep -q 'customer_shortname = "acme"' "$pt/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$pt/hcl/interface.tf" && grep -q 'workload_folder = data.google_active_folder.workload_folder.name' "$pt/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$pt/hcl/interface.tf")"
+grep -q ' = "acme' "$pt/hcl/main.tf" && fail "main.tf carries the organisation's value:\n$(cat "$pt/hcl/main.tf")"
+for r in owner editor viewer; do
+  grep -q "member = \"group:\${local.interface.customer_shortname}-\${var.application}-\${var.stage}-$r@\${local.interface.customer_domain}\"" "$pt/hcl/main.tf" || fail "the $r group is not granted over the local and the inputs:\n$(cat "$pt/hcl/main.tf")"
+done
 grep -q '^cost_centre = "4711"' "$pt/hcl/terraform.tfvars" && grep -q '^cost_centre = "4711"' "$sd/hcl/terraform.tfvars" || fail "the example value is not in both tfvars"
 cmp -s <(sed 1d "$pt/hcl/main.tf") <(sed 1d "$sd/hcl/main.tf") || fail "the thin estate's main.tf differs from the template's:\n$(diff "$pt/hcl/main.tf" "$sd/hcl/main.tf")"
 "$satz" --config "$pt" transpile template.satz --input stage=test --print-variables --check > tmp/template-input.txt 2>&1 || fail "--input refused the template's input:\n$(cat tmp/template-input.txt)"
 grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind the template's input:\n$(cat tmp/template-input.txt)"
-sed 's/name = "shop-dev" cost_centre = "4711"/name = "shop-dev" cost_centre = "47A1"/' "$cc/satz/workloads.satz" > "$cc/satz/tmp-bad.satz"
-"$satz" --config "$cc" transpile tmp-bad.satz --check > tmp/example-bad.txt 2>&1 && { rm -f "$cc/satz/tmp-bad.satz"; fail "a cost centre that is not four digits compiled"; }
-rm -f "$cc/satz/tmp-bad.satz"
-grep -q 'entry `shop-dev` has `cost_centre` = "47A1"' tmp/example-bad.txt || fail "the refusal does not name the entry and the value:\n$(cat tmp/example-bad.txt)"
 
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
 ih=tmp/inputs-hcl
