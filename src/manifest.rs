@@ -233,6 +233,16 @@ impl Manifest {
     pub fn of_type<'a>(&'a self, tf_type: &'a str) -> impl Iterator<Item = &'a EmittedResource> + 'a {
         self.resources.values().filter(move |r| r.tf_type == tf_type)
     }
+
+    /// The org policies the estate declares ENFORCING `constraint`: the `name` ends in
+    /// `/policies/<constraint>`, the one unconditional rule is `enforce = "TRUE"`, and
+    /// the spec is not `reset`. A policy declared off is not one of them — nothing
+    /// waits for a policy that does nothing.
+    pub fn enforced_policies_on<'a>(&'a self, constraint: &str) -> impl Iterator<Item = &'a EmittedResource> + 'a {
+        let suffix = format!("/policies/{}", constraint);
+        self.of_type("google_org_policy_policy")
+            .filter(move |r| r.enforce == Some(true) && !r.reset && r.attrs.get("name").is_some_and(|n| n.ends_with(&suffix)))
+    }
 }
 
 fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {

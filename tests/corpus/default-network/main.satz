@@ -1,0 +1,59 @@
+// Corpus case: the `default` network (ADR 0080). A project whose services name
+// `compute.googleapis.com` is written with `auto_create_network = false`, its Compute
+// service waits for the estate's enforcing `compute.skipDefaultNetworkCreation`
+// policy, a project that states the attribute keeps its value, and a project without
+// Compute gets neither the attribute nor the edge. Snapshot-gated.
+
+estate corpus_default_network
+
+params {
+  customer_organization_id = "123456789"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_org_policy_policy {
+  "compute-skipDefaultNetworkCreation" {
+    name   = "compute.skipDefaultNetworkCreation"
+    parent = "organizations/{customer_organization_id}"
+    spec {
+      rules = [
+        {
+          enforce = "TRUE"
+        },
+      ]
+    }
+  }
+}
+
+google_folder {
+  infra_folder {
+    display_name = "Infrastructure"
+    google_project {
+      infra {
+        project_id = "corp-infra-001"
+        project_service = [
+          "compute.googleapis.com",
+          "logging.googleapis.com",
+        ]
+      }
+      keep {
+        project_id          = "corp-keep-001"
+        auto_create_network = true
+        project_service = [
+          "compute.googleapis.com",
+        ]
+      }
+      plain {
+        project_id = "corp-plain-001"
+        project_service = [
+          "logging.googleapis.com",
+        ]
+      }
+    }
+  }
+}

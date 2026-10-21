@@ -378,6 +378,26 @@ The enable is a live change outside tofu's state. The declared
 `google_project_service` records an API that is now already on and its create is
 idempotent, so the plan that follows shows no change for it.
 
+`compute.googleapis.com` is the one API the preflight does not always switch on.
+Google creates the `default` network the moment Compute is switched on in a project
+where `compute.skipDefaultNetworkCreation` is not in force, so where the estate
+declares that policy enforcing, the preflight reads the organisation's effective
+policy first and switches Compute on only when it already enforces the constraint.
+Otherwise Compute is left to the apply, in which the Compute service waits for the
+policy, and the line says so:
+
+```
+APIs on corp-infra-001: 14 declared, 2 off — enabling 1 of them, because the refresh is billed to this project and runs before anything is created
+  enabled cloudasset.googleapis.com
+  left to the apply: compute.googleapis.com — the estate declares `google_org_policy_policy.compute_skipDefaultNetworkCreation` enforcing and the organisation does not enforce it yet; the apply creates the policy and switches Compute on after it, so the project gets no `default` network
+```
+
+`satz bootstrap` does the same on day 0, where nothing is live yet, and lists Compute
+under *Deferred to the estate*. A plan that then stops on a Compute read — resources
+imported into a project while Compute is off on the project their reads are billed to
+— needs the policy applied first, or Compute switched on by hand with the `gcloud
+services enable` line and the `default` network that creates deleted by hand.
+
 Where the enable cannot succeed — the identity holds no `serviceusage.services.enable`,
 the Service Usage API is itself off on the billed project, an org policy forbids it —
 the run stops before `tofu` and prints the command that does it by hand:

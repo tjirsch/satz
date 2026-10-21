@@ -482,6 +482,36 @@ fn order_after_project_services(blocks: &mut [hcl::Block], infra_project: &str) 
     }
 }
 
+/// Google creates the `default` network the moment Compute is switched on in a project,
+/// and tests `compute.skipDefaultNetworkCreation` at that moment: a Compute service and
+/// the policy created in one apply, unordered, land the network on scheduling luck. Every
+/// `google_project_service` enabling Compute gets a `depends_on` on each policy the estate
+/// declares enforcing that constraint — a graph edge, no plan change — so the policy is
+/// live before Compute is on. The `plan`/`apply` preflight and `bootstrap` keep the same
+/// order outside the apply (`prerequisites::compute_deferral`). (ADR 0080)
+fn order_compute_after_skip_default_network(blocks: &mut [hcl::Block]) {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let policies: Vec<String> =
+        manifest.enforced_policies_on(crate::prerequisites::SKIP_DEFAULT_NETWORK).map(|r| r.address()).collect();
+    if policies.is_empty() {
+        return;
+    }
+    for b in blocks.iter_mut() {
+        let Some(address) = block_address(b) else { continue };
+        let Some(r) = manifest.resources.get(&address) else { continue };
+        if r.tf_type != "google_project_service" || r.attrs.get("service").map(String::as_str) != Some(crate::prerequisites::COMPUTE_API)
+        {
+            continue;
+        }
+        for policy in &policies {
+            // an edge into what the policy already reaches would close a loop
+            if !manifest.closure_of(policy).contains(&address) {
+                add_depends_on(b, policy);
+            }
+        }
+    }
+}
+
 /// Add `address` to the block's `depends_on`, creating the attribute when absent.
 fn add_depends_on(b: &mut hcl::Block, address: &str) {
     let dep = crate::emit_shared::traversal_expr(address);
@@ -608,6 +638,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     order_after_groups(&mut blocks);
     order_after_custom_constraints(&mut blocks);
     order_after_project_services(&mut blocks, &ctx.infra_project);
+    order_compute_after_skip_default_network(&mut blocks);
     order_org_policies_per_parent(&mut blocks);
 
     let mut manifest = crate::manifest::Manifest::from_blocks(&blocks);
@@ -1058,6 +1089,22 @@ fn reset_replace_comment(address: &str) -> String {
     )
 }
 
+/// The service one entry of `project_service` names, with the entry's own attributes:
+/// `"x.googleapis.com"`, `{ service = "x.googleapis.com" … }`, or `{ "x.googleapis.com" = { … } }`.
+fn service_entry(v: &serde_yaml::Value) -> Option<(String, Option<&serde_yaml::Mapping>)> {
+    match v {
+        serde_yaml::Value::String(svc) => Some((svc.clone(), None)),
+        serde_yaml::Value::Mapping(m) => match m.get(serde_yaml::Value::String("service".into())) {
+            Some(serde_yaml::Value::String(svc)) => Some((svc.clone(), Some(m))),
+            _ => match m.iter().next() {
+                Some((serde_yaml::Value::String(svc), mv)) => Some((svc.clone(), mv.as_mapping())),
+                _ => None,
+            },
+        },
+        _ => None,
+    }
+}
+
 /// google_project + its google_project_service children — mirrors the walk's
 /// transpile_google_project (context comes from node_path, not walk position).
 fn emit_project(
@@ -1155,6 +1202,19 @@ fn emit_project(
             b = b.add_attribute(hcl::Attribute::new(k, val));
         }
     }
+    // Google creates the `default` network the moment Compute is switched on in a
+    // project where `compute.skipDefaultNetworkCreation` is not in force. The provider
+    // deletes that network on create when `auto_create_network` is false, and does
+    // nothing to a project that already exists, so a project whose services name
+    // Compute is written without the network unless the estate states the attribute.
+    // A project without Compute has no network, and `false` there would make the
+    // provider switch Compute on only to delete it, so nothing is written (ADR 0080).
+    let enables_compute = get("project_service")
+        .and_then(|v| v.as_sequence())
+        .is_some_and(|s| s.iter().filter_map(service_entry).any(|(svc, _)| svc == crate::prerequisites::COMPUTE_API));
+    if enables_compute && get("auto_create_network").is_none() {
+        b = b.add_attribute(hcl::Attribute::new("auto_create_network", hcl::Expression::Bool(false)));
+    }
     if let Some(lc) = get("lifecycle").and_then(|v| crate::emit_shared::lifecycle_block(v, &|_| None)) {
         b = b.add_block(lc);
     }
@@ -1162,19 +1222,7 @@ fn emit_project(
 
     if let Some(serde_yaml::Value::Sequence(services)) = get("project_service") {
         for service_val in services {
-            let (service, service_attrs): (String, Option<&serde_yaml::Mapping>) = match service_val {
-                serde_yaml::Value::String(svc) => (svc.clone(), None),
-                serde_yaml::Value::Mapping(m) => match m.get(serde_yaml::Value::String("service".into())) {
-                    Some(serde_yaml::Value::String(svc)) => (svc.clone(), Some(m)),
-                    _ => {
-                        let Some((serde_yaml::Value::String(svc), mv)) = m.iter().next() else {
-                            continue;
-                        };
-                        (svc.clone(), mv.as_mapping())
-                    }
-                },
-                _ => continue,
-            };
+            let Some((service, service_attrs)) = service_entry(service_val) else { continue };
             let label = format!("{}_{}", resource_name, service.replace('.', "_"));
             blocks.push(crate::emit_shared::project_service_block(
                 &label,
@@ -1937,6 +1985,149 @@ mod project_alias_tests {
             "the alias runs as whoever is logged in:\n{}",
             out
         );
+    }
+}
+
+#[cfg(test)]
+mod default_network_order_tests {
+    //! Seen on a customer's new organisation: the infrastructure project's Compute
+    //! service and the CIS pack's `compute.skipDefaultNetworkCreation` went into the
+    //! first apply with no edge between them, and the project came out with a
+    //! `default` network. Google tests the policy when Compute is switched on.
+    use super::*;
+
+    fn blocks(tf: &str) -> Vec<hcl::Block> {
+        hcl::parse(tf).expect("fixture is valid HCL").blocks().cloned().collect()
+    }
+
+    fn depends_on(b: &hcl::Block) -> Option<String> {
+        b.body().attributes().find(|a| a.key() == "depends_on").map(|a| hcl::format::to_string(a.expr()).unwrap().split_whitespace().collect())
+    }
+
+    const ESTATE: &str = r#"
+resource "google_project" "infra" {
+  project_id = "corp-infra-001"
+}
+resource "google_project_service" "infra_compute_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "compute.googleapis.com"
+}
+resource "google_project_service" "infra_logging_googleapis_com" {
+  project = google_project.infra.project_id
+  service = "logging.googleapis.com"
+}
+resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+  name   = "organizations/123456789012/policies/compute.skipDefaultNetworkCreation"
+  parent = "organizations/123456789012"
+  spec {
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+resource "google_org_policy_policy" "workloads_skip" {
+  name   = "${google_folder.workloads.name}/policies/compute.skipDefaultNetworkCreation"
+  parent = google_folder.workloads.name
+  spec {
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+resource "google_org_policy_policy" "iam_disableServiceAccountKeyCreation" {
+  name   = "organizations/123456789012/policies/iam.disableServiceAccountKeyCreation"
+  parent = "organizations/123456789012"
+  spec {
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+resource "google_folder" "workloads" {
+  display_name = "Workloads"
+  parent       = "organizations/123456789012"
+}
+"#;
+
+    /// The Compute service waits for every enforcing declaration of the constraint,
+    /// on the organisation and on a folder alike; another service, another policy
+    /// and the policies themselves are left alone.
+    #[test]
+    fn the_compute_service_waits_for_every_enforcing_skip_policy() {
+        let mut bs = blocks(ESTATE);
+        order_compute_after_skip_default_network(&mut bs);
+        let by = |l: &str| bs.iter().find(|b| b.labels().get(1).map(|x| x.as_str()) == Some(l)).unwrap();
+        assert_eq!(
+            depends_on(by("infra_compute_googleapis_com")).as_deref(),
+            Some("[google_org_policy_policy.compute_skipDefaultNetworkCreation,google_org_policy_policy.workloads_skip]")
+        );
+        assert_eq!(depends_on(by("infra_logging_googleapis_com")), None);
+        assert_eq!(depends_on(by("compute_skipDefaultNetworkCreation")), None);
+        assert_eq!(depends_on(by("iam_disableServiceAccountKeyCreation")), None);
+        assert_eq!(depends_on(by("infra")), None);
+    }
+
+    /// A policy declared off, or reset, enforces nothing, so nothing waits for it.
+    #[test]
+    fn a_policy_declared_off_orders_nothing() {
+        let off = ESTATE.replace("enforce = \"TRUE\"", "enforce = \"FALSE\"");
+        let mut bs = blocks(&off);
+        order_compute_after_skip_default_network(&mut bs);
+        assert!(bs.iter().all(|b| depends_on(b).is_none()), "no policy enforces, no edge");
+
+        let reset = ESTATE.replace("spec {\n    rules {\n      enforce = \"TRUE\"\n    }\n  }", "spec {\n    reset = true\n  }");
+        let mut bs = blocks(&reset);
+        order_compute_after_skip_default_network(&mut bs);
+        assert!(bs.iter().all(|b| depends_on(b).is_none()), "a reset policy enforces nothing");
+    }
+
+    /// The preflight's reading of the same estate: the organisation's policy is the
+    /// one whose enforcement can be read, so it is the one named.
+    #[test]
+    fn the_deferral_names_the_organisations_policy() {
+        let manifest = crate::manifest::Manifest::from_blocks(blocks(ESTATE).iter());
+        let d = crate::prerequisites::compute_deferral(&manifest).expect("the estate declares the policy");
+        assert_eq!(d.policy, "google_org_policy_policy.compute_skipDefaultNetworkCreation");
+        assert_eq!(d.organization.as_deref(), Some("organizations/123456789012"));
+
+        let folder_only = ESTATE.replace("resource \"google_org_policy_policy\" \"compute_skipDefaultNetworkCreation\"", "resource \"google_org_policy_policy\" \"gone\"")
+            .replace("organizations/123456789012/policies/compute.skipDefaultNetworkCreation", "organizations/123456789012/policies/compute.vmExternalIpAccess");
+        let manifest = crate::manifest::Manifest::from_blocks(blocks(&folder_only).iter());
+        let d = crate::prerequisites::compute_deferral(&manifest).expect("the folder's policy still counts");
+        assert_eq!(d.policy, "google_org_policy_policy.workloads_skip");
+        assert_eq!(d.organization, None, "a folder is a reference, not an id to read at");
+
+        let none = ESTATE.replace("enforce = \"TRUE\"", "enforce = \"FALSE\"");
+        let manifest = crate::manifest::Manifest::from_blocks(blocks(&none).iter());
+        assert!(crate::prerequisites::compute_deferral(&manifest).is_none(), "nothing enforces, nothing is deferred");
+    }
+
+    /// What the preflight prints beside the API it left alone, per what it read.
+    #[test]
+    fn the_reason_says_what_was_read() {
+        let d = crate::prerequisites::ComputeDeferral {
+            policy: "google_org_policy_policy.compute_skipDefaultNetworkCreation".into(),
+            organization: Some("organizations/123456789012".into()),
+        };
+        let not_yet = d.reason(&Ok(Some(false)));
+        assert!(not_yet.contains("does not enforce it yet") && not_yet.contains("no `default` network"), "{not_yet}");
+        let unread = d.reason(&Err("403 PERMISSION_DENIED".into()));
+        assert!(unread.contains("could not be read (403 PERMISSION_DENIED)"), "{unread}");
+        let folder = crate::prerequisites::ComputeDeferral { organization: None, ..d.clone() };
+        assert!(folder.reason(&Ok(None)).contains("enforcing on a folder"));
+        assert!(d.bootstrap_reason().contains("the first apply creates the policy"));
+
+        let done = crate::prerequisites::ApiPreflight {
+            project: "corp-infra-001".into(),
+            declared: vec!["compute.googleapis.com".into(), "logging.googleapis.com".into()],
+            enabled: vec!["logging.googleapis.com".into()],
+            deferred: vec![crate::prerequisites::DeferredApi { api: "compute.googleapis.com".into(), reason: not_yet.clone() }],
+        };
+        let out = done.render();
+        assert!(out.starts_with("APIs on corp-infra-001: 2 declared, 2 off — enabling 1 of them"), "{out}");
+        assert!(out.contains("  enabled logging.googleapis.com\n  left to the apply: compute.googleapis.com — the estate declares"), "{out}");
+        let only = crate::prerequisites::ApiPreflight { enabled: Vec::new(), ..done };
+        assert!(only.render().starts_with("APIs on corp-infra-001: 2 declared, 1 off\n  left to the apply"), "{}", only.render());
     }
 }
 

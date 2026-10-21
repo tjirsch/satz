@@ -106,6 +106,10 @@ google_folder {
 }
 ```
 
+A project whose `project_service` names `compute.googleapis.com` is emitted with
+`auto_create_network = false`, so it gets no `default` network; state the attribute
+to decide otherwise.
+
 A repeated *block* is a **list of objects** (`lifecycle_rule = [ { … }, { … } ]`).
 A repeated *key* inside one body is an error naming both lines.
 

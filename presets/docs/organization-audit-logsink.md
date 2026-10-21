@@ -132,7 +132,7 @@ The whole library's history: [the changelog](../CHANGELOG.md#changelog) in `pres
 
 <!-- notes:start — hand-written, kept across `satz doc-packs` -->
 
-The project lands in the scope this pack is `use`d in: at the top level it belongs to the organisation, inside a `google_folder` block to that folder. Moving it afterwards is a project move, so decide the scope before the first apply.
+The project is created in the folder `logsink_project_folder` names — a folder the estate declares, `google_folder.<label>.name`, or an existing one by its numeric id — and directly under the organisation while that param is empty; an estate `satz init` wrote binds `google_folder.infra_folder.name`. Where the pack's `use` line stands decides nothing. Moving the project afterwards is an in-place parent change that changes the policies and the grants it inherits, so decide the folder before the first apply.
 
 [`monitoring.organization_cis_log_alerts_central`](organization-cis-log-alerts-central.md) takes this pack's project by reference, so an estate using both wires nothing. The bucket, its location and the project id cannot change once created, and shortening the retention deletes everything already past the new age at the next lifecycle run.
 

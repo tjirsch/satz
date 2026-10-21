@@ -1258,7 +1258,8 @@ pub(crate) const READ_APIS: [&str; 6] = [
 /// does it by hand, when they cannot be read or switched on.
 pub(crate) async fn enable_read_apis(infra: &str) -> Result<(), Box<dyn std::error::Error>> {
     let apis: Vec<String> = READ_APIS.iter().map(|a| a.to_string()).collect();
-    match crate::prerequisites::enable_declared_apis(infra, apis, Some(infra)).await {
+    // the read APIs only, never Compute: nothing to leave to an apply
+    match crate::prerequisites::enable_declared_apis(infra, apis, Some(infra), None).await {
         Ok(done) if done.enabled.is_empty() => {
             println!("import: reads are billed to {}; the {} APIs they call are on there", infra, done.declared.len());
             Ok(())

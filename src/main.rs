@@ -1845,7 +1845,7 @@ Thumbs.db
             // before `tofu` runs is what the estate declares, so an estate whose
             // resources need an API it declares nowhere is refused here rather than
             // halfway through the first apply.
-            let services = match prerequisites_report(&config_path, &tool_config, &runtime_config, PrerequisiteFindings::Report) {
+            let (services, deferred) = match prerequisites_report(&config_path, &tool_config, &runtime_config, PrerequisiteFindings::Report) {
                 Ok(r) => {
                     if let Err(e) = require_apis_declared(&r, "bootstrap") {
                         if dry_run {
@@ -1854,7 +1854,13 @@ Thumbs.db
                             return Err(e.into());
                         }
                     }
-                    r.infra_services
+                    // Compute waits for the policy that stops the `default` network: on
+                    // day 0 nothing is live, so the first apply switches it on (ADR 0080)
+                    let deferred = r
+                        .compute_deferral
+                        .map(|d| vec![(crate::prerequisites::COMPUTE_API.to_string(), d.bootstrap_reason())])
+                        .unwrap_or_default();
+                    (r.infra_services, deferred)
                 }
                 // An estate that does not compile is refused HERE, before a folder, a
                 // project or a bucket exists. This arm used to fall back to an empty list
@@ -1863,7 +1869,7 @@ Thumbs.db
                 // first resource that needed a type. A dry run creates nothing, so it warns.
                 Err(e) if dry_run => {
                     eprintln!("warning: bootstrap would refuse: the estate does not compile — {}", e);
-                    Vec::new()
+                    (Vec::new(), Vec::new())
                 }
                 Err(e) => {
                     return Err(format!("bootstrap refused before creating anything: the estate does not compile — {}", e).into())
@@ -1872,6 +1878,7 @@ Thumbs.db
             crate::bootstrap::bootstrap(
                 config_path,
                 &services,
+                &deferred,
                 dry_run,
                 greenfield,
                 no_default_grants,
@@ -3821,6 +3828,10 @@ pub(crate) struct PrerequisitesReport {
     /// every service the estate declares on `infra_project`, whatever needs it:
     /// what `bootstrap` enables before `tofu` runs
     pub infra_services: Vec<String>,
+    /// the enforcing `compute.skipDefaultNetworkCreation` the estate declares, when it
+    /// does: `bootstrap` and the `plan`/`apply` preflight then leave
+    /// `compute.googleapis.com` to the apply, which creates the policy first
+    pub compute_deferral: Option<crate::prerequisites::ComputeDeferral>,
     /// one `gcloud services enable` line per project in `missing_apis` — what an
     /// operator who applies with `tofu` directly runs, since writing the
     /// declaration into the estate does not switch anything on. Empty when
@@ -3883,6 +3894,7 @@ pub(crate) fn prerequisites_report(
         } else {
             crate::prerequisites::declared_apis(&out.manifest, &infra)
         },
+        compute_deferral: crate::prerequisites::compute_deferral(&out.manifest),
         infra_project: infra,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
         write: crate::prerequisites::plan(&missing, &granted),
@@ -4573,6 +4585,9 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
     }
     let mut state: Option<crate::bootstrap::StateIndex> = None;
     let mut impersonating = false;
+    // Compute goes on only where the organisation already enforces
+    // `compute.skipDefaultNetworkCreation`, when the estate declares it (ADR 0080)
+    let deferral = crate::prerequisites::compute_deferral(&manifest);
     for step in api_preflight_steps(&billing, &manifest) {
         let (project, declared) = match step {
             ApiPreflightStep::NoneDeclared(project) => {
@@ -4604,7 +4619,7 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
             configure_emitted_impersonation(&provider)?;
             impersonating = true;
         }
-        match crate::prerequisites::enable_declared_apis(&project, declared, billing.default_project()).await {
+        match crate::prerequisites::enable_declared_apis(&project, declared, billing.default_project(), deferral.as_ref()).await {
             Ok(done) => eprint!("{}", done.render()),
             Err(refusal) => return Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
         }
@@ -7563,6 +7578,7 @@ provider "google" {
             project: "corp-infra-001".to_string(),
             declared: vec!["iam.googleapis.com".to_string()],
             enabled: Vec::new(),
+            deferred: Vec::new(),
         };
         assert_eq!(done.render(), "APIs on corp-infra-001: 1 declared, all enabled\n");
         let changed = crate::prerequisites::ApiPreflight {

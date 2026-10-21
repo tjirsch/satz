@@ -17,7 +17,7 @@ use std::path::Path;
 
 use rmcp::schemars;
 
-use crate::manifest::Manifest;
+use crate::manifest::{EmittedResource, Manifest};
 
 /// Where a role is granted, and where the live check tests it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, schemars::JsonSchema)]
@@ -816,6 +816,75 @@ pub(crate) fn enable_command(project: &str, apis: &[String]) -> String {
     format!("gcloud services enable {} --project {}", apis.join(" "), project)
 }
 
+/// The API whose enablement makes Google create the `default` network in a project.
+pub(crate) const COMPUTE_API: &str = "compute.googleapis.com";
+/// The constraint that stops that — tested by Google at the moment Compute is switched on,
+/// and never afterwards.
+pub(crate) const SKIP_DEFAULT_NETWORK: &str = "compute.skipDefaultNetworkCreation";
+
+/// Why an imperative enable leaves `compute.googleapis.com` to the apply (ADR 0080).
+///
+/// Google creates the `default` network the moment Compute is switched on in a project,
+/// and tests `compute.skipDefaultNetworkCreation` at that moment. An estate that declares
+/// the policy enforcing wants no such network, and inside the apply the emitter orders
+/// every Compute service behind the policy. The `plan`/`apply` preflight and `bootstrap`
+/// run BEFORE the apply, where no edge can order them, so they switch Compute on only
+/// where the organisation already enforces the constraint; otherwise the apply does it,
+/// after the policy, and the run says so.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct ComputeDeferral {
+    /// the policy the estate declares, by address
+    pub policy: String,
+    /// `organizations/<n>` when the policy is declared on the organisation: where its
+    /// live enforcement is read. A policy on a folder names the folder by reference,
+    /// which may not exist yet, so nothing is read and the apply decides.
+    pub organization: Option<String>,
+}
+
+/// The deferral the estate calls for, or `None` when it declares no enforcing
+/// `compute.skipDefaultNetworkCreation` policy. An organisation-level policy is preferred
+/// over a folder's: its enforcement can be read.
+pub(crate) fn compute_deferral(manifest: &Manifest) -> Option<ComputeDeferral> {
+    let on_organization = |r: &EmittedResource| r.attrs.get("parent").is_some_and(|p| p.starts_with("organizations/"));
+    let policies: Vec<&EmittedResource> = manifest.enforced_policies_on(SKIP_DEFAULT_NETWORK).collect();
+    let policy = policies.iter().copied().find(|r| on_organization(r)).or_else(|| policies.first().copied())?;
+    Some(ComputeDeferral {
+        policy: policy.address(),
+        organization: policy.attrs.get("parent").filter(|p| p.starts_with("organizations/")).cloned(),
+    })
+}
+
+impl ComputeDeferral {
+    const WHAT_THE_APPLY_DOES: &'static str =
+        "creates the policy and switches Compute on after it, so the project gets no `default` network";
+
+    /// Why the preflight left Compute alone, given what it read live: `Ok(Some(true))` is
+    /// never a reason (Compute goes on), anything else is one.
+    pub fn reason(&self, live: &Result<Option<bool>, String>) -> String {
+        let finding = match (&self.organization, live) {
+            (None, _) => format!("the estate declares `{}` enforcing on a folder", self.policy),
+            (Some(_), Err(e)) => format!(
+                "the estate declares `{}` enforcing and whether the organisation enforces it could not be read ({})",
+                self.policy, e
+            ),
+            (Some(_), Ok(_)) => format!("the estate declares `{}` enforcing and the organisation does not enforce it yet", self.policy),
+        };
+        format!("{}; the apply {}", finding, Self::WHAT_THE_APPLY_DOES)
+    }
+
+    /// Why `bootstrap` left Compute alone on day 0: nothing is live yet, so nothing is read.
+    pub fn bootstrap_reason(&self) -> String {
+        format!("the estate declares `{}` enforcing; the first apply {}", self.policy, Self::WHAT_THE_APPLY_DOES)
+    }
+}
+
+/// An API the preflight found off and left to the apply, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct DeferredApi {
+    pub api: String,
+    pub reason: String,
+}
+
 /// What the `plan`/`apply` preflight found and did on the billed project.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ApiPreflight {
@@ -825,24 +894,33 @@ pub(crate) struct ApiPreflight {
     pub declared: Vec<String>,
     /// the ones that were off, now on
     pub enabled: Vec<String>,
+    /// the ones that were off and are left to the apply, each with why
+    pub deferred: Vec<DeferredApi>,
 }
 
 impl ApiPreflight {
-    /// One line for the terminal, plus one per API switched on.
+    /// One line for the terminal, plus one per API switched on or left to the apply.
     pub fn render(&self) -> String {
-        let mut out = if self.enabled.is_empty() {
+        let off = self.enabled.len() + self.deferred.len();
+        let mut out = if off == 0 {
             format!("APIs on {}: {} declared, all enabled\n", self.project, self.declared.len())
+        } else if self.enabled.is_empty() {
+            format!("APIs on {}: {} declared, {} off\n", self.project, self.declared.len(), off)
         } else {
             format!(
-                "APIs on {}: {} declared, {} off — enabling them, because the refresh is billed to \
+                "APIs on {}: {} declared, {} off — enabling {}, because the refresh is billed to \
                  this project and runs before anything is created\n",
                 self.project,
                 self.declared.len(),
-                self.enabled.len()
+                off,
+                if self.deferred.is_empty() { "them".to_string() } else { format!("{} of them", self.enabled.len()) }
             )
         };
         for api in &self.enabled {
             out.push_str(&format!("  enabled {}\n", api));
+        }
+        for d in &self.deferred {
+            out.push_str(&format!("  left to the apply: {} — {}\n", d.api, d.reason));
         }
         out
     }
@@ -911,6 +989,9 @@ pub(crate) async fn enable_declared_apis(
     project: &str,
     declared: Vec<String>,
     through: Option<&str>,
+    // the estate's enforcing `compute.skipDefaultNetworkCreation`, when it declares one:
+    // Compute is then switched on only where the organisation already enforces it
+    deferral: Option<&ComputeDeferral>,
 ) -> Result<ApiPreflight, ApiRefusal> {
     let refused = |why: &str, detail: String, enable: Vec<String>| ApiRefusal {
         project: project.to_string(),
@@ -942,13 +1023,24 @@ pub(crate) async fn enable_declared_apis(
             }
         }
     }
+    let mut deferred = Vec::new();
+    if let (Some(d), Some(i)) = (deferral, off.iter().position(|a| a == COMPUTE_API)) {
+        let live = match &d.organization {
+            Some(org) => crate::org_policy::effective_enforcement(&client, &token, org, SKIP_DEFAULT_NETWORK, through).await,
+            None => Ok(None),
+        };
+        if live != Ok(Some(true)) {
+            off.remove(i);
+            deferred.push(DeferredApi { api: COMPUTE_API.to_string(), reason: d.reason(&live) });
+        }
+    }
     if off.is_empty() {
-        return Ok(ApiPreflight { project: project.to_string(), declared, enabled: Vec::new() });
+        return Ok(ApiPreflight { project: project.to_string(), declared, enabled: Vec::new(), deferred });
     }
     crate::gcp::serviceusage::batch_enable(&client, &token, project, &off, through)
         .await
         .map_err(|e| refused("satz could not enable them", e.to_string(), off.clone()))?;
-    Ok(ApiPreflight { project: project.to_string(), declared, enabled: off })
+    Ok(ApiPreflight { project: project.to_string(), declared, enabled: off, deferred })
 }
 
 /// The grant-map key the estate writes for its service account.
