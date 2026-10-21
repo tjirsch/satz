@@ -1,0 +1,64 @@
+      enforce = "TRUE"
+    google_org_policy_policy.compute_skipDefaultNetworkCreation
+    google_org_policy_policy.compute_skipDefaultNetworkCreation
+    rules {
+    }
+  ]
+  ]
+  auto_create_network = false
+  auto_create_network = true
+  depends_on = [
+  depends_on = [
+  display_name = "Infrastructure"
+  folder_id = google_folder.infra_folder.name
+  folder_id = google_folder.infra_folder.name
+  folder_id = google_folder.infra_folder.name
+  name = "corp-infra-001"
+  name = "corp-keep-001"
+  name = "corp-plain-001"
+  name = "organizations/123456789/policies/compute.skipDefaultNetworkCreation"
+  parent = "organizations/123456789"
+  parent = "organizations/123456789"
+  project = google_project.infra.project_id
+  project = google_project.infra.project_id
+  project = google_project.keep.project_id
+  project = google_project.plain.project_id
+  project_id = "corp-infra-001"
+  project_id = "corp-keep-001"
+  project_id = "corp-plain-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  service = "compute.googleapis.com"
+  service = "compute.googleapis.com"
+  service = "logging.googleapis.com"
+  service = "logging.googleapis.com"
+  spec {
+  }
+resource "google_folder" "infra_folder" {
+resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+resource "google_project" "infra" {
+resource "google_project" "keep" {
+resource "google_project" "plain" {
+resource "google_project_service" "infra_compute_googleapis_com" {
+resource "google_project_service" "infra_logging_googleapis_com" {
+resource "google_project_service" "keep_compute_googleapis_com" {
+resource "google_project_service" "plain_logging_googleapis_com" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+customer-organization-id = "123456789"
+---imports---

@@ -850,6 +850,34 @@ pub(crate) fn resolve_quota_project() -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// The effective enforcement of a boolean constraint at `parent` (`organizations/<n>`),
+/// read from `policies/<constraint>:getEffectivePolicy`: `Some(true)` when its one
+/// unconditional rule enforces, `Some(false)` when it does not, `None` when the
+/// effective policy has no single unconditional rule. `quota` bills the read as
+/// [`crate::gcp::billed_to`] does. The response is the same Policy shape Cloud Asset
+/// serves, so the compliance plane's reader judges it.
+pub(crate) async fn effective_enforcement(
+    client: &reqwest::Client,
+    token: &str,
+    parent: &str,
+    constraint: &str,
+    quota: Option<&str>,
+) -> Result<Option<bool>, String> {
+    let url = format!("{}/v2/{}/policies/{}:getEffectivePolicy", ORGPOLICY_HOST, parent, constraint);
+    let res = crate::gcp::billed_to(client.get(&url), quota)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("getEffectivePolicy {} on {}: {}", constraint, parent, e))?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("getEffectivePolicy {} on {} failed ({}): {}", constraint, parent, status, body));
+    }
+    let json: Value = res.json().await.map_err(|e| format!("getEffectivePolicy {} on {}: {}", constraint, parent, e))?;
+    Ok(crate::compliance::live_enforcement(&json).map(|e| e.enforce))
+}
+
 pub struct OrgPolicyClient {
     http: reqwest::Client,
     token: String,

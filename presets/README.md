@@ -27,8 +27,10 @@ estate or a pack): a `when` on a param nobody declares is an error, not `false`.
 Multi-resource-type packs (marked below) rely on **hoisted scopes**: org/customer/
 billing-scoped types (`google_cloud_identity_group`, `google_organization_iam_member`,
 `google_billing_account_iam_member`) may sit anywhere in the tree and are emitted
-once at their intrinsic scope. Projects land wherever the pack is used — root or
-inside a `google_folder { … }` block. Two packs contributing to the same
+once at their intrinsic scope. A pack's project is created in the folder its folder
+param names (`logsink_project_folder`, `mdc_mgmt_project_folder`) and directly under
+the organisation while that param is empty; where the `use` line stands decides
+nothing (ADR 0046). Two packs contributing to the same
 resource-type map merge label by label (the ⊕ fold); the same label with a
 different body is a hard error naming both files.
 

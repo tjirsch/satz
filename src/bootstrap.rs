@@ -509,6 +509,10 @@ pub async fn bootstrap(
     // the services the estate declares on its infrastructure project — enabled
     // before `tofu` runs, so the first apply never races an API
     estate_services: &[String],
+    // the ones among them left to the first apply, each with why: Compute, where
+    // the estate declares `compute.skipDefaultNetworkCreation` enforcing and the
+    // apply has to create the policy before Compute goes on (ADR 0080)
+    deferred_services: &[(String, String)],
     dry_run: bool,
     greenfield: bool,
     no_default_grants: bool,
@@ -889,6 +893,10 @@ pub async fn bootstrap(
             .unwrap_or(false);
         if already_enabled {
             summary.record(&step, StepStatus::AlreadyExisted);
+            continue;
+        }
+        if let Some((_, reason)) = deferred_services.iter().find(|(api, _)| api == service) {
+            summary.record(&step, StepStatus::Deferred(reason.clone()));
             continue;
         }
 

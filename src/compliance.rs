@@ -2064,6 +2064,53 @@ fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessSco
     }
 }
 
+/// The CAI asset type of a VPC network. Read beside a `compute.skipDefaultNetworkCreation`
+/// witness: the control it witnesses (CIS 3.1) is "no `default` network exists", and a
+/// policy enforced today says nothing about the networks created before it was — or in
+/// the same apply, a moment before it (ADR 0080).
+const NETWORK_ASSET: &str = "compute.googleapis.com/Network";
+
+/// Is `w` an org-policy witness on `compute.skipDefaultNetworkCreation`?
+fn is_skip_default_network_witness(w: &str, manifest: &Manifest) -> bool {
+    let suffix = format!("/policies/{}", crate::prerequisites::SKIP_DEFAULT_NETWORK);
+    manifest
+        .resources
+        .get(w)
+        .is_some_and(|r| r.tf_type == "google_org_policy_policy" && r.attrs.get("name").is_some_and(|n| n.ends_with(&suffix)))
+}
+
+/// The projects holding a network named `default`, read from the inventory's network
+/// assets: Cloud Asset names one `projects/<id>/global/networks/default`.
+fn default_network_projects(inventory: &Inventory) -> BTreeSet<String> {
+    inventory
+        .get(&(NETWORK_ASSET.to_string(), LiveContent::Resource))
+        .into_iter()
+        .flat_map(|assets| assets.keys())
+        .filter_map(|k| k.strip_prefix("projects/")?.strip_suffix("/global/networks/default").map(str::to_string))
+        .collect()
+}
+
+/// A `compute.skipDefaultNetworkCreation` witness is judged by the networks as well as
+/// by the policy's value: a live `default` network fails it, naming the projects. The
+/// policy's own verdict stays in the text, so the row says both what the policy does and
+/// what exists.
+fn with_default_networks(state: LiveState, projects: &BTreeSet<String>) -> LiveState {
+    if projects.is_empty() {
+        return state;
+    }
+    let found = format!(
+        "a `default` network exists in {} project(s): {}",
+        projects.len(),
+        projects.iter().cloned().collect::<Vec<_>>().join(", ")
+    );
+    match state {
+        LiveState::Diverged(why) => LiveState::Diverged(format!("{}; {}", why, found)),
+        LiveState::Verified { .. } => LiveState::Diverged(format!("enforced live, and {}", found)),
+        LiveState::Missing => LiveState::Diverged(format!("not live, and {}", found)),
+        unverifiable @ LiveState::Unverifiable(_) => unverifiable,
+    }
+}
+
 /// What a witness is compared against live: the asset's resource data, or the
 /// IAM policy set on it. Cloud Asset Inventory serves them as two content
 /// types, so a type needing both is fetched twice.
@@ -2709,6 +2756,9 @@ pub(crate) async fn report_compliance_evidence(
                 Goal::Deviation { witnesses, .. } => witnesses,
                 _ => continue,
             };
+            // a deviation declares the control unmet; the networks that prove it are
+            // not a verdict on the deviation
+            let deviation = matches!(goal, Goal::Deviation { .. });
             for w in ws {
                 if let Some(tf_type) = w.split('.').next() {
                     if let Some((at, _, scope, content)) = live_matcher(tf_type) {
@@ -2719,6 +2769,9 @@ pub(crate) async fn report_compliance_evidence(
                             }
                         }
                     }
+                }
+                if !deviation && is_skip_default_network_witness(w, manifest) {
+                    needed.insert((NETWORK_ASSET.to_string(), LiveContent::Resource));
                 }
             }
         }
@@ -2775,6 +2828,7 @@ pub(crate) async fn report_compliance_evidence(
                 Goal::Deviation { witnesses, .. } => witnesses,
                 _ => continue,
             };
+            let deviation = matches!(goal, Goal::Deviation { .. });
             for w in ws {
                 let tf_type = w.split('.').next().unwrap_or("");
                 let state = match live_matcher(tf_type) {
@@ -2790,7 +2844,8 @@ pub(crate) async fn report_compliance_evidence(
                                 else { "live inventory unavailable".into() },
                             ),
                             (Some(_), Err(why)) => LiveState::Unverifiable(why),
-                            (Some(inv), Ok(id)) => match inv.get(&(at.to_string(), content)).and_then(|ids| ids.get(&id)) {
+                            (Some(inv), Ok(id)) => {
+                                let found = match inv.get(&(at.to_string(), content)).and_then(|ids| ids.get(&id)) {
                                 None => LiveState::Missing,
                                 Some(data) if content == LiveContent::IamPolicy => {
                                     let r = manifest.resources.get(w);
@@ -2853,7 +2908,15 @@ pub(crate) async fn report_compliance_evidence(
                                         (None, _) => LiveState::Verified { id: id.clone(), conditional: Vec::new() },
                                     }
                                 }
-                            },
+                                };
+                                // CIS 3.1 is "no `default` network exists": the
+                                // networks decide it beside the policy's value
+                                if !deviation && is_skip_default_network_witness(w, manifest) {
+                                    with_default_networks(found, &default_network_projects(inv))
+                                } else {
+                                    found
+                                }
+                            }
                         }
                     }
                 };
@@ -4763,6 +4826,69 @@ mod iam_witness_tests {
         }
         let (_, _, _, content) = live_matcher("google_storage_bucket").unwrap();
         assert_eq!(content, LiveContent::Resource, "the bucket itself is resource data");
+    }
+
+    /// CIS 3.1 is "no `default` network exists". The policy's value says what happens
+    /// from now on; the networks say what is there. Seen on a customer's new
+    /// organisation: the policy enforced, and the infrastructure project holding the
+    /// `default` network Google created a moment before it.
+    #[test]
+    fn the_skip_default_network_witness_is_judged_by_the_networks_too() {
+        let tf = r#"
+resource "google_org_policy_policy" "compute_skipDefaultNetworkCreation" {
+  name   = "organizations/1/policies/compute.skipDefaultNetworkCreation"
+  parent = "organizations/1"
+  spec {
+    rules {
+      enforce = "TRUE"
+    }
+  }
+}
+resource "google_org_policy_policy" "other" {
+  name   = "organizations/1/policies/iam.disableServiceAccountKeyCreation"
+  parent = "organizations/1"
+}
+"#;
+        let manifest = Manifest::parse(tf);
+        assert!(is_skip_default_network_witness("google_org_policy_policy.compute_skipDefaultNetworkCreation", &manifest));
+        assert!(!is_skip_default_network_witness("google_org_policy_policy.other", &manifest));
+        assert!(!is_skip_default_network_witness("google_org_policy_policy.absent", &manifest));
+
+        let mut inventory: Inventory = BTreeMap::new();
+        inventory.insert(
+            (NETWORK_ASSET.to_string(), LiveContent::Resource),
+            BTreeMap::from([
+                ("projects/corp-infra-001/global/networks/default".to_string(), serde_json::json!({"name": "default"})),
+                ("projects/corp-data-001/global/networks/default".to_string(), serde_json::json!({"name": "default"})),
+                ("projects/corp-data-001/global/networks/shared".to_string(), serde_json::json!({"name": "shared"})),
+            ]),
+        );
+        let projects = default_network_projects(&inventory);
+        assert_eq!(projects.iter().cloned().collect::<Vec<_>>(), vec!["corp-data-001", "corp-infra-001"]);
+        assert!(default_network_projects(&BTreeMap::new()).is_empty());
+
+        let verified = LiveState::Verified { id: "organizations/1/policies/compute.skipDefaultNetworkCreation".into(), conditional: Vec::new() };
+        match with_default_networks(verified.clone(), &projects) {
+            LiveState::Diverged(why) => {
+                assert_eq!(why, "enforced live, and a `default` network exists in 2 project(s): corp-data-001, corp-infra-001")
+            }
+            other => panic!("a default network fails the witness: {:?}", other),
+        }
+        // the policy's own verdict stays beside the networks
+        match with_default_networks(LiveState::Diverged("declared enforce = TRUE, live policy has enforcement OFF".into()), &projects) {
+            LiveState::Diverged(why) => assert!(why.starts_with("declared enforce = TRUE, live policy has enforcement OFF; a `default` network"), "{why}"),
+            other => panic!("{:?}", other),
+        }
+        match with_default_networks(LiveState::Missing, &projects) {
+            LiveState::Diverged(why) => assert!(why.starts_with("not live, and a `default` network"), "{why}"),
+            other => panic!("{:?}", other),
+        }
+        // no network, no change — and an unreadable witness is not made readable by them
+        assert_eq!(with_default_networks(verified.clone(), &BTreeSet::new()), verified);
+        assert_eq!(
+            with_default_networks(LiveState::Unverifiable("x".into()), &projects),
+            LiveState::Unverifiable("x".into())
+        );
     }
 }
 

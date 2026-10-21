@@ -43,6 +43,7 @@
   account_id = "microsoft-defender-cspm"
   attribute_mapping = {
   attribute_mapping = {
+  auto_create_network = false
   billing_account = "01AA-BB-CC"
   depends_on = [
   depends_on = [

@@ -19,7 +19,7 @@ value.
 | **HCL** | resources, providers, state — the IaC layer's assembly language, run by OpenTofu (preferred) or Terraform, with providers from Google and others | that a resource *exists* as declared | `tofu plan` / `apply` |
 | **Satz** | estate + packs, params, composition, suppressions | that the estate is a consistent, conflict-free fold of named, versioned parts — and that every org policy in it is *declared* explicitly | `transpile` |
 | **Controls** | claims against a catalog | that each declared control has its witnesses *emitted* — a claim with a missing witness is reported as broken, never as satisfied | `require` |
-| **Evidence** | the goal view joined with the live estate | that each witness is live and — for org policies — *enforcing*, by value; a policy switched off in the console is **NOT ENFORCED**, which outranks DRIFTED | `report-compliance` |
+| **Evidence** | the goal view joined with the live estate | that each witness is live and — for org policies — *enforcing*, by value, and on `compute.skipDefaultNetworkCreation` that no project holds a `default` network; a policy switched off in the console is **NOT ENFORCED**, which outranks DRIFTED | `report-compliance` |
 
 In the Satz layer, org policies are ordinary resources in versioned packs. A
 semantic upstream change to a pack the estate includes forks the pack and repoints
@@ -143,7 +143,9 @@ another (§6.5). If it is not on these lists, Satz did not change it.
   declared `lifecycle`); its `member` / `manager` / `owner` lists become
   `google_cloud_identity_group_membership` resources (§6.4);
 - `project_service = [ … ]` explodes into one `google_project_service` per
-  service; each project gets its own provider alias, scoped to it (§6.8);
+  service; each project gets its own provider alias, scoped to it (§6.8); a list
+  naming `compute.googleapis.com` writes the project with `auto_create_network =
+  false` unless the estate states it (§6.6);
 - an org policy's structured `parameters { … }` is JSON-encoded into the
   string the provider wants;
 - the backend is chosen by `deployment_mode` (§6.8); `"import-id"` becomes an
@@ -952,6 +954,16 @@ about to be switched on. A resource whose API no `google_project_service` enable
 gets no edge — the compile reports that instead, because a dependency on nothing is
 not a thing.
 
+**Compute waits for `compute.skipDefaultNetworkCreation`.** Google tests that
+constraint at the moment Compute is switched on in a project, so every
+`google_project_service` enabling `compute.googleapis.com` carries `depends_on` each
+`google_org_policy_policy` the estate declares enforcing it, on the organisation or on
+a folder; a policy declared `enforce = "FALSE"` or `reset = true` orders nothing.
+`satz plan`, `satz apply` and `satz bootstrap` keep the same order outside the apply:
+they switch Compute on before `tofu` runs only where the organisation already enforces
+the constraint, and otherwise leave it to the apply and say so ([the API
+preflight](workflows.md#the-api-preflight)).
+
 **The API has to be on the project the call is BILLED to.** The estate's `google`
 provider carries `user_project_override = true` with `billing_project =
 infra_project_name`, so Google requires the service enabled on the infra project
@@ -1118,6 +1130,17 @@ empty says nothing: the node the block stands in decides, which at the top level
 is the organisation. That is how a pack carries its own parent in a param — the
 default says nothing, and an estate that names a folder gets the same project
 wherever the pack's `use` line stands.
+
+A project whose `project_service` names `compute.googleapis.com` is written with
+`auto_create_network = false`. Google creates the `default` network, with firewall
+rules open to the internet, the moment Compute is switched on in a project where
+`compute.skipDefaultNetworkCreation` is not in force, and the provider deletes that
+network on create when the attribute is false. An estate that states
+`auto_create_network` keeps its value. A project without Compute has no network and
+gets no attribute: `false` there would make the provider switch Compute on to delete
+it. On a project that already exists the attribute does nothing — the provider reads
+it as `true` on import and ignores it on update — so an imported project that enables
+Compute plans one in-place change, once, and removes nothing.
 
 ### 6.7 Adoption of existing resources
 
@@ -2610,9 +2633,10 @@ omitted):
 Status precedence, highest first:
 
 1. **NOT ENFORCED** — a witness is live but not doing what the estate declares
-   (an org policy's `enforce` differs). Outranks DRIFTED: a missing resource is
-   absent from the inventory, while a switched-off one is listed like an enforced
-   one.
+   (an org policy's `enforce` differs), or the `compute.skipDefaultNetworkCreation`
+   witness is enforced and a project holds a `default` network all the same (the
+   row names the projects). Outranks DRIFTED: a missing resource is absent from
+   the inventory, while a switched-off one is listed like an enforced one.
 2. **DRIFTED** — a declared witness is not live.
 3. **partial (open duty)** — unattested duties remain.
 4. **partial (contributes)** — only `contributes` claims.

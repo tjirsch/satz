@@ -13,6 +13,29 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.93.0
+
+**A project whose `project_service` names `compute.googleapis.com` is written with
+`auto_create_network = false`, its Compute service waits for the estate's enforcing
+`compute.skipDefaultNetworkCreation` policy, and `plan`, `apply` and `bootstrap` switch
+Compute on before `tofu` runs only where the organisation already enforces that
+constraint.** Google creates the `default` network, with firewall rules open to the
+internet, the moment Compute is switched on in a project where the policy is not in
+force — which is what the first apply of an estate did when the Compute service and the
+policy went in together. Nothing an estate holds is refused. **The plan moves once:** a
+`google_project` that lists Compute and already exists — imported, or created by an
+earlier apply — plans an in-place change `auto_create_network: true → false`, which the
+provider ignores on update: it deletes nothing and creates nothing. A project this or a
+later apply creates is created without the network. Find it: `grep -n
+compute.googleapis.com satz/*.satz` names the projects; in the library, the Defender
+management project (`presets/integrations/microsoft-defender-for-cloud.satz`) and the
+shared-network host project (`presets/shared-network.satz`) list it, and an estate that
+adopted either before this release plans the one change on that project. **The edit:** none; an estate
+that wants the network states `auto_create_network = true` on the project. A `default`
+network that already exists is not removed by satz: `report-compliance` names its
+project on the CIS 3.1 row as **NOT ENFORCED**, and `gcloud compute networks delete
+default --project <id>`, after its firewall rules, removes it.
+
 ### v0.92.0
 
 **`inputs` is a statement.** A top-level block labelled `inputs` is read as a template's

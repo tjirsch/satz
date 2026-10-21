@@ -488,7 +488,13 @@ the resource's own project and for the infrastructure project — because
 `google_project_service` has no ordering of its own and one apply can otherwise create
 a resource before its API is on. A service is never ordered behind a service, and no
 edge is added into a service block's own dependencies, so the project a service is
-declared on and the folder above it never wait for it.
+declared on and the folder above it never wait for it. The one service that waits for
+a policy is Compute: a `google_project_service` enabling `compute.googleapis.com`
+depends on every `google_org_policy_policy` the estate declares enforcing
+`compute.skipDefaultNetworkCreation`, because Google creates the `default` network the
+moment Compute is switched on and tests the constraint then. The project that lists
+Compute is written with `auto_create_network = false` unless the estate states the
+attribute, so the provider deletes the network where the policy was not yet in force.
 
 **Declaring an API does not switch it on.** `tofu apply` refreshes every resource in
 state before it creates anything, and that refresh is billed the same way, so an API the
@@ -1343,6 +1349,13 @@ exists, so org-policy witnesses are compared by VALUE. The estate's declared
 `spec.rules[].enforce`, and a mismatch reports **NOT ENFORCED**, which outranks
 DRIFTED: a missing resource is absent from the inventory, while a switched-off
 policy is listed like an enforced one.
+
+The `compute.skipDefaultNetworkCreation` witness (CIS 3.1, *default network does not
+exist*) is judged by the networks as well. The report reads every
+`compute.googleapis.com/Network` of the organisation, and a network named `default`
+in any project makes the row **NOT ENFORCED**, naming the projects, whatever the
+policy's value: the policy stops new networks and says nothing about the ones created
+before it was in force.
 
 The verdict is the policy's one unconditional rule. Its conditional rules — a
 tag-conditional `enforce: false` that exempts tagged resources, for one — are listed
