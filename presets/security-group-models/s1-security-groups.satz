@@ -12,8 +12,13 @@
 // Groups are looked up by email; no ids are hard-coded here (tenant-specific).
 // Memberships are NOT part of this pack: presets define groups,
 // humans grant membership.
+//
+// The first admin holds Project Creator and Billing Account Creator explicitly — the two
+// roles a new organisation grants its whole domain. Once that grant and the groups' are
+// live, `satz apply` takes the domain off those two roles and touches nothing else of the
+// organisation's policy; `satz plan` says what the apply would do.
 
-pack s1_security_groups version "1.2"
+pack s1_security_groups version "1.3"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"
@@ -173,6 +178,14 @@ google_organization_iam_member {
   "group:{gcp_billing_admins_name}@{customer_domain}" = [
     "roles/resourcemanager.organizationViewer",
     "roles/billing.admin",
+    "roles/billing.creator",
+  ]
+
+  // The two roles a new organisation grants its whole domain, held by the first admin
+  // explicitly: once this grant is live, `satz apply` removes the domain's entry for each
+  // of them and nothing else.
+  "user:{first_admin}@{customer_domain}" = [
+    "roles/resourcemanager.projectCreator",
     "roles/billing.creator",
   ]
 }

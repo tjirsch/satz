@@ -872,16 +872,7 @@ enum GrantLive {
     Unclear(Vec<String>),
 }
 
-/// Members compare as IAM compares them: the address of a user, group, service
-/// account or domain without regard to case, every other principal exactly.
-fn same_member(a: &str, b: &str) -> bool {
-    let folds = |m: &str| ["user:", "group:", "serviceAccount:", "domain:"].iter().any(|p| m.starts_with(p));
-    if folds(a) && folds(b) {
-        a.eq_ignore_ascii_case(b)
-    } else {
-        a == b
-    }
-}
+use crate::gcp::same_member;
 
 /// Whether `policy` (an IAM policy, version 3) holds the declared grant.
 fn grant_in_policy(policy: &serde_json::Value, role: &str, member: &str, condition: &DeclaredCondition) -> GrantLive {

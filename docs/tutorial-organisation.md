@@ -163,6 +163,16 @@ satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
 ```
 
+The model's plan holds the five groups, their organisation roles, and the first admin's
+own Project Creator and Billing Account Creator — the two roles a new organisation grants
+its whole domain. Before `tofu` starts, the preflight reads the organisation's policy and
+prints `left in place: domain:example.com holds roles/resourcemanager.projectCreator —
+user:admin@example.com declared and not live yet`; the apply grants it, and the next
+apply — the CIS baseline's below — prints `removed domain:example.com from
+roles/resourcemanager.projectCreator — restore with: gcloud organizations
+add-iam-policy-binding …` for each of the two roles. Nothing else of the policy moves
+([the default grants](workflows.md#the-default-grants)).
+
 The CIS baseline is the one to read before applying: its organisation policies land in one
 apply. Switch it on and read what it asks for first:
 

@@ -685,6 +685,40 @@ pub(crate) fn add_binding(policy: &mut serde_json::Value, role: &str, member: &s
     true
 }
 
+/// Remove `member` from the UNCONDITIONAL binding of `role` in `policy`, and the binding
+/// itself when that leaves it empty. A conditional binding of the same role is not
+/// touched. Returns whether anything changed; the etag and version stay as read.
+pub(crate) fn remove_member(policy: &mut serde_json::Value, role: &str, member: &str) -> bool {
+    let Some(bindings) = policy.get_mut("bindings").and_then(|b| b.as_array_mut()) else {
+        return false;
+    };
+    let mut changed = false;
+    bindings.retain_mut(|b| {
+        if b.get("role").and_then(|r| r.as_str()) != Some(role) || b.get("condition").is_some() {
+            return true;
+        }
+        let Some(members) = b.get_mut("members").and_then(|m| m.as_array_mut()) else {
+            return true;
+        };
+        let before = members.len();
+        members.retain(|m| !m.as_str().is_some_and(|m| same_member(m, member)));
+        changed |= members.len() != before;
+        !members.is_empty()
+    });
+    changed
+}
+
+/// Members compare as IAM compares them: the address of a user, group, service
+/// account or domain without regard to case, every other principal exactly.
+pub(crate) fn same_member(a: &str, b: &str) -> bool {
+    let folds = |m: &str| ["user:", "group:", "serviceAccount:", "domain:"].iter().any(|p| m.starts_with(p));
+    if folds(a) && folds(b) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -898,6 +932,50 @@ mod tests {
         let mut policy = serde_json::json!({ "etag": "BwX1234=" });
         assert!(add_binding(&mut policy, "roles/viewer", "user:a@example.com"));
         assert_eq!(policy["bindings"][0]["members"][0], "user:a@example.com");
+    }
+
+    #[test]
+    fn remove_member_takes_one_member_out_of_the_unconditional_binding_and_nothing_else() {
+        let mut policy = serde_json::json!({
+            "version": 1,
+            "etag": "BwX1234=",
+            "bindings": [
+                { "role": "roles/resourcemanager.projectCreator", "members": ["domain:Example.com", "group:gcp-organization-admins@example.com"] },
+                {
+                    "role": "roles/resourcemanager.projectCreator",
+                    "members": ["domain:example.com"],
+                    "condition": { "title": "expires", "expression": "request.time < timestamp('2027-01-01T00:00:00Z')" }
+                },
+                { "role": "roles/billing.creator", "members": ["domain:example.com"] }
+            ]
+        });
+        // the address compares without regard to case, as IAM compares it
+        assert!(remove_member(&mut policy, "roles/resourcemanager.projectCreator", "domain:example.com"));
+        let bindings = policy["bindings"].as_array().unwrap();
+        assert_eq!(bindings.len(), 3);
+        assert_eq!(bindings[0]["members"], serde_json::json!(["group:gcp-organization-admins@example.com"]));
+        assert_eq!(bindings[1]["members"], serde_json::json!(["domain:example.com"]), "the conditional binding is not touched");
+        assert!(!remove_member(&mut policy, "roles/resourcemanager.projectCreator", "domain:example.com"), "gone already");
+        // a binding the removal empties is dropped
+        assert!(remove_member(&mut policy, "roles/billing.creator", "domain:example.com"));
+        assert_eq!(policy["bindings"].as_array().unwrap().len(), 2);
+        assert!(!remove_member(&mut policy, "roles/billing.creator", "domain:example.com"));
+        assert_eq!(policy["etag"], "BwX1234=");
+        assert_eq!(policy["version"], 1);
+    }
+
+    #[test]
+    fn remove_member_on_a_policy_without_bindings_changes_nothing() {
+        let mut policy = serde_json::json!({ "etag": "BwX1234=" });
+        assert!(!remove_member(&mut policy, "roles/viewer", "domain:example.com"));
+        assert_eq!(policy, serde_json::json!({ "etag": "BwX1234=" }));
+    }
+
+    #[test]
+    fn same_member_folds_case_on_addresses_only() {
+        assert!(same_member("domain:Example.com", "domain:example.com"));
+        assert!(same_member("serviceAccount:A@example.com", "serviceAccount:a@example.com"));
+        assert!(!same_member("principal://x/Subject/A", "principal://x/subject/a"));
     }
 }
 

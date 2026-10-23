@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-packs`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**49 packs · 237 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**49 packs · 239 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
@@ -16,8 +16,8 @@ One page per pristine pack, derived from the pack file by `satz doc-packs`, in t
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`s1_security_groups`](s1-security-groups.md) | 1.2 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 11 | — |
-| [`s2_security_groups`](s2-security-groups.md) | 1.2 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 13 | — |
+| [`s1_security_groups`](s1-security-groups.md) | 1.3 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 12 | — |
+| [`s2_security_groups`](s2-security-groups.md) | 1.3 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 14 | — |
 | [`exemptions.exemption_tag`](exemption-tag.md) | 2.0 | Exemption classes: one organisation tag key, one value per KIND of exemption, and nothing bound to any of them. | 9 | — |
 
 ## Billing and budget
