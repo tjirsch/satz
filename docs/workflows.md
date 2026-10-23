@@ -214,7 +214,11 @@ pre-flight is named (`pre-flight: SKIPPED`).
 
 **What bootstrap does NOT do:** it creates no service account and grants no IAM
 beyond the self-grant above — the IaC service account and its grants are declared in
-the estate and come into being on the first `tofu apply`.
+the estate and come into being on the first `tofu apply`. It removes nothing either: the
+domain's default Project Creator and Billing Account Creator grants, which the project
+creation above runs on, are taken off by a later `satz apply`, once the security-group
+model has granted the first admin the two roles explicitly
+([the default grants](#the-default-grants)).
 
 **What follows.** `bootstrap` ends by naming the next commands with the estate's own
 values, in this order: `satz update-prerequisites <estate>`; `satz transpile <estate>
@@ -315,7 +319,10 @@ tofu apply
 ```
 
 The first apply creates the identity layer: the Cloud Identity groups, their IAM roles
-(`Token Creator` among them) and the rest of the management project.
+(`Token Creator` among them) and the rest of the management project. Once the
+security-group model is in, its apply grants the first admin Project Creator and Billing
+Account Creator explicitly, and the apply after that takes the domain's default entries
+for the two roles off the organisation ([the default grants](#the-default-grants)).
 
 `tofu` applies `hcl/` as satz wrote it, with one exception that needs an argument: an
 org policy the state holds with rules while the estate declares it `reset = true`. The
@@ -417,6 +424,44 @@ the APIs it adds.
 The reasoning is in [ADR 0036](adr/0036-plan-and-apply-enable-the-apis-the-estate-declares.md)
 and, for the projects beside the infrastructure project,
 [ADR 0072](adr/0072-an-api-is-judged-on-the-project-its-provider-bills-to.md).
+
+### The default grants
+
+A new organisation grants `roles/resourcemanager.projectCreator` and `roles/billing.creator`
+to `domain:<customer domain>`: every user in the directory creates projects and billing
+accounts. The security-group models grant the two roles to the first admin explicitly,
+beside the groups that hold them, and `satz apply` takes the domain's entry off each of
+the two roles once every holder the estate declares for that role on the organisation is
+live. It runs after the APIs, before `tofu`, as the same identity; it reads the
+organisation and the domain from the emitted `terraform.tfvars` and the declared holders
+from `main.tf` — every unconditional `google_organization_iam_member` of the two roles. One
+line per declared role:
+
+```
+default grants on organizations/123456789012:
+  left in place: domain:example.com holds roles/resourcemanager.projectCreator — user:admin@example.com declared and not live yet; the apply grants it and the next apply removes the domain's entry
+  left in place: domain:example.com holds roles/billing.creator — user:admin@example.com declared and not live yet; the apply grants it and the next apply removes the domain's entry
+```
+
+and on the apply after that:
+
+```
+default grants on organizations/123456789012:
+  removed domain:example.com from roles/resourcemanager.projectCreator — restore with: gcloud organizations add-iam-policy-binding 123456789012 --member=domain:example.com --role=roles/resourcemanager.projectCreator
+  removed domain:example.com from roles/billing.creator — restore with: gcloud organizations add-iam-policy-binding 123456789012 --member=domain:example.com --role=roles/billing.creator
+```
+
+The removal is one write under the policy's etag, retried on a concurrent change, and it
+touches nothing else: a holder the estate does not declare stays, whatever role it holds;
+a domain entry held under a condition is reported and left; an estate that declares
+`"domain:{customer_domain}"` a holder of one of the roles in its own grant map keeps it,
+and the line reads `kept: the estate declares domain:example.com a holder of
+roles/billing.creator`. `satz plan` prints `apply would remove …` and writes nothing. A
+folder-scoped estate, a project estate and an estate that declares no holder of either
+role are named and skipped; a policy that cannot be read stops the command. A domain entry
+restored by hand is removed again on the next apply, with the line printed.
+`--no-api-preflight` skips this step with the APIs. The reasoning is in
+[ADR 0081](adr/0081-the-domain-default-grants-are-removed-by-the-apply-not-by-a-binding.md).
 
 ### Switch to the service account, and deploy as it
 

@@ -9,6 +9,7 @@ params {
   customer_id              = "C0example"
   customer_domain          = "example.com"
   customer_shortname       = "acme"
+  first_admin              = "first.admin"
   infra_project_name       = "acme-infra-001"
   svc_iac_account          = "svc-iac-001"
   billing_account_infra    = "012345-6789AB-CDEF01"

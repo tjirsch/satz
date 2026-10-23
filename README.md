@@ -88,7 +88,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
 - `--silence <KIND[:SUBJECT]>`: leave a finding out of this run's output, by what it is (see [Silencing a finding](#silencing-a-finding-silence)). Repeatable; `SATZ_SILENCE` takes the same selectors comma-separated. The finding is still produced, still counted and still in `--format json`; an error is never silenced, and a `--silence` that names one refuses the run. Refused for `satz mcp` and `satz lsp`, which serve many estates in one process.
 - `--no-impersonate`: run as the Application Default Credentials themselves, without becoming the estate's IaC service account — for a check that must answer as the human.
-- `--no-api-preflight`: `plan` and `apply` start the tool without asking Service Usage which of the APIs the estate declares are off, and enable none — for a run that must reach the tool without satz calling Google.
+- `--no-api-preflight`: `plan` and `apply` start the tool without asking Service Usage which of the APIs the estate declares are off, and enable none; `apply` also leaves the domain's default Project Creator and Billing Account Creator grants where they are — for a run that must reach the tool without satz calling Google.
 
 ### User settings (~/.config/satz/satz.toml)
 

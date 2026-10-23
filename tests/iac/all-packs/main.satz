@@ -18,7 +18,7 @@ params {
   infra_bucket_name                   = "acme-infra-001-state"
   svc_iac_account                     = "svc-iac-001"
   svc_iac_users_group                 = "svc-iac-001-users"
-  first_admin                         = "admin@example.com"
+  first_admin                         = "admin"
   billing_account_infra               = "012345-6789AB-CDEF01"
   logsink_project_id                  = "acme-log-001"
   logsink_project_folder              = "google_folder.shared.name"

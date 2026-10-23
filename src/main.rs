@@ -25,6 +25,7 @@ mod adopt;
 mod bootstrap;
 mod preflight;
 mod day_zero;
+mod default_grants;
 mod init_params;
 mod prerequisites;
 mod review_pack;
@@ -4304,13 +4305,18 @@ fn estate_among_tf_args(sub: &str, args: &[String]) -> Option<String> {
 /// apply's approval prompt and the usual coloured output behave normally, and the
 /// tool's own exit code is propagated — a failed plan must fail the caller.
 ///
-/// Two things it adds, both before the tool starts and both only for `plan` and
+/// Three things it adds, all before the tool starts and all only for `plan` and
 /// `apply`:
 ///
 /// - The APIs. Every API the estate declares on the project the provider bills
 ///   to is switched on if it is off (`api_preflight`, ADR 0036), as the estate's
 ///   IaC service account. `init` does not: it configures a backend and talks to
 ///   no Google API of the estate's.
+/// - The default grants. The domain's Project Creator and Billing Account Creator
+///   entries on the organisation — a new organisation's defaults — are taken off by
+///   `apply` once every holder the estate declares for the role is live
+///   (`remove_default_grants`, ADR 0081); `plan` says what `apply` would do. The
+///   same `api_preflight` switch covers it: off, satz calls no Google API before the tool.
 /// - The replacements. An org policy that the state holds with rules and the
 ///   estate now declares reset is replaced (`reset_replacements`, ADR 0011), and
 ///   satz says so. The emitted `main.tf` names the same `-replace` in a comment
@@ -4347,7 +4353,11 @@ async fn run_tf(
     }
     let mut args = args.to_vec();
     if (subcommand == "plan" || subcommand == "apply") && api_preflight {
+        // both steps run as what `tofu` is about to act as: one binding, read from the
+        // emitted provider block
+        configure_emitted_impersonation(&emitted_provider(hcl_dir)?)?;
         enable_declared_apis(hcl_dir, &runtime_config.tf_tool).await?;
+        remove_default_grants(hcl_dir, subcommand == "apply").await?;
     }
     if subcommand == "plan" || subcommand == "apply" {
         for address in reset_replacements_for(runtime_config, hcl_dir, &args)? {
@@ -4549,7 +4559,6 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
 /// Every path says what it did, the ones that check nothing included: a
 /// preflight that prints nothing is read as a preflight that passed.
 async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let provider = emitted_provider(hcl_dir)?;
     let billing = emitted_billing(hcl_dir)?;
     let projects = billing.projects();
     if projects.is_empty() {
@@ -4563,28 +4572,11 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
         );
         return Ok(());
     }
-    let main_tf = hcl_dir.join("main.tf");
-    let text = match std::fs::read_to_string(&main_tf) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("APIs: not checked — there is no {}", main_tf.display());
-            return Ok(());
-        }
-        Err(e) => return Err(format!("{}: {}", main_tf.display(), e).into()),
+    let Some(manifest) = emitted_manifest(hcl_dir)? else {
+        eprintln!("APIs: not checked — there is no {}", hcl_dir.join("main.tf").display());
+        return Ok(());
     };
-    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
-    let mut manifest = crate::manifest::Manifest::from_blocks(body.blocks());
-    let imports_tf = hcl_dir.join("imports.tf");
-    match std::fs::read_to_string(&imports_tf) {
-        Ok(t) => {
-            let imports = hcl::parse(&t).map_err(|e| format!("{}: {}", imports_tf.display(), e))?;
-            manifest.attach_imports(imports.blocks());
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("{}: {}", imports_tf.display(), e).into()),
-    }
     let mut state: Option<crate::bootstrap::StateIndex> = None;
-    let mut impersonating = false;
     // Compute goes on only where the organisation already enforces
     // `compute.skipDefaultNetworkCreation`, when the estate declares it (ADR 0080)
     let deferral = crate::prerequisites::compute_deferral(&manifest);
@@ -4615,15 +4607,85 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
                 (project, declared)
             }
         };
-        if !impersonating {
-            configure_emitted_impersonation(&provider)?;
-            impersonating = true;
-        }
         match crate::prerequisites::enable_declared_apis(&project, declared, billing.default_project(), deferral.as_ref()).await {
             Ok(done) => eprint!("{}", done.render()),
             Err(refusal) => return Err(format!("{}\n{}", refusal.summary(), refusal.render().trim_end()).into()),
         }
     }
+    Ok(())
+}
+
+/// The emitted `main.tf` as a manifest, with `imports.tf` attached when there is one;
+/// `None` when there is no `main.tf`.
+fn emitted_manifest(hcl_dir: &Path) -> Result<Option<crate::manifest::Manifest>, String> {
+    let main_tf = hcl_dir.join("main.tf");
+    let text = match std::fs::read_to_string(&main_tf) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {}", main_tf.display(), e)),
+    };
+    let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
+    let mut manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    let imports_tf = hcl_dir.join("imports.tf");
+    match std::fs::read_to_string(&imports_tf) {
+        Ok(t) => {
+            let imports = hcl::parse(&t).map_err(|e| format!("{}: {}", imports_tf.display(), e))?;
+            manifest.attach_imports(imports.blocks());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {}", imports_tf.display(), e)),
+    }
+    Ok(Some(manifest))
+}
+
+/// After the APIs, before `plan` or `apply`: the two grants a new organisation gives its
+/// whole domain — Project Creator and Billing Account Creator — taken off the domain by
+/// `apply` once every holder the estate declares for that role on the organisation is
+/// live, and nothing else of the policy touched (ADR 0081). `plan` reads and says what
+/// `apply` would do. The organisation and the domain are read from the emitted
+/// `terraform.tfvars`, the declared holders from `main.tf`; a folder-scoped estate, a
+/// project estate (no organisation or domain of its own) and an estate that declares no
+/// holder of either role are named and skipped. Runs as the identity `run_tf` bound
+/// for the preflight: what `tofu` is about to act as.
+async fn remove_default_grants(hcl_dir: &Path, write: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(manifest) = emitted_manifest(hcl_dir)? else {
+        eprintln!("default grants: not checked — there is no {}", hcl_dir.join("main.tf").display());
+        return Ok(());
+    };
+    let tfvars = hcl_dir.join("terraform.tfvars");
+    let names = match std::fs::read_to_string(&tfvars) {
+        Ok(t) => crate::prerequisites::names_in_tfvars(&t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(e) => return Err(format!("{}: {}", tfvars.display(), e).into()),
+    };
+    let (org, domain) = match (names.get("var.customer-organization-id"), names.get("var.customer-domain")) {
+        (Some(o), Some(d)) if !o.is_empty() && !d.is_empty() => (o.clone(), d.clone()),
+        _ => {
+            eprintln!(
+                "default grants: not checked — {} names no customer-organization-id and customer-domain, so this estate has no organisation of its own",
+                tfvars.display()
+            );
+            return Ok(());
+        }
+    };
+    if org.starts_with("folders/") {
+        eprintln!("default grants: not checked — the estate installs under {}, and the grants are the organisation's", org);
+        return Ok(());
+    }
+    let org_id = org.trim_start_matches("organizations/").to_string();
+    let declared = crate::default_grants::declared_holders(&manifest, &org_id);
+    if declared.is_empty() {
+        eprintln!(
+            "default grants on organizations/{}: not checked — the estate declares no holder of {} on the organisation",
+            org_id,
+            crate::default_grants::ROLES.join(" or ")
+        );
+        return Ok(());
+    }
+    let token = crate::gcp::access_token().await.map_err(|e| format!("default grants on organizations/{}: satz has no credential to read the policy with: {}", org_id, e))?;
+    let client = reqwest::Client::new();
+    let report = crate::default_grants::reconcile(&client, &token, &org_id, &domain, &declared, write).await?;
+    eprint!("{}", report.render());
     Ok(())
 }
 

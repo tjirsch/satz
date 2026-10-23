@@ -13,6 +13,37 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.94.0
+
+**`satz apply` takes `domain:<customer domain>` off `roles/resourcemanager.projectCreator` and
+`roles/billing.creator` on the organisation — the two grants a new organisation carries by
+default, which make every user in the directory a project creator and a billing-account creator —
+once every holder the estate declares for that role on the organisation is live; and the
+security-group models grant both roles to the first admin explicitly.** Nothing an estate holds
+is refused. **The plan moves once:** two `google_organization_iam_member` creates for
+`user:<first_admin>@<customer domain>`, one per role. **What the apply does live:** before `tofu`
+runs, beside the API preflight, it reads the organisation's IAM policy and, for each of the two
+roles the estate declares a holder of, removes the domain's entry from the role's unconditional
+binding when every declared holder — the model's group, the first admin, the IaC service account —
+is in it, in one write under the policy's etag, and prints each removal with the command that
+restores it:
+
+```
+default grants on organizations/123456789012:
+  removed domain:example.com from roles/resourcemanager.projectCreator — restore with: gcloud organizations add-iam-policy-binding 123456789012 --member=domain:example.com --role=roles/resourcemanager.projectCreator
+```
+
+A holder the estate does not declare is never touched. A domain entry held under a condition is
+reported and left. `satz plan` prints `apply would remove …` and writes nothing.
+`--no-api-preflight` skips the step together with the APIs. The first apply after the upgrade
+prints `left in place: … user:admin@example.com declared and not live yet` and grants the first
+admin; the second removes the domain's entries. Find what the apply will remove:
+`gcloud organizations get-iam-policy 123456789012 --flatten=bindings --filter="bindings.members:domain:" --format="value(bindings.role)"`
+lists the roles the domain holds. **The edit:** none. An estate that wants the domain to keep one
+of the roles declares that grant in its own `google_organization_iam_member` map
+(`"domain:{customer_domain}" = ["roles/billing.creator"]`); the apply then prints `kept: the estate
+declares domain:… a holder of …` and removes nothing for that role.
+
 ### v0.93.0
 
 **A project whose `project_service` names `compute.googleapis.com` is written with
@@ -1051,6 +1082,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `s1_security_groups` | 1.3 | 2026-10-23 | the first admin holds `roles/resourcemanager.projectCreator` and `roles/billing.creator` on the organisation explicitly — the two roles a new organisation grants its whole domain; once that grant and the groups' are live, `satz apply` takes the domain off those two roles and touches nothing else of the policy. Two `google_organization_iam_member` creates in the plan |
+| `s2_security_groups` | 1.3 | 2026-10-23 | the first admin holds `roles/resourcemanager.projectCreator` and `roles/billing.creator` on the organisation explicitly — the two roles a new organisation grants its whole domain; once that grant and the groups' are live, `satz apply` takes the domain off those two roles and touches nothing else of the policy. Two `google_organization_iam_member` creates in the plan |
 | `workload_deployer` | 1.0 | 2026-10-15 | first version: one deployer identity per customer team — per entry of the request point `workload_deployers`, `{ name group folder }`, the team's infrastructure Google project under `deployer_project_folder`, inside it the account `svc-deploy-<name>` and the state bucket, `deployer_folder_roles` on the entry's folder and on each entry of `workload_deployer_folders`, `deployer_billing_roles` on the billing account, `deployer_organization_roles` (`roles/browser`, for the interface's lookups) on the organisation, and `deployer_group_roles` for the team's group on the account alone |
 | `estate_map` | 2.9 | 2026-10-15 | offers `workload-deployer` on `use_workload_deployer`, off by default, with its question; nothing already on changes |
 | `monitoring.organization_audit_logsink` | 1.8 | 2026-10-14 | `logsink_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |

@@ -300,6 +300,20 @@ ships human memberships** — presets define groups, humans grant membership
 membership declare it on their own estate-level groups. Every group name is a
 param.
 
+**The domain's default grants.** A new organisation grants
+`roles/resourcemanager.projectCreator` and `roles/billing.creator` to its whole domain —
+every user in the directory creates projects and billing accounts. Both models grant those
+two roles to the first admin (`user:{first_admin}@{customer_domain}`) explicitly, beside
+the org-admins and billing-admins groups that hold them, and `satz apply` takes the
+domain's entry off each of the two roles once every holder the estate declares for it is
+live — the first apply after the model goes in grants the first admin and leaves the
+domain in place, the next removes it, each run printing what it found and did, with the
+`gcloud organizations add-iam-policy-binding` line that restores an entry. Nothing else of
+the organisation's policy is touched: a holder the estate does not declare stays, a domain
+entry held under a condition is reported and left, and an estate that declares
+`"domain:{customer_domain}"` a holder of one of the roles in its own grant map keeps it
+([ADR 0081](../docs/adr/0081-the-domain-default-grants-are-removed-by-the-apply-not-by-a-binding.md)).
+
 **Use:**
 
 ```
