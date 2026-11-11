@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### v0.95.0
+### v0.95.1
 
 **Six commands and four MCP tools that act on the preset library are renamed, and the old
 names are refused.** Nothing an estate holds is refused and no plan moves. A script, a
