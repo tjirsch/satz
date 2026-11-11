@@ -401,6 +401,33 @@ grep -q 'folder_workloads' tmp/fw-request.txt || fail "the request's refusal doe
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the folder-workload step"
 
+step "a workload's estate is judged against what was delivered to its account, and what is missing is asked for (ADR 0087)"
+# the example: everything it needs was delivered, so the check is quiet — no role at the organization, no API to write
+grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
+grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organisation binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
+"$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload's estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
+grep -q "a workload's account: the interface \`workload-shop\` delivers 6 role(s) on its folders, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q '^not delivered: none' tmp/wl-report.txt \
+  || fail "the report does not say what was delivered:\n$(cat tmp/wl-report.txt)"
+# a budget needs an API on the workload's infrastructure project and a billing role: neither was delivered
+{ cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-undelivered.satz"
+"$satz" --config "$pt" transpile tmp-undelivered.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "a workload's estate with an undelivered need does not compile at level warn:\n$(cat tmp/wl.txt)"; }
+grep -q "not enabled on acme-deploy-shop, the workload's infrastructure project" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
+  || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "the undelivered API is not asked for:\n$(cat tmp/wl.txt)"; }
+grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the workload'"'"'s entry in `folder_workloads`' tmp/wl.txt \
+  || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "the undelivered billing role is not asked for:\n$(cat tmp/wl.txt)"; }
+grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-undelivered.satz"; fail "a workload's estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
+# the write: nothing is written for what was not delivered, the file stays as it is, and the command fails
+cp "$pt/satz/tmp-undelivered.satz" tmp/wl-before.satz
+"$satz" --config "$pt" update-prerequisites tmp-undelivered.satz > tmp/wl-write.txt 2>&1 && { rm -f "$pt/satz/tmp-undelivered.satz"; fail "update-prerequisites succeeded on a workload's estate with undelivered needs"; }
+cmp -s "$pt/satz/tmp-undelivered.satz" tmp/wl-before.satz || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "update-prerequisites wrote into a workload's estate:\n$(diff tmp/wl-before.satz "$pt/satz/tmp-undelivered.satz")"; }
+grep -q '2 prerequisite(s) are not delivered to svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com' tmp/wl-write.txt && ! grep -q '^wrote \|gcloud services enable' tmp/wl-write.txt \
+  || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "the write does not say what is not delivered, or offers to enable it:\n$(cat tmp/wl-write.txt)"; }
+# the apply: refused while an API is not delivered, with whom to ask
+"$satz" --config "$pt" transpile tmp-undelivered.satz --output "$PWD/tmp/wl-hcl" --apply > tmp/wl-apply.txt 2>&1 && { rm -f "$pt/satz/tmp-undelivered.satz"; fail "an estate with an undelivered API was applied"; }
+rm -f "$pt/satz/tmp-undelivered.satz"
+grep -q "apply refused: 1 API(s) this estate's resources need are not enabled on the workload's infrastructure project — billingbudgets.googleapis.com on acme-deploy-shop" tmp/wl-apply.txt \
+  && grep -q "the organisation's estate's" tmp/wl-apply.txt || fail "the apply's refusal does not name the API and whom to ask:\n$(cat tmp/wl-apply.txt)"
+
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
 ih=tmp/inputs-hcl
 "$satz" --config . transpile yaml/showcase.satz --output "$PWD/$ih" > tmp/inputs.txt 2>&1 || fail "the showcase does not transpile:\n$(cat tmp/inputs.txt)"

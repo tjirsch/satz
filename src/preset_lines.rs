@@ -402,7 +402,10 @@ impl<'a> View<'a> {
         self.groups(n)
             .into_iter()
             .map(|(kind, any_of, params)| {
-                let met = any_of.iter().any(|p| on(p)) || (kind == "data" && self.data_bound(n, &params));
+                // a gate the estate binds itself is answered, whether or not the pack that
+                // asks it is used: `when <gate>` compiles, and the line is on or off by it
+                let gate_bound = kind == "gate" && !params.is_empty() && params.iter().all(|p| self.own.contains_key(p));
+                let met = any_of.iter().any(|p| on(p)) || (kind == "data" && self.data_bound(n, &params)) || gate_bound;
                 Requirement { kind, any_of, params, met }
             })
             .collect()

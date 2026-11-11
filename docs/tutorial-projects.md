@@ -195,7 +195,7 @@ satz transpile shop_dev.satz
 | `variables.tf` | `variable "application"`, `"stage"`, `"cost_centre"`, each described by the comment above its input. The template's params follow them, as every estate's do, and no resource reads those |
 | `terraform.tfvars` | `application = "shop"`, `stage = "dev"`, `cost_centre = "4711"` — the bound values, with the params after them |
 
-Plan and apply as the team's account — a member of `gcp-project-admins@example.com`,
+Plan and apply as the team's account — a member of `gcp-shop-admins@example.com`,
 logged in with `gcloud`, is who the impersonation runs for:
 
 ```bash
@@ -205,7 +205,14 @@ satz transpile shop_dev.satz --apply
 
 The plan reads the workload's folder live (`roles/browser`), creates `acme-shop-dev` in
 it (`roles/resourcemanager.projectCreator` on that folder), links the billing account
-(`roles/billing.user`) and sets its grants (`roles/resourcemanager.projectIamAdmin`). A
+(`roles/billing.user`) and sets its grants (`roles/resourcemanager.projectIamAdmin`).
+
+The compile checks exactly that. It reads what was delivered to the account from the
+interface `workload-shop` and judges the estate's resource types against it, so this estate
+compiles without a prerequisite warning. A template that needs more — a budget needs
+`billingbudgets.googleapis.com` on `acme-deploy-shop` and `roles/billing.costsManager` — is
+told what to ask the organisation's estate for, and `--apply` refuses until the API is
+delivered: the team's account can grant itself nothing above its own projects. A
 second project is a second thin estate — `shop-test/satz/shop_test.satz` with
 `stage = "test"` — or, for a run, `satz transpile shop_dev.satz --input stage=test`.
 
