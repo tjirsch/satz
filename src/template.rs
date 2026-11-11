@@ -321,7 +321,7 @@ fn pack_menu(graph: &PackGraph) -> String {
          // gained since — so the list here stays the library's, not one person's memory of it.\n\
          // Whichever writes it, the compile reports a question THIS estate has answered true\n\
          // whose line is still commented, so the two never drift apart. A default in the map or\n\
-         // in a pack is the library's proposal, not this estate's answer: `satz packs` lists it,\n\
+         // in a pack is the library's proposal, not this estate's answer: `satz presets` lists it,\n\
          // and the compile says nothing until the answer is bound here.\n",
         graph,
         Place::Menu,

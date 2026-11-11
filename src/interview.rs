@@ -145,8 +145,8 @@ pub(crate) fn bound_literal(src: &str, name: &str) -> Result<Option<String>, Str
 
 /// Bind `name = value` in the estate's `params {}`: replace the binding it already
 /// has, in place, and append one only when nothing binds the name. Every writer of a
-/// param lands here — `init`, the interview and `satz_interview`, `add-pack` and
-/// `remove-pack`, the notice `adopt --execute --import` acknowledges, `migrate`'s
+/// param lands here — `init`, the interview and `satz_interview`, `add-preset` and
+/// `remove-preset`, the notice `adopt --execute --import` acknowledges, `migrate`'s
 /// deployment mode, the greenfield write-back — so no two of them can leave a subject
 /// bound twice, which satz refuses to compile.
 ///
@@ -257,7 +257,7 @@ fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> R
 
 /// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
 /// exists. Answering its question YES is what puts the pack in the estate: the line of
-/// every pack on that gate is switched on as `satz add-pack` switches it — uncommented, or
+/// every pack on that gate is switched on as `satz add-preset` switches it — uncommented, or
 /// written where the pack graph places it — for the interview and for `satz_interview`
 /// alike, since both land here.
 ///
@@ -266,7 +266,7 @@ fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> R
 /// someone's estate is not a thing an answer should do.
 fn pack_lines(src: &str, gate: &str, value: &serde_yaml::Value, graph: Option<&PackGraph>) -> Result<String, String> {
     match (value.as_bool(), graph) {
-        (Some(true), Some(g)) => Ok(crate::packs::gate_on(src, g, gate)?.0),
+        (Some(true), Some(g)) => Ok(crate::preset_lines::gate_on(src, g, gate)?.0),
         _ => Ok(src.to_string()),
     }
 }
@@ -345,7 +345,7 @@ fn gates_said_yes(row: &QuestionRow, value: &serde_yaml::Value) -> Vec<String> {
     }
 }
 
-/// Refuse a yes to a pack whose requirements are off in `src` — as `satz add-pack`
+/// Refuse a yes to a pack whose requirements are off in `src` — as `satz add-preset`
 /// refuses the same switch — before anything is written.
 fn refuse_unmet(
     graph: Option<&PackGraph>,
@@ -356,7 +356,7 @@ fn refuse_unmet(
 ) -> Result<(), String> {
     let Some(g) = graph else { return Ok(()) };
     for gate in gates_said_yes(row, value) {
-        let unmet = crate::packs::unmet_for_gate(g, Path::new(&runtime.presets_dir), src, &gate)?;
+        let unmet = crate::preset_lines::unmet_for_gate(g, Path::new(&runtime.presets_dir), src, &gate)?;
         if !unmet.is_empty() {
             return Err(format!("{} = yes: {}", gate, unmet.join("; ")));
         }
@@ -367,7 +367,7 @@ fn refuse_unmet(
 /// Write `after` over `before` only when the estate still reads with it — its params
 /// resolve and every line stands where it may — and restore `before` when it does not:
 /// an answer that leaves an estate satz refuses is refused, with the file as it was (the
-/// rule `satz add-pack` follows, ADR 0023). The questions report is the proof rather than
+/// rule `satz add-preset` follows, ADR 0023). The questions report is the proof rather than
 /// the whole compile, because it needs no provider schema: an estate is answered on day
 /// 0, before `satz update-schema` has run.
 fn write_proven(estate: &Path, runtime: &ToolConfig, before: &str, after: &str) -> Result<(), String> {
@@ -567,13 +567,13 @@ pub(crate) fn run(
     // A yes that switches a pack on opens its notice; it is shown once, when it opens.
     // So is what it adds to another pack's list params.
     let mut open_notices = crate::notices::open(estate, runtime)?;
-    let mut contributions = crate::packs::contributions(estate, runtime)?;
+    let mut contributions = crate::preset_lines::contributions(estate, runtime)?;
     let mut switch_opened = |out: &mut dyn Write| -> Result<(), String> {
         let now = crate::notices::open(estate, runtime)?;
         w(out, &crate::notices::render(&crate::notices::opened(&open_notices, &now)))?;
         open_notices = now;
-        let now = crate::packs::contributions(estate, runtime)?;
-        w(out, &crate::packs::render_contributions(&crate::packs::contributed(&contributions, &now)))?;
+        let now = crate::preset_lines::contributions(estate, runtime)?;
+        w(out, &crate::preset_lines::render_contributions(&crate::preset_lines::contributed(&contributions, &now)))?;
         contributions = now;
         Ok(())
     };

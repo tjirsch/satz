@@ -85,7 +85,7 @@ for md in sorted((ROOT / "presets/docs").glob("*.md")):
 
 # The library's groups, in reading order, with the pack pages in each: the side menu
 # of every pack page. `presets/library-groups.txt` is the one list (ADR 0076) and
-# `satz doc-packs` is its gate; the check here covers only what this script relies
+# `satz doc-presets` is its gate; the check here covers only what this script relies
 # on — every pack page is in the menu once, and every menu entry is a page.
 LIBRARY_PAGE = "presets/index.html"
 

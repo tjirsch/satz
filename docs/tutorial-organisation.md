@@ -138,16 +138,16 @@ that is the condition for the first pack.
 The first line of the menu is the map, and it goes on by its path:
 
 ```bash
-satz add-pack C0example.satz presets/estate-map.satz
+satz add-preset C0example.satz presets/estate-map.satz
 ```
 
 The map declares the questions every other pack's line is gated on — which security
-group model, which packs on — and `add-pack` says how many it opened and names the
+group model, which packs on — and `add-preset` says how many it opened and names the
 command that asks them:
 
 ```bash
 satz interview C0example.satz
-satz packs C0example.satz --format text --out -
+satz presets C0example.satz --format text --out -
 ```
 
 Answer the model (`S1`, the five admin groups) and the recommended packs with their
@@ -177,13 +177,13 @@ The CIS baseline is the one to read before applying: its organisation policies l
 apply. Switch it on and read what it asks for first:
 
 ```bash
-satz add-pack C0example.satz use_cis_baseline
+satz add-preset C0example.satz use_cis_baseline
 satz adopt C0example.satz --execute --import
 satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
 ```
 
-`add-pack` binds the gate and activates the line; the pack's notice says why `adopt`
+`add-preset` binds the gate and activates the line; the pack's notice says why `adopt`
 comes first — Google sets some of these policies on every new organisation, and an apply
 that creates a policy that exists stops on `409 POLICY_ALREADY_EXISTS`. `adopt` resolves
 what is already there, writes its ids into the estate as `"import-id"`, so the plan

@@ -13,6 +13,32 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.95.0
+
+**Six commands and four MCP tools that act on the preset library are renamed, and the old
+names are refused.** Nothing an estate holds is refused and no plan moves. A script, a
+pipeline, a runbook or an MCP client that calls an old name gets the argument parser's
+`unrecognized subcommand`, or `unknown tool` over MCP.
+
+| before | now |
+|---|---|
+| `satz packs` | `satz presets` |
+| `satz add-pack` | `satz add-preset` |
+| `satz remove-pack` | `satz remove-preset` |
+| `satz review-pack` | `satz review-preset` |
+| `satz doc-packs` | `satz doc-presets` |
+| `satz pack-graph` | `satz preset-graph` |
+| `satz_packs` | `satz_presets` |
+| `satz_add_pack` | `satz_add_preset` |
+| `satz_remove_pack` | `satz_remove_preset` |
+| `satz_review_pack` | `satz_review_preset` |
+
+**How to find it:** `grep -rnE 'add-pack|remove-pack|review-pack|doc-packs|pack-graph |satz packs|satz_(add_|remove_|review_)?packs?\b'`
+over the repository's scripts, pipelines and runbooks. **What to write instead:** the name in
+the right column; arguments, flags, output and exit codes are the same. The file
+`presets/pack-graph.json`, the folder `presets/`, the keyword `pack` and the fields of every
+report keep their names (ADR 0082).
+
 ### v0.94.0
 
 **`satz apply` takes `domain:<customer domain>` off `roles/resourcemanager.projectCreator` and

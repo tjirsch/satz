@@ -6,7 +6,7 @@
 //! The rules are the content rules of `scripts/check-names.sh`, the repository's
 //! privacy gate, in a second implementation (ADR 0050). The script stays the gate: it
 //! runs where there is no toolchain and on a tree that does not compile. This copy is
-//! what `satz review-pack` judges a pack with, because a pack written against its
+//! what `satz review-preset` judges a pack with, because a pack written against its
 //! author's own organisation carries exactly these shapes, and each one must become a
 //! param before the pack goes upstream.
 //!

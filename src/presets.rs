@@ -1685,7 +1685,7 @@ fn is_git_dirty(path: &Path) -> Result<bool, String> {
 
 /// Write a commented `use` line for every pack `graph` offers that the estate has no line
 /// for — active or commented, under its pristine name or its `.local` fork — each where the
-/// graph's order puts it (`crate::packs::place_line`): after the pack before it in the same
+/// graph's order puts it (`crate::preset_lines::place_line`): after the pack before it in the same
 /// place, inside the block the graph names, never at the end of a file whose blocks read
 /// a param the line's pack declares.
 ///
@@ -1695,7 +1695,7 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<Vec<(String, Str
     let src = crate::fsx::read_to_string(estate)?;
     let mut added: Vec<(String, String)> = Vec::new();
     let has_line = |text: &str, path: &str| {
-        crate::packs::scan(text).uses.iter().any(|l| {
+        crate::preset_lines::scan(text).uses.iter().any(|l| {
             let fork = crate::fsx::slash(&fork_sibling(Path::new(path)));
             l.written == path || l.written == fork
         })
@@ -1724,7 +1724,7 @@ fn adopt_pack_lines(estate: &Path, graph: &PackGraph) -> Result<Vec<(String, Str
         // the first line of the phase is the summary
         let summary = n.phase.as_deref().and_then(|p| p.lines().next()).unwrap_or("").trim().to_string();
         let summary = if summary.is_empty() { "with the group above".to_string() } else { summary };
-        let (next, _) = crate::packs::place_line(&out, graph, n, true);
+        let (next, _) = crate::preset_lines::place_line(&out, graph, n, true);
         out = next;
         let summary = match crate::template::place(n) {
             crate::template::Place::Block(at) => format!("{} (in `{}`)", summary, at),

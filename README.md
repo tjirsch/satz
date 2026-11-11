@@ -176,7 +176,7 @@ This builds the release binary and installs it to `~/.cargo/bin` (no sudo requir
 
 All commands accept the [global options](#global-options) (`--config`, `--validation`, `--verbose`, `--html-help`, `--silence`, `--no-impersonate`, `--no-api-preflight`, `--no-actions`, `--no-pack-actions`, all below), before the command or after it. `satz --help` lists them; a command's own help lists only that command's options. `satz <command> -h` is the one-line-per-option summary, `--help` the full text (both wrap to your terminal), `--html-help` opens the command's section on the documentation site. The groups below are the ones `satz --help` prints, in the same order:
 
-Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Five commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, `prowler`, which prints a command line to paste, `mcp-config`, which prints the block an MCP client reads, and `add-pack` and `remove-pack`, which report the switch they made. `remediation-plan` and `doc-packs` write several files each, so they take `--out-dir <DIR>`.
+Every reporting command takes the same two arguments: `--format`, the rendering, and `--out`, the file it lands in. A command's `--help` lists exactly the formats it writes and anything else is refused naming them; a command that writes `markdown` writes `pdf` too, the same document typeset. A table in a PDF is laid out from what it holds: a column of status glyphs is as wide as a glyph and the prose columns share the rest in proportion to their text, the first row is a header that repeats on every page the table spans, and a document that holds a table of five columns or more is landscape from its first page to its last. `--out` may name the file with its extension or without one — `--format pdf --out evidence/cis` writes `evidence/cis.pdf` — and a name ending in another format's extension (`--format pdf --out cis.md`) is refused. One invocation produces exactly one artefact at exactly one named path and says on stderr where it went, so nothing reaches the console that nobody asked for and `--format json --out - | jq` is a clean pipe. Five commands answer on the console instead, because what they produce is not a document: `update-prerequisites`, which edits the estate and reports what it wrote, `prowler`, which prints a command line to paste, `mcp-config`, which prints the block an MCP client reads, and `add-preset` and `remove-preset`, which report the switch they made. `remediation-plan` and `doc-presets` write several files each, so they take `--out-dir <DIR>`.
 
 **Estate**
 
@@ -191,8 +191,8 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
 | `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
-| `add-pack <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
-| `remove-pack <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
+| `add-preset <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
+| `remove-preset <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
 
 **HCL**
 
@@ -214,9 +214,9 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir` |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
-| `review-pack <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-pack) |
-| `pack-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
-| `doc-packs` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
+| `review-preset <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-preset) |
+| `preset-graph` | `--presets-dir <DIR>` (default `presets_dir` from the config), `--check` — checks the library and writes `<presets_dir>/pack-graph.json`, the pack graph that ships with the presets: every pack with its gate, phase, block and adoption order from the map's `offers` entries, and the edges between packs — derived from their param references and `ask_when`, declared on the entries where the packs do not show them. Nothing is written while a check fails; `--check` fails when the file is behind the library. See [The pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
+| `doc-presets` | `--out-dir <DIR>` (default `<presets_dir>/docs`), `--check` — one Markdown page per pristine pack, derived from the pack file, plus a grouped index; `--check` fails when the pages are behind, a claim names a control its catalog lacks, a pack header says nothing the index can print, or a pack version has no changelog row |
 
 **Policies**
 
@@ -232,7 +232,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | Command | Options / Arguments |
 |---------|---------------------|
 | `questions <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`\|`xlsx`, the decisions catalog as a workbook a customer fills in and sends back), `--out <FILE>`, `--unanswered` — every question the estate's packs declare with its state: `answered` when the estate's own params bind it, else `unanswered` with the default the pack offers or `blocking` when none is possible. `markdown` is the decisions sheet; `summary.complete` is the gate `bootstrap` and `transpile --apply` refuse on |
-| `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-pack` does — refused, naming it, while a pack it needs is off — and prints the notice that pack carries. An answer that would leave an estate satz refuses is refused and writes nothing. See [satz interview](docs/interview.md) |
+| `interview <INPUT>` | `--create`, `--all`, `--accept-defaults` — asks the open questions one at a time at the terminal and writes each answer into the estate's params; `--create` writes the estate first from `presets/estate-core.satz`. A yes to a pack's question switches its line on as `add-preset` does — refused, naming it, while a pack it needs is off — and prints the notice that pack carries. An answer that would leave an estate satz refuses is refused and writes nothing. See [satz interview](docs/interview.md) |
 | `require <FRAMEWORK> <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, *(catalog id, e.g. `cis-gcp-4.0`)* |
 | `report-compliance [<FRAMEWORK>] <INPUT>` | `--format` (`markdown`\|`json`\|`pdf`), `--out <FILE>`, `--prowler`, `--checkov`, `--no-live`, `--fail-on <statuses>` |
 | `scan [<INPUT>]` | Checkov over `hcl_dir`; with the estate, each finding is pointed at the Satz block that declared the resource; failed checks exit 1 |
@@ -364,18 +364,18 @@ satz bootstrap <ESTATE> [options]
     - **Init**: Runs `tofu init` to download plugins.
     - **Import**: Automatically imports the created Folder, Project, and Bucket into the local state.
 
-### Reviewing a pack (`review-pack`)
+### Reviewing a pack (`review-preset`)
 
 A pack is the unit everyone extends satz with, and the bar it has to clear is real: it
 is what the library's own gates enforce on every pack in `presets/`. Those gates need a
 satz checkout and a Rust toolchain, so a pack written anywhere else could not be checked
-at all — its author found out by opening a pull request, or never. `review-pack` is that
+at all — its author found out by opening a pull request, or never. `review-preset` is that
 bar as a command.
 
 ```bash
-satz review-pack my-pack.satz --format text --out -
-satz review-pack my-pack.satz --format json --out review.json      # the findings as data
-satz review-pack my-pack.satz --against C0example.satz --format text --out -
+satz review-preset my-pack.satz --format text --out -
+satz review-preset my-pack.satz --format json --out review.json      # the findings as data
+satz review-preset my-pack.satz --against C0example.satz --format text --out -
 ```
 
 It checks, in the order a pack fails them: it **parses**; it is **formatted** (`satz fmt
@@ -404,14 +404,14 @@ it. `--against <estate>` judges it inside a real estate instead.
 The findings are the same `Finding` the compile, `satz lsp` and `satz_transpile_check`
 produce — severity, kind, file, line, message, fix — so an editor or an app that already
 reads those needs nothing new to show them, and the text report prints them as every
-command does ([How a finding is printed](#how-a-finding-is-printed)). `satz_review_pack` serves the same review over MCP,
+command does ([How a finding is printed](#how-a-finding-is-printed)). `satz_review_preset` serves the same review over MCP,
 read-only. The command exits non-zero when the pack does not clear the bar.
 
 Each private-looking token is an error of kind `private-shape` at its line, naming the
 token: a pack goes upstream with a param in its place, or with the documented example
 value. The rules and their allow-lists are the ones `scripts/check-names.sh` holds this
 repository to ([housekeeping](docs/housekeeping.md#check-namessh--the-privacy-gate)): what
-`review-pack` flags in a pack is what that gate flags in it.
+`review-preset` flags in a pack is what that gate flags in it.
 
 ### What an estate must declare (`update-prerequisites`)
 
@@ -1850,7 +1850,7 @@ API and touches no credential.
 What a compile finds — the errors it refuses on, the warnings and the infos — is printed
 in blocks, one per finding, and findings that say the same thing share one. Every command
 that prints a finding prints this block: `transpile`, every command that compiles,
-`review-pack` and the findings of `packs`. This is `tests/corpus/cis-packs/main.satz` as
+`review-preset` and the findings of `packs`. This is `tests/corpus/cis-packs/main.satz` as
 `estate.satz`, the CIS baseline and nine of its extensions on, on a terminal 100 columns
 wide:
 
@@ -1859,7 +1859,7 @@ packs on while a pack they need is off (1)
 
 warning  pack-requirement  estate.satz:45  presets/cis/CIS-GCP-Foundation-4.0.satz
     `presets/cis/CIS-GCP-Foundation-4.0.satz` needs `presets/estate-map.satz`, which is off
-    fix: satz add-pack estate.satz presets/estate-map.satz
+    fix: satz add-preset estate.satz presets/estate-map.satz
 
 notices open — what a pack asks to be run once it is on (10)
 
@@ -2272,7 +2272,7 @@ states facts, an agent judges and authors (ADR 0003). `skills/security-review/` 
 Foundations v5.0 security review of one organisation — phase 1 creates the evidence live
 (Prowler per service, `satz report-compliance` with Checkov, `triage`, `require`), phase 2 builds
 the two deliverables offline from it, the checklist of every control with its status and the
-remediation plan of satz packs and `gcloud` steps. `skills/estate-documentation/` writes a
+remediation plan of satz presets and `gcloud` steps. `skills/estate-documentation/` writes a
 customer's documentation package from the estate: a short description with a diagram of the
 organisation, its folders, projects and workloads, the decisions workbook (`satz questions`),
 and the review's two documents beside them. Each skill's scripts, references and assets are in

@@ -51,12 +51,12 @@ params {
 ```
 
 ```bash
-satz add-pack C0example.satz use_workload_deployer
+satz add-preset C0example.satz use_workload_deployer
 satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
 ```
 
-`add-pack` activates the pack's line (the `params` above bind what it asks:
+`add-preset` activates the pack's line (the `params` above bind what it asks:
 `deployer_project_folder` is a question, which `satz interview` asks when it is not
 bound). The apply creates, for the team `shop`:
 

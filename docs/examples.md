@@ -16,7 +16,7 @@ values.** `scripts/check-names.sh` enforces it: any `C0…` id, any 11–13-digi
 number, any billing-account id, any GUID, any 32-hex string, any project id, any
 e-mail or `.de` domain that is not on this page fails the commit and the CI run.
 The values themselves are listed in `scripts/check-names-allow.txt`, which the gate
-and `satz review-pack` both read.
+and `satz review-preset` both read.
 
 All domains are IANA-reserved (`example.com/net/org`, the `.example` TLD), so
 nothing here can resolve. All numbers are visibly synthetic.

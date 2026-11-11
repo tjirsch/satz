@@ -7,7 +7,7 @@
 // The map declares the choices, and at the bottom of the file one `offers` entry
 // per pack in the library: the gate that switches it on, the phase that has to be
 // finished before it can go in, the block its line belongs in, and — in file
-// order — the order the packs can be adopted. `satz pack-graph` reads the entries,
+// order — the order the packs can be adopted. `satz preset-graph` reads the entries,
 // derives who needs whom from the packs' own param references and `ask_when`, and
 // writes `presets/pack-graph.json`; an entry declares `requires` or `excludes` only
 // for an edge the packs do not show. The estate carries the matching `use … when`
@@ -274,7 +274,7 @@ question oneof interface_notice {
 // list of labelled bodies; `by_hand` offers a pack whose line is written by hand,
 // with the reason. Every other line stands at the top level of the estate, in the
 // order of the entries below. `requires` and `excludes` name the edges the packs
-// do not show by their param references — `satz pack-graph` derives the rest and
+// do not show by their param references — `satz preset-graph` derives the rest and
 // refuses a declared edge it can derive.
 
 offers "presets/estate-map.satz" {

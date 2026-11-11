@@ -73,17 +73,17 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::Import { .. }
         | Commands::UpdatePrerequisites { .. }
         | Commands::Interview { .. }
-        | Commands::AddPack { .. }
+        | Commands::AddPreset { .. }
         | Commands::Interfaces { .. }
         | Commands::CheckRequest { .. }
-        | Commands::RemovePack { .. }
+        | Commands::RemovePreset { .. }
         | Commands::MergePresets { .. }
         | Commands::GetPresets { .. }
         | Commands::CheckPresets { .. }
-        | Commands::DocPacks { .. }
-        | Commands::PackGraph { .. }
-        | Commands::ReviewPack { .. }
-        | Commands::Packs { .. }
+        | Commands::DocPresets { .. }
+        | Commands::PresetGraph { .. }
+        | Commands::ReviewPreset { .. }
+        | Commands::Presets { .. }
         | Commands::CheckConsumer { .. }
         | Commands::Questions { .. }
         | Commands::Require { .. }

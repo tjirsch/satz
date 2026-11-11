@@ -1,4 +1,4 @@
-//! `satz pack-graph`: the authoring command that checks the library and writes
+//! `satz preset-graph`: the authoring command that checks the library and writes
 //! `presets/pack-graph.json`, the graph every estate command reads.
 //!
 //! The nodes are the library's files. What the map says about each pack — its gate,
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 type BoxErr = Box<dyn std::error::Error>;
 
-/// The file `pack-graph` writes, beside the packs it describes.
+/// The file `preset-graph` writes, beside the packs it describes.
 pub(crate) const GRAPH_FILE: &str = "pack-graph.json";
 const MAP: &str = "estate-map.satz";
 const CORE: &str = "estate-core.satz";
@@ -56,7 +56,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
     let core_path = format!("presets/{}", CORE);
     let map = *by_path
         .get(&map_path)
-        .ok_or_else(|| format!("pack-graph: the library has no {} — the map is where the offered packs are written", map_path))?;
+        .ok_or_else(|| format!("preset-graph: the library has no {} — the map is where the offered packs are written", map_path))?;
     let at_map = |line: usize| format!("{}:{}", map_path, line);
 
     // every param, and where it is declared
@@ -464,8 +464,8 @@ fn check(g: &PackGraph, contributed: &BTreeSet<(String, String)>) -> Vec<Finding
     for n in g.nodes.iter().filter(|n| n.order.is_some() && n.by_hand.is_none()) {
         let order = n.order.unwrap_or_default();
         let section = match &n.block {
-            Some(b) => template::insert_into_map(&skeleton, b, "// pack-graph marker", "")
-                .and_then(|text| text.lines().position(|l| l.trim() == "// pack-graph marker"))
+            Some(b) => template::insert_into_map(&skeleton, b, "// preset-graph marker", "")
+                .and_then(|text| text.lines().position(|l| l.trim() == "// preset-graph marker"))
                 .unwrap_or(usize::MAX),
             None => 0,
         };
@@ -690,7 +690,7 @@ pub(crate) fn run(presets_dir: &Path, check: bool) -> Result<(), BoxErr> {
     if !findings.is_empty() {
         let mut lines: Vec<String> = findings.iter().map(|f| format!("check {}: {}", f.check, f.text)).collect();
         lines.sort();
-        return Err(format!("pack-graph: {} finding(s) in the library — nothing written:\n  {}", lines.len(), lines.join("\n  ")).into());
+        return Err(format!("preset-graph: {} finding(s) in the library — nothing written:\n  {}", lines.len(), lines.join("\n  ")).into());
     }
     let text = format!("{}\n", serde_json::to_string_pretty(&graph)?);
     let out = presets_dir.join(GRAPH_FILE);
@@ -698,14 +698,14 @@ pub(crate) fn run(presets_dir: &Path, check: bool) -> Result<(), BoxErr> {
     let declared = graph.edges.iter().filter(|e| e.source == Source::Declared).count();
     let summary = format!("{} node(s), {} edge(s), {} of them declared", graph.nodes.len(), graph.edges.len(), declared);
     if current.as_deref() == Some(text.as_str()) {
-        println!("pack-graph: {} current — {}", out.display(), summary);
+        println!("preset-graph: {} current — {}", out.display(), summary);
         return Ok(());
     }
     if check {
-        return Err(format!("pack-graph: {} is behind the library — run `satz pack-graph` and commit ({})", out.display(), summary).into());
+        return Err(format!("preset-graph: {} is behind the library — run `satz preset-graph` and commit ({})", out.display(), summary).into());
     }
     crate::fsx::write(&out, &text)?;
-    println!("pack-graph: wrote {} — {}", out.display(), summary);
+    println!("preset-graph: wrote {} — {}", out.display(), summary);
     Ok(())
 }
 
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn the_shipped_pack_graph_is_current() {
         let presets = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
-        run(&presets, true).expect("presets/pack-graph.json is behind the library — run `satz pack-graph` and commit");
+        run(&presets, true).expect("presets/pack-graph.json is behind the library — run `satz preset-graph` and commit");
     }
 
     #[test]

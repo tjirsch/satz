@@ -164,12 +164,12 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("report-compliance", Parity::Tools(&["satz_report_compliance"])),
     ("questions", Parity::Tools(&["satz_questions"])),
     ("interview", Parity::Tools(&["satz_interview"])),
-    ("packs", Parity::Tools(&["satz_packs"])),
+    ("presets", Parity::Tools(&["satz_presets"])),
     ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
-    ("add-pack", Parity::Tools(&["satz_add_pack"])),
+    ("add-preset", Parity::Tools(&["satz_add_preset"])),
     ("check-request", Parity::Off("a project's pipeline runs it on the pull request that vendors the file, before the estate's owner reviews it; the interface plane has no tools")),
     ("interfaces", Parity::Off("satz-studio reads its json form through the CLI, and an agent reads the interface READMEs the transpile writes; the interface plane has no tools")),
-    ("remove-pack", Parity::Tools(&["satz_remove_pack"])),
+    ("remove-preset", Parity::Tools(&["satz_remove_preset"])),
     ("triage", Parity::Tools(&["satz_triage"])),
     ("prowler", Parity::Tools(&["satz_prowler"])),
     ("remediation-plan", Parity::Tools(&["satz_remediation_items", "satz_remediation_annotate"])),
@@ -178,7 +178,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("get-presets", Parity::Tools(&["satz_get_presets"])),
     ("adopt", Parity::Tools(&["satz_adopt"])),
     ("update-prerequisites", Parity::Tools(&["satz_update_prerequisites"])),
-    ("review-pack", Parity::Tools(&["satz_review_pack"])),
+    ("review-preset", Parity::Tools(&["satz_review_preset"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
     ("fmt", Parity::Tools(&["satz_fmt"])),
@@ -202,8 +202,8 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("map-types", Parity::Off("it derives type-map.yaml from the Discovery Documents — a maintainer refresh of shipped data")),
     ("scan-plan", Parity::Off("plan-JSON plumbing for a tofu workflow MCP does not drive")),
     ("generate-migration", Parity::Off("it writes a state-mv script for a human to read and run")),
-    ("doc-packs", Parity::Off("it regenerates the pack pages in the repository; `--check` is a repository gate")),
-    ("pack-graph", Parity::Off("an authoring tool: it checks the library and writes the graph that ships with the presets; an estate reads the shipped file, and `--check` is a repository gate")),
+    ("doc-presets", Parity::Off("it regenerates the pack pages in the repository; `--check` is a repository gate")),
+    ("preset-graph", Parity::Off("an authoring tool: it checks the library and writes the graph that ships with the presets; an estate reads the shipped file, and `--check` is a repository gate")),
     ("self-update", Parity::Off("it replaces the binary")),
     ("completion", Parity::Off("a shell affordance")),
     ("open-readme", Parity::Off("it opens a browser")),
@@ -392,7 +392,7 @@ pub(crate) struct InterviewReport {
     /// What the packs this call's answers switched on add to other packs' list params —
     /// an external principal added to the CIS baseline's `allowed_policy_member_subjects`,
     /// for one. Shown once, like `notices`.
-    pub contributes: Vec<crate::packs::ContributionRow>,
+    pub contributes: Vec<crate::preset_lines::ContributionRow>,
     #[serde(flatten)]
     pub report: crate::questions::QuestionsReport,
 }
@@ -1367,7 +1367,7 @@ impl SatzMcp {
                        the human's decisions into the estate's `params {}` and `accept_defaults` writes every \
                        offered default (both need 'write'); an answer is checked against the question's shape, and \
                        one refused answer writes nothing. Answering a pack's gate `true` switches its line on as \
-                       `satz_add_pack` does, and is refused while a pack it needs is off; `notices` carries the \
+                       `satz_add_preset` does, and is refused while a pack it needs is off; `notices` carries the \
                        commands the switched-on packs ask to be run, and `contributes` what they add to other \
                        packs' list params. `summary.complete` is the gate: `satz bootstrap` and `satz transpile \
                        --apply` refuse until it is true. With `create: true` (needs 'write') the estate file is \
@@ -1463,7 +1463,7 @@ impl SatzMcp {
                 Ok(n) => n,
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
-            let contributed_before = match crate::packs::contributions(&estate, &open.runtime) {
+            let contributed_before = match crate::preset_lines::contributions(&estate, &open.runtime) {
                 Ok(c) => c,
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
@@ -1482,8 +1482,8 @@ impl SatzMcp {
                 Ok(now) => crate::notices::opened(&open_before, &now),
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
-            contributes = match crate::packs::contributions(&estate, &open.runtime) {
-                Ok(now) => crate::packs::contributed(&contributed_before, &now),
+            contributes = match crate::preset_lines::contributions(&estate, &open.runtime) {
+                Ok(now) => crate::preset_lines::contributed(&contributed_before, &now),
                 Err(e) => return Ok(Err(refused(format!("interview: {}", e)))),
             };
         }
@@ -1500,8 +1500,8 @@ impl SatzMcp {
     }
 
     #[tool(
-        name = "satz_packs",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PacksReport>(),
+        name = "satz_presets",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::preset_lines::PacksReport>(),
         description = "Every pack the pack graph offers, as this estate has it — the rows satz-studio's Packs view \
                        shows: the choice (the gate, the estate's `answer`, the library's `default`, the `value` \
                        they give), the `line` (active, ungated, commented, absent, forked, misplaced) at its line \
@@ -1517,8 +1517,8 @@ impl SatzMcp {
     async fn packs(
         &self,
         Parameters(args): Parameters<EstateArg>,
-    ) -> Result<Result<Json<crate::packs::PacksReport>, CallToolResult>, McpError> {
-        const SERVES: Option<&str> = Some("packs");
+    ) -> Result<Result<Json<crate::preset_lines::PacksReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("presets");
         if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
@@ -1526,7 +1526,7 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::packs::report(&estate, &open.runtime) {
+        match crate::preset_lines::report(&estate, &open.runtime) {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
         }
@@ -1576,9 +1576,9 @@ impl SatzMcp {
     }
 
     #[tool(
-        name = "satz_add_pack",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PackChange>(),
-        description = "Switch a pack on, as `satz add-pack` does: bind its gate true (an option of a choice sets \
+        name = "satz_add_preset",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::preset_lines::PackChange>(),
+        description = "Switch a pack on, as `satz add-preset` does: bind its gate true (an option of a choice sets \
                        its siblings false) and make its `use` line active where the pack graph places it, with the \
                        packs whose gate follows it. Refused, naming them, while a pack it needs is off \
                        (`with_requirements` switches those on where the graph names one) or a pack it excludes is \
@@ -1591,8 +1591,8 @@ impl SatzMcp {
     async fn add_pack(
         &self,
         Parameters(args): Parameters<AddPackArgs>,
-    ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
-        const SERVES: Option<&str> = Some("add-pack");
+    ) -> Result<Result<Json<crate::preset_lines::PackChange>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("add-preset");
         if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
@@ -1600,16 +1600,16 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::packs::add(&estate, &open.tool, &open.runtime, &args.pack, args.with_requirements) {
+        match crate::preset_lines::add(&estate, &open.tool, &open.runtime, &args.pack, args.with_requirements) {
             Ok(c) => Ok(Ok(Json(c))),
-            Err(e) => Ok(Err(refused(format!("add-pack: {}", e)))),
+            Err(e) => Ok(Err(refused(format!("add-preset: {}", e)))),
         }
     }
 
     #[tool(
-        name = "satz_remove_pack",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::packs::PackChange>(),
-        description = "Switch a pack off, as `satz remove-pack` does: bind its gate false and leave its line — a \
+        name = "satz_remove_preset",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::preset_lines::PackChange>(),
+        description = "Switch a pack off, as `satz remove-preset` does: bind its gate false and leave its line — a \
                        gated line with a false gate deploys nothing. Refused, naming them, while a pack that \
                        needs it is on (`cascade` switches those off too) or while its line is not gated on its \
                        gate. The edited estate is compiled and restored when it does not compile. The next apply \
@@ -1619,8 +1619,8 @@ impl SatzMcp {
     async fn remove_pack(
         &self,
         Parameters(args): Parameters<RemovePackArgs>,
-    ) -> Result<Result<Json<crate::packs::PackChange>, CallToolResult>, McpError> {
-        const SERVES: Option<&str> = Some("remove-pack");
+    ) -> Result<Result<Json<crate::preset_lines::PackChange>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("remove-preset");
         if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
@@ -1628,9 +1628,9 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::packs::remove(&estate, &open.tool, &open.runtime, &args.pack, args.cascade) {
+        match crate::preset_lines::remove(&estate, &open.tool, &open.runtime, &args.pack, args.cascade) {
             Ok(c) => Ok(Ok(Json(c))),
-            Err(e) => Ok(Err(refused(format!("remove-pack: {}", e)))),
+            Err(e) => Ok(Err(refused(format!("remove-preset: {}", e)))),
         }
     }
 
@@ -1747,7 +1747,7 @@ impl SatzMcp {
         description = "Format Satz text: the canonical layout every file in the library is in — two-space \
                        indent, `=` aligned over a run, one list item per line. Text in, text out: satz \
                        writes no file, so the client keeps the one it holds. Meaning never changes, and the \
-                       formatter proves it. `satz_review_pack` refuses a pack that is not formatted, and \
+                       formatter proves it. `satz_review_preset` refuses a pack that is not formatted, and \
                        this is what formats it.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
@@ -1769,7 +1769,7 @@ impl SatzMcp {
     }
 
     #[tool(
-        name = "satz_review_pack",
+        name = "satz_review_preset",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::review_pack::Review>(),
         description = "Judge one pack against the library's own bar, the way a pull request would: it parses, it is \
                        formatted, its header says what it is, its version has a changelog row, it carries no value \
@@ -1788,7 +1788,7 @@ impl SatzMcp {
         &self,
         Parameters(args): Parameters<ReviewPackArgs>,
     ) -> Result<Result<Json<crate::review_pack::Review>, CallToolResult>, McpError> {
-        const SERVES: Option<&str> = Some("review-pack");
+        const SERVES: Option<&str> = Some("review-preset");
         if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
@@ -1813,7 +1813,7 @@ impl SatzMcp {
         };
         match crate::review_pack::review(&pack, against.as_deref(), &open.tool, &open.runtime) {
             Ok(review) => Ok(Ok(Json(review))),
-            Err(e) => Ok(Err(refused(format!("review-pack: {}", e)))),
+            Err(e) => Ok(Err(refused(format!("review-preset: {}", e)))),
         }
     }
 
@@ -3082,14 +3082,14 @@ mod confine_tests {
         assert!(made.created && f.root.join("yaml/new.satz").is_file(), "{made:?}");
     }
 
-    /// A yes to a pack whose requirement is off is refused the way `satz add-pack` refuses
+    /// A yes to a pack whose requirement is off is refused the way `satz add-preset` refuses
     /// the same switch, and the estate file is left as it was. The answer used to bind the
     /// gate, switch the line on and then fail the report on the param the missing pack
     /// declares, leaving on disk an estate `satz_open` refuses.
     #[tokio::test]
     async fn a_yes_whose_pack_needs_one_that_is_off_is_refused_and_writes_nothing() {
         let f = fixture("interview-unmet");
-        // the repository's library and test schema, inside the root: `add-pack` compiles
+        // the repository's library and test schema, inside the root: `add-preset` compiles
         for (from, to) in [("presets", "presets"), ("tests/schemas", "schemas")] {
             let from = Path::new(env!("CARGO_MANIFEST_DIR")).join(from);
             let copy = std::process::Command::new("cp").arg("-R").arg(&from).arg(f.root.join(to)).status().unwrap();
@@ -3117,7 +3117,7 @@ mod confine_tests {
         assert_eq!(std::fs::read(&estate).unwrap(), before, "a refused answer writes nothing");
     }
 
-    /// The library copied into the fixture's root, so `add-pack` compiles, and a skeleton
+    /// The library copied into the fixture's root, so `add-preset` compiles, and a skeleton
     /// with the map switched on — the estate every pack switch starts from.
     async fn with_the_map(f: &Fixture) {
         for (from, to) in [("presets", "presets"), ("tests/schemas", "schemas")] {
@@ -3140,7 +3140,7 @@ mod confine_tests {
 
     /// Switching `billing_export` on widens the CIS baseline's
     /// `allowed_policy_member_subjects` through a contribution. The switch says so — in
-    /// `satz_add_pack`'s result and in `satz_interview`'s — rather than leaving the
+    /// `satz_add_preset`'s result and in `satz_interview`'s — rather than leaving the
     /// widened list to be found in the compiled policy.
     #[tokio::test]
     async fn a_switch_reports_what_the_pack_contributes_to_another_pack_s_list() {
@@ -3153,7 +3153,7 @@ mod confine_tests {
             .unwrap()
         {
             Ok(Json(c)) => c,
-            Err(r) => panic!("add-pack billing_export refused: {}", text(&r)),
+            Err(r) => panic!("add-preset billing_export refused: {}", text(&r)),
         };
         let c = change
             .contributes
@@ -3161,12 +3161,12 @@ mod confine_tests {
             .find(|c| c.param == "allowed_policy_member_subjects")
             .unwrap_or_else(|| panic!("the contribution is not reported: {change:?}"));
         assert!(c.pack.ends_with("billing-export.satz") && c.applied && c.values == vec![EXPORT_ACCOUNT.to_string()], "{c:?}");
-        assert!(crate::packs::render_change(&change).contains(EXPORT_ACCOUNT), "the CLI prints it too");
+        assert!(crate::preset_lines::render_change(&change).contains(EXPORT_ACCOUNT), "the CLI prints it too");
 
         // the same switch through an answer
         let g = fixture("contributes-interview");
         with_the_map(&g).await;
-        // the baseline the export account is contributed to first, as add-pack requires
+        // the baseline the export account is contributed to first, as add-preset requires
         let baseline = interview(&g, json!({"estate": "new.satz", "answers": {"use_cis_baseline": true}})).await.expect("the baseline");
         assert!(baseline.contributes.is_empty(), "the baseline contributes nothing: {:?}", baseline.contributes);
         let report = interview(&g, json!({"estate": "new.satz", "answers": {"use_billing_export": true}}))

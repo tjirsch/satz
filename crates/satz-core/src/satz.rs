@@ -255,7 +255,7 @@ pub struct QuestionDecl {
 /// is where a pack's gate, its phase, its place in the estate and its adoption order
 /// (the entry's position in the file) are written. What a pack needs from another
 /// pack is mostly visible in the packs themselves — a param default that reads
-/// another pack's param — and `satz pack-graph` derives that; `requires` and
+/// another pack's param — and `satz preset-graph` derives that; `requires` and
 /// `excludes` declare only what the packs cannot show. Emits nothing: the compile
 /// never reads an entry, so it is inert in an estate's fold.
 #[derive(Debug, Clone, PartialEq)]

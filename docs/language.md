@@ -512,13 +512,13 @@ What it does:
 - It is no value of its own: it is never a `variable`, never in `terraform.tfvars`, and
   no `question` may ask it — what a customer answers is `<param>`.
 - Where no file the estate uses declares `<param>`, the entries are dropped. The pack
-  graph carries the requirement as a `data` edge, and `satz packs` names it.
+  graph carries the requirement as a `data` edge, and `satz presets` names it.
 
 What a pack writes it as is checked where it is written: it belongs in a pack, its value
 is a list, and a file that declares `<param>` itself writes the entries into that default
 instead. A `<param>` that is not a list is refused, naming the contributing file.
 
-`satz packs <estate>` prints each pack's contributions, so every entry in a list has a
+`satz presets <estate>` prints each pack's contributions, so every entry in a list has a
 pack beside it; a pack's own page under `presets/docs/` lists them under **Contributes**.
 
 What the compiler does with them: every param becomes a typed `variable` in
@@ -1942,7 +1942,7 @@ Composition follows from that: a choice between two packs is two booleans plus t
 - `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
   `--dry-run` and `--plan` warn. `satz interview` asks and writes the answers —
   [satz interview](interview.md).
-- `satz doc-packs` gives each pack a **Questions** section.
+- `satz doc-presets` gives each pack a **Questions** section.
 - A question's `prompt` becomes the `description` of the generated
   `variables.tf` variable — the pack already wrote the one-line sentence.
 - `check-presets` reports a pack whose questions changed as **`questions`**, not as
@@ -1986,15 +1986,15 @@ beside the estate.
 **A notice belongs in a pack, and its param is the notice's alone.** It is declared in
 the same file, as `false`, and no `question` asks it — an acknowledgement is not a
 customer decision. The param is never emitted: it is in no `variables.tf` and no
-`terraform.tfvars`, so binding it moves nothing in the plan. `satz pack-graph` refuses a
+`terraform.tfvars`, so binding it moves nothing in the plan. `satz preset-graph` refuses a
 library where another pack declares or reads it, or where a notice sits on the day-0 pack
 or the map, which nothing switches on.
 
 #### Where they show up
 
-- **When the pack is switched on** — a yes in `satz interview`, `satz add-pack`, or
+- **When the pack is switched on** — a yes in `satz interview`, `satz add-preset`, or
   `merge-presets` bringing the pack in — the notice is printed once, and the MCP tools
-  `satz_interview` and `satz_add_pack` return it in `notices`.
+  `satz_interview` and `satz_add_preset` return it in `notices`.
 - **Until it is acknowledged** the compile warns at the estate's `use` line of the pack —
   a `notice` finding whose subject is the param and whose `fix:` line is the pack's `run`,
   with the estate's file name where the pack wrote `<estate>` —
@@ -2003,7 +2003,7 @@ or the map, which nothing switches on.
   `--plan` and `--dry-run` compile, print the finding and go on.
 - `satz adopt --execute --import` **acknowledges the notices that name it** when the run
   covers every resource type and nothing failed: it binds their params itself.
-- `satz packs` lists each pack's notices with their state, and `satz doc-packs` gives a
+- `satz presets` lists each pack's notices with their state, and `satz doc-presets` gives a
   pack a **Notices** section.
 - `check-presets` reports a pack whose notices changed as **`questions`**, not as drift:
   a notice emits nothing, so a reworded one never forks an estate.
@@ -2045,26 +2045,26 @@ offers "presets/cis/cloud-sql-dry-run.satz" {
 An entry emits nothing and the compile never reads one. An `offers` entry anywhere but
 in `pack estate_map` is refused at parse time.
 
-`satz pack-graph` reads the entries and writes `presets/pack-graph.json`: every library
+`satz preset-graph` reads the entries and writes `presets/pack-graph.json`: every library
 file as a node, and the edges between them. Most edges are derived from the packs — a
 param one pack reads or contributes to and another declares (`data`), a gate a pack
 declares for another (`gate`), an `ask_when` (`asks`), the options of one `question oneof`
 (`excludes`) — so
 `requires` and `excludes` on an entry name only what the packs cannot show, and
-`pack-graph` refuses a declared edge it derives. A `data` edge from a READ also puts the
+`preset-graph` refuses a declared edge it derives. A `data` edge from a READ also puts the
 reading pack's line after the declaring pack's; one from a contribution does not, because
 a contribution is merged before the compile walks anything. Several `requires` on packs that exclude
 one another are one requirement: any of them meets it.
 
 The estate commands read that file from the estate's `presets_dir`, and one pack logic
-answers them all (`src/packs.rs`). `init` and `interview --create` write the pack menu
-from it. `satz packs` reports every node as the estate has it: the gate's answer and
+answers them all (`src/preset_lines.rs`). `init` and `interview --create` write the pack menu
+from it. `satz presets` reports every node as the estate has it: the gate's answer and
 default, the line — `active`, `ungated` (active without `when <gate>`), `commented`,
 `absent`, `forked` (naming the `.local` fork) or `misplaced` (outside the block the graph
 places it in) — whether the pack deploys, what it requires and what requires it; a `use`
-the graph does not know is `unmanaged`. `satz add-pack` and `satz remove-pack` switch a
+the graph does not know is `unmanaged`. `satz add-preset` and `satz remove-preset` switch a
 pack on or off by its gate or its path. A yes in the interview switches a line on as
-`add-pack` does, and `merge-presets` writes the lines the estate lacks from the graph of
+`add-preset` does, and `merge-presets` writes the lines the estate lacks from the graph of
 its pristine source. An active line of a gated pack that has no `when` is a compile
 finding naming the line to write ([workflows](workflows.md#when-a-pack-line-has-no-gate)).
 Every line satz writes goes where the graph's order puts it: after
@@ -2084,7 +2084,7 @@ The compile reports, from the same logic: a gate **the estate itself binds** `tr
 line is commented or absent — skipping a line written `by_hand`, and counting a pack as
 used when an `excludes` neighbour on the same gate is. A default in the map or in a pack
 is the library's proposal and not this estate's answer, so a skeleton that has answered
-nothing compiles clean at every validation level and `satz packs` is where the proposals
+nothing compiles clean at every validation level and `satz presets` is where the proposals
 are read. Then: an active line of a gated pack without its
 `when`, where the gate is declared; a pack that deploys while something it needs is off;
 and, as an error before the fold, two packs on two gates that exclude one another both
@@ -2345,7 +2345,7 @@ project's folder, and the rules need equality, not the central estate's values �
 that writes a value is told it collides, and one that does not learns the estate's resource
 addresses and nothing of their values. satz writes the file through its formatter; a file that holds
 anything else is refused at its line. It is no estate: `satz transpile` of it is refused,
-and so is a copy of it in the preset library (`satz doc-packs`, `satz pack-graph`).
+and so is a copy of it in the preset library (`satz doc-presets`, `satz preset-graph`).
 
 **`${{interface.<export>}}` — a project estate reads the values.**
 
@@ -2823,8 +2823,8 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
 | `packs <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |
-| `add-pack <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is compiled and restored when it does not compile |
-| `remove-pack <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
+| `add-preset <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is compiled and restored when it does not compile |
+| `remove-preset <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
 | `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs each billed project must enable against what it declares there. Writes both into the estate; `--report-only` lists them instead |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, what that estate runs as — its service account, impersonated by the credential, in cloud mode; the credential itself in local mode — with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
@@ -2844,9 +2844,9 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `import [<source>] [--all] [--only t,…] [--exclude t,…] [--import-config f] [-o <file>] [--into <estate>] [--as <estate>] [--organization <n>] [--wrap-all]` | — | create an estate from what exists (§12): a state file, `organizations/<n>` / `folders/<n>` / `projects/<id>` live, or a directory of `.tf`; `--from` forces the shape; `--into` imports only what the estate does not declare, as packs it `use`s; `--as` reads the scope as that estate's IaC service account; checked by `transpile` + `tofu plan` |
 | `triage <framework> <estate>.satz --prowler f --format markdown\|pdf\|json --out f` | Evidence | every Prowler FAIL sorted into buckets A–E (a pack covers it / Satz declares it / declared exception / unmanaged / manual) — the remediation plan's skeleton; `--fix` adds the estate delta the buckets imply to the report (markdown only) |
 | `scan [<estate>.satz]` | HCL | Checkov over `hcl_dir`, findings pointed at the Satz line that declared the resource; failed checks exit 1 |
-| `review-pack <pack>.satz --format text\|json --out f [--against <estate>.satz]` | Satz | one pack against the library's bar — parses, formatted, a header sentence, a version with its changelog row, no value shaped like private data, no membership, no legacy constraint beside its managed replacement, a prerequisite row for every type it emits, and it compiles. A pack is a fragment, so it is folded into a synthesised estate (the documented example params, the pack's own defaults) unless `--against` names a real one |
-| `pack-graph [--presets-dir d] [--check]` | Satz | builds the library's pack graph from the map's `offers` entries and the packs' own param references and `ask_when`, checks it, and writes `<presets_dir>/pack-graph.json`; nothing is written while a check fails, and `--check` fails when the file is behind the library |
-| `doc-packs [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
+| `review-preset <pack>.satz --format text\|json --out f [--against <estate>.satz]` | Satz | one pack against the library's bar — parses, formatted, a header sentence, a version with its changelog row, no value shaped like private data, no membership, no legacy constraint beside its managed replacement, a prerequisite row for every type it emits, and it compiles. A pack is a fragment, so it is folded into a synthesised estate (the documented example params, the pack's own defaults) unless `--against` names a real one |
+| `preset-graph [--presets-dir d] [--check]` | Satz | builds the library's pack graph from the map's `offers` entries and the packs' own param references and `ask_when`, checks it, and writes `<presets_dir>/pack-graph.json`; nothing is written while a check fails, and `--check` fails when the file is behind the library |
+| `doc-presets [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
 | `silence list [<estate>.satz]` / `silence add <kind>[:<subject>] --reason "…" [--machine]` / `silence remove <kind>[:<subject>] [--machine]` | — | what an estate or this machine leaves out of its printed output, named by a finding's `kind` and `subject`. `list` with an estate says what each row still silences, or that it is stale. A silenced finding stays in `--format json` and in what MCP returns; an error is never silenced. `--silence <kind>[:<subject>]` and `SATZ_SILENCE` do it for one run |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
 | `bootstrap <estate>.satz [--dry-run] [--greenfield] [--no-default-grants]` | Satz | first apply for a new organisation: management project, state bucket, service account |
@@ -2856,8 +2856,8 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 All of them accept `--config <estate-dir-or-config.toml>` and run from anywhere. A command
 that produces a report takes `--format`, the rendering, and `--out`, the file it lands in:
 one invocation, one artefact, one named path, and nothing on the console but the line on
-stderr saying where it went — `--out -` pipes. `update-prerequisites`, `prowler`, `add-pack`
-and `remove-pack` answer on the console instead: an exit code and a command line to paste are not documents.
+stderr saying where it went — `--out -` pipes. `update-prerequisites`, `prowler`, `add-preset`
+and `remove-preset` answer on the console instead: an exit code and a command line to paste are not documents.
 The estate file is a positional argument, relative to `yaml_dir`.
 
 ---

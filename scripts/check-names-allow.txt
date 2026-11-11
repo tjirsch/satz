@@ -1,6 +1,6 @@
 # The privacy gate's allow-lists: the values that are shaped like private data and
 # are not. ONE source, read by two readers: scripts/check-names.sh, and satz itself
-# (src/privacy_shapes.rs compiles this file in, and `satz review-pack` judges a pack
+# (src/privacy_shapes.rs compiles this file in, and `satz review-preset` judges a pack
 # with it). A value added here is allowed by both at once.
 #
 # One entry per line: `<list> <extended regular expression>`. The entries of a list

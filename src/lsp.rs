@@ -607,7 +607,7 @@ fn compile_for_diagnostics(
         Ok(fe) => fe,
         // the same refusal the CLI reports, hint included, at the same line
         Err(e) => {
-            push_err(crate::packs::hinted(e, &graph, &label, &estate_arg, src, &config.validation_level));
+            push_err(crate::preset_lines::hinted(e, &graph, &label, &estate_arg, src, &config.validation_level));
             return out;
         }
     };

@@ -5,7 +5,7 @@
 # before its extensions, a dry-run twin right after its pack. The files do not move:
 # an estate's `use` line names the path, whatever group the pack is in.
 #
-# `satz doc-packs` reads this file and refuses a pack in no group or in two, a line
+# `satz doc-presets` reads this file and refuses a pack in no group or in two, a line
 # that names no pack, a group with no pack, and a group presets/README.md has no
 # `## <group>` heading for, in this order. The index presets/docs/README.md prints
 # one section per group, and scripts/build-site.py builds the library's side menu

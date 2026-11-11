@@ -1,11 +1,11 @@
 //! The pack graph: which packs the library offers, which gate switches each one on,
-//! and which pack needs which other one — as `satz pack-graph` writes it to
+//! and which pack needs which other one — as `satz preset-graph` writes it to
 //! `presets/pack-graph.json` and every consumer reads it.
 //!
 //! The types live here, in the core, so that satz and satz-studio deserialize the
 //! same structs from the one shipped file and neither derives the graph itself.
 //! Building it — reading the map's `offers` entries and deriving the edges from the
-//! packs — is `satz pack-graph`'s job, not this module's.
+//! packs — is `satz preset-graph`'s job, not this module's.
 
 use serde::{Deserialize, Serialize};
 
@@ -135,7 +135,7 @@ pub enum EdgeKind {
     Excludes,
 }
 
-/// Whether the map declared an edge or `satz pack-graph` derived it from the packs.
+/// Whether the map declared an edge or `satz preset-graph` derived it from the packs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
