@@ -79,8 +79,9 @@ estate compiles, as `each` and `use … when` are.
   with one of two values is two params, not two lines.
 - A condition tests one name for carrying a value. There is no comparison, no `and` and
   no `or`.
-- The tree-sitter grammar and the tools built on it read the two forms once they are in
-  the grammar; until then a file that uses them is an error node there.
+- The tree-sitter grammar reads both forms from the commit `editors/zed/extension.toml`
+  pins. A tool that carries an older copy of the grammar reads a file that uses them as
+  an error node until it takes that commit.
 - An estate that uses `organization-budget.satz` sees a changed pack at its next
   `merge-presets`, which forks it unless `--adopt organization-budget` takes it in
   place; the adoption moves no plan.
