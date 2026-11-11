@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The estate's `config.toml`. A key the struct does not name is refused: a misspelled
+/// `packs_dir` or `presets_dir` would otherwise leave the default in place, and a
+/// command would work on another folder than the one the file names.
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ToolConfig {
     #[serde(default = "default_yaml_dir")]
     pub yaml_dir: String,
@@ -352,6 +356,30 @@ mod config_error_tests {
         assert!(msg.contains("variables:"), "should quote the offending line: {msg}");
         assert!(msg.contains("That file is YAML"), "should explain the --config mixup: {msg}");
         assert!(msg.contains("satz bootstrap C0example.yaml"), "should show the fix: {msg}");
+    }
+
+    /// A key satz does not read was dropped without a word, so a misspelled folder key
+    /// left the default in place. The refusal names the key and the line it stands on.
+    #[test]
+    fn a_key_the_config_does_not_have_is_refused_by_name() {
+        let content = "yaml_dir = \"satz\"\npack_dir = \"../../packs\"\n";
+        let err = toml::from_str::<super::ToolConfig>(content).unwrap_err();
+        let msg = describe_toml_error(Path::new("config.toml"), content, &err);
+        assert!(msg.contains("unknown field `pack_dir`"), "should name the key: {msg}");
+        assert!(msg.contains("packs_dir"), "should list the keys there are: {msg}");
+        assert!(msg.contains("line 2"), "should give the line: {msg}");
+
+        // the two fields satz sets itself are no keys of the file
+        for own in ["inputs = []\n", "dir = \".\"\n"] {
+            assert!(toml::from_str::<super::ToolConfig>(own).is_err(), "{own}");
+        }
+        // every key the README's table names is read
+        let all = "yaml_dir = \"satz\"\nhcl_dir = \"hcl\"\ninterfaces_dir = \"interfaces\"\ninclude_dirs = [\".\"]\n\
+                   schema_dir = \"schemas\"\npresets_dir = \"presets\"\npacks_dir = \"packs\"\ntf_tool = \"tofu\"\n\
+                   google_providers = [\"google\"]\naws_providers = []\nazure_providers = []\nalibaba_providers = []\n\
+                   provider_version = \"7.14.1\"\nauto_explode = []\nvalidation_level = \"warn\"\nimport_config = \"x.yaml\"\n\
+                   [[silence]]\nkind = \"action\"\nreason = \"seen\"\n";
+        toml::from_str::<super::ToolConfig>(all).expect("every documented key parses");
     }
 
     #[test]
