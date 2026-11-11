@@ -3,7 +3,7 @@
 //!
 //! A notice is open while the estate does not bind its param `true`. Every reader goes
 //! through here: the compile's warning, the refusal of a command that writes to the
-//! organisation while an open notice is an `error`, what `satz interview`, `add-pack` and
+//! organisation while an open notice is an `error`, what `satz interview`, `add-preset` and
 //! `merge-presets` print when a switch opens one, and what `satz adopt --execute
 //! --import` acknowledges when it has run. The
 //! notices are read by the same schema-free walk the questions are, so they are the ones
@@ -179,7 +179,7 @@ pub(crate) fn compile_findings(
 ) -> Vec<Finding> {
     let open: Vec<NoticeRow> = rows(notices, env).into_iter().filter(|n| !n.acknowledged).collect();
     let header = "notices open — what a pack asks to be run once it is on";
-    let scan = crate::packs::scan(estate_src);
+    let scan = crate::preset_lines::scan(estate_src);
     let label = estate.to_string_lossy().into_owned();
     open.iter()
         .map(|n| {

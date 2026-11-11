@@ -6,7 +6,7 @@
 # what $NAMES_IDENT allows in a local clone.
 #
 # The content rules have a second implementation in satz (src/privacy_shapes.rs,
-# what `satz review-pack` judges a pack with). Both read their allow-lists from
+# what `satz review-preset` judges a pack with). Both read their allow-lists from
 # scripts/check-names-allow.txt, and a cargo test runs both over the corpus in
 # tests/privacy-shapes/ and fails on any token one flags and the other does not.
 # A content rule reports one `    <file>:<line>: <token>` row per token under its
@@ -41,7 +41,7 @@ ALLOW_IDENT='[0-9]+\+[A-Za-z0-9-]+@users\.noreply\.github\.com|noreply@github\.c
 IDENT_FIX='set git config user.email to your GitHub noreply address (<id>+<user>@users.noreply.github.com), or NAMES_IDENT to an extended regex for a local clone'
 # The content allow-lists — example values, vendor hosts, vendor-default GUIDs —
 # live in ONE file both readers take them from: this script, and satz itself
-# (src/privacy_shapes.rs compiles it in for `satz review-pack`). One entry per
+# (src/privacy_shapes.rs compiles it in for `satz review-preset`). One entry per
 # line, `<list> <ERE>`; a list's entries are joined into one alternation. A list
 # with no entry, or a missing file, stops the gate: checking against nothing must
 # never read as OK.

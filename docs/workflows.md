@@ -94,10 +94,10 @@ Five steps, in this order. Each one is a section below.
 
    An estate the interview wrote already lists every pack, each as a commented `use` line
    under the phase it can be adopted in — the map first, then the security-group model,
-   then what depends on the groups, and so on. `satz add-pack <estate> <gate>` adds a pack:
+   then what depends on the groups, and so on. `satz add-preset <estate> <gate>` adds a pack:
    it binds the gate, makes the line active, and refuses while a pack it needs is off,
-   naming it; `satz remove-pack` binds the gate false. Answering that pack's question in
-   `satz interview` switches its line on the same way, and `satz packs` shows every pack
+   naming it; `satz remove-preset` binds the gate false. Answering that pack's question in
+   `satz interview` switches its line on the same way, and `satz presets` shows every pack
    with its answer, its line and what it needs. `satz merge-presets` writes the
    line for a pack the library has gained since the estate was written, so the list stays
    the library's rather than one person's memory of it. A question **this estate** has
@@ -105,7 +105,7 @@ Five steps, in this order. Each one is a section below.
    compile, because otherwise the answer is bound and nothing emits it. The answer is the
    estate's own `params {}` binding: a default in the map or in a pack is the library's
    proposal, so a day-0 skeleton — every line commented, nothing answered — compiles clean
-   at `validation_level = "error"`, and `satz packs` is where the proposals are read.
+   at `validation_level = "error"`, and `satz presets` is where the proposals are read.
 
    A pack can name one command to run once it is on: the CIS org-policy packs name
    `satz adopt <estate> --execute --import`, because Google sets some of their policies on
@@ -1481,7 +1481,7 @@ Checkov, `triage` and `require` for the central estate, and per workload the int
 (`satz check-consumer` on its HCL, `satz transpile --check` on a satz project). Nothing in this
 phase changes the organisation. Phase 2 builds the two documents offline from `scope.yaml` and the
 evidence (`scripts/build_audit.py`, then `scripts/verify_outputs.py`): the checklist of every
-control with its status, and the remediation plan of satz packs and `gcloud` steps, with a
+control with its status, and the remediation plan of satz presets and `gcloud` steps, with a
 section per workload. The pack, its `use` line, the gcloud commands that meet and check a control
 and the risk of leaving it open come from the `measures` of each control in satz's report and
 `require` output — the packs' own claims (ADR 0073); `assets/measures.yaml` holds what the skill
@@ -1568,12 +1568,12 @@ have is refused before anything changes.
 Every pack but `estate-core` and the map is switched by a gate, and a no switches it
 off only through a line written `use "…" when <gate>`. An active line of such a pack
 written without `when` deploys the pack whatever the answer says. The compile reports
-each one as an `ungated-pack` finding with its file and line, `satz packs` lists the
-line as `ungated`, and `satz remove-pack` refuses to switch the pack off through it.
+each one as an `ungated-pack` finding with its file and line, `satz presets` lists the
+line as `ungated`, and `satz remove-preset` refuses to switch the pack off through it.
 
 The finding names both halves of the edit: write `use "<path>" when <gate>` on that
 line, and bind `<gate> = true` in the estate's own `params { }`. The line deploys the
-pack, and the binding keeps it deploying once the gate decides; `satz remove-pack` is
+pack, and the binding keeps it deploying once the gate decides; `satz remove-preset` is
 what switches it off afterwards. No command writes the `when`.
 
 ### When a release moves a pack

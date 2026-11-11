@@ -47,7 +47,7 @@ mod dossier;
 mod presets;
 mod doc_packs;
 mod pack_graph;
-mod packs;
+mod preset_lines;
 mod notices;
 mod org_write;
 mod github;
@@ -141,9 +141,9 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "packs", "add-pack", "remove-pack", "interfaces", "check-request"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
-    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-packs", "pack-graph", "review-pack"]),
+    ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
     (
         "Policies",
         &[
@@ -720,7 +720,7 @@ pub(crate) enum Commands {
     /// One Markdown page per pristine pack, derived from the pack file (purpose, params, resources, claims, duties) plus an index — into `<presets_dir>/docs/`
     ///
     /// `--check` fails when the pages are behind the packs
-    DocPacks {
+    DocPresets {
         /// Output directory — one page per pack (default: `<presets_dir>/docs`)
         #[arg(long, value_name = "DIR")]
         out_dir: Option<PathBuf>,
@@ -731,7 +731,7 @@ pub(crate) enum Commands {
     /// Check the library's packs and write `<presets_dir>/pack-graph.json`: every pack, its gate, phase, block and adoption order from the map's `offers` entries, and the edges between them — derived from the packs' param references and `ask_when`, declared in the map where the packs do not show them
     ///
     /// Nothing is written while a check fails; `--check` fails when the file is behind the library
-    PackGraph {
+    PresetGraph {
         /// The library to read and write into (default: presets_dir from the config)
         #[arg(long, value_name = "DIR")]
         presets_dir: Option<PathBuf>,
@@ -754,7 +754,7 @@ pub(crate) enum Commands {
     ///
     /// Read-only, offline. A `use` the pack graph does not know is listed as
     /// unmanaged; the findings are the compile's own pack findings.
-    Packs {
+    Presets {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format — json is the report an agent or satz-studio reads, markdown and
@@ -771,7 +771,7 @@ pub(crate) enum Commands {
     /// Refused, naming them, while a pack it needs is off — `--with-requirements`
     /// switches those on too where there is one to choose — or a pack it excludes is
     /// on. The edited estate is compiled, and restored when it does not compile.
-    AddPack {
+    AddPreset {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// The pack: its gate (`use_audit_logsink`) or its path (`presets/monitoring/organization-audit-logsink.satz`)
@@ -806,7 +806,7 @@ pub(crate) enum Commands {
     /// Refused, naming them, while a pack that needs it is on — `--cascade` switches
     /// those off too — or while its line is not gated on its gate. The edited estate
     /// is compiled, and restored when it does not compile.
-    RemovePack {
+    RemovePreset {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// The pack: its gate or its path
@@ -824,7 +824,7 @@ pub(crate) enum Commands {
     /// a synthesised one — the documented example params, the pack's own declared
     /// defaults — unless `--against` names a real estate. Exits non-zero when the
     /// pack does not clear the bar.
-    ReviewPack {
+    ReviewPreset {
         /// The pack file to review (.satz)
         pack: PathBuf,
         /// Judge it inside this estate instead of a synthesised one
@@ -2183,12 +2183,12 @@ Thumbs.db
                 merge.as_deref(),
             )
         }
-        Commands::DocPacks { out_dir, check } => {
+        Commands::DocPresets { out_dir, check } => {
             let presets = PathBuf::from(&runtime_config.presets_dir);
             let out_dir = out_dir.unwrap_or_else(|| presets.join("docs"));
             crate::doc_packs::run(&presets, &out_dir, check)
         }
-        Commands::PackGraph { presets_dir, check } => {
+        Commands::PresetGraph { presets_dir, check } => {
             let presets = presets_dir.unwrap_or_else(|| PathBuf::from(&runtime_config.presets_dir));
             crate::pack_graph::run(&presets, check)
         }
@@ -2251,7 +2251,7 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::ReviewPack { pack, against, format, out } => {
+        Commands::ReviewPreset { pack, against, format, out } => {
             let out = crate::out::target(out, format)?;
             let review = crate::review_pack::review(&pack, against.as_deref(), &tool_config, &runtime_config)?;
             let text = match format {
@@ -2351,14 +2351,14 @@ Thumbs.db
             eprintln!("check-consumer: {} resource(s) under {} checked against {}: no finding", n, dir.display(), input_path.display());
             Ok(())
         }
-        Commands::Packs { input, format, out } => {
+        Commands::Presets { input, format, out } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let report = crate::packs::report(&input_path, &runtime_config)?;
+            let report = crate::preset_lines::report(&input_path, &runtime_config)?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
-                OutFormat::Markdown | OutFormat::Pdf => crate::packs::render_markdown(&report),
-                _ => crate::packs::render_text(&report, crate::out::width(&out)),
+                OutFormat::Markdown | OutFormat::Pdf => crate::preset_lines::render_markdown(&report),
+                _ => crate::preset_lines::render_text(&report, crate::out::width(&out)),
             };
             let deploying = report.packs.iter().filter(|p| p.deploys).count();
             let what = format!("{} pack(s), {} deploying, {} finding(s)", report.packs.len(), deploying, report.findings.len());
@@ -2369,15 +2369,15 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::AddPack { input, pack, with_requirements, format } => {
+        Commands::AddPreset { input, pack, with_requirements, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let change = match crate::packs::add(&input_path, &tool_config, &runtime_config, &pack, with_requirements) {
+            let change = match crate::preset_lines::add(&input_path, &tool_config, &runtime_config, &pack, with_requirements) {
                 Ok(c) => c,
-                Err(e) => return Err(format!("add-pack {}: nothing changed.\n\n{}", pack, e).into()),
+                Err(e) => return Err(format!("add-preset {}: nothing changed.\n\n{}", pack, e).into()),
             };
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
-                _ => print!("{}", crate::packs::render_change(&change)),
+                _ => print!("{}", crate::preset_lines::render_change(&change)),
             }
             Ok(())
         }
@@ -2422,15 +2422,15 @@ Thumbs.db
             write_report(&out, text.as_bytes(), &what)?;
             Ok(())
         }
-        Commands::RemovePack { input, pack, cascade, format } => {
+        Commands::RemovePreset { input, pack, cascade, format } => {
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let change = match crate::packs::remove(&input_path, &tool_config, &runtime_config, &pack, cascade) {
+            let change = match crate::preset_lines::remove(&input_path, &tool_config, &runtime_config, &pack, cascade) {
                 Ok(c) => c,
-                Err(e) => return Err(format!("remove-pack {}: nothing changed.\n\n{}", pack, e).into()),
+                Err(e) => return Err(format!("remove-preset {}: nothing changed.\n\n{}", pack, e).into()),
             };
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
-                _ => print!("{}", crate::packs::render_change(&change)),
+                _ => print!("{}", crate::preset_lines::render_change(&change)),
             }
             Ok(())
         }
@@ -2697,11 +2697,11 @@ pub(crate) enum PrerequisiteFindings {
 }
 
 /// Whether a compile prints its warnings and notes to stderr, where the CLI shows them.
-/// `review-pack` compiles `Silent`: the findings are its report, and printing them
+/// `review-preset` compiles `Silent`: the findings are its report, and printing them
 /// beside it would say everything twice. A refusal reads the same either way.
 ///
 /// A parameter of one compile for the reason `PrerequisiteFindings` is: `satz mcp`
-/// serves `satz_review_pack` beside every other call, concurrently, and a flag one
+/// serves `satz_review_preset` beside every other call, concurrently, and a flag one
 /// review set would stop every other compile in the process from printing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FindingsOutput {
@@ -2848,7 +2848,7 @@ fn pipeline_b_compile_using(
         // The parser's error is a finding like any other — one row with its file and
         // line — so every reader gets a front-end refusal in the shape of any refusal.
         Err(e) => {
-            let hinted = crate::packs::hinted(
+            let hinted = crate::preset_lines::hinted(
                 e,
                 &graph,
                 &input_path.to_string_lossy(),
@@ -3006,7 +3006,7 @@ pub(crate) fn compile_tail(
     // of the decision; the rest are reported after the emitter.
     let label = estate.to_string_lossy().into_owned();
     let (exclusions, pack_findings) = match graph {
-        crate::pack_graph::Shipped::Graph(g, dir) => crate::packs::compile_findings(g, dir, &label, estate_arg, estate_src, level),
+        crate::pack_graph::Shipped::Graph(g, dir) => crate::preset_lines::compile_findings(g, dir, &label, estate_arg, estate_src, level),
         _ => (Vec::new(), Vec::new()),
     };
     f.extend(exclusions);
@@ -5157,7 +5157,7 @@ pub(crate) fn estate_declaration(
     let loader = satz_loader(input_path, &runtime_config.include_dirs);
     let env = satz_core::pipeline::estate_params(&input_path.to_string_lossy(), &src, &loader).map_err(|e| {
         let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
-        let hinted = crate::packs::hinted(
+        let hinted = crate::preset_lines::hinted(
             e,
             &graph,
             &input_path.to_string_lossy(),
@@ -5690,7 +5690,7 @@ fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Er
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
         "report-compliance", "merge-presets", "check-presets", "self-update", "open-readme", "completion",
-        "scan-plan", "generate-migration", "run-actions", "update-prerequisites", "review-pack", "fmt", "lsp",
+        "scan-plan", "generate-migration", "run-actions", "update-prerequisites", "review-preset", "fmt", "lsp",
     ];
     match subcommand {
         Some(cmd) if DOCUMENTED.contains(&cmd) => open_url(&format!("{}#cmd-{}", DOCS_URL, cmd)),
@@ -5867,7 +5867,7 @@ mod command_groups {
         ("mcp", Identity::PerTool),
         ("transpile", Identity::EstateSaWhenItRuns("only --plan/--apply reach an API, through run_tf")),
         ("update-prerequisites", Identity::NoGoogleApi),
-        ("review-pack", Identity::NoGoogleApi),
+        ("review-preset", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
         ("check-request", Identity::NoGoogleApi),
@@ -5885,8 +5885,8 @@ mod command_groups {
         ("get-presets", Identity::NoGoogleApi),
         ("merge-presets", Identity::NoGoogleApi),
         ("check-presets", Identity::NoGoogleApi),
-        ("doc-packs", Identity::NoGoogleApi),
-        ("pack-graph", Identity::NoGoogleApi),
+        ("doc-presets", Identity::NoGoogleApi),
+        ("preset-graph", Identity::NoGoogleApi),
         ("require", Identity::NoGoogleApi),
         ("prowler", Identity::NoGoogleApi),
         ("mcp-config", Identity::NoGoogleApi),
@@ -5895,10 +5895,10 @@ mod command_groups {
         ("silence", Identity::NoGoogleApi),
         ("questions", Identity::NoGoogleApi),
         ("interview", Identity::NoGoogleApi),
-        ("packs", Identity::NoGoogleApi),
+        ("presets", Identity::NoGoogleApi),
         ("check-consumer", Identity::NoGoogleApi),
-        ("add-pack", Identity::NoGoogleApi),
-        ("remove-pack", Identity::NoGoogleApi),
+        ("add-preset", Identity::NoGoogleApi),
+        ("remove-preset", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
         ("triage", Identity::NoGoogleApi),
         ("remediation-plan", Identity::NoGoogleApi),
@@ -8933,8 +8933,8 @@ action "step" {
         assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
         // the command is the finding's `fix`, for this estate, and the sentence does not repeat it
-        assert_eq!(f.fix.as_deref(), Some("satz add-pack tail.satz presets/organization-budget.satz"));
-        assert!(!f.message.contains("satz add-pack"), "{}", f.message);
+        assert_eq!(f.fix.as_deref(), Some("satz add-preset tail.satz presets/organization-budget.satz"));
+        assert!(!f.message.contains("satz add-preset"), "{}", f.message);
     }
 
     /// Presets without `pack-graph.json`: the checks that read the menu are skipped, and
@@ -9183,9 +9183,9 @@ google_storage_bucket {
 
 #[cfg(test)]
 mod review_quiet_tests {
-    //! `review-pack` compiles its scratch estate with nothing printed: the findings are
+    //! `review-preset` compiles its scratch estate with nothing printed: the findings are
     //! its report. The silence is that compile's alone — `satz mcp` serves
-    //! `satz_review_pack` beside every other call, concurrently, and a compile running
+    //! `satz_review_preset` beside every other call, concurrently, and a compile running
     //! beside a review prints its warnings as it would alone.
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

@@ -1,8 +1,8 @@
-//! `satz review-pack` — the library's quality bar, as a command.
+//! `satz review-preset` — the library's quality bar, as a command.
 //!
 //! A pack is the unit everyone extends satz with, and until this existed the bar it
 //! had to clear was enforced entirely by gates inside this repository: a `cargo test`
-//! over the prerequisite table, `doc-packs --check`, the formatter's corpus test, the
+//! over the prerequisite table, `doc-presets --check`, the formatter's corpus test, the
 //! changelog row the index refuses to be without, the managed/legacy pairing. Every
 //! one of them needs a satz checkout and a Rust toolchain, so a pack written anywhere
 //! else could not be checked at all — its author found out by opening a pull request,
@@ -59,7 +59,7 @@ const REASON: usize = 80;
 /// The estate satz writes to fold the pack into: the example params, then the pack.
 pub(crate) fn synthetic_estate(pack: &Path) -> String {
     let mut s = String::from(
-        "// Written by `satz review-pack` to fold one pack into an estate. The params are\n\
+        "// Written by `satz review-preset` to fold one pack into an estate. The params are\n\
          // the documented example values; the pack's own questions are answered with the\n\
          // defaults it declares.\n\nestate review\n\nparams {\n",
     );

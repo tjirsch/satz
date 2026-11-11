@@ -66,7 +66,7 @@ typst-pdf = "0.15.1"
 pulldown-cmark = "0.13.4"
 typst-layout = "0.15.1"
 futures-util = "0.3.34"
-# the privacy shapes `review-pack` judges a pack by (`src/privacy_shapes.rs`): the
+# the privacy shapes `review-preset` judges a pack by (`src/privacy_shapes.rs`): the
 # gate script's rules, matched byte for byte as its `grep -E` matches them
 regex = "1.13"
 

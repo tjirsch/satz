@@ -267,11 +267,11 @@ notice cis_baseline_adopted {
 }
 ```
 
-`satz_interview` and `satz_add_pack` return what their call opened in `notices`. Tell the
+`satz_interview` and `satz_add_preset` return what their call opened in `notices`. Tell the
 human the command and let them run it; when it has run, acknowledge it with
 `satz_interview` `answers: {<param>: true}` — never before. Until then the compile warns
 and every command that writes to the organisation refuses, because the notice declares
-`severity = error`; a notice declaring `warning` or `info` refuses nothing. `satz_packs`
+`severity = error`; a notice declaring `warning` or `info` refuses nothing. `satz_presets`
 shows every pack's notices with `severity` and `acknowledged`.
 
 **Interviewing a customer** is `satz_interview`: the open questions with their offers;
@@ -280,8 +280,8 @@ shows every pack's notices with `severity` and `acknowledged`.
 `accept_defaults: true` writes every offer. Offer defaults as defaults, never invent a
 blocking answer, and repeat until `summary.complete`.
 
-**Adding or removing a pack** is `satz_add_pack` / `satz_remove_pack` with the pack's gate
-or path — never an edited `use` line. `satz_packs` lists every pack with its answer, its
+**Adding or removing a pack** is `satz_add_preset` / `satz_remove_preset` with the pack's gate
+or path — never an edited `use` line. `satz_presets` lists every pack with its answer, its
 line, whether it deploys and what it needs. A refusal names the pack that is missing or
 still depends on it: ask the human before passing `with_requirements` or `cascade`.
 
@@ -382,7 +382,7 @@ Also available: `satz_check_presets` (is the pack library current, or forked?),
 the estate, or adopts upstream in place with `adopt`), `satz_update_prerequisites` (the roles the
 estate's service account is missing for what it emits and the APIs its infrastructure
 project does not enable — it writes both unless `report_only`),
-`satz_review_pack` (judge a pack somebody wrote against the library's bar, findings
+`satz_review_preset` (judge a pack somebody wrote against the library's bar, findings
 anchored to file and line — offline and read-only),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_fmt` (the
 canonical layout of a file), `satz_get_presets` (fetch the pack library), `satz_prowler`
@@ -435,7 +435,7 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the finding's `fix`, then bind its `subject` — the param — `true` |
 | the IaC service account … lacks roles, kind `prerequisites` | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
 | … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate emits is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
-| `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-pack` that switches the needed one on |
+| `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-preset` that switches the needed one on |
 | `"${{interface.x}}"` names no export, kind `interface-use` | the interface file the estate `use`s has no export `x`; the message lists what it has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
 | `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the request point does not declare; the message lists its fields |

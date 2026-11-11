@@ -4,7 +4,7 @@ description: >-
   Run a CIS GCP Foundations v5.0 security review for one customer organisation and produce the two
   Security-Toolset deliverables — the CIS-Checkliste (.xlsx, every one of the 93 controls with a
   status from the taxonomy FAIL / LÜCKE / MANUAL / PASS / FALSE POSITIVE / N/A) and the
-  Remediation-Plan (.docx, German, satz packs + gcloud). Phase 1 creates the evidence LIVE against the
+  Remediation-Plan (.docx, German, satz presets + gcloud). Phase 1 creates the evidence LIVE against the
   customer org (Prowler per service, satz report-compliance + Checkov, triage, require); phase 2 builds
   both documents OFFLINE from that evidence. Use this skill whenever the user mentions a security
   review, security report, Prowler or Checkov run, CIS checklist, Findings-Excel, Remediation-Plan,

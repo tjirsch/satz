@@ -432,11 +432,11 @@ pub(crate) fn config_file_path(
         } else {
             // Config is mandatory for Transpile and other commands that need it
             match cmd_choice {
-                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPacks { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. } | Commands::McpConfig { .. }
-                | Commands::Packs { .. } | Commands::AddPack { .. } | Commands::Interfaces { .. } | Commands::CheckRequest { .. } | Commands::RemovePack { .. } | Commands::CheckConsumer { .. }
+                Commands::Transpile { .. } | Commands::ScanPlan { .. } | Commands::GenerateMigration { .. } | Commands::UpdateSchema { .. } | Commands::Import { .. } | Commands::Migrate { .. } | Commands::Bootstrap { .. } | Commands::ExportOrganizationalPolicies { .. } | Commands::DiffOrganizationalPolicies { .. } | Commands::ReportOrganizationalPolicies { .. } | Commands::GetPresets { .. } | Commands::CheckPresets { .. } | Commands::Require { .. } | Commands::ReportCompliance { .. } | Commands::Adopt { .. } | Commands::MapTypes { .. } | Commands::Scan { .. } | Commands::DocPresets { .. } | Commands::Triage { .. } | Commands::RemediationPlan { .. } | Commands::AdoptOrgPolicies { .. } | Commands::MergePresets { .. } | Commands::RunActions { .. } | Commands::Questions { .. } | Commands::Interview { .. } | Commands::Prowler { .. } | Commands::McpConfig { .. }
+                | Commands::Presets { .. } | Commands::AddPreset { .. } | Commands::Interfaces { .. } | Commands::CheckRequest { .. } | Commands::RemovePreset { .. } | Commands::CheckConsumer { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
-                | Commands::ReviewPack { .. }
-                | Commands::PackGraph { presets_dir: None, .. }
+                | Commands::ReviewPreset { .. }
+                | Commands::PresetGraph { presets_dir: None, .. }
                 // the estate tier lives in the estate's config.toml. `--machine` needs
                 // none, and a bare `list` says what this machine silences from anywhere
                 | Commands::Silence {
@@ -457,7 +457,7 @@ pub(crate) fn config_file_path(
                 // ~/.config/satz/satz.toml and has no estate
                 | Commands::Silence { .. }
                 | Commands::UpdatePrerequisites { input: None, .. }
-                | Commands::PackGraph { presets_dir: Some(_), .. } => {
+                | Commands::PresetGraph { presets_dir: Some(_), .. } => {
                     // These commands can proceed without a config file
                     PathBuf::from("config.toml")
                 }

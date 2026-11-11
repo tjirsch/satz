@@ -29,7 +29,7 @@ looked", which the fold alone cannot, because a pack default and an estate's dec
 resolve to the same value there.
 
 **A param is bound once.** Every command that writes one — `init` on a re-run, the
-interview and `satz_interview`, `add-pack` and `remove-pack`, the notice `adopt
+interview and `satz_interview`, `add-preset` and `remove-preset`, the notice `adopt
 --execute --import` acknowledges, `migrate`'s deployment mode, `bootstrap`'s greenfield
 write-back — replaces the binding the estate already has, where it stands: the line
 keeps its indentation, its `=` column and its trailing comment. A param nothing binds
@@ -188,7 +188,7 @@ That is why a fresh estate asks eighteen questions and not fifty-seven: day 0 is
 alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
 move to the service account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
-where the pack graph places it; `satz add-pack` does the same by the pack's gate or path. Both
+where the pack graph places it; `satz add-preset` does the same by the pack's gate or path. Both
 refuse while a pack it needs is off, naming it, and both refuse a commented line that stands
 inside a folder's or a project's body, naming the move to the top level; an answer that would
 leave an estate satz refuses is refused and nothing is written; `satz merge-presets` writes the line for a pack the
@@ -196,7 +196,7 @@ library has gained since; and the compile reports a question **this estate** has
 `true` whose line is still commented or missing, so they never drift apart. An answer is a
 binding in the estate's own `params {}`; a default in the map or in a pack is what the
 library proposes, so a skeleton that has answered nothing compiles clean at every
-validation level. `satz packs` lists every pack with its answer, the library's default,
+validation level. `satz presets` lists every pack with its answer, the library's default,
 its line and what it needs.
 
 An estate `init` wrote without `--interview` has `use "presets/estate-core.satz"`

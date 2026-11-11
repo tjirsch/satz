@@ -94,9 +94,9 @@ kinds! {
     /// the interface file does not let it — the rules of `consumer`, on the project's own
     /// resources — or a `${{interface.<export>}}` no used interface file carries
     InterfaceUse => "interface-use",
-    /// `review-pack`: a rule the preset library holds, judged on one pack
+    /// `review-preset`: a rule the preset library holds, judged on one pack
     Pack => "pack",
-    /// `review-pack`: a token in the pack shaped like private data — an id, a domain, an
+    /// `review-preset`: a token in the pack shaped like private data — an id, a domain, an
     /// address — that is no documented example value
     PrivateShape => "private-shape",
 }
@@ -143,7 +143,7 @@ pub(crate) struct Finding {
     /// The sentence: what was found, and why it matters. Never the command that answers
     /// it — that is `fix`.
     pub message: String,
-    /// The command that answers this finding, as it is typed: `satz add-pack e.satz
+    /// The command that answers this finding, as it is typed: `satz add-preset e.satz
     /// presets/estate-map.satz`. Absent where no one command does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,

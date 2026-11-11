@@ -64,11 +64,11 @@ GROUPS = ("read", "write", "exec")
 EXPECTED_TOOLS = {
     *("satz_open", "satz_estates", "satz_restrict", "satz_require", "satz_questions"),
     *("satz_interview", "satz_triage", "satz_prowler", "satz_transpile_check"),
-    *("satz_transpile", "satz_fmt", "satz_review_pack", "satz_check_presets"),
+    *("satz_transpile", "satz_fmt", "satz_review_preset", "satz_check_presets"),
     *("satz_get_presets", "satz_merge_presets", "satz_remediation_items"),
     *("satz_remediation_annotate", "satz_adopt", "satz_update_prerequisites"),
     *("satz_scan_checkov", "satz_report_compliance", "satz_whoami"),
-    *("satz_packs", "satz_add_pack", "satz_remove_pack", "satz_check_consumer"),
+    *("satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer"),
 }
 
 # MCP 2025-06-18 requires an object `outputSchema` (`type: "object"`) and an object
@@ -427,7 +427,7 @@ def suite_main(s: Server, root: Path, checkov: bool) -> None:
         ("satz_interview showcase", "satz_interview", {"estate": "showcase.satz", "filter": "all"}, R),
         ("satz_triage", "satz_triage", fw, R),
         ("satz_prowler", "satz_prowler", {}, R),
-        ("satz_review_pack", "satz_review_pack", {"pack": "presets/organization-budget.satz"}, R),
+        ("satz_review_preset", "satz_review_preset", {"pack": "presets/organization-budget.satz"}, R),
         ("satz_update_prerequisites report_only", "satz_update_prerequisites", {"report_only": True}, R),
         ("satz_report_compliance no_live", "satz_report_compliance", fw | {"no_live": True}, R),
         ("satz_whoami offline", "satz_whoami", {"offline": True}, R),
@@ -580,8 +580,8 @@ def suite_ceiling(s: Server, outside: Path) -> None:
         OUTSIDE,
     )
     s.call(
-        "satz_review_pack pack outside the root",
-        "satz_review_pack",
+        "satz_review_preset pack outside the root",
+        "satz_review_preset",
         {"pack": str(outside)},
         "error",
         OUTSIDE,

@@ -1,9 +1,9 @@
 //! Which packs an estate uses, and whether that agrees with the pack graph.
 //!
-//! One module answers it for every reader. `satz packs` and `satz_packs` report it,
-//! `satz add-pack` and `satz remove-pack` change it, the interview and `merge-presets`
+//! One module answers it for every reader. `satz presets` and `satz_presets` report it,
+//! `satz add-preset` and `satz remove-preset` change it, the interview and `merge-presets`
 //! write pack lines through it, and the compile's pack findings are its findings — so
-//! what an editor marks, what `transpile --check` prints and what `add-pack` refuses
+//! what an editor marks, what `transpile --check` prints and what `add-preset` refuses
 //! are the same sentences.
 //!
 //! The inputs are the estate's text and the graph that ships with its presets
@@ -409,7 +409,7 @@ impl<'a> View<'a> {
     }
 
     /// The sentence for a requirement `n` has and that is off — the same in the compile's
-    /// finding, `packs`, and `add-pack`'s refusal.
+    /// finding, `packs`, and `add-preset`'s refusal.
     fn requirement_text(&self, n: &Node, r: &Requirement) -> String {
         let name = |p: &str| match self.node(p).and_then(|m| m.gate.clone()) {
             Some(g) => format!("`{}` (`{}`)", p, g),
@@ -486,7 +486,7 @@ impl<'a> View<'a> {
                 Finding::new(
                     Severity::Error,
                     Kind::ExcludedPacks,
-                    format!("`{}` and `{}` exclude one another and both are on — switch one off with `satz remove-pack`", a.path, b.path),
+                    format!("`{}` and `{}` exclude one another and both are on — switch one off with `satz remove-preset`", a.path, b.path),
                 )
                 .in_group("pairs of packs that exclude one another, both on")
                 .maybe_at(label.to_string(), self.lines_of(&a.path).0.map(|l| l.index as u32 + 1))
@@ -518,7 +518,7 @@ impl<'a> View<'a> {
                     } else {
                         format!("`{}` is true and this estate has no line for `{}` — the command writes it where the pack graph places it", g, n.path)
                     };
-                    unadopted.push((n.path.clone(), msg, Some(format!("satz add-pack <estate> {}", n.path)), at(line)));
+                    unadopted.push((n.path.clone(), msg, Some(format!("satz add-preset <estate> {}", n.path)), at(line)));
                 }
             }
             if let ("ungated", Some(l), true) = (state, line, self.gate_exists(n)) {
@@ -538,8 +538,8 @@ impl<'a> View<'a> {
                     // one pack meets it: that is the command. Several could: which is the
                     // operator's choice, and the sentence says so
                     let (text, fix) = match r.any_of.as_slice() {
-                        [one] => (self.requirement_text(n, r), Some(format!("satz add-pack <estate> {}", one))),
-                        _ => (format!("{} — `satz add-pack` one of them first", self.requirement_text(n, r)), None),
+                        [one] => (self.requirement_text(n, r), Some(format!("satz add-preset <estate> {}", one))),
+                        _ => (format!("{} — `satz add-preset` one of them first", self.requirement_text(n, r)), None),
                     };
                     needs.push((n.path.clone(), text, fix, at(line)));
                 }
@@ -701,7 +701,7 @@ pub(crate) fn compile_findings(
         Err(e) => return (Vec::new(), vec![Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{}: {}", label, e))]),
     };
     // the pack each finding is about becomes its subject: the half of its identity a
-    // `[[silence]]` row names, and what `satz packs` groups by
+    // `[[silence]]` row names, and what `satz presets` groups by
     let strip = |v: Vec<(String, Finding)>| v.into_iter().map(|(path, f)| f.about(path)).collect();
     (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, estate_arg, level)))
 }
@@ -747,7 +747,7 @@ fn front_end_hints(graph: &PackGraph, presets_dir: &Path, label: &str, estate_ar
 }
 
 // ---------------------------------------------------------------------------
-// `satz packs`
+// `satz presets`
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
@@ -853,7 +853,7 @@ fn no_graph(dir: &Path) -> String {
     )
 }
 
-/// `satz packs <estate>`: every pack the graph offers, as this estate has it.
+/// `satz presets <estate>`: every pack the graph offers, as this estate has it.
 pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport, BoxErr> {
     let src = crate::fsx::read_to_string(estate)?;
     let label = estate.display().to_string();
@@ -1215,7 +1215,7 @@ pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String,
 }
 
 /// What stops a yes to `gate` in `src`: each requirement of a pack on that gate that is
-/// off — the refusal `satz add-pack` gives without `--with-requirements`, so an answer and a
+/// off — the refusal `satz add-preset` gives without `--with-requirements`, so an answer and a
 /// switch refuse the same estate. Empty when nothing stops it.
 pub(crate) fn unmet_for_gate(graph: &PackGraph, presets_dir: &Path, src: &str, gate: &str) -> Result<Vec<String>, String> {
     let lib = Library::load(graph, presets_dir).map_err(|e| e.to_string())?;
@@ -1224,7 +1224,7 @@ pub(crate) fn unmet_for_gate(graph: &PackGraph, presets_dir: &Path, src: &str, g
     for n in graph.lines().into_iter().filter(|n| n.gate.as_deref() == Some(gate)) {
         let on = |p: &str| view.deploys(p) || p == n.path;
         for r in view.requirements(n, &on).into_iter().filter(|r| !r.met) {
-            out.push(format!("{} — `satz add-pack` it first", view.requirement_text(n, &r)));
+            out.push(format!("{} — `satz add-preset` it first", view.requirement_text(n, &r)));
         }
     }
     out.dedup();
@@ -1245,7 +1245,7 @@ pub(crate) fn gate_on(src: &str, graph: &PackGraph, gate: &str) -> Result<(Strin
 }
 
 // ---------------------------------------------------------------------------
-// `satz add-pack` and `satz remove-pack`
+// `satz add-preset` and `satz remove-preset`
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
@@ -1254,7 +1254,7 @@ pub(crate) struct Bound {
     pub value: bool,
 }
 
-/// What `add-pack` or `remove-pack` changed.
+/// What `add-preset` or `remove-preset` changed.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PackChange {
     pub estate: String,
@@ -1331,7 +1331,7 @@ fn resolve<'g>(graph: &'g PackGraph, arg: &str) -> Result<Vec<&'g Node>, String>
     }
     let on_gate: Vec<&Node> = graph.nodes.iter().filter(|n| n.gate.as_deref() == Some(arg)).collect();
     if on_gate.is_empty() {
-        return Err(format!("`{}` is neither a pack the pack graph offers nor a gate — `satz packs <estate>` lists both", arg));
+        return Err(format!("`{}` is neither a pack the pack graph offers nor a gate — `satz presets <estate>` lists both", arg));
     }
     Ok(on_gate)
 }
@@ -1349,7 +1349,7 @@ fn write_proven(estate: &Path, before: &str, after: &str, tool: &ToolConfig, run
     Ok(())
 }
 
-/// `satz add-pack <estate> <gate|path>`.
+/// `satz add-preset <estate> <gate|path>`.
 pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, with_requirements: bool) -> Result<PackChange, BoxErr> {
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
@@ -1393,8 +1393,8 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
                     Some(m) => close(view, m, with, plan, refusals, depth + 1),
                     None => refusals.push(view.requirement_text(n, &r)),
                 },
-                (true, _) => refusals.push(format!("{} — which one is a decision: add-pack it first", view.requirement_text(n, &r))),
-                (false, _) => refusals.push(format!("{} — `satz add-pack` it first", view.requirement_text(n, &r))),
+                (true, _) => refusals.push(format!("{} — which one is a decision: add-preset it first", view.requirement_text(n, &r))),
+                (false, _) => refusals.push(format!("{} — `satz add-preset` it first", view.requirement_text(n, &r))),
             }
         }
         plan.push(n);
@@ -1424,14 +1424,14 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     for n in &plan {
         for x in graph.excluded_by(&n.path) {
             if view.deploys(&x.path) && !plan.iter().any(|p| p.path == x.path) {
-                refusals.push(format!("`{}` excludes `{}`, which is on — `satz remove-pack` it first", n.path, x.path));
+                refusals.push(format!("`{}` excludes `{}`, which is on — `satz remove-preset` it first", n.path, x.path));
             }
         }
     }
     if !refusals.is_empty() {
         refusals.dedup();
         let hint = if with_requirements { "" } else { "\n  `--with-requirements` switches a requirement on too, where there is one to choose" };
-        return Err(format!("add-pack {}: refused, nothing written:\n  {}{}", arg, refusals.join("\n  "), hint).into());
+        return Err(format!("add-preset {}: refused, nothing written:\n  {}{}", arg, refusals.join("\n  "), hint).into());
     }
 
     // the questions as they stand, for the choices and for what opens
@@ -1483,7 +1483,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     Ok(change)
 }
 
-/// `satz remove-pack <estate> <gate|path>`: the gate bound false, the line left as it
+/// `satz remove-preset <estate> <gate|path>`: the gate bound false, the line left as it
 /// is — a gated line with a false gate deploys nothing.
 pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, cascade: bool) -> Result<PackChange, BoxErr> {
     let (graph, dir) = graph_for(runtime)?;
@@ -1565,7 +1565,7 @@ pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg
     }
     if !refusals.is_empty() {
         refusals.dedup();
-        return Err(format!("remove-pack {}: refused, nothing written:\n  {}", arg, refusals.join("\n  ")).into());
+        return Err(format!("remove-preset {}: refused, nothing written:\n  {}", arg, refusals.join("\n  ")).into());
     }
     let mut change = PackChange { estate: estate.display().to_string(), action: "remove", ..PackChange::default() };
     let mut src = before.clone();

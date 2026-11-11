@@ -1766,7 +1766,7 @@ pub fn compile_estate_bound(
     }
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     let mut tfvars = w.genv;
-    // An acknowledgement is not configuration: nothing reads it (`satz pack-graph`
+    // An acknowledgement is not configuration: nothing reads it (`satz preset-graph`
     // refuses a pack that does), so it is no variable, and binding it moves no line of
     // the emission.
     let notices = w.notices;
@@ -2243,7 +2243,7 @@ pub fn estate_params(
 /// `applied` is false when no file this estate uses declares `param` — the pack that
 /// declares it is off, so there is nothing to add to and nothing enforcing either. The
 /// pack graph carries the requirement (a `data` edge to the pack that declares the
-/// param) and `satz packs` names it.
+/// param) and `satz presets` names it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Contribution {
     /// the list param the entries are added to

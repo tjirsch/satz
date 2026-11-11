@@ -248,9 +248,9 @@ grep -q 'parent = local.interface.infra_folder' "$pm" || fail "a folder's looked
 grep -q '"central" = local.interface.customer_domain' "$pm" || fail "a whole value inside a map is not the bare local:\n$(cat $pm)"
 grep -q 'corp-archive-001\|^data ' "$pm" && fail "main.tf carries the central estate's value or a lookup:\n$(cat $pm)"
 [ -e project/interfaces ] && fail "a project that exports nothing wrote interfaces/"
-"$satz" --config project/config.toml packs archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz packs failed on the project:\n$(cat tmp/project-packs.txt)"
-grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'vendor/archive/archive/satz/interface.satz' || fail "satz packs does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
-sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && fail "satz packs reads the interface file as a pack:\n$(cat tmp/project-packs.txt)"
+"$satz" --config project/config.toml presets archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz presets failed on the project:\n$(cat tmp/project-packs.txt)"
+grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'vendor/archive/archive/satz/interface.satz' || fail "satz presets does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
+sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && fail "satz presets reads the interface file as a pack:\n$(cat tmp/project-packs.txt)"
 if command -v tofu >/dev/null 2>&1; then
   (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's root module does not validate"
 fi
@@ -1088,10 +1088,10 @@ grep -q '^replaced ' tmp/mcp-force.txt || fail "the replacement is not reported:
 python3 -c "import json;d=json.load(open('tmp/clients/.mcp.json'));assert d['mcpServers']['satz']['type']=='stdio',d" \
   || fail ".mcp.json does not hold the stdio server"
 
-step "review-pack: the library's own bar, as a command, on a good pack and a bad one"
+step "review-preset: the library's own bar, as a command, on a good pack and a bad one"
 # A pack every gate in this repository already accepts must clear the command too,
 # or the command is not the same bar.
-"$satz" --config . review-pack "$root/presets/organization-budget.satz" --format text --out tmp/review-good.txt 2>/dev/null \
+"$satz" --config . review-preset "$root/presets/organization-budget.satz" --format text --out tmp/review-good.txt 2>/dev/null \
   || fail "a shipped pack does not clear its own library's bar:\n$(cat tmp/review-good.txt)"
 grep -q 'the pack clears the bar' tmp/review-good.txt || fail "the review does not say so:\n$(cat tmp/review-good.txt)"
 grep -q 'emits: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
@@ -1118,7 +1118,7 @@ google_cloud_identity_group_membership {
   }
 }
 PACKEOF
-if "$satz" --config . review-pack tmp/packs/bad.satz --format text --out tmp/review-bad.txt 2>/dev/null; then
+if "$satz" --config . review-preset tmp/packs/bad.satz --format text --out tmp/review-bad.txt 2>/dev/null; then
   fail "a pack breaking four rules cleared the bar:\n$(cat tmp/review-bad.txt)"
 fi
 grep -q 'not formatted' tmp/review-bad.txt || fail "the layout rule did not fire:\n$(cat tmp/review-bad.txt)"
@@ -1126,8 +1126,8 @@ grep -q 'no header comment' tmp/review-bad.txt || fail "the header rule did not 
 grep -q 'no `pack <name> version' tmp/review-bad.txt || fail "the version rule did not fire:\n$(cat tmp/review-bad.txt)"
 grep -q 'presets define groups, humans grant membership' tmp/review-bad.txt || fail "the membership rule did not fire:\n$(cat tmp/review-bad.txt)"
 # the findings are the shape an editor already reads: severity, kind, file, line
-"$satz" --config . review-pack tmp/packs/bad.satz --format json --out tmp/review-bad.json 2>/dev/null || true
-python3 - <<'PYEOF' || fail "review-pack --format json is not the findings shape"
+"$satz" --config . review-preset tmp/packs/bad.satz --format json --out tmp/review-bad.json 2>/dev/null || true
+python3 - <<'PYEOF' || fail "review-preset --format json is not the findings shape"
 import json
 r = json.load(open("tmp/review-bad.json"))
 assert r["folded_into"] == "synthetic", r["folded_into"]
@@ -1139,16 +1139,16 @@ assert any(f.get("line") for f in errs), "no finding is anchored to a line"
 assert all(f.get("file", "").endswith("bad.satz") for f in r["findings"]), r["findings"]
 PYEOF
 
-step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-packs --check)"
-"$satz" --config . doc-packs --check || fail "presets/docs is behind the packs — run \`satz doc-packs\` and commit"
+step "pack docs are current, claims are on-catalog, every version has a changelog row (satz doc-presets --check)"
+"$satz" --config . doc-presets --check || fail "presets/docs is behind the packs — run \`satz doc-presets\` and commit"
 
 step "the packaged skills are current (scripts/build-skills.py --check)"
 python3 "$root/scripts/build-skills.py" --check || fail "a skills/<name>.skill is behind its folder — run scripts/build-skills.py and commit"
 
-step "the pack graph passes its checks and is current (satz pack-graph --check)"
-"$satz" pack-graph --presets-dir "$root/presets" --check > tmp/pack-graph.txt 2>&1 \
-  || fail "satz pack-graph --check:\n$(cat tmp/pack-graph.txt)"
-grep -q 'pack-graph.json current' tmp/pack-graph.txt || fail "pack-graph --check did not report the graph current"
+step "the pack graph passes its checks and is current (satz preset-graph --check)"
+"$satz" preset-graph --presets-dir "$root/presets" --check > tmp/preset-graph.txt 2>&1 \
+  || fail "satz preset-graph --check:\n$(cat tmp/preset-graph.txt)"
+grep -q 'pack-graph.json current' tmp/preset-graph.txt || fail "preset-graph --check did not report the graph current"
 
 step "report-compliance --format pdf: typeset by satz, with nothing on PATH"
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format pdf --out tmp/evidence.pdf >/dev/null 2>&1 \
@@ -1805,8 +1805,8 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_transpile_check", "satz_transpile", "satz_report_compliance",
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
-                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_pack", "satz_fmt",
-                      "satz_packs", "satz_add_pack", "satz_remove_pack", "satz_check_consumer"}, sorted(tools)
+                      "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_preset", "satz_fmt",
+                      "satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -1831,19 +1831,19 @@ for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", 
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
              "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets",
-             "satz_packs", "satz_add_pack", "satz_remove_pack", "satz_check_consumer"):
+             "satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"
 assert tools["satz_require"]["annotations"]["readOnlyHint"] is True
 assert tools["satz_transpile"]["annotations"]["readOnlyHint"] is False
-assert tools["satz_packs"]["annotations"]["readOnlyHint"] is True
+assert tools["satz_presets"]["annotations"]["readOnlyHint"] is True
 assert tools["satz_check_consumer"]["annotations"]["readOnlyHint"] is True
 # satz_check_consumer: the team's one attachment off an attach point, at its line
 consumer = msgs[19]["result"]["structuredContent"]
 assert consumer["resources"] == 2, consumer
 assert [(f["kind"], f["file"].endswith("consumer/main.tf"), f["line"]) for f in consumer["findings"]] == [("consumer", True, 16)], consumer
-assert tools["satz_add_pack"]["annotations"]["readOnlyHint"] is False
+assert tools["satz_add_preset"]["annotations"]["readOnlyHint"] is False
 
 # the role gap an agent asks about: the smoke estate grants what it emits, and the
 # answer names the service account it judged
@@ -2142,26 +2142,26 @@ grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv
   || fail "the model that was not chosen keeps its line commented"
 "$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
 
-step "packs, add-pack and remove-pack: one pack logic over the shipped graph, the same in the CLI, the compile and MCP"
+step "packs, add-preset and remove-preset: one pack logic over the shipped graph, the same in the CLI, the compile and MCP"
 # The interviewed day-0 estate: the map is commented, so every pack line is inert.
 rm -rf tmp/pk && mkdir -p tmp/pk && cp tmp/iv/new.satz tmp/pk/e.satz
-"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" presets/estate-map.satz > tmp/pk/map.txt 2>&1 || fail "add-pack of the map failed:\n$(cat tmp/pk/map.txt)"
-grep -q '^use "presets/estate-map.satz"' tmp/pk/e.satz || fail "add-pack did not uncomment the map's line"
+"$satz" --config . add-preset "$PWD/tmp/pk/e.satz" presets/estate-map.satz > tmp/pk/map.txt 2>&1 || fail "add-preset of the map failed:\n$(cat tmp/pk/map.txt)"
+grep -q '^use "presets/estate-map.satz"' tmp/pk/e.satz || fail "add-preset did not uncomment the map's line"
 # a pack whose provider is off is refused, naming the provider's gate
-if "$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_central_alerts > tmp/pk/refused.txt 2>&1; then
-  fail "add-pack of the central alerts with the logsink off was not refused"
+if "$satz" --config . add-preset "$PWD/tmp/pk/e.satz" use_central_alerts > tmp/pk/refused.txt 2>&1; then
+  fail "add-preset of the central alerts with the logsink off was not refused"
 fi
 grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' tmp/pk/refused.txt \
   || fail "the refusal must name the logsink's gate:\n$(cat tmp/pk/refused.txt)"
-"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_central_alerts --with-requirements > tmp/pk/add.txt 2>&1 \
-  || fail "add-pack --with-requirements failed:\n$(cat tmp/pk/add.txt)"
+"$satz" --config . add-preset "$PWD/tmp/pk/e.satz" use_central_alerts --with-requirements > tmp/pk/add.txt 2>&1 \
+  || fail "add-preset --with-requirements failed:\n$(cat tmp/pk/add.txt)"
 grep -qE '^use "presets/monitoring/organization-audit-logsink.satz" when use_audit_logsink' tmp/pk/e.satz \
   || fail "the requirement's line was not switched on at the top level:\n$(grep -n logsink tmp/pk/e.satz)"
-grep -q 'cis_central_email' tmp/pk/add.txt || fail "add-pack must name the questions the pack opened:\n$(cat tmp/pk/add.txt)"
-"$satz" fmt --check "$PWD/tmp/pk/e.satz" || fail "add-pack left a formatted estate unformatted"
+grep -q 'cis_central_email' tmp/pk/add.txt || fail "add-preset must name the questions the pack opened:\n$(cat tmp/pk/add.txt)"
+"$satz" fmt --check "$PWD/tmp/pk/e.satz" || fail "add-preset left a formatted estate unformatted"
 # a pack others need is refused, naming them; --cascade switches them off too
-if "$satz" --config . remove-pack "$PWD/tmp/pk/e.satz" use_audit_logsink > tmp/pk/rm.txt 2>&1; then
-  fail "remove-pack of the logsink with the central alerts on was not refused"
+if "$satz" --config . remove-preset "$PWD/tmp/pk/e.satz" use_audit_logsink > tmp/pk/rm.txt 2>&1; then
+  fail "remove-preset of the logsink with the central alerts on was not refused"
 fi
 grep -q 'organization-cis-log-alerts-central.satz` needs' tmp/pk/rm.txt || fail "the refusal must name the dependent:\n$(cat tmp/pk/rm.txt)"
 # the compile names the same requirement when the estate is edited by hand
@@ -2171,14 +2171,14 @@ if "$satz" --config . transpile "$PWD/tmp/pk/off.satz" --check > tmp/pk/off.txt 
 fi
 grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' tmp/pk/off.txt \
   || fail "transpile --check must print the pack graph's sentence:\n$(cat tmp/pk/off.txt)"
-"$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/packs.json > /dev/null 2>&1 || fail "satz packs failed"
+"$satz" --config . presets "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/packs.json > /dev/null 2>&1 || fail "satz presets failed"
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
-  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_packs\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
-  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_remove_pack\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\",\"cascade\":true}}}" \
-  "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_add_pack\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_presets\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_remove_preset\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\",\"cascade\":true}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_add_preset\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"pack\":\"use_audit_logsink\"}}}" \
   > tmp/pk/mcp-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/pk/mcp-in.jsonl > tmp/pk/mcp.jsonl 2>/dev/null || true
 python3 - <<'PYEOF' || fail "the pack tools over MCP disagree with the CLI"
@@ -2186,7 +2186,7 @@ import json
 msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/pk/mcp.jsonl") if l.strip()) if "id" in d}
 cli = json.load(open("tmp/pk/packs.json"))
 served = msgs[3]["result"]["structuredContent"]
-assert served["packs"] == cli["packs"], "satz_packs and `satz packs --format json` report different rows"
+assert served["packs"] == cli["packs"], "satz_presets and `satz presets --format json` report different rows"
 row = {p["path"]: p for p in served["packs"]}
 assert row["presets/monitoring/organization-cis-log-alerts-central.satz"]["deploys"] is True
 assert row["presets/monitoring/organization-cis-log-alerts-central.satz"]["requires"][0]["met"] is True
@@ -2199,8 +2199,8 @@ PYEOF
 step "a pack's notice: named when the pack goes on, open until the estate binds its param, and apply refuses"
 # The CIS baseline asks for `satz adopt` before the first apply — Google sets some of its
 # policies on every new organisation, and creating one that exists stops the apply.
-"$satz" --config . add-pack "$PWD/tmp/pk/e.satz" use_cis_baseline > tmp/pk/notice.txt 2>&1 \
-  || fail "add-pack of the CIS baseline failed:\n$(cat tmp/pk/notice.txt)"
+"$satz" --config . add-preset "$PWD/tmp/pk/e.satz" use_cis_baseline > tmp/pk/notice.txt 2>&1 \
+  || fail "add-preset of the CIS baseline failed:\n$(cat tmp/pk/notice.txt)"
 grep -q 'notice — presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/pk/notice.txt \
   || fail "switching the pack on must name its notice:\n$(cat tmp/pk/notice.txt)"
 grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the notice must say how it is acknowledged"
@@ -2212,17 +2212,17 @@ grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/
 # the estate is named as a command takes it — this one is given as an absolute path, and
 # that is what the line has to carry: the file name alone would name yaml/e.satz, another file
 grep -q "^    fix: satz adopt $PWD/tmp/pk/e.satz --execute --import$" tmp/pk/notice-check.txt || fail "the command is the finding's last line, naming the estate as a command takes it:\n$(cat tmp/pk/notice-check.txt)"
-# the acknowledgement is an answer: `satz_interview` takes it, and `satz_packs` reports both states
-"$satz" --config . packs "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz packs failed"
+# the acknowledgement is an answer: `satz_interview` takes it, and `satz_presets` reports both states
+"$satz" --config . presets "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz presets failed"
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}' \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\",\"answers\":{\"cis_baseline_adopted\":true}}}}" \
-  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_packs\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_presets\",\"arguments\":{\"estate\":\"$PWD/tmp/pk/e.satz\"}}}" \
   > tmp/pk/notice-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/pk/notice-in.jsonl > tmp/pk/notice-mcp.jsonl 2>/dev/null || true
-python3 - <<'PYEOF' || fail "the notice is not carried through satz packs and satz_interview"
+python3 - <<'PYEOF' || fail "the notice is not carried through satz presets and satz_interview"
 import json
 cli = {p["path"]: p for p in json.load(open("tmp/pk/notice-packs.json"))["packs"]}
 n = cli["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"]

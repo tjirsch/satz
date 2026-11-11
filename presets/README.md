@@ -40,7 +40,7 @@ back as `"import-id"`. Pack headers that mention adoption mean that command.
 
 ---
 
-**Writing one:** `satz review-pack <file> --format text --out -` judges a pack
+**Writing one:** `satz review-preset <file> --format text --out -` judges a pack
 against everything on this page — it parses, it is formatted, its header opens with a
 sentence the index can print, its id is its file name, its version has a changelog row in
 [`CHANGELOG.md`](CHANGELOG.md), it carries no value shaped like private data that is not a
@@ -68,7 +68,7 @@ and `gcloud` except §1.1.4; `cargo test` fails on one that does not.
 
 **This page and the pack pages:** this page holds the conventions, one introduction per
 group, and the files beside the packs that are not packs. [`docs/README.md`](docs/README.md)
-is one page per pack, derived from the pack file by `satz doc-packs` — what it does, the
+is one page per pack, derived from the pack file by `satz doc-presets` — what it does, the
 copy-pasteable `use` block with its params and the params it needs from outside, the
 resources, the claims with their control titles from the catalog, the duties, which
 contributed resources no claim witnesses, and the pack's own version history — with a
@@ -80,19 +80,19 @@ in reading order — the estate map and core, security groups, billing, the CIS 
 monitoring, networking, projects and interfaces, security operations, continuous
 verification. The sections below, the index of pack pages and the site's side menu follow
 it; a pack file stays where it is, since an estate's `use` line names its path.
-`satz doc-packs` refuses a pack in no group or in two, and a group this page has no
+`satz doc-presets` refuses a pack in no group or in two, and a group this page has no
 `##` heading for, in that order.
 
 **Tiers:** the map decides them, in its defaults. `estate-core` and `estate-map` are in
 every estate; every other pack has one gate, and the gate's default in `estate-map.satz`
 is the pack's tier — `true` is on unless the customer declines, `false` is opt-in, a
 reference to another gate follows that choice. A vendor integration is an opt-in pack
-under `integrations/`, and `satz pack-graph` refuses one whose gate defaults to `true`.
+under `integrations/`, and `satz preset-graph` refuses one whose gate defaults to `true`.
 Nothing declares a tier.
 
 **Names:** a pack's id is its file name, `-` written `_`: `cis/cmek.satz` is `pack cmek`.
 The folder says where a pack lives, the groups file its topic, and the id keys the
-changelog and names the page, so it is unique. `satz doc-packs` and `satz review-pack`
+changelog and names the page, so it is unique. `satz doc-presets` and `satz review-preset`
 refuse any other id; the ids that predate the rule are named in `LEGACY_PACK_IDS`
 (`src/doc_packs.rs`) until their rename, and a row whose pack conforms is refused.
 
@@ -106,12 +106,12 @@ after the day-0 params. One boolean per optional pack plus the S1/S2 model as a
 destroys. Below the choices, one `offers` entry per pack in the library says the gate its
 line carries, the phase that has to be finished before it can go in, the block it
 belongs in and — by the entries' order — the order the packs can be adopted; `satz
-pack-graph` turns them, with the edges it derives from the packs, into
+preset-graph` turns them, with the edges it derives from the packs, into
 `presets/pack-graph.json` ([ADR 0031](../docs/adr/0031-the-map-offers-every-pack-and-the-graph-ships-with-the-presets.md)).
 The estate carries one `use … when` line per choice, each written commented under its
 phase. `satz init` and `satz interview --create` write them from the pack graph,
-`satz merge-presets` writes a missing one, `satz interview` and `satz add-pack` switch a
-line on when its choice is answered yes, `satz packs` lists every choice with its line, and a
+`satz merge-presets` writes a missing one, `satz interview` and `satz add-preset` switch a
+line on when its choice is answered yes, `satz presets` lists every choice with its line, and a
 test fails on a choice with no line ([ADR 0007](../docs/adr/0007-the-map-is-a-pack-of-choices-and-the-estate-carries-the-lines.md)).
 
 ```
@@ -663,9 +663,9 @@ Switch that pack off and its entries go with it. Two packs contributing the same
 add it once. Where the contributing line stands decides nothing: the entries are merged
 before anything is compiled. Where no pack in the estate declares the param at all —
 the CIS baseline is off, so nothing is restricting anyway — the entries are dropped, and
-`satz packs` names the requirement. Two packs contribute today: `billing-export` and
+`satz presets` names the requirement. Two packs contribute today: `billing-export` and
 `integrations/microsoft-defender-for-cloud`, each named in its own section of this page, and
-`satz packs <estate>` prints which pack put which entry in this estate's list.
+`satz presets <estate>` prints which pack put which entry in this estate's list.
 
 #### SCC activation under the §1.1 lock
 
@@ -970,7 +970,7 @@ org-wide can be voluminous — measure a week of volume before narrowing it.
 The eight alert controls are numbered **§2.5–2.12 in CIS 5.0** and **§2.4–2.11 in
 CIS 4.0** (5.0 inserted a new §2.2; 4.0's §2.12 is DNS logging). Resource labels
 and this document use the 5.0 numbers; each pack claims both versions with the
-right id, and `doc-packs --check` refuses a claim on an id its catalog lacks.
+right id, and `doc-presets --check` refuses a claim on an id its catalog lacks.
 
 Two variants of the same eight controls; **the central one is the default**. Both may
 coexist: a control passes when either path is satisfied.
@@ -1440,7 +1440,7 @@ per entry, and each is that project's own (`project-onboarding.satz`). A project
 it. A pack's interface uses only common interfaces. What satz generates from it —
 `interfaces/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
 estate: it holds one estate's values and lookup keys, and nothing generated goes into the
-preset library (`satz doc-packs` and `satz pack-graph` refuse an interface file there).
+preset library (`satz doc-presets` and `satz preset-graph` refuse an interface file there).
 
 **An export is a contract with the projects that read it.** A pack version that removes or
 renames an export, or changes the shape of its value — a string that becomes a list, a
@@ -1649,7 +1649,7 @@ modules cannot be set at all, see below), **sources and source IAM** (only for a
 customer pushing third-party findings into SCC), and **Security Posture**, which is
 a framework of its own rather than part of this preset.
 
-A **pack** may declare an action too, and `satz doc-packs` puts it on the pack's
+A **pack** may declare an action too, and `satz doc-presets` puts it on the pack's
 page. An action is a step satz runs, never a witness: no claim covers what a script
 did, and nothing about it reaches `report-compliance`. Because
 `get-presets` downloads packs from this public repository, every compile warns
@@ -1939,7 +1939,7 @@ to be typed. `ask_when` names a boolean param; when it is false the question is
 
 `satz questions <estate>` lists them with their state (`--unanswered` for the open ones,
 `--format markdown` for the decisions sheet a customer signs off); `satz interview` asks
-them and writes the answers; `satz doc-packs` gives each pack a Questions section; and
+them and writes the answers; `satz doc-presets` gives each pack a Questions section; and
 the prompt becomes the generated `variables.tf` description. `check-presets` reports a
 pack whose questions changed as `questions`, not as drift: its HCL is identical, so the
 estate is not forked, and the change — a `recreate → edit` downgrade included — is
@@ -1963,14 +1963,14 @@ notice cis_baseline_adopted {
 }
 ```
 
-satz shows it when the pack goes on — the interview's yes, `satz add-pack`,
+satz shows it when the pack goes on — the interview's yes, `satz add-preset`,
 `merge-presets` bringing the pack in — and the compile warns at the estate's `use` line
 until the estate binds the param `true`. `severity = error` makes every command that
 writes to the organisation refuse while it is open (§6.15 of the language reference lists
 the three severities). The param is the notice's alone: declared `false` in
 the same pack, asked by no question, read by nothing, and never emitted — binding it
-moves no line of the HCL. `satz packs` lists every pack's notices with their state, and
-`satz doc-packs` gives a pack a Notices section.
+moves no line of the HCL. `satz presets` lists every pack's notices with their state, and
+`satz doc-presets` gives a pack a Notices section.
 
 The CIS org-policy packs carry one each, naming `satz adopt`; a run over every resource
 type that resolves everything binds their params itself.
