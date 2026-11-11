@@ -1,0 +1,47 @@
+// A top-level folder that SAYS its parent (ADR 0085): by a param that names a folder the
+// estate declares, by a reference, by the id of a folder that already exists, and from
+// the entries of a list — which is how a pack creates folders wherever an estate wants them.
+
+estate folder_parent_fixture
+
+params {
+  customer_organization_id = "123456789012"
+  infra_project_name       = "corp-infra-001"
+  team_folder_parent       = "google_folder.workloads.name"
+  team_folders = [
+    { name = "shop-frontend" parent = "google_folder.workloads.name" },
+    { name = "shop-data" parent = "folders/222222222222" },
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_folder {
+  workloads {
+    display_name = "Workloads"
+  }
+  by_param {
+    display_name = "By param"
+    parent       = team_folder_parent
+  }
+  by_reference {
+    display_name = "By reference"
+    parent       = "${{google_folder.workloads.name}}"
+  }
+  each team_folders by name {
+    display_name = "{each.name}"
+    parent       = "{each.parent}"
+  }
+}
+
+providers {
+  "google" {
+    alias   = "google"
+    project = infra_project_name
+    region  = "europe-west3"
+  }
+}

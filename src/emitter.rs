@@ -37,6 +37,18 @@ impl EmitCtx<'_> {
     }
 }
 
+/// The parent a top-level folder names. `${google_folder.x.name}` and the dotted path
+/// `google_folder.x.name` are the reference; `folders/123` and `organizations/123` are
+/// the id, written as it is — a `/` is what tells the two apart, as for a project's
+/// `folder_id` (ADR 0045).
+fn folder_parent_expr(parent: &str) -> hcl::Expression {
+    if parent.starts_with("${") {
+        crate::emit_shared::reference_expr(parent)
+    } else {
+        crate::emit_shared::parse_expr(parent)
+    }
+}
+
 fn last_with_prefix<'a>(path: &'a [String], prefix: &str) -> Option<&'a str> {
     path.iter().rev().find_map(|e| e.strip_prefix(prefix))
 }
@@ -798,11 +810,13 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
                             addr.label, p, f
                         ))
                     }
-                    // a top-level folder whose parent is another folder outside
-                    // this estate (a partial import) says so explicitly
+                    // a top-level folder says its parent: the id of a folder or an
+                    // organisation outside this estate (a partial import), or a folder
+                    // this estate declares, by reference — which is how a pack creates a
+                    // folder under one the estate names in a param (ADR 0085)
                     (None, Some(p)) => match pick("parent") {
-                        Some(v) if view.is_some() => crate::emit_shared::render_value(v, &|_| None).unwrap_or_else(|| hcl::Expression::from(p.to_string())),
-                        _ => hcl::Expression::from(p.to_string()),
+                        Some(v) if view.is_some() => crate::emit_shared::render_value(v, &|_| None).unwrap_or_else(|| folder_parent_expr(p)),
+                        _ => folder_parent_expr(p),
                     },
                     (None, None) => hcl::Expression::from(format!("organizations/{}", ctx.org_id)),
                 };
@@ -1692,6 +1706,17 @@ mod backend_identity_tests {
             None,
         )
         .expect("providers.tf emits")
+    }
+
+    #[test]
+    fn a_top_level_folder_names_its_parent_by_reference_or_by_id() {
+        let reference = crate::emit_shared::traversal_expr("google_folder.workloads.name");
+        assert_eq!(folder_parent_expr("google_folder.workloads.name"), reference);
+        assert_eq!(folder_parent_expr("${google_folder.workloads.name}"), reference);
+        assert_eq!(folder_parent_expr("${local.interface.workload_folder}"), crate::emit_shared::traversal_expr("local.interface.workload_folder"));
+        for id in ["folders/222222222222", "organizations/123456789012"] {
+            assert_eq!(folder_parent_expr(id), hcl::Expression::from(id.to_string()));
+        }
     }
 
     #[test]
