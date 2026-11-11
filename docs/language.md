@@ -2526,6 +2526,11 @@ Suffix carries meaning; the tooling enforces it.
 - Most customisation is **params**, the rest a `.local` fork. If a fork's whole
   diff could be a param, the param belongs in the pack.
 
+The suffixes are the preset library's, under `presets_dir`. A workload pack in `packs_dir`
+carries none: whose it is, is decided by its row in `packs_dir/origin.toml` — a fetched
+pack has one, the repository's own has none
+([workflows → Workload packs](workflows.md#workload-packs)).
+
 ---
 
 ## 7. Proof: `require`

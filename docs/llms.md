@@ -197,6 +197,15 @@ pack declares a `question oneof` over them, satz refuses two true branches by na
 To change what a pristine pack does, **use a param**. If no param exists for what you
 need, say so instead of forking.
 
+**A workload pack is not a preset.** A preset is a pack of the library under `presets/`,
+switched on with `satz_add_preset`. A workload pack is one file in the estate's
+`packs_dir`, used by an estate beside the organisation: `satz_packs` lists them with their
+state, `satz_get_pack` fetches one and records its origin in `packs_dir/origin.toml`,
+`satz_update_pack` brings a fetched one up to date and leaves an edited one as it is
+(`report_only` first), `satz_detach_pack` makes one the repository's own, and
+`satz_review_pack` judges one. A pack with no row in `origin.toml` is the repository's own:
+no tool writes it, and you edit it as you edit the estate.
+
 ## Removing something a pack contributes
 
 ```satz

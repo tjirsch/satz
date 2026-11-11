@@ -28,6 +28,11 @@ pub struct ToolConfig {
     /// used and adapted, presets_dir holds everything available for copying.
     #[serde(default = "default_presets_dir")]
     pub presets_dir: String,
+    /// Where the estate's workload packs live: the ones `get-pack` fetched, recorded in
+    /// `origin.toml` there, beside the ones the repository wrote itself. An estate
+    /// `use`s them through `include_dirs`.
+    #[serde(default = "default_packs_dir")]
+    pub packs_dir: String,
     #[serde(default = "default_tf_tool")]
     pub tf_tool: String,
     #[serde(default = "default_google_providers")]
@@ -110,6 +115,8 @@ fn default_include_dirs() -> Vec<String> { vec![".".to_string(), default_yaml_di
 fn default_schema_dir() -> String { "schemas".to_string() }
 
 fn default_presets_dir() -> String { "presets".to_string() }
+
+fn default_packs_dir() -> String { "packs".to_string() }
 
 fn default_tf_tool() -> String { "tofu".to_string() }
 
@@ -239,6 +246,7 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
             include_dirs: default_include_dirs(),
             schema_dir: default_schema_dir(),
             presets_dir: default_presets_dir(),
+            packs_dir: default_packs_dir(),
             tf_tool: default_tf_tool(),
             google_providers: default_google_providers(),
             aws_providers: Vec::new(),
@@ -277,6 +285,9 @@ pub(crate) fn resolved_config(tool: &ToolConfig, config_dir: &Path) -> ToolConfi
     }
     if Path::new(&rc.presets_dir).is_relative() {
         rc.presets_dir = at(&rc.presets_dir);
+    }
+    if Path::new(&rc.packs_dir).is_relative() {
+        rc.packs_dir = at(&rc.packs_dir);
     }
     rc.include_dirs = rc
         .include_dirs
@@ -436,6 +447,7 @@ pub(crate) fn config_file_path(
                 | Commands::Presets { .. } | Commands::AddPreset { .. } | Commands::Interfaces { .. } | Commands::CheckRequest { .. } | Commands::RemovePreset { .. } | Commands::CheckConsumer { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPreset { .. }
+                | Commands::Packs { .. } | Commands::GetPack { .. } | Commands::UpdatePack { .. } | Commands::DetachPack { .. } | Commands::ReviewPack { .. }
                 | Commands::PresetGraph { presets_dir: None, .. }
                 // the estate tier lives in the estate's config.toml. `--machine` needs
                 // none, and a bare `list` says what this machine silences from anywhere

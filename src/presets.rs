@@ -1826,7 +1826,7 @@ fn refresh_adoption_diffs(local_base: &Path) -> Result<Vec<PathBuf>, BoxErr> {
 }
 
 /// Unified diff via git (battle-tested); falls back to a full old/new dump.
-fn text_diff(old: &str, new: &str) -> String {
+pub(crate) fn text_diff(old: &str, new: &str) -> String {
     let tmp = std::env::temp_dir();
     let (fo, fn_) = (tmp.join(format!("mp_old_{}", std::process::id())), tmp.join(format!("mp_new_{}", std::process::id())));
     if crate::fsx::write(&fo, old).is_ok() && crate::fsx::write(&fn_, new).is_ok() {

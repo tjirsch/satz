@@ -48,6 +48,7 @@ mod presets;
 mod doc_packs;
 mod pack_graph;
 mod preset_lines;
+mod workload_packs;
 mod notices;
 mod org_write;
 mod github;
@@ -144,6 +145,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
+    ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "review-pack"]),
     (
         "Policies",
         &[
@@ -825,6 +827,90 @@ pub(crate) enum Commands {
     /// defaults — unless `--against` names a real estate. Exits non-zero when the
     /// pack does not clear the bar.
     ReviewPreset {
+        /// The pack file to review (.satz)
+        pack: PathBuf,
+        /// Judge it inside this estate instead of a synthesised one
+        #[arg(long, value_name = "ESTATE")]
+        against: Option<PathBuf>,
+        /// Output format — json carries the findings an editor already reads
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
+        format: OutFormat,
+        /// Where it goes — the one file this run writes, the format's extension added
+        /// when the name has none (`-` for stdout)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+    /// Every workload pack in `packs_dir` with its state — the repository's own, current, behind, edited, gone from the source — and every pack the source holds that `packs_dir` does not
+    ///
+    /// A workload pack is one `.satz` file an estate `use`s. `packs_dir/origin.toml`
+    /// records the ones `get-pack` fetched; a pack without a row is the repository's
+    /// own. Reads the source: the `packs/` tree of the satz repository, or `--from`.
+    Packs {
+        /// Read the packs of this folder instead of the satz repository's
+        #[arg(long, value_name = "DIR")]
+        from: Option<PathBuf>,
+        /// Output format — json is the report an agent reads
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
+        format: OutFormat,
+        /// Where it goes — the one file this run writes (`-` for stdout)
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+    },
+    /// Fetch one workload pack into `packs_dir` and record where it came from, so `update-pack` keeps it current
+    ///
+    /// Refused when `packs_dir` already holds a pack of that id. `--all` fetches every
+    /// pack the source holds that `packs_dir` lacks.
+    GetPack {
+        /// The pack's id: its path under `packs/` without `.satz`
+        id: Option<String>,
+        /// Every pack the source holds that `packs_dir` does not
+        #[arg(long)]
+        all: bool,
+        /// Take the pack from this folder instead of the satz repository
+        #[arg(long, value_name = "DIR")]
+        from: Option<PathBuf>,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Bring one fetched workload pack up to date with its source: a pack unchanged since it was fetched is overwritten, a pack edited here is left as it is and reported with its difference
+    ///
+    /// A pack without a recorded origin is the repository's own and is never
+    /// written. `--all` covers every recorded pack. Exits 1 when a pack is edited
+    /// or gone from the source.
+    UpdatePack {
+        /// The pack's id: its path under `packs/` without `.satz`
+        id: Option<String>,
+        /// Every pack with a recorded origin
+        #[arg(long)]
+        all: bool,
+        /// Read this folder instead of the satz repository — for the packs fetched from a folder
+        #[arg(long, value_name = "DIR")]
+        from: Option<PathBuf>,
+        /// Print what would happen without writing anything
+        #[arg(long)]
+        report_only: bool,
+        /// Overwrite a pack edited here with the source's file
+        #[arg(long)]
+        take_upstream: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Forget where a fetched workload pack came from: its file stays, and it is the repository's own pack from here on
+    DetachPack {
+        /// The pack's id: its path under `packs/` without `.satz`
+        id: String,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Judge one workload pack: it parses, it is formatted, its header says what it is, it states its version, it carries no value shaped like private data, it declares no membership, every type it emits has a prerequisite row, and it compiles
+    ///
+    /// The bar of `review-preset` without the two checks that belong to the preset
+    /// library: the changelog row and the adoption rule. Exits non-zero when the
+    /// pack does not clear the bar.
+    ReviewPack {
         /// The pack file to review (.satz)
         pack: PathBuf,
         /// Judge it inside this estate instead of a synthesised one
@@ -2251,23 +2337,53 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::ReviewPreset { pack, against, format, out } => {
+        Commands::Packs { from, format, out } => {
             let out = crate::out::target(out, format)?;
-            let review = crate::review_pack::review(&pack, against.as_deref(), &tool_config, &runtime_config)?;
+            let source = crate::workload_packs::Source::new(from)?;
+            let report = crate::workload_packs::list(&runtime_config, &source).await?;
             let text = match format {
-                OutFormat::Json => serde_json::to_string_pretty(&review)?,
-                _ => crate::review_pack::render(&review, crate::out::width(&out)),
+                OutFormat::Json => serde_json::to_string_pretty(&report)?,
+                _ => crate::workload_packs::render_list(&report),
             };
-            let what = format!(
-                "{} finding(s) on {}",
-                review.findings.len(),
-                pack.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
-            );
-            write_report(&out, text.as_bytes(), &what)?;
-            if !review.passed() {
+            write_report(&out, text.as_bytes(), &format!("{} pack(s)", report.packs.len()))?;
+            Ok(())
+        }
+        Commands::GetPack { id, all, from, format } => {
+            let which = crate::workload_packs::Which::new(id, all, "get-pack")?;
+            let source = crate::workload_packs::Source::new(from)?;
+            let report = crate::workload_packs::get(&runtime_config, &source, &which).await?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::workload_packs::render_get(&report)),
+            }
+            Ok(())
+        }
+        Commands::UpdatePack { id, all, from, report_only, take_upstream, format } => {
+            let which = crate::workload_packs::Which::new(id, all, "update-pack")?;
+            let source = crate::workload_packs::Source::new(from)?;
+            let report = crate::workload_packs::update(&runtime_config, &source, &which, report_only, take_upstream).await?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::workload_packs::render_update(&report)),
+            }
+            if report.attention {
                 std::process::exit(1);
             }
             Ok(())
+        }
+        Commands::DetachPack { id, format } => {
+            let detached = crate::workload_packs::detach(&runtime_config, &id)?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&detached)?),
+                _ => println!("detached {}: it was fetched from `{}` and is this repository's own pack now — no update writes it", detached.id, detached.source),
+            }
+            Ok(())
+        }
+        Commands::ReviewPreset { pack, against, format, out } => {
+            run_review(&pack, against.as_deref(), crate::review_pack::Bar::Library, format, out, &tool_config, &runtime_config)
+        }
+        Commands::ReviewPack { pack, against, format, out } => {
+            run_review(&pack, against.as_deref(), crate::review_pack::Bar::Workload, format, out, &tool_config, &runtime_config)
         }
         Commands::Plan { args } => run_tf(&runtime_config, "plan", &args, api_preflight).await,
         Commands::Apply { args } => run_tf(&runtime_config, "apply", &args, api_preflight).await,
@@ -5686,6 +5802,34 @@ mod fmt_arguments {
     }
 }
 
+/// `review-preset` and `review-pack`: one review, judged by the bar the command names.
+fn run_review(
+    pack: &Path,
+    against: Option<&Path>,
+    bar: crate::review_pack::Bar,
+    format: OutFormat,
+    out: PathBuf,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out = crate::out::target(out, format)?;
+    let review = crate::review_pack::review(pack, against, bar, tool_config, runtime_config)?;
+    let text = match format {
+        OutFormat::Json => serde_json::to_string_pretty(&review)?,
+        _ => crate::review_pack::render(&review, crate::out::width(&out)),
+    };
+    let what = format!(
+        "{} finding(s) on {}",
+        review.findings.len(),
+        pack.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+    );
+    write_report(&out, text.as_bytes(), &what)?;
+    if !review.passed() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 fn open_html_help(subcommand: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     const DOCUMENTED: &[&str] = &[
         "init", "bootstrap", "transpile", "migrate", "import", "update-schema", "get-presets", "require",
@@ -5868,6 +6012,11 @@ mod command_groups {
         ("transpile", Identity::EstateSaWhenItRuns("only --plan/--apply reach an API, through run_tf")),
         ("update-prerequisites", Identity::NoGoogleApi),
         ("review-preset", Identity::NoGoogleApi),
+        ("packs", Identity::NoGoogleApi),
+        ("get-pack", Identity::NoGoogleApi),
+        ("update-pack", Identity::NoGoogleApi),
+        ("detach-pack", Identity::NoGoogleApi),
+        ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
         ("check-request", Identity::NoGoogleApi),
@@ -9307,7 +9456,7 @@ google_storage_bucket {
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     crate::findings::take_said();
-                    crate::review_pack::review(&pack, None, &cfg, &cfg).expect("the review runs");
+                    crate::review_pack::review(&pack, None, crate::review_pack::Bar::Library, &cfg, &cfg).expect("the review runs");
                     let said = crate::findings::take_said();
                     assert!(said.is_empty(), "the review printed its compile's findings: {:?}", said);
                     reviews.fetch_add(1, Ordering::Relaxed);

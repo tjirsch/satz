@@ -124,10 +124,22 @@ fn declared_version(src: &str) -> Option<(String, String)> {
     None
 }
 
+/// Which bar a pack is judged by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bar {
+    /// `review-preset`: a pack of the preset library, which also has a row in the
+    /// library's changelog and an adoption rule in its import config
+    Library,
+    /// `review-pack`: a workload pack, which stands outside the library and is held
+    /// to everything but those two
+    Workload,
+}
+
 /// The whole review, in the order a pack fails it.
 pub(crate) fn review(
     pack: &Path,
     against: Option<&Path>,
+    bar: Bar,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<Review, BoxErr> {
@@ -197,6 +209,7 @@ pub(crate) fn review(
              every update compares it"
                 .to_string(),
         )),
+        Some(_) if bar == Bar::Workload => {}
         Some((name, version)) => {
             let changelog = Path::new(&runtime_config.presets_dir).join("CHANGELOG.md");
             match std::fs::read_to_string(&changelog) {
@@ -482,6 +495,7 @@ pub(crate) fn review(
                 ));
             }
         }
+        Ok(None) if bar == Bar::Workload => {}
         Ok(None) => f.push(at(
             &pack,
             None,
@@ -689,7 +703,7 @@ mod tests {
                 std::thread::spawn(move || {
                     start.wait();
                     for n in 0..5 {
-                        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+                        let r = review(&pack, None, Bar::Library, &cfg, &cfg).expect("the review runs");
                         let messages: Vec<&str> = r.findings.iter().map(|f| f.message.as_str()).collect();
                         assert_eq!(r.emits, std::slice::from_ref(&address), "review {} of {}: {:?}", n, pack.display(), messages);
                         assert!(
@@ -727,7 +741,7 @@ mod tests {
         )
         .unwrap();
         crate::findings::take_said();
-        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+        let r = review(&pack, None, Bar::Library, &cfg, &cfg).expect("the review runs");
         assert!(crate::findings::take_said().is_empty(), "the review's compile printed");
         let f = r
             .findings
@@ -796,7 +810,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let r = review(&pack, None, &cfg, &cfg).expect("the review runs");
+        let r = review(&pack, None, Bar::Library, &cfg, &cfg).expect("the review runs");
         let f = r
             .findings
             .iter()

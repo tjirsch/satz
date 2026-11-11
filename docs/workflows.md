@@ -27,6 +27,11 @@ live, and `satz adopt` resolves the ids of what exists so the plan reads no chan
 rather than replace. Once it does, the infrastructure is changed through the estate
 from then on; nothing is recreated on the way.
 
+**[Workload packs](#workload-packs).** The packs a workload's estate takes one at a time:
+`get-pack` fetches one into `packs_dir` and records where it came from, `update-pack` brings
+a fetched pack up to date and leaves an edited one as it is, and a pack the repository
+wrote itself is written by no command.
+
 **[Keeping presets current](#keeping-presets-current).** The loop that runs for the
 life of an estate. `check-presets` reports which packs are behind upstream, edited
 locally or changed only in what they ask; `get-presets` installs what is missing and
@@ -1505,6 +1510,82 @@ compliance framework and the workloads — their Google projects, what each read
 interface and what the estate lets a project request. The review's two documents are copied in
 from `audit/`; the package refuses to be written while one of the four files is missing. Nothing
 in the package is written by hand: a change goes into the estate and the package is rebuilt.
+
+## Workload packs
+
+A **workload pack** is one `.satz` file an estate beside the organisation `use`s to build a
+workload: a pack with a `pack <id> version "…"` header that stands alone — no gate in the
+estate map, no node in the pack graph, no claim in a catalog. A workload's estate keeps its
+packs in one folder, `packs_dir` (`packs/` beside `config.toml` unless the config names
+another), and that folder holds two kinds:
+
+| a pack in `packs_dir` | whose it is | what writes it |
+|---|---|---|
+| with a row in `packs_dir/origin.toml` | fetched from a source | `satz update-pack` |
+| without a row | the repository's own | no command |
+
+`origin.toml` is the origin record: one row per fetched pack, with its id, the source it
+came from (`github:<owner>/<repo>`, or `dir` for a folder), the version it stated and the
+SHA-256 of the file as fetched. It is committed with the estate. The row decides whose a
+pack is; its name does not, so a pack the repository wrote stays its own when the source
+gains a pack of the same id.
+
+A pack's **id** is its path under the source's `packs/` tree without `.satz`:
+`packs/workload-project.satz` is `workload-project`.
+
+### The source
+
+The source is the `packs/` tree of the satz repository on `main`, or a folder: `--from
+<dir>` on every command that reads one. Fetching one pack from the repository is one
+download and no API request; `satz packs` and `get-pack --all` list the tree with one API
+request. A folder is how a team shares packs of its own: a checkout of the repository that
+holds them, named with `--from`.
+
+A row records the kind of source, never a folder's path. `update-pack` without `--from`
+reads the satz repository and looks at the rows that came from it; with `--from` it reads
+the folder and looks at the rows recorded as `dir`. A row of the other kind is reported as
+not checked.
+
+### The commands
+
+```bash
+satz packs --format text --out -          # what is here, and what the source holds
+satz get-pack workload-project            # fetch one pack, record its origin
+satz update-pack workload-project         # bring it up to date
+satz update-pack --all --report-only      # what an update of every fetched pack would do
+satz detach-pack workload-project         # keep it as the repository's own
+satz review-pack packs/my-pack.satz --format text --out -
+```
+
+`get-pack` writes `packs_dir/<id>.satz` and the row, and prints the `use` line that reaches
+the file. It is refused when `packs_dir` already holds a pack of that id, and when
+`packs_dir` is under none of the config's `include_dirs` — `use` resolves against those
+folders, so an estate whose packs are shared by several estates names the shared folder in
+both keys:
+
+```toml
+packs_dir    = "../../packs"
+include_dirs = [".", "satz", "../../packs"]
+```
+
+`update-pack` compares three things: the row, the local file and the source's file.
+
+| the local file | the source's file | what `update-pack` does |
+|---|---|---|
+| as fetched | the same | nothing: `current` |
+| as fetched | another | overwrites the local file and updates the row: `updated` |
+| changed since it was fetched | any | leaves the file as it is, prints its difference to the source's file and exits 1: `edited` |
+| any | gone | leaves the file as it is and exits 1: `gone` |
+
+For an edited pack there are two ways on: `--take-upstream` overwrites it with the source's
+file, and `detach-pack` removes its row, after which it is the repository's own. Nothing
+forks a pack and nothing rewrites an estate's `use` lines; one `packs_dir` serves any
+number of estates.
+
+`review-pack` holds a workload pack to the bar of `review-preset` without the two checks
+that belong to the preset library — the changelog row and the adoption rule.
+
+A workload pack is one file. A script an `action` of the pack runs is not fetched with it.
 
 ## Keeping presets current
 
