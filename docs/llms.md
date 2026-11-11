@@ -334,6 +334,12 @@ entry of the list; `request <list param> { key fields description }` declares wh
 may add to that list, and a project's request file — a pack of `contributes_<param>` entries
 — is checked by `satz check-request` and vendored into the estate by pull request.
 
+`each <list> by <field> as "{each.<field>}_<what>" { … }` labels each body with the string,
+so two `each` over one list write two resources of one type per entry, under labels that
+stay fixed. `key = value when <param>` and `block when <param> { … }` write the attribute or
+the block only where the param carries a value — `when not` for the opposite, and inside an
+`each` also `when each.<field>`. A param nobody declares is an error, never `false`.
+
 Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
 `satz interfaces` and `satz check-request` have no tool: ask a human for them. A project is
 onboarded by an entry of `projects` in `presets/project-onboarding.satz`, added by a reviewed

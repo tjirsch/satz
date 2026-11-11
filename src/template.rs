@@ -795,6 +795,7 @@ pub(crate) mod tests {
         items.iter().any(|e| match e {
             Entry::Use { .. } => true,
             Entry::Map { body, .. } | Entry::Each { body, .. } => uses_a_pack(body),
+            Entry::When { entry, .. } => uses_a_pack(std::slice::from_ref(entry.as_ref())),
             Entry::Attr { .. } => false,
         })
     }

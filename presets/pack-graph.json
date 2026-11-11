@@ -44,7 +44,7 @@
     },
     {
       "path": "presets/organization-budget.satz",
-      "version": "2.0",
+      "version": "2.1",
       "role": "pack",
       "gate": "use_budget",
       "gate_declared_in": "presets/estate-map.satz",

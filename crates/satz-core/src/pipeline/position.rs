@@ -241,6 +241,17 @@ fn relocation_advice(node: &str, label: &str) -> String {
 /// resource that really is called `params` is written.
 pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> Option<Misfit> {
     match entry {
+        // a condition stands on an attribute or a block inside a resource type map, a
+        // folder's or a project's body: the walk settles it there before anything reads
+        // the entry it stands on. At the top level of a file nothing settles it
+        Entry::When { cond, line, .. } => match pos {
+            Position::File => Some(Misfit {
+                line: *line,
+                what: format!("`when {}{}` stands at {} — a condition stands on an attribute or a block inside a resource type map", if cond.not { "not " } else { "" }, cond.name, pos.written()),
+                fix: "Write it on the labelled resource inside its type map, `google_x { label when <param> { … } }`; a whole pack is gated with `use … when`".to_string(),
+            }),
+            _ => None,
+        },
         // `each` writes labelled bodies, so it stands where labels do — and in a grant
         // map, where an entry's body is a grant map of its own
         Entry::Each { list, key, line, .. } => match pos {

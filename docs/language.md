@@ -631,8 +631,11 @@ entry   := KEY "=" value                  attribute
          | KEY "{" { entry } "}"          nested mapping
          | KEY NAME "{" { entry } "}"     named map entry
          | "use" STRING [ … ]             include inside this mapping
-         | "each" IDENT "by" IDENT "{" { entry } "}"
+         | "each" IDENT "by" IDENT [ "as" STRING ] [ "when" [ "not" ] IDENT ] "{" { entry } "}"
                                           one labelled body per entry of a list param
+         | KEY "=" value "when" [ "not" ] IDENT
+         | KEY [ NAME ] "when" [ "not" ] IDENT "{" { entry } "}"
+                                          an attribute or a block under a condition
 KEY     := IDENT | STRING                 (a string key may interpolate)
 NAME    := IDENT | STRING
 value   := STRING | NUMBER | true | false | IDENT
@@ -847,6 +850,29 @@ google_pubsub_subscription {
 A field an entry may leave out takes a default from the list's request point,
 `defaults = { <field> = <value> }` (§6.17), so a body reads it from every entry.
 
+`each <list> by <field> as "<label>" { … }` labels each body with the string instead of
+the field's value. The string reads the entry as the body does, `{each.x}`, and text; it
+is written before a `when`. Several `each` over one list then write several resources of
+one type per entry, each under a label that says which one it is:
+
+```
+google_pubsub_topic {
+  each event_topics by name {
+    name    = "{customer_shortname}-{each.name}"
+    project = infra_project_name
+  }
+  each event_topics by name as "{each.name}_dead_letter" {
+    name    = "{customer_shortname}-{each.name}-dead-letter"
+    project = infra_project_name
+  }
+}
+```
+
+The example writes `google_pubsub_topic.orders` and `google_pubsub_topic.orders_dead_letter`
+for the entry `orders`. A label is a resource's address, so what the string leaves fixed
+stays fixed whatever else the entry carries: a name read from another field of the entry
+can change without the address moving.
+
 The list is the param as the compile sees it, a pack's `contributes_<param>` entries
 included (ADR 0051), so a project's or a pack's entry expands like the estate's own. A label
 is the entry's field, never its place in the list: reordering the list moves nothing,
@@ -858,11 +884,65 @@ Refused, at the `each` line: a list param no file declares, a param that is no l
 entry that is no object, one without the field or whose field is no label (a letter,
 then letters, digits, `_` and `-`), two entries with one label, `{each.x}` of a field the
 entry lacks or of a list or an object inside a string, a `use` or a second `each` inside
-the body, `each` in a resource body, `when` with no field after it, and
-`{each.x}` outside an `each`.
+the body, `each` in a resource body, `when` with no field after it, `as` followed by
+anything but a string, an `as` label that reads a param, that is no label, or that two
+entries make the same, and `{each.x}` outside an `each`.
 At the top level of a file `each` writes interfaces, not resources (§6.17). A label an `each` writes that the map also writes by hand is
 one address declared twice. `each` without `by`, or `each { … }`, is a label named
 `each`.
+
+#### `when` — an attribute or a block under a condition
+
+```
+google_storage_bucket {
+  documents {
+    name     = "{customer_shortname}-documents"
+    location = "EU"
+    encryption when use_cmek {
+      default_kms_key_name = cmek_key
+    }
+    force_destroy = true when not keep_documents
+  }
+  scratch when want_scratch {
+    name     = "{customer_shortname}-scratch"
+    location = "EU"
+  }
+}
+```
+
+`key = value when <param>` and `key [name] when <param> { … }` write the attribute or the
+block only where the param carries a value: `false`, `""`, an empty list and an empty
+object do not count, as for `use … when`. `when not <param>` writes it where the param
+carries none. A block is a nested block of a resource, or a labelled resource in its type
+map — `scratch` above is a bucket the estate has only while `want_scratch` is true. What
+the condition leaves out is not in the HCL: no `count`, no empty block.
+
+Inside an `each`, a condition also reads the entry: `when each.<field>` writes the
+attribute or the block for the entries that carry the field with a value.
+
+```
+google_pubsub_topic {
+  each event_topics by name as "{each.name}_dead_letter" {
+    name    = "{customer_shortname}-{each.name}-dead-letter"
+    project = infra_project_name
+    message_storage_policy when each.subscription {
+      allowed_persistence_regions = [default_region]
+    }
+  }
+}
+```
+
+(`tests/smoke/yaml/showcase.satz`.)
+
+A whole pack is gated with `use … when` (§6.9), a whole `each` body with `each … when`;
+this is for the one attribute or block that differs inside a body that otherwise stays.
+A key written twice in one body is an error under a condition too, so the two values of
+one attribute are two params, not two lines.
+
+Refused, at the line: a param no file declares — never read as `false`; an input (it
+decides no structure, §6.3); `each.<field>` outside an `each`; a condition inside an
+object that is a value (`labels = { a = "b" when p }` — write it on `labels`); and a
+condition at the top level of a file.
 
 ### 6.5 IAM grants
 
@@ -2942,6 +3022,9 @@ across files it is the fold's conflict above.
   `each` inside the body is refused; and `each` stands in a resource type map, or at the top
   level of a file around `interface` blocks — not in a body or a grant map, so a bare-list
   pack cannot hold one. `when` reads one field of the entry; there is no condition on two.
+- **A condition reads one name.** `… when <param>` and `… when each.<field>` test one param
+  or one field for carrying a value; there is no comparison, no `and` and no `or`, and no
+  condition inside an object that is a value.
 - **A pack is one instance.** Its params join one estate-wide namespace, and the same pack
   used twice is the same resources (ADR 0075).
 - **`private` and `suppress` are read from the estate's own files**, never from a used one.

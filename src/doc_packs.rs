@@ -121,6 +121,7 @@ fn entry_text(e: &Entry) -> String {
             s
         }
         Entry::Each { list, key, body, .. } => format!("each {} by {} {{ {} }}", list, key, body.iter().map(entry_text).collect::<Vec<_>>().join(" ")),
+        Entry::When { cond, entry, .. } => format!("{} when {}{}", entry_text(entry), if cond.not { "not " } else { "" }, cond.name),
     }
 }
 
@@ -437,6 +438,14 @@ fn shape(items: &[Entry]) -> Shape {
                             Entry::Use { .. } => entry_text(b),
                             // one label per entry of the list, known once the estate compiles
                             Entry::Each { list, key, .. } => format!("one per entry of {}, by {}", list, key),
+                            // a labelled body under a condition: there where the param carries a value
+                            Entry::When { cond, entry, .. } => match entry.as_ref() {
+                                Entry::Map { key, body, .. } => {
+                                    s.resources.push(Res { typ: Some(k.clone()), label: key_text(key), off: declared_off(body) });
+                                    format!("{} (when {}{})", key_text(key), if cond.not { "not " } else { "" }, cond.name)
+                                }
+                                other => entry_text(other),
+                            },
                         })
                         .collect();
                     s.typed.entry(k).or_default().extend(labels);
@@ -449,6 +458,7 @@ fn shape(items: &[Entry]) -> Shape {
             Entry::Attr { key, .. } => s.bare.push(format!("{} (attribute)", key_text(key))),
             Entry::Use { .. } => s.uses.push(entry_text(e)),
             Entry::Each { list, key, .. } => s.bare.push(format!("each {} by {}", list, key)),
+            Entry::When { .. } => s.bare.push(entry_text(e)),
         }
     }
     s
@@ -558,6 +568,13 @@ pub(crate) fn refs_in_entry(e: &Entry, out: &mut Refs) {
         Entry::Each { list, body, line, .. } => {
             note(out, list, *line);
             body.iter().for_each(|b| refs_in_entry(b, out));
+        }
+        // the param a condition names is one the pack reads; a field of an entry is not
+        Entry::When { cond, entry, line } => {
+            if !cond.name.starts_with("each.") {
+                note(out, &cond.name, *line);
+            }
+            refs_in_entry(entry, out);
         }
     }
 }

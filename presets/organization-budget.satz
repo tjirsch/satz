@@ -28,7 +28,7 @@
 // budgets/<id>"` (`gcloud billing budgets list --billing-account=<account>`); `satz adopt`
 // does not resolve budgets. An empty `import_id` creates the budget.
 
-pack organization_budget version "2.0"
+pack organization_budget version "2.1"
 
 params {
   // The organisation budget's amount per calendar month, in whole units of the billing
@@ -124,10 +124,10 @@ google_monitoring_notification_channel {
   }
 }
 
-// ---- the budgets: with a channel, and without one -----------------------------------
+// ---- the budgets: each with its channel where it names an address -------------------
 
 google_billing_budget {
-  each budgets by name when email {
+  each budgets by name {
     "import-id"     = each.import_id
     display_name    = "{each.name}"
     billing_account = billing_account_infra
@@ -142,25 +142,9 @@ google_billing_budget {
       }
     }
     threshold_rules = budget_threshold_rules
-    all_updates_rule {
+    all_updates_rule when each.email {
       monitoring_notification_channels = ["${{google_monitoring_notification_channel.{each.name}.name}}"]
       disable_default_iam_recipients   = budget_default_recipients_off
     }
-  }
-  each budgets by name when not email {
-    "import-id"     = each.import_id
-    display_name    = "{each.name}"
-    billing_account = billing_account_infra
-    budget_filter {
-      projects           = each.projects
-      resource_ancestors = each.folders
-    }
-    amount {
-      specified_amount {
-        currency_code = budget_currency
-        units         = "{each.amount}"
-      }
-    }
-    threshold_rules = budget_threshold_rules
   }
 }

@@ -391,6 +391,21 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
 /// (ADR 0051). Refused at the `each` line: a list no file declares, a param that is no
 /// list, an entry that is no object, one without the field or whose field is no label, and
 /// two entries with one label.
+/// A label an `each` may write: a letter, then letters, digits, `_` and `-`.
+fn is_label(label: &str) -> bool {
+    label.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// What a condition that reached a value is told: it stands on an attribute or a block of
+/// a body, never inside an object that is a value.
+fn when_in_a_value(cond: &satz::Cond) -> String {
+    format!(
+        "`when {}{}` inside an object that is a value — a condition stands on an attribute or a block of a resource body, so write it on the attribute that holds the object",
+        if cond.not { "not " } else { "" },
+        cond.name
+    )
+}
+
 fn each_list<'e>(env: &'e Env, list: &str, key: &str, file_name: &str, line: usize) -> Result<Vec<(String, &'e serde_yaml::Mapping)>, PipelineError> {
     let what = format!("each {} by {}", list, key);
     let entries = match env.get(list) {
@@ -408,8 +423,7 @@ fn each_list<'e>(env: &'e Env, list: &str, key: &str, file_name: &str, line: usi
             Some(other) => return perr(file_name, line, format!("`{}`: entry {} of `{}` has `{}` = {} — a label is a string", what, n + 1, list, key, yaml_text(other))),
             None => return perr(file_name, line, format!("`{}`: entry {} of `{}` has no `{}`, the field that labels its body", what, n + 1, list, key)),
         };
-        let fits = label.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-        if !fits {
+        if !is_label(&label) {
             return perr(file_name, line, format!("`{}`: `{}` = \"{}\" is no label — a letter, then letters, digits, `_` and `-`", what, key, label));
         }
         if let Some(first) = out.iter().position(|(l, _)| *l == label) {
@@ -477,20 +491,34 @@ fn interfaces_of(file: &satz::File, file_name: &str, env: &Env) -> Result<Vec<(s
 /// field's text, a bare `each.x` the field's value. A `use` and a second `each` inside the
 /// body are refused.
 fn each_entries(entries: &[Entry], fields: &serde_yaml::Mapping, line: usize) -> Result<Vec<Entry>, String> {
-    entries
-        .iter()
-        .map(|e| match e {
-            Entry::Attr { key, value, line } => Ok(Entry::Attr { key: each_key(key, fields)?, value: each_value(value, fields, *line)?, line: *line }),
-            Entry::Map { key, name, body, line } => Ok(Entry::Map {
+    let mut out = Vec::new();
+    for e in entries {
+        match e {
+            Entry::Attr { key, value, line } => out.push(Entry::Attr { key: each_key(key, fields)?, value: each_value(value, fields, *line)?, line: *line }),
+            Entry::Map { key, name, body, line } => out.push(Entry::Map {
                 key: each_key(key, fields)?,
                 name: name.as_ref().map(|n| each_key(n, fields)).transpose()?,
                 body: each_entries(body, fields, *line)?,
                 line: *line,
             }),
-            Entry::Use { .. } => Err("a `use` inside `each` — a pack is used at the top level of a file".to_string()),
-            Entry::Each { .. } => Err(format!("an `each` inside `each` (line {}) — one level expands", line)),
-        })
-        .collect()
+            // `… when each.<field>`: settled against this entry, here. A condition on a
+            // param stays for the walk, which knows the params.
+            Entry::When { cond, entry, line } => {
+                let inner = each_entries(std::slice::from_ref(entry.as_ref()), fields, *line)?;
+                match cond.name.strip_prefix("each.") {
+                    Some(field) => {
+                        if carries(fields, field) != cond.not {
+                            out.extend(inner);
+                        }
+                    }
+                    None => out.extend(inner.into_iter().map(|entry| Entry::When { cond: cond.clone(), entry: Box::new(entry), line: *line })),
+                }
+            }
+            Entry::Use { .. } => return Err("a `use` inside `each` — a pack is used at the top level of a file".to_string()),
+            Entry::Each { .. } => return Err(format!("an `each` inside `each` (line {}) — one level expands", line)),
+        }
+    }
+    Ok(out)
 }
 
 /// `each … when <field>`: the entry carries the field with a value — absent, `""`, an empty
@@ -638,6 +666,7 @@ fn resolve_obj(entries: &[Entry], env: &Env, file: &str) -> Result<serde_yaml::M
             Entry::Each { list, key, line, .. } => {
                 return perr(file, *line, format!("`each {} by {} {{ … }}` inside a resource body — it writes labelled bodies, so it stands directly inside a resource type map", list, key))
             }
+            Entry::When { cond, line, .. } => return perr(file, *line, when_in_a_value(cond)),
         }
     }
     Ok(map)
@@ -2506,7 +2535,7 @@ fn collect_questions(
     for item in items {
         match item {
             // an `each` body declares no param, asks no question and uses no pack
-            Entry::Attr { .. } | Entry::Each { .. } => {}
+            Entry::Attr { .. } | Entry::Each { .. } | Entry::When { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
                     if let Some(e) = renamed_param(p, file_name, *line) {
@@ -2560,7 +2589,7 @@ fn collect_params(
     for item in items {
         match item {
             // an `each` body declares no param, asks no question and uses no pack
-            Entry::Attr { .. } | Entry::Each { .. } => {}
+            Entry::Attr { .. } | Entry::Each { .. } | Entry::When { .. } => {}
             Entry::Use { path, when, line, .. } => {
                 if let Some(p) = when {
                     if let Some(e) = renamed_param(p, file_name, *line) {
@@ -2817,6 +2846,7 @@ impl Walk<'_> {
                 Entry::Each { list, key, line, .. } => {
                     return perr(file_name, *line, format!("`each {} by {} {{ … }}` inside a resource body — it stands directly inside a resource type map", list, key))
                 }
+                Entry::When { cond, line, .. } => return perr(file_name, *line, when_in_a_value(cond)),
             };
             let key = self.key_text(key, file_name, line)?;
             if path.is_empty() && satz_body_key(tf_type, &key) {
@@ -3104,11 +3134,11 @@ impl Walk<'_> {
     /// `belongs` judges first.
     fn expand_each(&self, body: &[Entry], pos: Position, file_name: &str) -> Result<Vec<Entry>, PipelineError> {
         if !body.iter().any(|e| matches!(e, Entry::Each { .. })) {
-            return Ok(body.to_vec());
+            return self.settle_when(body, file_name);
         }
         let mut out = Vec::new();
         for e in body {
-            let Entry::Each { list, key, when, body: template, line } = e else {
+            let Entry::Each { list, key, label: as_label, when, body: template, line } = e else {
                 out.push(e.clone());
                 continue;
             };
@@ -3120,15 +3150,68 @@ impl Walk<'_> {
             if self.inputs.contains_key(list) {
                 return perr(file_name, *line, format!("`{}`: `{}` is an input — an `each` decides labels at compile time, and an input is a variable the plan reads; make `{}` a param", what, list, list));
             }
-            for (label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
+            let mut written: Vec<String> = Vec::new();
+            for (entry_label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
                 if let Some(w) = when {
                     if carries(fields, &w.field) == w.not {
                         continue;
                     }
                 }
-                let at = |msg: String| PipelineError { file: file_name.to_string(), line: *line, msg: format!("`{}`, entry `{}`: {}", what, label, msg) };
+                let at = |msg: String| PipelineError { file: file_name.to_string(), line: *line, msg: format!("`{}`, entry `{}`: {}", what, entry_label, msg) };
+                // `as "<label>"`: the body's label is the string, read from the entry
+                let label = match as_label {
+                    None => entry_label.clone(),
+                    Some(parts) => {
+                        let mut label = String::new();
+                        for part in each_parts(parts, fields).map_err(at)? {
+                            match part {
+                                StrPart::Lit(l) => label.push_str(&l),
+                                StrPart::Param(p) => return Err(at(format!("as: the label reads the param `{}` — a label reads the entry, `{{each.<field>}}`, and text", p))),
+                            }
+                        }
+                        if !is_label(&label) {
+                            return Err(at(format!("as: \"{}\" is no label — a letter, then letters, digits, `_` and `-`", label)));
+                        }
+                        if written.contains(&label) {
+                            return Err(at(format!("as: \"{}\" is the label of an earlier entry too — one label is one resource, so the label reads `{{each.{}}}`", label, key)));
+                        }
+                        written.push(label.clone());
+                        label
+                    }
+                };
                 let body = each_entries(template, fields, *line).map_err(at)?;
                 out.push(Entry::Map { key: Key::Str(vec![StrPart::Lit(label)]), name: None, body, line: *line });
+            }
+        }
+        self.settle_when(&out, file_name)
+    }
+
+    /// `entries` with every `… when <param>` settled: the attribute or the block it
+    /// stands on is kept where the param carries a value — with `not`, where it does
+    /// not — and dropped otherwise, bodies of blocks included. An `each`'s body is left
+    /// for its expansion. A param nobody declares is an error, never `false`, and an
+    /// input decides no structure.
+    fn settle_when(&self, entries: &[Entry], file_name: &str) -> Result<Vec<Entry>, PipelineError> {
+        let mut out = Vec::new();
+        for e in entries {
+            match e {
+                Entry::When { cond, entry, line } => {
+                    let said = format!("when {}{}", if cond.not { "not " } else { "" }, cond.name);
+                    if cond.name.starts_with("each.") {
+                        return perr(file_name, *line, format!("`{}`: `{}` reads an entry, and this stands in no `each` — outside one a condition names a param", said, cond.name));
+                    }
+                    if !self.genv.contains_key(&cond.name) {
+                        return perr(file_name, *line, format!("`{}`: unknown param `{}` — a condition on a param nobody declares would silently drop what it stands on", said, cond.name));
+                    }
+                    if self.inputs.contains_key(&cond.name) {
+                        return perr(file_name, *line, format!("`{}`: `{}` is an input — a condition decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", said, cond.name, cond.name));
+                    }
+                    if truthy(self.genv.get(&cond.name)) != cond.not {
+                        out.extend(self.settle_when(std::slice::from_ref(entry.as_ref()), file_name)?);
+                    }
+                }
+                Entry::Map { key, name, body, line } => out.push(Entry::Map { key: key.clone(), name: name.clone(), body: self.settle_when(body, file_name)?, line: *line }),
+                other => out.push(other.clone()),
             }
         }
         Ok(out)
@@ -3187,6 +3270,9 @@ impl Walk<'_> {
                 }
                 Entry::Each { line, .. } => {
                     return perr(file_name, *line, "an `each` reached the walk at the top level of a file");
+                }
+                Entry::When { line, .. } => {
+                    return perr(file_name, *line, "a `when` reached the walk at the top level of a file");
                 }
                 Entry::Use { path: use_path, as_key, when, line } => {
                     // Before the `when` guard: a line gated off still points at a
@@ -3334,7 +3420,7 @@ impl Walk<'_> {
                         other => {
                             let l = match other {
                                 Entry::Attr { line, .. } => *line,
-                                Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
+                                Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => *line,
                             };
                             return perr(file_name, l, "unexpected entry directly under `folder`");
                         }
@@ -3411,6 +3497,9 @@ impl Walk<'_> {
                 Entry::Each { line, .. } => {
                     return perr(file_name, *line, "an `each` reached the walk in the body of a folder or a project")
                 }
+                Entry::When { line, .. } => {
+                    return perr(file_name, *line, "a `when` reached the walk in the body of a folder or a project")
+                }
                 Entry::Map { key, line, .. } => {
                     let k = self.key_text(key, file_name, *line)?;
                     // Routing, not validation. A key that resolves only in its
@@ -3476,7 +3565,7 @@ impl Walk<'_> {
                         }
                         other => {
                             let l = match other {
-                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
+                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => *line,
                                 Entry::Map { line, .. } => *line,
                             };
                             return perr(file_name, l, "unexpected entry directly under `project`");
@@ -3698,7 +3787,7 @@ impl Walk<'_> {
                         }
                         other => {
                             let l = match other {
-                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => *line,
+                                Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => *line,
                                 Entry::Map { line, .. } => *line,
                             };
                             return perr(file_name, l, format!("unexpected entry under resource map '{}'", rt.tf_type));
