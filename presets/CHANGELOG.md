@@ -39,6 +39,15 @@ the right column; arguments, flags, output and exit codes are the same. The file
 `presets/pack-graph.json`, the folder `presets/`, the keyword `pack` and the fields of every
 report keep their names (ADR 0082).
 
+**A key `config.toml` does not have is refused.** satz read the keys it knows and dropped
+every other one, so a misspelled `presets_dir` or `packs_dir` left the default in place.
+A config that carries such a key now stops every command that reads it:
+``Failed to parse 'config.toml' as TOML: unknown field `pack_dir`, expected one of …``,
+with the line. **How to find it:** run any command, for instance `satz transpile <estate>
+--check`; the error names the key. **What to write instead:** correct the key's spelling,
+or delete a key satz never read — the README's *Project config* table lists the keys there
+are. No plan moves: the key had no effect.
+
 ### v0.94.0
 
 **`satz apply` takes `domain:<customer domain>` off `roles/resourcemanager.projectCreator` and

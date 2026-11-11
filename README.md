@@ -2005,7 +2005,7 @@ There are two separate configuration concepts:
 
 ### Project config (config.toml)
 
-Per-project settings are read from **`config.toml`** in the project root (or the path given by `--config`). This file defines `yaml_dir`, `hcl_dir`, providers, and other project-specific options. Default values are:
+Per-project settings are read from **`config.toml`** in the project root (or the path given by `--config`). This file defines `yaml_dir`, `hcl_dir`, providers, and other project-specific options. A key the table does not name is refused, with the key and its line: a misspelled key is an error, never a default. Default values are:
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -2014,6 +2014,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `interfaces_dir` | `"interfaces"` | Where the estate's interfaces are written for the projects beside it, whole on every transpile; it holds nothing else, so it does not hold `hcl_dir`. `satz init` writes it |
 | `schema_dir` | `"schemas"` | Directory where provider schemas are cached |
 | `presets_dir` | `"presets"` | Preset library downloaded by `get-presets`; the import-config default resolves here |
+| `packs_dir` | `"packs"` | The estate's workload packs: the ones `get-pack` fetched, recorded in `origin.toml` there, and the repository's own ([Workload packs](docs/workflows.md#workload-packs)) |
 | `include_dirs` | `[".", "satz"]` | Search paths for `use`d packs |
 | `tf_tool` | `"tofu"` | The OpenTofu/Terraform binary satz runs (schemas, `plan`, `apply`) |
 | `google_providers` | `["google", "google-beta"]` | List of Google providers |
