@@ -2491,8 +2491,18 @@ impl SatzMcp {
             Ok(r) => r,
             Err(e) => return Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         };
-        // a workload's estate writes the APIs of its own projects alone: what was not
-        // delivered to its account stands in the report's `request`
+        // A workload's estate writes the APIs of its own projects alone. With nothing of
+        // that kind to write, a call that asked for the write is refused while something
+        // was not delivered to its account: "nothing written" would read as "nothing
+        // missing", and the caller has to be told whom to ask.
+        if !args.report_only && report.writable_gap() == 0 && !report.request.is_empty() {
+            return Ok(Err(refused(format!(
+                "update-prerequisites: {} prerequisite(s) are not delivered to {} — they are the organisation's estate's to add (`presets/folder-workload.satz`), and nothing is written for them:\n  {}",
+                report.request.len(),
+                report.service_account,
+                report.request.join("\n  ")
+            ))));
+        }
         if args.report_only || report.writable_gap() == 0 {
             return Ok(Ok(Json(PrerequisitesResult { report, written: Vec::new() })));
         }
