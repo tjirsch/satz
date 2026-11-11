@@ -947,6 +947,7 @@ fn uses_of(file: &File) -> Vec<String> {
             match e {
                 Entry::Use { path, .. } => out.push(path.clone()),
                 Entry::Map { body, .. } | Entry::Each { body, .. } => walk(body, out),
+                Entry::When { entry, .. } => walk(std::slice::from_ref(entry.as_ref()), out),
                 Entry::Attr { .. } => {}
             }
         }

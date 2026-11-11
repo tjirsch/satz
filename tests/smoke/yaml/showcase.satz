@@ -254,6 +254,18 @@ google_pubsub_topic {
     name                       = "{customer_shortname}-{each.name}"
     project                    = infra_project_name
     message_retention_duration = each.retention
+    // `… when <param>`: the attribute is written where the param carries a value
+    labels = { optional = "on" } when want_optional
+  }
+  // `each … as "<label>"`: the label of each body is the string, read from the entry, so a
+  // second `each` over the list writes a second topic per entry. `… when each.<field>` on
+  // a block: written for the entries that carry the field with a value.
+  each event_topics by name as "{each.name}_dead_letter" {
+    name    = "{customer_shortname}-{each.name}-dead-letter"
+    project = infra_project_name
+    message_storage_policy when each.subscription {
+      allowed_persistence_regions = [default_region]
+    }
   }
 }
 

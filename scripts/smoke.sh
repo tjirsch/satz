@@ -1298,6 +1298,94 @@ for pack in "$root"/packs/*.satz; do
     || fail "$(basename "$pack") does not clear the bar:\n$(cat tmp/review-pack.txt)"
 done
 
+step "each … as writes a second resource per entry under its own label, and a condition leaves an attribute, a block and a resource out"
+rm -rf tmp/ext && mkdir -p tmp/ext/satz
+cat > tmp/ext/config.toml <<EXTEOF
+yaml_dir = "satz"
+hcl_dir = "hcl"
+include_dirs = [".", "satz"]
+schema_dir = "$root/tests/schemas"
+tf_tool = "tofu"
+provider_version = "7.14.1"
+EXTEOF
+ext_estate() { # $1 use_key
+  cat <<EXTEOF
+estate ext
+
+params {
+  customer_organization_id = "123456789012"
+  customer_id              = "C0example"
+  customer_domain          = "example.com"
+  infra_project_name       = "acme-infra-001"
+  use_key                  = $1
+  key_name                 = "projects/acme-infra-001/locations/europe/keyRings/r/cryptoKeys/k"
+  spaces = [
+    { id = "hr" viewers = "acme-hr-viewers" editors = "acme-hr-editors" email = "hr@example.com" },
+    { id = "it" viewers = "acme-it-viewers" editors = "acme-it-editors" email = "" },
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+google_cloud_identity_group {
+  each spaces by id as "{each.id}_viewers" {
+    email        = "{each.viewers}@{customer_domain}"
+    display_name = "{each.id} viewers"
+  }
+  each spaces by id as "{each.id}_editors" {
+    email        = "{each.editors}@{customer_domain}"
+    display_name = "{each.id} editors"
+  }
+}
+
+google_storage_bucket {
+  each spaces by id {
+    name     = "acme-{each.id}"
+    project  = infra_project_name
+    location = "EU"
+    encryption when use_key {
+      default_kms_key_name = key_name
+    }
+    labels        = { owner = "{each.email}" } when each.email
+    force_destroy = true when not use_key
+  }
+  extra when use_key {
+    name     = "acme-extra"
+    project  = infra_project_name
+    location = "EU"
+  }
+}
+EXTEOF
+}
+ext_estate false > tmp/ext/satz/e.satz
+"$satz" --config tmp/ext/config.toml transpile e.satz > tmp/ext/off.txt 2>&1 || fail "the estate does not transpile:\n$(cat tmp/ext/off.txt)"
+for label in hr_viewers hr_editors it_viewers it_editors; do
+  grep -q "resource \"google_cloud_identity_group\" \"$label\"" tmp/ext/hcl/main.tf || fail "each … as did not write google_cloud_identity_group.$label"
+done
+grep -q 'default_kms_key_name\|"google_storage_bucket" "extra"' tmp/ext/hcl/main.tf && fail "a condition on a false param wrote its block or its resource"
+[ "$(grep -c 'force_destroy = true' tmp/ext/hcl/main.tf)" = 2 ] || fail "when not on a false param did not write the attribute for both entries"
+[ "$(grep -c '"owner" = ' tmp/ext/hcl/main.tf)" = 1 ] || fail "when each.email did not write the attribute for exactly the entry that carries it"
+ext_estate true > tmp/ext/satz/e.satz
+"$satz" --config tmp/ext/config.toml transpile e.satz > tmp/ext/on.txt 2>&1 || fail "the estate does not transpile with the param on:\n$(cat tmp/ext/on.txt)"
+[ "$(grep -c 'default_kms_key_name' tmp/ext/hcl/main.tf)" = 2 ] || fail "a condition on a true param did not write its block for both entries"
+grep -q '"google_storage_bucket" "extra"' tmp/ext/hcl/main.tf || fail "a condition on a true param did not write the labelled resource"
+grep -q 'force_destroy' tmp/ext/hcl/main.tf && fail "when not on a true param wrote the attribute"
+ext_refused() { # $1 what to replace, $2 with what, $3 what the refusal says
+  ext_estate true | python3 -c 'import sys; s=sys.stdin.read(); a,b=sys.argv[1],sys.argv[2]; assert a in s, a; sys.stdout.write(s.replace(a,b,1))' "$1" "$2" > tmp/ext/satz/x.satz
+  if "$satz" --config tmp/ext/config.toml transpile x.satz --check > tmp/ext/x.txt 2>&1; then fail "accepted: $2"; fi
+  grep -qF "$3" tmp/ext/x.txt || fail "the refusal of \`$2\` must say \`$3\`:\n$(cat tmp/ext/x.txt)"
+}
+ext_refused 'as "{each.id}_viewers"' 'as "viewers"' 'is the label of an earlier entry too'
+ext_refused 'as "{each.id}_viewers"' 'as "{customer_id}_{each.id}"' 'the label reads the param `customer_id`'
+ext_refused 'as "{each.id}_viewers"' 'as "1{each.id}"' 'is no label'
+ext_refused 'encryption when use_key {' 'encryption when nobody_declared {' 'unknown param `nobody_declared`'
+ext_refused 'extra when use_key {' 'extra when each.id {' 'this stands in no `each`'
+ext_refused 'labels        = { owner = "{each.email}" } when each.email' 'labels        = { owner = "x" env = "y" when use_key }' 'inside an object that is a value'
+
 step "import, state shape"
 "$satz" --config . import state.json -o imported-state.satz --verbose | tee tmp/import-state.txt
 grep -q 'skipped' tmp/import-state.txt || fail "the skipped report did not print"

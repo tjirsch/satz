@@ -1313,5 +1313,6 @@ the private history recorded them.
 | `sa_security_audit` | 1.0 | 2026-08-21 | read-only security-audit service account with its custom role |
 | `billing_account_permissions` | 1.1 | 2026-09-01 | split by audience: the domain gets `billing.user` + `billing.viewer`; a `billing_admins_group` param (default `gcp-billing-admins@{customer_domain}`) gets `billing.admin` + `billing.costsManager`; the IaC SA keeps `billing.admin`. Adoption adds three grants per estate — a real plan |
 | `billing_account_permissions` | 1.0 | 2026-08-20 | billing-account IAM for the S1 groups and the IaC service account |
+| `organization_budget` | 2.1 | 2026-11-11 | each budget is written once, its notification rule under `when each.email`, where 2.0 wrote the budget twice under `when email` and `when not email`; what it emits is unchanged, so `merge-presets --adopt organization-budget` moves no plan |
 | `organization_budget` | 2.0 | 2026-10-02 | amount, currency, thresholds and recipients are params, `budget_amount` and the recipients asked; `budgets` adds budgets for projects or folders, each with an optional e-mail channel, as a request point; an existing budget is adopted through an entry's `import_id`, the placeholder id is gone |
 | `organization_budget` | 1.0 | 2026-08-20 | organization budget with threshold alerts (`"import-id"` example) |

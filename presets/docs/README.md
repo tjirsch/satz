@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-presets`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**49 packs · 239 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**49 packs · 238 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
@@ -25,7 +25,7 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
-| [`organization_budget`](organization-budget.md) | 2.0 | Budgets on the infrastructure billing account with alert thresholds: one for the whole account, and one per entry of `budgets` for a set of projects or folders. | 3 | — |
+| [`organization_budget`](organization-budget.md) | 2.1 | Budgets on the infrastructure billing account with alert thresholds: one for the whole account, and one per entry of `budgets` for a set of projects or folders. | 2 | — |
 | [`billing_export`](billing-export.md) | 1.0 | Cloud Billing usage and cost data, exported to BigQuery in a project of its own — where the spend is KEPT, as opposed to the budget that alarms on it. | 3 | — |
 
 ## CIS baseline and extensions

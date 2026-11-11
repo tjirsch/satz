@@ -27,7 +27,10 @@
 //!              | IDENT "{" { entry } "}"    nested mapping
 //!              | IDENT IDENT "{" ... "}"    map entry: name -> body   (folder x {...})
 //!              | IDENT STRING "{" ... "}"   interpolated-key map entry
-//!              | "each" IDENT "by" IDENT "{" ... "}"   one body per entry of a list param
+//!              | "each" IDENT "by" IDENT [ "as" STRING ] [ "when" [ "not" ] IDENT ] "{" ... "}"
+//!                                           one body per entry of a list param
+//!              | IDENT "=" value "when" [ "not" ] IDENT          attribute under a condition
+//!              | IDENT [ IDENT | STRING ] "when" [ "not" ] IDENT "{" ... "}"   block under one
 //!              | STRING "=" value           interpolated key -> value (IAM grants)
 //!              | STRING "{" { entry } "}"
 //!              | "use" STRING [...]         include inside this mapping
@@ -80,17 +83,33 @@ pub struct EachWhen {
     pub not: bool,
 }
 
+/// The `when` of an attribute or a block: the param, or inside an `each` the field of
+/// the entry (`each.<field>`), that must carry a value for it to be written — with `not`,
+/// must not. What counts as a value is what counts for `use … when` and `each … when`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cond {
+    pub name: String,
+    pub not: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
     Attr { key: Key, value: Value, line: usize },
     Map { key: Key, name: Option<Key>, body: Vec<Entry>, line: usize },
+    /// `key = value when <cond>` or `key [name] when <cond> { … }`: the attribute or the
+    /// block is written only where the condition holds. Resolved by the walk before
+    /// anything reads the body, so nothing after it sees a condition.
+    When { cond: Cond, entry: Box<Entry>, line: usize },
     Use { path: String, as_key: Option<String>, when: Option<String>, line: usize },
     /// `each <list param> by <field> { … }` inside a resource type map: one labelled body
     /// per entry of the list, labelled by the entry's `<field>`; `{each.x}` and `each.x` in
     /// the body read the entry's fields. `each <list> by <field> when <field> { … }` writes the
     /// body only for the entries that carry the second field with a value that is not empty,
-    /// `when not <field>` only for the others. Expanded by the walk, once params are resolved.
-    Each { list: String, key: String, when: Option<EachWhen>, body: Vec<Entry>, line: usize },
+    /// `when not <field>` only for the others. `each <list> by <field> as "<label>"` labels
+    /// each body with the string instead of the field's value — it reads the entry as the
+    /// body does, so several `each` over one list write several resources of one type per
+    /// entry. Expanded by the walk, once params are resolved.
+    Each { list: String, key: String, label: Option<Vec<StrPart>>, when: Option<EachWhen>, body: Vec<Entry>, line: usize },
 }
 
 /// `suppress <tf_type> "<label>"` — estate-level subtractive override: remove a
@@ -1274,6 +1293,17 @@ impl P {
                         Some(Tok::Ident(k)) if !k.contains('.') => k,
                         other => return err(line, format!("each {} by: expected the field of each entry that labels its body, found {:?}", list, other)),
                     };
+                    let label = if matches!(self.peek(), Some(Tok::Ident(a)) if a == "as") {
+                        self.next();
+                        match self.next() {
+                            Some(Tok::Str(parts)) => Some(parts),
+                            other => {
+                                return err(line, format!("each {} by {} as: expected the label of each body as a string that reads the entry, `\"{{each.{}}}_…\"`, found {:?}", list, key, key, other))
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     let when = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "when") {
                         self.next();
                         // `when not <field>`; a field named `not` is `when not {`
@@ -1291,9 +1321,9 @@ impl P {
                     } else {
                         None
                     };
-                    self.expect(Tok::LBrace, "'{' after `each <list> by <field>`, optionally followed by `when <field>` or `when not <field>`")?;
+                    self.expect(Tok::LBrace, "'{' after `each <list> by <field>`, optionally followed by `as \"<label>\"` and `when <field>` or `when not <field>`")?;
                     let body = self.entries()?;
-                    out.push(Entry::Each { list, key, when, body, line });
+                    out.push(Entry::Each { list, key, label, when, body, line });
                 }
                 Some(Tok::Ident(_)) | Some(Tok::Str(_)) => {
                     let key = match self.next().unwrap() {
@@ -1306,7 +1336,18 @@ impl P {
                             self.next();
                             let value = self.value()?;
                             note_key(&mut seen, &key, None, line)?;
-                            out.push(Entry::Attr { key, value, line });
+                            let attr = Entry::Attr { key, value, line };
+                            // `key = value when <cond>`. `when <name> {` after a value is
+                            // the next entry, a map named `<name>` under the key `when`.
+                            out.push(if self.cond_ahead(false) { self.conditional(attr, line)? } else { attr });
+                        }
+                        // `key when <cond> { … }`
+                        Some(Tok::Ident(_)) if self.cond_ahead(true) => {
+                            let cond = self.cond(line)?;
+                            self.expect(Tok::LBrace, "'{' after `when <param>`")?;
+                            let body = self.entries()?;
+                            note_key(&mut seen, &key, None, line)?;
+                            out.push(Entry::When { cond, entry: Box::new(Entry::Map { key, name: None, body, line }), line });
                         }
                         Some(Tok::LBrace) => {
                             self.next();
@@ -1325,10 +1366,16 @@ impl P {
                                     return err(line, statement_in_a_block(k));
                                 }
                             }
+                            // `key name when <cond> { … }`
+                            let cond = if self.cond_ahead(true) { Some(self.cond(line)?) } else { None };
                             self.expect(Tok::LBrace, "'{' after map entry name")?;
                             let body = self.entries()?;
                             note_key(&mut seen, &key, Some(&name), line)?;
-                            out.push(Entry::Map { key, name: Some(name), body, line });
+                            let map = Entry::Map { key, name: Some(name), body, line };
+                            out.push(match cond {
+                                Some(cond) => Entry::When { cond, entry: Box::new(map), line },
+                                None => map,
+                            });
                         }
                         other => {
                             return err(line, format!("after key: expected '=', '{{' or a name, found {:?}", other))
@@ -1339,6 +1386,39 @@ impl P {
                 Some(other) => return err(line, format!("unexpected {:?} in block", other)),
             }
         }
+    }
+
+    /// Whether a condition stands here: `when <name>` or `when not <name>`. Before a block
+    /// (`before_brace`) a `{` follows it; after an attribute's value none does — there
+    /// `when <name> {` is the next entry, a map.
+    fn cond_ahead(&self, before_brace: bool) -> bool {
+        let ident = |at: usize| matches!(self.toks.get(self.i + at), Some((Tok::Ident(_), _)));
+        let brace = |at: usize| matches!(self.toks.get(self.i + at), Some((Tok::LBrace, _)));
+        let opens = |at: usize| brace(at) || matches!(self.toks.get(self.i + at), Some((Tok::Eq, _)));
+        if !matches!(self.peek(), Some(Tok::Ident(w)) if w == "when") || !ident(1) {
+            return false;
+        }
+        let not = matches!(self.toks.get(self.i + 1), Some((Tok::Ident(n), _)) if n == "not") && ident(2);
+        let after = if not { 3 } else { 2 };
+        if before_brace { brace(after) } else { !opens(after) }
+    }
+
+    /// `when [not] <name>`, where [`Self::cond_ahead`] saw one.
+    fn cond(&mut self, line: usize) -> Result<Cond, SatzError> {
+        self.next();
+        let not = matches!(self.peek(), Some(Tok::Ident(n)) if n == "not") && matches!(self.toks.get(self.i + 1), Some((Tok::Ident(_), _)));
+        if not {
+            self.next();
+        }
+        match self.next() {
+            Some(Tok::Ident(name)) if !name.contains('.') || (name.starts_with("each.") && name.matches('.').count() == 1 && name.len() > 5) => Ok(Cond { name, not }),
+            other => err(line, format!("when: expected a param, or inside an `each` a field of the entry as `each.<field>`, found {:?}", other)),
+        }
+    }
+
+    fn conditional(&mut self, entry: Entry, line: usize) -> Result<Entry, SatzError> {
+        let cond = self.cond(line)?;
+        Ok(Entry::When { cond, entry: Box::new(entry), line })
     }
 
     fn claim_stmt(&mut self, line: usize) -> Result<ClaimDecl, SatzError> {
@@ -2832,7 +2912,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
     for item in std::mem::take(&mut file.items) {
         let (kind, name, body, line) = match item {
             Entry::Map { key: Key::Ident(k), name, body, line } => (k, name, body, line),
-            Entry::Map { line, .. } | Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
+            Entry::Map { line, .. } | Entry::Attr { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => {
                 return err(line, format!("interface \"{}\": holds `central`, `output`, `lookup` and `managed` blocks only", iface.name));
             }
         };
@@ -2851,7 +2931,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
                 Entry::Map { key: Key::Ident(k), name: None, body, .. } => {
                     fields.insert(k, (None, Some(body)));
                 }
-                Entry::Attr { line, .. } | Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
+                Entry::Attr { line, .. } | Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => {
                     return err(line, format!("{}: an unexpected entry", kind));
                 }
             }
@@ -2980,7 +3060,7 @@ fn plain_value(v: &Value, line: usize) -> Result<serde_yaml::Value, SatzError> {
                         };
                         m.insert(serde_yaml::Value::String(k), plain_value(value, *line)?);
                     }
-                    Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } => {
+                    Entry::Map { line, .. } | Entry::Use { line, .. } | Entry::Each { line, .. } | Entry::When { line, .. } => {
                         return err(*line, "an object value holds `key = value` entries only")
                     }
                 }
@@ -3419,12 +3499,22 @@ fn canon_entry(e: &Entry, out: &mut String) {
                 when.as_deref().unwrap_or("")
             ));
         }
-        Entry::Each { list, key, when, body, .. } => {
-            // `when` only where written, so an `each` without one keeps the canonical form
-            // it had, and no pack forks in an estate for a change it did not make
+        Entry::When { cond, entry, .. } => {
+            out.push_str(&format!("when({}{}){{", if cond.not { "!" } else { "" }, cond.name));
+            canon_entry(entry, out);
+            out.push('}');
+        }
+        Entry::Each { list, key, label, when, body, .. } => {
+            // `when` and `as` only where written, so an `each` without them keeps the
+            // canonical form it had, and no pack forks in an estate for a change it did
+            // not make
+            let label = match label {
+                Some(parts) => format!("|as:{}", canon_key(&Key::Str(parts.clone()))),
+                None => String::new(),
+            };
             match when {
-                Some(w) => out.push_str(&format!("each({}|{}|{}{}){{", list, key, if w.not { "!" } else { "" }, w.field)),
-                None => out.push_str(&format!("each({}|{}){{", list, key)),
+                Some(w) => out.push_str(&format!("each({}|{}{}|{}{}){{", list, key, label, if w.not { "!" } else { "" }, w.field)),
+                None => out.push_str(&format!("each({}|{}{}){{", list, key, label)),
             }
             for b in body {
                 canon_entry(b, out);
@@ -4333,7 +4423,7 @@ mod review_2026_08_29_tests {
     fn each_parses_and_its_canonical_form_carries_it() {
         let f = parse("estate e\ngoogle_x {\n  each xs by name {\n    a = \"{each.name}\"\n    b = each.size\n  }\n}\n").unwrap();
         let Entry::Map { body, .. } = &f.items[0] else { panic!("{:?}", f.items) };
-        let Entry::Each { list, key, when, body, line } = &body[0] else { panic!("{:?}", body) };
+        let Entry::Each { list, key, when, body, line, .. } = &body[0] else { panic!("{:?}", body) };
         assert_eq!((list.as_str(), key.as_str(), *line), ("xs", "name", 3));
         assert_eq!(when, &None);
         assert_eq!(body.len(), 2);
@@ -4387,6 +4477,52 @@ mod review_2026_08_29_tests {
 
     /// At the top level `each` holds interface blocks, named from the entry; the canonical
     /// form carries it; anything else inside it, and a name that reads no field, is refused.
+    #[test]
+    fn each_as_parses_and_only_a_written_label_moves_the_canonical_form() {
+        let plain = parse("pack p version \"1\"\ngoogle_pubsub_topic {\n  each topics by name {\n    name = \"{each.name}\"\n  }\n}\n").unwrap();
+        let labelled = parse("pack p version \"1\"\ngoogle_pubsub_topic {\n  each topics by name as \"{each.name}_dlq\" when sub {\n    name = \"{each.name}\"\n  }\n}\n").unwrap();
+        let Entry::Map { body, .. } = &labelled.items[0] else { panic!("{:?}", labelled.items) };
+        let Entry::Each { label, when, .. } = &body[0] else { panic!("{:?}", body) };
+        assert_eq!(label.as_deref(), Some(&[StrPart::Param("each.name".into()), StrPart::Lit("_dlq".into())][..]));
+        assert_eq!(when.as_ref().map(|w| (w.field.as_str(), w.not)), Some(("sub", false)));
+        assert!(canonical(&labelled).contains("|as:"), "{}", canonical(&labelled));
+        assert!(!canonical(&plain).contains("|as:"), "{}", canonical(&plain));
+        let e = parse("pack p version \"1\"\ngoogle_pubsub_topic {\n  each topics by name as dlq {\n  }\n}\n").unwrap_err();
+        assert!(e.msg.contains("as: expected the label"), "{}", e.msg);
+    }
+
+    #[test]
+    fn a_condition_stands_on_an_attribute_and_on_a_block() {
+        let src = "pack p version \"1\"\ngoogle_storage_bucket {\n  b {\n    name = \"n\"\n    force_destroy = true when not keep\n    encryption when use_key {\n      default_kms_key_name = key\n    }\n    lifecycle_rule first when each.rule {\n    }\n  }\n  extra when want {\n    name = \"x\"\n  }\n}\n";
+        let f = parse(src).unwrap();
+        let Entry::Map { body: types, .. } = &f.items[0] else { panic!() };
+        let Entry::Map { body, .. } = &types[0] else { panic!("{:?}", types) };
+        assert!(matches!(&body[0], Entry::Attr { .. }));
+        let cond = |e: &Entry| match e {
+            Entry::When { cond, entry, .. } => (cond.name.clone(), cond.not, matches!(entry.as_ref(), Entry::Map { .. })),
+            other => panic!("no condition: {:?}", other),
+        };
+        assert_eq!(cond(&body[1]), ("keep".to_string(), true, false));
+        assert_eq!(cond(&body[2]), ("use_key".to_string(), false, true));
+        assert_eq!(cond(&body[3]), ("each.rule".to_string(), false, true));
+        assert_eq!(cond(&types[1]), ("want".to_string(), false, true));
+        assert!(canonical(&f).contains("when(!keep){") && canonical(&f).contains("when(use_key){"), "{}", canonical(&f));
+    }
+
+    /// `when` after a value is a condition only where no `{` or `=` follows its name:
+    /// a map keyed `when`, and an attribute named `when`, read as they always did.
+    #[test]
+    fn a_key_named_when_is_still_a_key() {
+        let f = parse("pack p version \"1\"\nblock {\n  a = 1\n  when x {\n    b = 2\n  }\n  c = 3\n  when = 4\n}\n").unwrap();
+        let Entry::Map { body, .. } = &f.items[0] else { panic!() };
+        assert!(matches!(&body[0], Entry::Attr { .. }), "{:?}", body);
+        assert!(matches!(&body[1], Entry::Map { key: Key::Ident(k), name: Some(_), .. } if k == "when"), "{:?}", body);
+        assert!(matches!(&body[2], Entry::Attr { .. }));
+        assert!(matches!(&body[3], Entry::Attr { key: Key::Ident(k), .. } if k == "when"), "{:?}", body);
+        let e = parse("pack p version \"1\"\nblock {\n  a = 1 when a.b\n}\n").unwrap_err();
+        assert!(e.msg.contains("when: expected a param"), "{}", e.msg);
+    }
+
     #[test]
     fn each_at_the_top_level_writes_interfaces() {
         let f = parse("pack p\neach xs by name {\n  interface \"{each.name}-api\" {\n    export \"a\" = \"${{google_x.{each.name}.id}}\"\n  }\n}\n").unwrap();
