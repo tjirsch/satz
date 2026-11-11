@@ -1211,6 +1211,42 @@ is the organisation. That is how a pack carries its own parent in a param — th
 default says nothing, and an estate that names a folder gets the same project
 wherever the pack's `use` line stands.
 
+A top-level folder says its parent the same way
+(`tests/smoke/yaml/folder-parent.satz`, ADR 0085):
+
+```
+params {
+  team_folder_parent = "google_folder.workloads.name"
+}
+
+google_folder {
+  workloads {
+    display_name = "Workloads"
+  }
+  team_alpha {
+    display_name = "Team Alpha"
+    parent       = team_folder_parent
+  }
+}
+```
+
+```hcl
+resource "google_folder" "team_alpha" {
+  display_name = "Team Alpha"
+  parent = google_folder.workloads.name
+  provider = google.google
+}
+```
+
+`parent` takes a reference to a folder the estate declares
+(`google_folder.<label>.name`, or `"${{google_folder.<label>.name}}"`), or the id
+of a folder or an organisation that already exists (`"folders/123456789012"`,
+`"organizations/123456789012"`): a `/` is what makes it an id. Without `parent` a
+top-level folder stands under the organisation. This is how a pack creates a folder
+under one the estate names in a param, and how the entries of a list each name their
+own (`each … { parent = "{each.parent}" }`). A folder that is nested takes no
+`parent`: the nesting is the parent, and saying both is refused.
+
 A project whose `project_service` names `compute.googleapis.com` is written with
 `auto_create_network = false`. Google creates the `default` network, with firewall
 rules open to the internet, the moment Compute is switched on in a project where

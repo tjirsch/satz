@@ -135,6 +135,22 @@ else
   step "tofu not on PATH — validate skipped"
 fi
 
+step "a top-level folder says its parent: a reference to a declared folder, or the id of one that exists (ADR 0085)"
+"$satz" --config . transpile folder-parent.satz --output "$PWD/tmp/folder-parent-hcl" >/dev/null 2>tmp/folder-parent.err \
+  || fail "the folder-parent estate does not compile:\n$(cat tmp/folder-parent.err)"
+fp=tmp/folder-parent-hcl/main.tf
+for f in by_param by_reference shop_frontend; do
+  grep -A3 "^resource \"google_folder\" \"$f\"" "$fp" | grep -q '^ *parent *= google_folder.workloads.name$' \
+    || fail "the folder $f does not name its parent by reference:\n$(grep -A4 "\"google_folder\" \"$f\"" "$fp")"
+done
+grep -A3 '^resource "google_folder" "shop_data"' "$fp" | grep -q '^ *parent *= "folders/222222222222"$' \
+  || fail "a parent that is an id is not written as it is:\n$(grep -A4 '"google_folder" "shop_data"' "$fp")"
+grep -A3 '^resource "google_folder" "workloads"' "$fp" | grep -q '^ *parent *= "organizations/123456789012"$' \
+  || fail "a top-level folder without a parent is not under the organisation"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/folder-parent-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the folder-parent estate does not validate"
+fi
+
 step "showcase: every language feature in one estate (the reference cites it)"
 "$satz" --config . transpile showcase.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/showcase-transpile.err \
   || fail "the showcase does not compile:\n$(cat tmp/showcase-transpile.err)"
