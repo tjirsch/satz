@@ -1621,6 +1621,46 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
         "interface_notice_pubsub",
         "the change notice is a choice of delivery forms, `question oneof interface_notice`, and Pub/Sub is its option; the `use \"presets/interface-notice.satz\" when …` line names the new param too",
     ),
+    (
+        "use_workload_deployer",
+        "use_folder_workload",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the `use … when` line names the new param too",
+    ),
+    (
+        "workload_deployers",
+        "folder_workloads",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); an entry is `{ name group }` and no longer names a `folder` — each folder is an entry of `folder_workload_folders`",
+    ),
+    (
+        "workload_deployer_folders",
+        "folder_workload_folders",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); an entry is `{ name workload parent }`, a folder the pack CREATES under `parent`, not a grant on a folder that exists",
+    ),
+    (
+        "deployer_project_folder",
+        "folder_workload_project_folder",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "deployer_folder_roles",
+        "folder_workload_roles",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the default no longer holds `roles/resourcemanager.folderAdmin`",
+    ),
+    (
+        "deployer_organization_roles",
+        "folder_workload_organization_roles",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "deployer_group_roles",
+        "folder_workload_group_roles",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "deployer_billing_roles",
+        "folder_workloads",
+        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the roles on the billing account are the field `billing_roles` of each workload's entry",
+    ),
 ];
 
 /// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
@@ -1664,6 +1704,12 @@ const MOVED_PACKS: &[MovedPack] = &[
         to: "presets/cis/CIS-GCP-Foundation-4.0.satz",
         why: "the CIS packs live in one folder, and the baseline declares its own `google_org_policy_policy { … }` now",
         edit: "Change the path inside the quotes, and move the line of the pristine baseline out of `google_org_policy_policy { … }` to the top level; the line of a `.local.satz` fork stays inside the block, and the fork and its `.diff.satz` move to the new folder as they are. The pristine copy at the old path is deleted, not moved",
+    },
+    MovedPack {
+        from: "presets/workload-deployer.satz",
+        to: "presets/folder-workload.satz",
+        why: "the pack creates the folders a workload works in and grants its account on those alone, where it granted folder administration on a folder the teams share",
+        edit: "Change the path inside the quotes, rename the params the compile then names, and give each workload its folders as entries of `folder_workload_folders` — `presets/CHANGELOG.md` under Breaking changes has the steps and what the plan moves",
     },
 ];
 
@@ -2430,6 +2476,18 @@ fn contribution_seed(
     let mut seed = Env::new();
     let mut records = Vec::new();
     for r in raw {
+        // A list a release renamed: no pack declares the old name any more, so the
+        // entries would reach nothing and nothing would say so.
+        if let Some((from, to, why)) = RENAMED_PARAMS.iter().find(|(from, _, _)| *from == r.param) {
+            return perr(
+                &r.file,
+                r.line,
+                format!(
+                    "{}{}: the list `{}` was renamed to `{}` — {}. Rename the declaration to `{}{}`; left as it is, its entries reach no pack.",
+                    satz::CONTRIBUTES_PREFIX, from, from, to, why, satz::CONTRIBUTES_PREFIX, to
+                ),
+            );
+        }
         let entries = match resolve_value(&r.value, &env, &r.file, r.line)? {
             serde_yaml::Value::Sequence(s) => s,
             // `parse` refuses a contribution that is not a list.
@@ -4037,6 +4095,43 @@ mod tests {
         assert_eq!((err.file.as_str(), err.line), ("e.satz", 3), "with the line to edit");
         assert!(renamed_param("logsink_project_id", "e.satz", 3).is_none(), "the new name is fine");
         assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
+    }
+
+    #[test]
+    fn the_workload_deployer_names_are_refused_and_name_the_folder_workload_ones() {
+        // The pack was replaced: its path, its params and the lists a team's request file
+        // adds to are each refused with the name that took their place.
+        for (from, to) in [
+            ("use_workload_deployer", "use_folder_workload"),
+            ("workload_deployers", "folder_workloads"),
+            ("workload_deployer_folders", "folder_workload_folders"),
+            ("deployer_project_folder", "folder_workload_project_folder"),
+            ("deployer_folder_roles", "folder_workload_roles"),
+            ("deployer_organization_roles", "folder_workload_organization_roles"),
+            ("deployer_group_roles", "folder_workload_group_roles"),
+            ("deployer_billing_roles", "billing_roles"),
+        ] {
+            let err = renamed_param(from, "e.satz", 3).unwrap_or_else(|| panic!("`{}` must be refused", from));
+            assert!(err.msg.contains(to), "`{}`: the error names `{}` — got {}", from, to, err.msg);
+        }
+        let load = |p: &str| match p {
+            "requests/pay.satz" => Ok("pack pay_request version \"1\"\nparams {\n  contributes_workload_deployers = [\n    { name = \"pay\" },\n  ]\n}\n".to_string()),
+            other => Err(format!("no load: {}", other)),
+        };
+        for path in ["presets/workload-deployer.satz", "presets/workload-deployer.local.satz"] {
+            let estate = format!("estate t\n\nuse \"{}\"\n", path);
+            let Err(err) = compile_estate("t.satz", &estate, &Table, &load) else {
+                panic!("{}: the old path must be refused", path);
+            };
+            assert!(err.msg.contains(&path.replace("workload-deployer", "folder-workload")), "{}", err.msg);
+        }
+        // a vendored request file that still adds to the old list: silent before, because a
+        // contribution to a list no pack declares is how a pack that is off is skipped
+        let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"requests/pay.satz\"\n", &Table, &load) else {
+            panic!("a contribution to a renamed list must be refused");
+        };
+        assert!(err.msg.contains("contributes_folder_workloads"), "{}", err.msg);
+        assert_eq!((err.file.as_str(), err.line), ("requests/pay.satz", 3), "{}", err.msg);
     }
 
     #[test]

@@ -1126,24 +1126,28 @@ resources read the central estate as `${{interface.<export>}}` — `project =
 compile. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
 it, after a change of the central estate, says what to do about it.
 
-### A team's deployer identity
+### A workload's identity and its folders
 
-A team that rolls out many Google projects and folders — with templates of its own, in
+A workload that rolls out Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an account of its own, never as the
-organisation's IaC account. `presets/workload-deployer.satz` creates it per entry of
-`workload_deployers`: the team's infrastructure Google project, inside it the account
-`svc-deploy-<name>` and the state bucket its states live in, and the roles the account
-needs — folder and project creation, IAM and API enablement on the parent folder it creates
-under (the workload folder, or the folder the entry names; further parents through
-`workload_deployer_folders`), billing user on the billing account so a new project can be
-linked, and `roles/browser` on the organisation, which is what the interface's lookups need:
-the workload folder is looked up by its name among the organisation's folders. The team's
-group may become the account and nothing else. The role sets are params.
+organisation's IaC account. `presets/folder-workload.satz` creates it per entry of
+`folder_workloads`: the workload's infrastructure Google project, inside it the account
+`svc-deploy-<name>` and the bucket its states live in. Each entry of
+`folder_workload_folders` is a folder the pack creates for one workload, under the workload
+folder or the parent the entry names, and the account's roles are granted on that folder
+alone: folder and project creation and deletion, the IAM of its projects, API enablement.
+It holds no access control on a folder, so it cannot widen its own rights, and one account
+may work in several folders that share no root. Beside that it is billing user on the
+billing account, so a new project can be linked, and holds `roles/browser` on the
+organisation, which is what the interface's lookups need. The workload's group may become
+the account and nothing else. The role sets are params; a workload's APIs and billing roles
+are fields of its entry.
 
-The team's pipeline impersonates the account and keeps its state in the team's bucket. It
-reads the organisation through the interface folder it took, and never the organisation's
-state: a looked-up value asks the Google API for the live resource with the team's own
-credentials ([the pack](../presets/README.md#workload-deployersatz)).
+The workload's pipeline impersonates the account and keeps its state in the workload's
+bucket. It reads the organisation through the two interface folders it took — its identity
+with what was delivered to it, and its folder — and never the organisation's state: a
+looked-up value asks the Google API for the live resource with the workload's own
+credentials ([the pack](../presets/README.md#folder-workloadsatz)).
 
 ### Static values and lookups
 

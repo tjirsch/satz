@@ -2,9 +2,9 @@
 
 This tutorial starts where [an organisation from scratch](tutorial-organisation.md)
 ends: Acme's estate runs as its IaC service account and publishes `interfaces/common/`.
-A customer team — `shop` — now needs Google projects of its own under the `Workloads`
-folder, with its own repository, state and pipeline, and it must never run as the
-organisation's account. Two kinds of team do this: one writes Satz, one writes OpenTofu
+A customer team — `shop` — now needs Google projects of its own, in a folder of its own
+under `Workloads`, with its own repository, state and pipeline, and it must never run as
+the organisation's account. Two kinds of team do this: one writes Satz, one writes OpenTofu
 and nothing else. Both read the organisation through its **interface**, and the same
 template serves both. The files are [`examples/acme/`](../examples/README.md).
 
@@ -34,44 +34,49 @@ a tag — and takes it again after every change of the organisation. The folder'
 carries a content hash, and a transpile that changes a value writes `CHANGES.md` beside
 the interface's README with what a project does about it.
 
-## 2. The team's identity, once
+## 2. The team's identity and its folder, once
 
-A team gets an identity of its own from the organisation's estate: the pack
-[`presets/workload-deployer.satz`](../presets/README.md#workload-deployersatz). In
+A team gets an identity of its own and a folder of its own from the organisation's estate:
+the pack [`presets/folder-workload.satz`](../presets/README.md#folder-workloadsatz). In
 `C0example.satz`:
 
 ```
 params {
-  use_workload_deployer   = true
-  deployer_project_folder = "google_folder.infra_folder.name"
-  workload_deployers = [
-    { name = "shop" group = "gcp-project-admins@example.com" },
-  ]
+  use_folder_workload            = true
+  folder_workload_project_folder = "google_folder.infra_folder.name"
+  folder_workloads               = [{ name = "shop" group = "gcp-shop-admins@example.com" }]
+  folder_workload_folders        = [{ name = "shop" workload = "shop" display_name = "Shop" }]
 }
 ```
 
 ```bash
-satz add-preset C0example.satz use_workload_deployer
+satz add-preset C0example.satz use_folder_workload
 satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
 ```
 
 `add-preset` activates the pack's line (the `params` above bind what it asks:
-`deployer_project_folder` is a question, which `satz interview` asks when it is not
-bound). The apply creates, for the team `shop`:
+`folder_workload_project_folder` is a question, which `satz interview` asks when it is not
+bound). The apply creates, for the workload `shop`:
 
 | what | the team's |
 |---|---|
 | Google project `acme-deploy-shop` | where its plans are billed and its state lives, under the infrastructure folder |
 | service account `svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com` | what its pipelines run as |
 | bucket `acme-deploy-shop-state` | where its states live; the account writes it |
-| roles on the `Workloads` folder | folder and project creation, their IAM, their APIs (`deployer_folder_roles`); further parents through `workload_deployer_folders` |
+| folder `Shop` under `Workloads` | where it works: every folder and project it creates stands in it |
+| roles on the folder `Shop`, and on no other | folder and project creation and deletion, the IAM of its projects, their APIs (`folder_workload_roles`). No access control on a folder, no organisation policy, no tag |
 | `roles/billing.user` on the billing account | linking a new project |
-| `roles/browser` on the organisation | the one organisation-level right: the folder lookup of step 1 lists the organisation's folders |
-| impersonation for `gcp-project-admins@example.com` | the group's members may become the account, and nothing else |
+| `roles/browser` on the organisation | the one organisation-level right: the folder lookups of step 1 list a parent's folders |
+| impersonation for `gcp-shop-admins@example.com` | the group's members may become the account, and nothing else |
+
+A second folder for the same account is a second entry of `folder_workload_folders` that
+names `shop`, under any parent; a workload that needs more APIs or a further billing role
+says so in its entry ([the pack](../presets/README.md#folder-workloadsatz)).
 
 Every transpile of the organisation writes the current `interfaces/`; the team takes
-`common/` from there. Everything the team does from here runs as `svc-deploy-shop`.
+`workload-shop/` — its identity, and what was delivered to it — and `shop/` — its folder —
+from there. Everything the team does from here runs as `svc-deploy-shop`.
 
 ## 3. The template
 
@@ -109,17 +114,20 @@ billing account. `deployment_mode = "cloud"` makes every provider and the backen
 impersonate `svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com`.
 
 ```
-use "vendor/common/core/satz/interface.satz"
+use "vendor/workload-shop/workload-shop/satz/interface.satz"
+use "vendor/shop/shop/satz/interface.satz"
 ```
 
-**The interface file**, from the folder the team took, read as `${{interface.<export>}}`.
+**The interface files**, from the two folders the team took, read as
+`${{interface.<export>}}`: the workload's identity with what was delivered to it, and the
+folder it works in. Each carries the organisation's core values too.
 
 ```
 google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.workload_folder}}"
+    folder_id       = "${{interface.delivered_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     project_service = ["cloudresourcemanager.googleapis.com"]
@@ -135,7 +143,7 @@ google_project {
 ```
 
 **The project**: its id from the organisation's short name and the inputs, its parent
-the looked-up workload folder, a label from an input, and three grants to groups named
+the workload's own folder, looked up, a label from an input, and three grants to groups named
 after the project. The grants are labelled resources (`owner { role member }`) rather
 than the member map (`"group:…" = [ … ]`): a group name that reads an input is a value,
 and an input is never a key — a key is a Terraform resource name. The groups exist in the
@@ -150,7 +158,7 @@ team's repository:
 shop-dev/
   config.toml                 include_dirs reaches the template; schemas/ and presets/ beside
   satz/shop_dev.satz          the instance: the inputs bound, the template used
-  vendor/common/              interfaces/common/ of the organisation, taken whole
+  vendor/                     interfaces/workload-shop/ and interfaces/shop/ of the organisation, taken whole
   hcl/                        written by satz
 ```
 
@@ -173,7 +181,7 @@ use "simple-project.satz"
 A using document's `params { }` binds a template's inputs as it binds any param. Then:
 
 ```bash
-cp -R <the organisation>/interfaces/common vendor/common
+cp -R <the organisation>/interfaces/workload-shop <the organisation>/interfaces/shop vendor/
 satz transpile shop_dev.satz
 ```
 
@@ -181,8 +189,8 @@ satz transpile shop_dev.satz
 
 | file | what |
 |---|---|
-| `interface.tf` | the organisation's values, in two locals: `interface_static` with the ones satz knows, which the providers read, and `interface`, which merges the looked-up ones in — `workload_folder = data.google_active_folder.workload_folder.name` — followed by the `data` block itself, with the permission it needs in a comment above it |
-| `main.tf` | the project: `project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"`, `folder_id = local.interface.workload_folder`, `"cost_centre" = var.cost_centre`, the three grants. No value of the organisation stands in it |
+| `interface.tf` | the organisation's values, in two locals: `interface_static` with the ones satz knows, which the providers read, and `interface`, which merges the looked-up ones in — `delivered_folder = data.google_active_folder.shop.name` — followed by the `data` blocks themselves, each with the permission it needs in a comment above it |
+| `main.tf` | the project: `project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"`, `folder_id = local.interface.delivered_folder`, `"cost_centre" = var.cost_centre`, the three grants. No value of the organisation stands in it |
 | `providers.tf` | the `google` provider on the team's project, impersonating the team's account, its region from `local.interface_static.default_region`; the `gcs` backend on the team's bucket; one alias per project the estate declares |
 | `variables.tf` | `variable "application"`, `"stage"`, `"cost_centre"`, each described by the comment above its input. The template's params follow them, as every estate's do, and no resource reads those |
 | `terraform.tfvars` | `application = "shop"`, `stage = "dev"`, `cost_centre = "4711"` — the bound values, with the params after them |
@@ -195,14 +203,14 @@ satz transpile shop_dev.satz --plan
 satz transpile shop_dev.satz --apply
 ```
 
-The plan reads the workload folder live (`roles/browser`), creates `acme-shop-dev` under
-it (`roles/resourcemanager.projectCreator` on the folder), links the billing account
+The plan reads the workload's folder live (`roles/browser`), creates `acme-shop-dev` in
+it (`roles/resourcemanager.projectCreator` on that folder), links the billing account
 (`roles/billing.user`) and sets its grants (`roles/resourcemanager.projectIamAdmin`). A
 second project is a second thin estate — `shop-test/satz/shop_test.satz` with
 `stage = "test"` — or, for a run, `satz transpile shop_dev.satz --input stage=test`.
 
-When the organisation changes, the team takes `interfaces/common/` again, reads
-`CHANGES.md` beside `core/README.md` for what moved, and transpiles: `interface.tf`
+When the organisation changes, the team takes its two folders again, reads `CHANGES.md`
+in each for what moved, and transpiles: `interface.tf`
 follows, `main.tf` does not change.
 
 The compile holds the project to the interface's rules: a resource attached to the
@@ -232,7 +240,7 @@ tofu plan -var stage=test -var cost_centre=0815
 | file | the team |
 |---|---|
 | `terraform.tfvars` | edits it, or passes `-var` — the three inputs are the variables `main.tf` reads, and the id, the name, the label and the groups follow; the lines below them are the template's params, read by nothing |
-| `interface.tf` | takes it from the organisation's `interfaces/common/` after every change of the organisation — or writes the organisation's values into it by hand, which is what pointing the same `main.tf` at another organisation means |
+| `interface.tf` | takes it again after every change of the organisation — or writes the organisation's values into it by hand, which is what pointing the same `main.tf` at another organisation means |
 | `providers.tf` | leaves as it is: it runs as the team's account on the team's project, with the state in the team's bucket |
 | `main.tf`, `variables.tf` | leaves as they are; a second project of the same shape is a second directory with its own `terraform.tfvars` |
 
@@ -254,13 +262,13 @@ CI runs it against the team's repository.
 
 | | the Satz way | the HCL way |
 |---|---|---|
-| the truth about the organisation | `vendor/common/core/satz/interface.satz` | `interface.tf` |
+| the truth about the organisation | the two `interface.satz` files under `vendor/` | `interface.tf` |
 | the values that change per instance | `params { }` of a thin estate, or `--input` | `terraform.tfvars`, or `-var` |
-| the identity | the deployer account, in `params` of the template | the deployer account, in `providers.tf` |
+| the identity | the workload's account, in `params` of the template | the workload's account, in `providers.tf` |
 | the state | the team's bucket, `gcs` backend | the same |
 | the organisation's state | never read | never read |
 | held to the interface by | the compile | `satz check-consumer` |
-| after the organisation changes | take `interfaces/common/` again, transpile | take `interface.tf` again |
+| after the organisation changes | take the two interface folders again, transpile | take `interface.tf` again |
 
 One template, one interface, one identity per team; what differs is who runs the
 compiler.

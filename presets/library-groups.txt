@@ -56,7 +56,7 @@ shared-network.satz
 
 [Projects and interfaces]
 project-onboarding.satz
-workload-deployer.satz
+folder-workload.satz
 interface-notice.satz
 
 [Security operations and integrations]

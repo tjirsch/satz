@@ -1,4 +1,4 @@
-// A template for one Google project under the organisation's workload folder: the id by
+// A template for one Google project in the folder of the workload `shop`: the id by
 // the customer's naming scheme, a four-digit cost centre as a label, and the owner, editor
 // and viewer roles granted to three groups named after the project. One file, used two ways.
 //
@@ -13,9 +13,10 @@
 // bound values in `terraform.tfvars`. `satz transpile simple-project.satz --input stage=test`
 // binds one for a run.
 //
-// The plan runs as the team's own account, in the team's own project, with the state in
-// the team's own bucket — the three things `presets/workload-deployer.satz` creates for a
-// team in the organisation's estate. The groups are not declared here: they exist in the
+// The plan runs as the workload's own account, in the workload's own project, with the
+// state in the workload's own bucket, and creates under the workload's own folder — what
+// `presets/folder-workload.satz` creates for the workload `shop` in the organisation's
+// estate and publishes as the interfaces `workload-shop` and `shop`. The groups are not declared here: they exist in the
 // customer's directory — synced from Microsoft Entra ID — before the apply, which fails on
 // a group that does not.
 
@@ -31,9 +32,10 @@ inputs {
 }
 
 params {
-  // The team's identity, as the organisation's workload-deployer pack created it for the
-  // team `shop`: the project the plan is billed to and the state lives in, the account the
-  // plan runs as, the state bucket. Example values: replace them with your team's.
+  // The workload's identity, as the organisation's folder-workload pack created it for
+  // `shop` and published it in the interface `workload-shop` (`project_id`, `iac_account`,
+  // `state_bucket`): the project the plan is billed to and the state lives in, the account
+  // the plan runs as, the state bucket. Example values: replace them with your workload's.
   infra_project_name = "acme-deploy-shop"
   svc_iac_account    = "svc-deploy-shop"
   infra_bucket_name  = "acme-deploy-shop-state"
@@ -61,14 +63,16 @@ providers {
   }
 }
 
-// The organisation's values, read from the interface file: `${{interface.<export>}}`.
-use "vendor/common/core/satz/interface.satz"
+// The organisation's values, read from two interface files as `${{interface.<export>}}`:
+// the workload's identity with what was delivered to it, and the folder it works in.
+use "vendor/workload-shop/workload-shop/satz/interface.satz"
+use "vendor/shop/shop/satz/interface.satz"
 
 google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.workload_folder}}"
+    folder_id       = "${{interface.delivered_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     // The grants below are calls to this API, billed to the project itself.

@@ -13,6 +13,55 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.96.0
+
+**`presets/workload-deployer.satz` is replaced by `presets/folder-workload.satz`, and the old
+path, its params and its request lists are refused.** The old pack granted a team's account
+`roles/resourcemanager.folderAdmin` on a folder that already existed — by default the workload
+folder every team shares. That role sets the folder's IAM, so each team's account could grant
+itself anything under the shared folder. The new pack creates the folders a workload works in
+and grants the account on those alone, with no role that sets a folder's IAM.
+
+| before | now |
+|---|---|
+| `use "presets/workload-deployer.satz" when use_workload_deployer` | `use "presets/folder-workload.satz" when use_folder_workload` |
+| `workload_deployers = [{ name group folder }]` | `folder_workloads = [{ name group }]`, optionally with `apis` and `billing_roles` |
+| the entry's `folder`, and `workload_deployer_folders = [{ name deployer folder }]` — grants on folders that exist | `folder_workload_folders = [{ name workload display_name parent }]` — folders the pack creates |
+| `deployer_project_folder` | `folder_workload_project_folder` |
+| `deployer_folder_roles` | `folder_workload_roles` — folderCreator, folderEditor, projectCreator, projectDeleter, projectIamAdmin, serviceUsageAdmin |
+| `deployer_organization_roles`, `deployer_group_roles` | `folder_workload_organization_roles`, `folder_workload_group_roles` |
+| `deployer_billing_roles` | the field `billing_roles` of each workload's entry |
+| a request file's `contributes_workload_deployers`, `contributes_workload_deployer_folders` | `contributes_folder_workloads`, `contributes_folder_workload_folders` |
+| no interface | `workload-<name>` (identity, and what was delivered) and one per folder (`delivered_folder`) |
+
+**How to find it:** `grep -rnE 'workload-deployer|workload_deployer|deployer_(project_folder|folder_roles|organization_roles|billing_roles|group_roles)'`
+over the estate's repository and the teams' request files; the compile refuses each at its
+line and names the replacement.
+
+**What to write instead:**
+
+1. Change the `use` line's path and gate, and rename the params, by the table.
+2. Take `folder` out of each workload's entry. For each workload write one entry of
+   `folder_workload_folders` per folder it is to work in: `{ name = "shop" workload = "shop" }`
+   creates the folder `shop` under the workload folder; `parent` names another.
+3. `satz get-presets`, then `satz transpile <estate> --plan`.
+
+**The plan moves.** Per workload: nothing on its infrastructure project, account, bucket or
+billing grant — their addresses are unchanged. Per old folder grant: destroyed, four per team
+and folder, `roles/resourcemanager.folderAdmin` among them. Per folder entry: one
+`google_folder` create and six `google_folder_iam_member` creates.
+
+**Projects a team already created under the shared folder stay where they are.** Their
+creator is their owner, so the account keeps working in them; it can no longer create a
+project beside them, because it holds nothing on the shared folder any more. To bring one
+under the workload's folder, move it once with the organisation's rights — in the team's
+estate, change the project's parent to `${{interface.delivered_folder}}` and apply that one
+change as an identity that holds `roles/resourcemanager.projectMover` on both folders — or
+leave it. Nothing is moved automatically. A team's estate that read
+`${{interface.workload_folder}}` as its projects' parent reads `${{interface.delivered_folder}}`
+from the interface of its folder, and takes `interfaces/workload-<name>/` and
+`interfaces/<folder>/` to its `vendor/`.
+
 ### v0.95.1
 
 **Six commands and four MCP tools that act on the preset library are renamed, and the old
@@ -1117,9 +1166,10 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `folder_workload` | 1.0 | 2026-11-11 | first version, replacing `workload_deployer`: one identity per entry of `folder_workloads` (`{ name group apis billing_roles }` — infrastructure project, account, state bucket, the entry's APIs and billing roles) and one folder per entry of `folder_workload_folders` (`{ name workload display_name parent }`), created by the pack, with `folder_workload_roles` for the workload's account on that folder alone and no role that sets a folder's IAM; publishes the interfaces `workload-<name>` (identity and what was delivered) and `<folder>` (`delivered_folder`) |
+| `estate_map` | 3.0 | 2026-11-11 | offers `folder-workload` on `use_folder_workload` in place of `workload-deployer` on `use_workload_deployer`; the old gate is refused and names the new one |
 | `s1_security_groups` | 1.3 | 2026-10-23 | the first admin holds `roles/resourcemanager.projectCreator` and `roles/billing.creator` on the organisation explicitly — the two roles a new organisation grants its whole domain; once that grant and the groups' are live, `satz apply` takes the domain off those two roles and touches nothing else of the policy. Two `google_organization_iam_member` creates in the plan |
 | `s2_security_groups` | 1.3 | 2026-10-23 | the first admin holds `roles/resourcemanager.projectCreator` and `roles/billing.creator` on the organisation explicitly — the two roles a new organisation grants its whole domain; once that grant and the groups' are live, `satz apply` takes the domain off those two roles and touches nothing else of the policy. Two `google_organization_iam_member` creates in the plan |
-| `workload_deployer` | 1.0 | 2026-10-15 | first version: one deployer identity per customer team — per entry of the request point `workload_deployers`, `{ name group folder }`, the team's infrastructure Google project under `deployer_project_folder`, inside it the account `svc-deploy-<name>` and the state bucket, `deployer_folder_roles` on the entry's folder and on each entry of `workload_deployer_folders`, `deployer_billing_roles` on the billing account, `deployer_organization_roles` (`roles/browser`, for the interface's lookups) on the organisation, and `deployer_group_roles` for the team's group on the account alone |
 | `estate_map` | 2.9 | 2026-10-15 | offers `workload-deployer` on `use_workload_deployer`, off by default, with its question; nothing already on changes |
 | `monitoring.organization_audit_logsink` | 1.8 | 2026-10-14 | `logsink_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
 | `integrations.microsoft_defender_for_cloud` | 0.7 | 2026-10-14 | `mdc_mgmt_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |

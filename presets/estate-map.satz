@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "2.9"
+pack estate_map version "3.0"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -48,7 +48,7 @@ params {
   use_billing_export            = false
   use_shared_network            = false
   use_project_onboarding        = false
-  use_workload_deployer         = false
+  use_folder_workload           = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -140,9 +140,9 @@ question use_project_onboarding {
   blast    = high
 }
 
-question use_workload_deployer {
-  prompt   = "Give each customer team that rolls out folders and projects its own deployer identity: an infrastructure project of its own with the service account its pipelines run as and the bucket its states live in, and the roles that account needs under the workload folder?"
-  why      = "A team then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds the roles the estate grants it — on its parent folder, on the billing account, and the one read on the organisation the interface lookups need. Turning it off later destroys every team's project, with its state bucket and every state in it."
+question use_folder_workload {
+  prompt   = "Give each workload that is rolled out by an estate of its own — a team's deployments, a product — its own identity and its own folders: an infrastructure project with the service account its pipelines run as and the bucket its states live in, the folders it works in, and the account's roles on those folders alone?"
+  why      = "A workload then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds what the estate delivers — roles on its own folders, on the billing account, and the one read on the organisation the interface lookups need. It holds no access control on any folder. Turning it off later destroys every workload's infrastructure project, with its state bucket and every state in it, and every workload folder that is empty."
   reversal = recreate
   blast    = high
 }
@@ -319,9 +319,9 @@ offers "presets/project-onboarding.satz" {
   phase = "once the estate runs as the service account — the projects' own estates run as their own accounts"
 }
 
-offers "presets/workload-deployer.satz" {
-  when  = use_workload_deployer
-  phase = "once the estate runs as the service account and the workload folder exists — the teams' accounts are granted on it"
+offers "presets/folder-workload.satz" {
+  when  = use_folder_workload
+  phase = "once the estate runs as the service account and the workload folder exists — the workloads' folders are created under it"
 }
 
 offers "presets/shared-network.satz" {

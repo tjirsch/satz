@@ -306,7 +306,7 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 
 step "examples: the organisation's estate compiles, and each example beside it compiles against its interface"
 # examples/acme/ is the organisation; every subfolder with a config.toml is one example,
-# a project estate that reads interfaces/common/ copied to its vendor/.
+# a workload's estate that reads the interfaces copied to its vendor/.
 ex="$root/examples/acme"
 rm -rf "$ex/hcl" "$ex/interfaces"
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile:\n$(cat tmp/example-org.txt)"
@@ -315,7 +315,7 @@ examples=0
 for cfg in "$ex"/*/config.toml; do
   [ -f "$cfg" ] || continue
   d=$(dirname "$cfg"); n=$(basename "$d"); examples=$((examples + 1))
-  rm -rf "$d/hcl" "$d/vendor" && mkdir -p "$d/vendor" && cp -R "$ex/interfaces/common" "$d/vendor/common"
+  rm -rf "$d/hcl" "$d/vendor" && mkdir -p "$d/vendor" && cp -R "$ex/interfaces/." "$d/vendor/"
   for e in "$d"/satz/*.satz; do
     "$satz" --config "$d" transpile "$(basename "$e")" > "tmp/example-$n.txt" 2>&1 || fail "the example $n does not transpile:\n$(cat "tmp/example-$n.txt")"
   done
@@ -324,6 +324,9 @@ for cfg in "$ex"/*/config.toml; do
   fi
 done
 [ "$examples" -gt 0 ] || fail "examples/acme/ holds no example"
+# the workload's estate reads its folder and its identity from the two interfaces of the pack
+grep -q 'delivered_folder = data.google_active_folder.shop.name' "$ex/simple-project/hcl/interface.tf" || fail "the example does not read its workload's folder:\n$(cat "$ex/simple-project/hcl/interface.tf")"
+grep -q 'folder_id = local.interface.delivered_folder' "$ex/simple-project/hcl/main.tf" || fail "the example's project is not created in the workload's folder"
 # the template: inputs as variables in the HCL team's form, bound values in the Satz team's,
 # one main.tf for both
 pt="$ex/simple-project"; sd="$ex/shop-dev"
@@ -334,7 +337,7 @@ grep -q 'project = "${local.interface_static.customer_shortname}-${var.applicati
 # the organisation's values stand in interface.tf alone; a provider reads the static local
 grep -q 'region = local.interface_static.default_region' "$pt/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$pt/hcl/providers.tf")"
 grep -q 'local.interface\.' "$pt/hcl/providers.tf" && fail "a provider reads the local that holds the lookup it runs:\n$(cat "$pt/hcl/providers.tf")"
-grep -q 'customer_shortname = "acme"' "$pt/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$pt/hcl/interface.tf" && grep -q 'workload_folder = data.google_active_folder.workload_folder.name' "$pt/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$pt/hcl/interface.tf")"
+grep -q 'customer_shortname = "acme"' "$pt/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$pt/hcl/interface.tf" && grep -q 'delivered_folder = data.google_active_folder.shop.name' "$pt/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$pt/hcl/interface.tf")"
 grep -q ' = "acme' "$pt/hcl/main.tf" && fail "main.tf carries the organisation's value:\n$(cat "$pt/hcl/main.tf")"
 for r in owner editor viewer; do
   grep -q "member = \"group:\${local.interface.customer_shortname}-\${var.application}-\${var.stage}-$r@\${local.interface.customer_domain}\"" "$pt/hcl/main.tf" || fail "the $r group is not granted over the local and the inputs:\n$(cat "$pt/hcl/main.tf")"
@@ -343,6 +346,60 @@ grep -q '^cost_centre = "4711"' "$pt/hcl/terraform.tfvars" && grep -q '^cost_cen
 cmp -s <(sed 1d "$pt/hcl/main.tf") <(sed 1d "$sd/hcl/main.tf") || fail "the thin estate's main.tf differs from the template's:\n$(diff "$pt/hcl/main.tf" "$sd/hcl/main.tf")"
 "$satz" --config "$pt" transpile simple-project.satz --input stage=test --print-variables --check > tmp/template-input.txt 2>&1 || fail "--input refused the template's input:\n$(cat tmp/template-input.txt)"
 grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind the template's input:\n$(cat tmp/template-input.txt)"
+
+step "folder-workload: one account per workload, granted on the folders the pack creates for it and on nothing above them (ADR 0086)"
+# two workloads, three folders: one workload with two folders that share no root
+fw_lists='  folder_workloads = [{ name = "shop" group = "gcp-shop-admins@example.com" }, { name = "rag" group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
+  folder_workload_folders = [{ name = "shop" workload = "shop" display_name = "Shop" }, { name = "shop-data" workload = "shop" parent = "folders/222222222222" }, { name = "rag-acme" workload = "rag" }]'
+sed -e '/^  folder_workloads  *= /d' -e '/^  folder_workload_folders  *= /d' -e "s|^  use_folder_workload  *= true|&\\
+$fw_lists|" "$ex/satz/C0example.satz" > tmp/fw-org.satz
+grep -q 'name = "rag-acme"' tmp/fw-org.satz || fail "the folder-workload estate was not written from the example organisation"
+mkdir -p tmp/fw
+fw_run() { "$satz" --config "$ex" transpile "$PWD/$1" --output "$PWD/tmp/fw/hcl" --check; }
+"$satz" --config "$ex" transpile "$PWD/tmp/fw-org.satz" --output "$PWD/tmp/fw/hcl" > tmp/fw.txt 2>&1 || fail "the folder-workload estate does not transpile:\n$(cat tmp/fw.txt)"
+fwm=tmp/fw/hcl/main.tf
+for f in shop shop_data rag_acme; do
+  grep -q "^resource \"google_folder\" \"$f\"" "$fwm" || fail "the pack did not create the folder $f"
+  [ "$(grep -c "folder = \"\${google_folder.$f.name}\"" "$fwm")" = 6 ] || fail "the folder $f does not carry the six roles of folder_workload_roles:\n$(grep -B3 "google_folder.$f.name" "$fwm")"
+done
+grep -A3 '^resource "google_folder" "shop_data"' "$fwm" | grep -q 'parent *= "folders/222222222222"' || fail "a folder entry's parent that is an id is not written as it is"
+grep -A3 '^resource "google_folder" "shop"' "$fwm" | grep -q 'display_name *= "Shop"' || fail "a folder entry's display_name is not the folder's"
+grep -A3 '^resource "google_folder" "rag_acme"' "$fwm" | grep -q 'display_name *= "rag-acme"' || fail "a folder entry without display_name is not shown under its name"
+[ "$(grep -c '^resource "google_folder_iam_member"' "$fwm")" = 18 ] || fail "a folder grant stands on something other than the three workload folders:\n$(grep -A4 '^resource "google_folder_iam_member"' "$fwm" | grep 'folder *=' | sort | uniq -c)"
+grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a workload's account holds a role that sets folder IAM, policies or tags"
+grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a workload's own billing_roles did not reach the billing account"
+grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one workload's billing role reached another workload"
+fwi="$ex/interfaces"
+grep -A1 '^output "delivered_apis"' "$fwi/workload-rag/workload-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the workload's interface does not publish its APIs:\n$(cat "$fwi/workload-rag/workload-rag/satz/interface.satz")"
+grep -A1 '^output "delivered_billing_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a workload without billing_roles does not publish the default"
+grep -A1 '^output "delivered_folder_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "the workload's interface does not publish its folder roles"
+for o in project_id iac_account state_bucket; do
+  grep -q "^output \"$o\"" "$fwi/workload-shop/workload-shop/satz/interface.satz" || fail "the workload's interface does not publish $o"
+done
+grep -A1 '^output "delivered_folder"' "$fwi/shop-data/shop-data/satz/interface.satz" | grep -q 'data.google_active_folder.shop_data.name' || fail "a folder's interface does not publish the folder:\n$(cat "$fwi/shop-data/shop-data/satz/interface.satz")"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/fw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the folder-workload estate does not validate"
+fi
+# a folder entry that names a workload nobody declared is refused at the compile
+sed 's|{ name = "rag-acme" workload = "rag" }|{ name = "rag-acme" workload = "ghost" }|' tmp/fw-org.satz > tmp/fw-ghost.satz
+fw_run tmp/fw-ghost.satz > tmp/fw-ghost.txt 2>&1 && fail "a folder for a workload nobody declared compiled"
+grep -q 'google_service_account.deploy_ghost' tmp/fw-ghost.txt && grep -q 'deploy_rag, deploy_shop' tmp/fw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/fw-ghost.txt)"
+# the pack this one replaced: its path, its params and its request lists are refused by name
+sed 's|presets/folder-workload.satz|presets/workload-deployer.satz|' tmp/fw-org.satz > tmp/fw-oldpath.satz
+fw_run tmp/fw-oldpath.satz > tmp/fw-old.txt 2>&1 && fail "the old pack path compiled"
+grep -q 'moved to "presets/folder-workload.satz"' tmp/fw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/fw-old.txt)"
+for pair in use_folder_workload:use_workload_deployer folder_workloads:workload_deployers folder_workload_folders:workload_deployer_folders folder_workload_project_folder:deployer_project_folder; do
+  new=${pair%%:*}; old=${pair##*:}
+  sed "s|^  $new\( *\)= |  $old\1= |" tmp/fw-org.satz > tmp/fw-oldparam.satz
+  grep -q "^  $old  *= " tmp/fw-oldparam.satz || fail "the estate with the old param $old was not written"
+  fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "the old param $old compiled"
+  grep -q "param \`$old\` was renamed to \`$new\`" tmp/fw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/fw-old.txt)"
+done
+printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_workload_deployers = [\n    { name = "pay" group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
+"$satz" --config "$ex" check-request "$PWD/tmp/fw-request.satz" "$PWD/tmp/fw-org.satz" > tmp/fw-request.txt 2>&1 && fail "a request for the old list was accepted"
+grep -q 'folder_workloads' tmp/fw-request.txt || fail "the request's refusal does not name the lists that take requests:\n$(cat tmp/fw-request.txt)"
+# the example organisation's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the folder-workload step"
 
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
 ih=tmp/inputs-hcl

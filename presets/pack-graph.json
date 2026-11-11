@@ -7,7 +7,7 @@
     },
     {
       "path": "presets/estate-map.satz",
-      "version": "2.9",
+      "version": "3.0",
       "role": "map",
       "order": 0,
       "phase": "once the estate runs as the service account — the map, which declares the questions\nevery line below is gated on. This is the one to uncomment first.",
@@ -80,13 +80,13 @@
       "at": "presets/estate-map.satz:317"
     },
     {
-      "path": "presets/workload-deployer.satz",
+      "path": "presets/folder-workload.satz",
       "version": "1.0",
       "role": "pack",
-      "gate": "use_workload_deployer",
+      "gate": "use_folder_workload",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 7,
-      "phase": "once the estate runs as the service account and the workload folder exists — the teams' accounts are granted on it",
+      "phase": "once the estate runs as the service account and the workload folder exists — the workloads' folders are created under it",
       "at": "presets/estate-map.satz:322"
     },
     {
