@@ -1,0 +1,226 @@
+// One identity per workload, and the folders it works in. A workload is a team's or a
+// product's set of deployments — a shop, a RAG store per customer — that is rolled out by
+// an estate of its own beside this one. The pack gives it an infrastructure project with
+// the service account its pipelines run as and the bucket its states live in, creates the
+// folders it may work in, and grants the account its roles on THOSE folders and nowhere else.
+//
+//   use "presets/folder-workload.satz" when use_folder_workload
+//
+// TWO LISTS. One entry of `folder_workloads` is one identity:
+//   { name = "shop" group = "gcp-shop-admins@example.com" }
+// One entry of `folder_workload_folders` is one folder the pack creates, and the workload
+// whose account works in it:
+//   { name = "shop-frontend" workload = "shop" }
+//   { name = "shop-data"     workload = "shop" parent = "google_folder.data.name" }
+// A workload works in as many folders as name it, and they need no common root: `parent` is
+// `google_folder.workload_folder.name` unless the entry names another folder the estate
+// declares (`google_folder.<label>.name`) or one that already exists (`folders/<id>`). Both
+// lists are bound in the estate or requested by the team as `contributes_folder_workloads` /
+// `contributes_folder_workload_folders` in a small pack of its own, checked with
+// `satz check-request` and vendored by pull request. A `name` is lowercase letters, digits
+// and `-`, starting with a letter.
+//
+// PER WORKLOAD. The infrastructure project `{customer_shortname}-deploy-<name>` under
+// `folder_workload_project_folder`, billed to the infrastructure billing account, with the
+// APIs of the entry's `apis`. Inside it the account `svc-deploy-<name>` and the state bucket
+// `{customer_shortname}-deploy-<name>-state`, which the account may write; the group reads
+// the project and may become the account — that account only. On the billing account the
+// account holds the entry's `billing_roles` (`roles/billing.user` unless the entry says
+// more), on the organisation `folder_workload_organization_roles` — `roles/browser` and
+// nothing else by default: an interface looks a folder up by its name among its parent's
+// folders, and that listing needs `resourcemanager.folders.list` on the parent.
+//
+// PER FOLDER. The folder `<name>` (shown as `display_name` when the entry has one), and
+// `folder_workload_roles` for the workload's account on it: create and manage folders and
+// Google projects under it, set the IAM of its projects and enable their APIs. NOT granted:
+// access control on a folder, organisation policies, tags, billing administration — so an
+// account cannot grant itself anything on a folder, its own included, and reaches nothing
+// beside the folders it was given. A folder that already exists is declared as an entry and
+// taken over once with `satz adopt`, which finds it by its display name under its parent.
+//
+// AN ENTRY THAT ASKS FOR MORE. `apis` and `billing_roles` are lists, and an entry that
+// states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
+// its own.
+//
+// WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `vendor/` folder:
+// `workload-<name>` — `project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
+// delivered to the account, `delivered_folder_roles`, `delivered_billing_roles`,
+// `delivered_apis`, which `satz` judges the estate's needs against — and `<folder name>`,
+// with `delivered_folder`, the parent of everything the estate creates. One estate reads
+// one folder's interface: a workload with two folders is rolled out by two estates that
+// run as the same account.
+//
+// NO CLAIM. The workloads' identities are workloads, not controls: this pack witnesses nothing.
+
+pack folder_workload version "1.0"
+
+params {
+  // One entry per workload, `{ name group apis billing_roles }`: the name, the group that
+  // may become the account, the APIs of its infrastructure project and its roles on the
+  // billing account (the defaults of the request below when left out).
+  folder_workloads               = []
+  // One entry per folder, `{ name workload display_name parent }`: the folder's name, the
+  // workload whose account works in it, the name it is shown under (the entry's name when
+  // left out) and its parent (the workload folder when left out).
+  folder_workload_folders        = []
+  // The folder the workloads' infrastructure projects are created in. Empty is the
+  // organisation; a folder the estate declares is named by reference,
+  // `google_folder.<label>.name`, one that already exists by its id.
+  folder_workload_project_folder = ""
+  // What an account holds on each of its folders: folders and Google projects under it, the
+  // IAM of its projects, and the APIs it enables on them. No role here carries
+  // `resourcemanager.folders.setIamPolicy`.
+  folder_workload_roles = [
+    "roles/resourcemanager.folderCreator",
+    "roles/resourcemanager.folderEditor",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectDeleter",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+  ]
+  // What an account holds on the organisation: the read a folder lookup needs.
+  folder_workload_organization_roles = [
+    "roles/browser",
+  ]
+  // What a workload's group holds on the account: becoming it, and nothing else.
+  folder_workload_group_roles = [
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.serviceAccountUser",
+  ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question folder_workload_project_folder {
+  prompt    = "The folder the workloads' infrastructure projects are created in — the infrastructure folder as `google_folder.infra_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why       = "It decides the policies the workloads' infrastructure projects inherit. Changing it afterwards moves every live one between parents."
+  reversal  = edit
+  blast     = low
+  recommend = "google_folder.infra_folder.name"
+  empty     = "the organisation itself"
+}
+
+// ---- what a team may ask for ----------------------------------------------------------
+
+request folder_workloads {
+  key      = "name"
+  fields   = ["name", "group", "apis", "billing_roles"]
+  patterns = { name = "[a-z][a-z0-9-]*" group = "[^@: ]+@[^@: ]+" }
+  defaults = {
+    apis = [
+      "cloudbilling.googleapis.com",
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+    billing_roles = ["roles/billing.user"]
+  }
+  description = "A workload that rolls out folders and Google projects: its name, the address of the group that may become its account, the APIs of its infrastructure project and its roles on the billing account"
+}
+
+request folder_workload_folders {
+  key         = "name"
+  fields      = ["name", "workload", "display_name", "parent"]
+  patterns    = { name = "[a-z][a-z0-9-]*" workload = "[a-z][a-z0-9-]*" }
+  defaults    = { parent = "google_folder.workload_folder.name" }
+  description = "A folder a workload works in: the folder's name, the workload's name, the name the folder is shown under, and its parent"
+}
+
+// ---- per workload: its infrastructure project, account and state bucket ---------------
+
+google_project {
+  each folder_workloads by name {
+    name            = "deploy-{each.name}"
+    project_id      = "{customer_shortname}-deploy-{each.name}"
+    folder_id       = folder_workload_project_folder
+    billing_account = billing_account_infra
+    project_service = each.apis
+    google_service_account {
+      "deploy_{each.name}" {
+        account_id   = "svc-deploy-{each.name}"
+        display_name = "Deployer of the workload {each.name}"
+      }
+    }
+    google_storage_bucket {
+      "deploy_{each.name}_state" {
+        name                        = "{customer_shortname}-deploy-{each.name}-state"
+        location                    = default_region
+        force_destroy               = true
+        public_access_prevention    = "enforced"
+        uniform_bucket_level_access = true
+        versioning { enabled = true }
+      }
+    }
+    // The group reads its project; the account writes its states.
+    google_project_iam_member {
+      "group:{each.group}" = [
+        "roles/viewer",
+      ]
+    }
+    google_storage_bucket_iam_member {
+      bucket = "{customer_shortname}-deploy-{each.name}-state"
+      "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = [
+        "roles/storage.objectAdmin",
+      ]
+    }
+    // The group may become its account — that account only.
+    google_service_account_iam_member {
+      service_account_id   = "${{google_service_account.deploy_{each.name}.name}}"
+      "group:{each.group}" = folder_workload_group_roles
+    }
+  }
+}
+
+google_billing_account_iam_member {
+  billing_account_id = billing_account_infra
+  each folder_workloads by name {
+    "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = each.billing_roles
+  }
+}
+
+google_organization_iam_member {
+  each folder_workloads by name {
+    "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = folder_workload_organization_roles
+  }
+}
+
+// ---- per folder: the folder, and the workload's account on it and on nothing above it --
+
+google_folder {
+  each folder_workload_folders by name when display_name {
+    display_name = "{each.display_name}"
+    parent       = "{each.parent}"
+  }
+  each folder_workload_folders by name when not display_name {
+    display_name = "{each.name}"
+    parent       = "{each.parent}"
+  }
+}
+
+google_folder_iam_member {
+  each folder_workload_folders by name {
+    folder                                                                    = "${{google_folder.{each.name}.name}}"
+    "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = folder_workload_roles
+  }
+}
+
+// ---- what a workload's estate reads -----------------------------------------------------
+
+each folder_workloads by name {
+  interface "workload-{each.name}" {
+    export "project_id"              = "{customer_shortname}-deploy-{each.name}" description "The workload's infrastructure project: its plans are billed to it"
+    export "iac_account"             = "svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" description "The service account the workload's estates run as"
+    export "state_bucket"            = "{customer_shortname}-deploy-{each.name}-state" description "The bucket the workload's estates keep their states in"
+    export "delivered_folder_roles"  = folder_workload_roles description "The roles the account holds on each of the workload's folders"
+    export "delivered_billing_roles" = each.billing_roles description "The roles the account holds on the billing account"
+    export "delivered_apis"          = each.apis description "The APIs enabled on the workload's infrastructure project"
+  }
+}
+
+each folder_workload_folders by name {
+  interface "{each.name}" {
+    export "delivered_folder" = "${{google_folder.{each.name}.name}}" description "The folder the workload's account works in: the parent of what its estate creates"
+  }
+}

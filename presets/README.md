@@ -1331,65 +1331,107 @@ adds to a project's interface with a block of the same name in its own file — 
 
 Nothing in the pack bills while idle.
 
-### workload-deployer.satz
+### folder-workload.satz
 
-One deployer identity per customer team: a Google project of the team's own holding the
-service account its pipelines run as and the bucket its states live in, and the roles that
-account needs to roll out folders and Google projects under the workload folder — nothing
-more. A team then never runs as the organisation's IaC account.
+One identity per workload, and the folders it works in. A workload is a team's or a
+product's set of deployments, rolled out by an estate of its own beside the organisation's.
+The pack gives it a Google project holding the service account its pipelines run as and the
+bucket its states live in, creates the folders it may work in, and grants the account its
+roles on those folders and nowhere else. A workload then never runs as the organisation's
+IaC account, and it reaches nothing beside the folders it was given.
 
-**Use** — the teams' projects land in the folder `deployer_project_folder` names, so the line
-stands at the top level:
+**Use** — the workloads' infrastructure projects land in the folder
+`folder_workload_project_folder` names, so the line stands at the top level:
 
 ```
 params {
-  use_workload_deployer   = true
-  deployer_project_folder = "google_folder.infra_folder.name"
-  workload_deployers = [
-    { name = "platform" group = "gcp-project-admins@example.com" },
+  use_folder_workload            = true
+  folder_workload_project_folder = "google_folder.infra_folder.name"
+  folder_workloads = [
+    { name = "shop" group = "gcp-shop-admins@example.com" },
+  ]
+  folder_workload_folders = [
+    { name = "shop-frontend" workload = "shop" },
+    { name = "shop-data" workload = "shop" parent = "google_folder.data.name" },
   ]
 }
 
-use "presets/workload-deployer.satz" when use_workload_deployer
+use "presets/folder-workload.satz" when use_folder_workload
 ```
 
-**Requests.** A team asks for its identity with a small pack of its own, checked with `satz
-check-request <file> <estate>` and vendored into the estate by pull request:
+One workload works in as many folders as name it, and the folders need no common root.
+
+**Requests.** A team asks for its identity and its folders with a small pack of its own,
+checked with `satz check-request <file> <estate>` and vendored into the estate by pull
+request:
 
 | request point | key | fields |
 |---|---|---|
-| `workload_deployers` | `name` | `name` (the team's name — lowercase letters, digits and `-`, starting with a letter), `group` (the address of the group that may become the account, `<name>@<domain>`), `folder` (the parent the team creates under; `google_folder.workload_folder.name` when left out) |
-| `workload_deployer_folders` | `name` | `name`, `deployer` (the team's name), `folder` — one entry per further parent folder a team creates under |
+| `folder_workloads` | `name` | `name` (the workload's name — lowercase letters, digits and `-`, starting with a letter), `group` (the address of the group that may become the account, `<name>@<domain>`), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
+| `folder_workload_folders` | `name` | `name` (the folder's name, and its label: `google_folder.<name>`), `workload` (the workload whose account works in it), `display_name` (the name it is shown under; the entry's name when left out), `parent` (`google_folder.workload_folder.name` when left out; another folder the estate declares as `google_folder.<label>.name`, or one that exists as `folders/<id>`) |
 
-**Per entry** `platform`:
+`apis` and `billing_roles` are lists, and an entry that states one states it whole: a
+workload that manages budgets repeats the six APIs and adds
+`billingbudgets.googleapis.com`, and writes `billing_roles = ["roles/billing.user",
+"roles/billing.costsManager"]`. A folder entry that names a workload no entry declares is
+refused by the compile, which lists the accounts that exist.
+
+**Per workload** `shop`:
 
 | resource | what |
 |---|---|
-| `google_project.platform` | `{customer_shortname}-deploy-platform` under `deployer_project_folder`, billed to `billing_account_infra`, with the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs |
-| `google_service_account.deploy_platform` | `svc-deploy-platform`, the account the team's pipelines impersonate |
-| `google_storage_bucket.deploy_platform_state` | `{customer_shortname}-deploy-platform-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
-| the account's grants | `deployer_folder_roles` on the entry's folder (and on each further folder of `workload_deployer_folders`), `deployer_billing_roles` on the billing account, `deployer_organization_roles` on the organisation |
-| the group's grants | `roles/viewer` on the project; `deployer_group_roles` on the account alone |
+| `google_project.shop` | `{customer_shortname}-deploy-shop` under `folder_workload_project_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
+| `google_service_account.deploy_shop` | `svc-deploy-shop`, the account the workload's pipelines impersonate |
+| `google_storage_bucket.deploy_shop_state` | `{customer_shortname}-deploy-shop-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
+| the account's grants | the entry's `billing_roles` on the billing account, `folder_workload_organization_roles` on the organisation |
+| the group's grants | `roles/viewer` on the project; `folder_workload_group_roles` on the account alone |
 
-The one organisation-level right, `roles/browser`, is what the interface's lookups need: the
-workload folder is looked up by its name among the organisation's folders, and that listing
-needs `resourcemanager.folders.list` on the organisation. Without it the team's plan stops at
-the lookup.
+**Per folder** `shop-frontend`:
+
+| resource | what |
+|---|---|
+| `google_folder.shop_frontend` | the folder, under the entry's `parent` |
+| the account's grants | `folder_workload_roles` on this folder, for the account of the entry's workload |
+
+**What the account may do, and what it may not.** In its folders it creates, changes and
+deletes folders and Google projects, sets the IAM of its projects and enables their APIs.
+No role of `folder_workload_roles` carries `resourcemanager.folders.setIamPolicy`, so the
+account grants nothing on a folder — its own included — and it holds no organisation
+policy, tag or billing-administration role. Limits inside a workload's folder are
+organisation policies the organisation's estate sets on that folder. The one
+organisation-level right, `roles/browser`, is what the interface's lookups need: a folder is
+looked up by its name among its parent's folders, and that listing needs
+`resourcemanager.folders.list` on the parent. Without it the workload's plan stops at the
+lookup.
+
+A folder that already exists is declared as an entry and taken over once with `satz adopt`,
+which finds it by its display name under its parent. The pack grants on no folder it does
+not manage.
+
+**What the workload's estate reads.** Two interfaces, written to `interfaces/` by every
+transpile and taken whole to the estate's `vendor/`:
+
+| interface | export | what |
+|---|---|---|
+| `workload-shop` | `project_id`, `iac_account`, `state_bucket` | the workload's infrastructure project, the account its estates run as, the bucket their states live in |
+| | `delivered_folder_roles`, `delivered_billing_roles`, `delivered_apis` | what was delivered to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
+| `shop-frontend` | `delivered_folder` | the folder, looked up: the parent of what the estate creates |
+
+One estate reads one folder's interface. A workload with two folders is rolled out by two
+estates that run as the same account.
 
 **Overridable defaults:**
 
 | Param | Default | Meaning |
 |---|---|---|
-| `workload_deployers` | `[]` | the teams, bound in the estate or filled by requests |
-| `workload_deployer_folders` | `[]` | further parent folders per team |
-| `deployer_project_folder` | `""` | the folder the teams' projects are created in, asked; empty is the organisation, the infrastructure folder is `"google_folder.infra_folder.name"` |
-| `deployer_folder_roles` | folderAdmin, projectCreator, projectIamAdmin, serviceUsageAdmin | what the account holds on its parent folder(s) |
-| `deployer_organization_roles` | `["roles/browser"]` | what it holds on the organisation |
-| `deployer_billing_roles` | `["roles/billing.user"]` | what it holds on the billing account |
-| `deployer_group_roles` | tokenCreator, serviceAccountUser | what the team's group holds on the account |
+| `folder_workloads` | `[]` | the workloads, bound in the estate or filled by requests |
+| `folder_workload_folders` | `[]` | the folders, each with the workload that works in it |
+| `folder_workload_project_folder` | `""` | the folder the workloads' infrastructure projects are created in, asked; empty is the organisation, the infrastructure folder is `"google_folder.infra_folder.name"` |
+| `folder_workload_roles` | folderCreator, folderEditor, projectCreator, projectDeleter, projectIamAdmin, serviceUsageAdmin | what an account holds on each of its folders |
+| `folder_workload_organization_roles` | `["roles/browser"]` | what it holds on the organisation |
+| `folder_workload_group_roles` | tokenCreator, serviceAccountUser | what a workload's group holds on the account |
 
-The account's address is the pattern `svc-deploy-<name>@{customer_shortname}-deploy-<name>.iam.gserviceaccount.com`;
-the pack exports no interface. Nothing in the pack bills while idle.
+Nothing in the pack bills while idle.
 
 ### interface-notice.satz
 

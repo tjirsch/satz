@@ -31,7 +31,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 | organisation id | `123456789012` | `222222222222` | `333333333333` | `444444444444` |
 | billing account | `012345-6789AB-CDEF01` | `0B0B0B-0B0B0B-0B0B02` | `0C0C0C-0C0C0C-0C0C03` | `0D0D0D-0D0D0D-0D0D04` |
 | infra project | `acme-infra-001` | `bolt-infra-001` | `cedar-infra-001` | `delta-infra-001` |
-| a team's deployer project (`presets/workload-deployer.satz`, team `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop` | – | – | – |
+| a workload's infrastructure project (`presets/folder-workload.satz`, workload `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop`, its folder `Shop` | – | – | – |
 | log project | `acme-log-001` | `bolt-log-001` | `cedar-log-001` | `delta-log-001` |
 | audit bucket | `acme-organization-audit-bucket` | `bolt-organization-audit-bucket` | `cedar-organization-audit-bucket` | `delta-organization-audit-bucket` |
 | folder id (for `import-id` examples) | `123456789` | `222222222` | `333333333` | `444444444` |

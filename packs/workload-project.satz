@@ -5,8 +5,8 @@
 //
 // A workload pack: an estate beside the organisation takes it with
 // `satz get-pack workload-project`, binds the params below and applies as its own
-// account — a team's deployer (`presets/workload-deployer.satz` in the organisation's
-// estate), which may create projects under the folder it is given.
+// account — a workload's identity (`presets/folder-workload.satz` in the organisation's
+// estate), which may create projects in the folders it was given.
 //
 // THE PROJECT. `workload_project_id` under `workload_project_parent`, linked to
 // `workload_billing_account`, with `workload_project_services` enabled and protected
@@ -16,8 +16,8 @@
 // creates none and declares no membership. An apply naming a group that does not exist
 // fails at that grant.
 //
-// The parent is a folder id, or the organisation's interface read by the estate:
-// `workload_project_parent = "${{interface.workload_folder}}"`.
+// The parent is a folder id, or the workload's folder as the organisation publishes it,
+// read by the estate: `workload_project_parent = "${{interface.delivered_folder}}"`.
 
 pack workload_project version "1.0"
 

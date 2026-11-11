@@ -54,9 +54,9 @@ From the repository root, with `satz` on the path:
 # 1. the organisation: writes examples/acme/hcl/ and examples/acme/interfaces/
 satz --config examples/acme transpile C0example.satz
 
-# 2. the example takes the organisation's common interfaces whole
+# 2. the example takes its two interface folders whole: its identity, and its folder
 mkdir -p examples/acme/simple-project/vendor
-cp -R examples/acme/interfaces/common examples/acme/simple-project/vendor/common
+cp -R examples/acme/interfaces/workload-shop examples/acme/interfaces/shop examples/acme/simple-project/vendor/
 
 # 3. the example: writes examples/acme/simple-project/hcl/
 satz --config examples/acme/simple-project transpile simple-project.satz
@@ -77,13 +77,13 @@ organisation](../docs/tutorial-projects.md)).
 
 | example | what it shows |
 |---|---|
-| [`acme/simple-project`](acme/simple-project/satz/simple-project.satz) | One Google project as a **template**: `inputs { application stage cost_centre }` are the values a reader binds, everything else is fixed — the id by the organisation's `customer_shortname` and the inputs, the parent the organisation's `workload_folder`, a four-digit cost centre as a label, and `roles/owner`, `roles/editor` and `roles/viewer` granted to three groups named after the project, which exist in the directory (synced from Microsoft Entra ID) before the apply. Compiled as it stands, its `hcl/` is the HCL team's form — `variables.tf` declares the three inputs, `terraform.tfvars` carries the example values, `main.tf` reads `var.<name>`, `interface.tf` holds the organisation's values — so a team edits `terraform.tfvars` or passes `-var` and runs `tofu` without satz. `satz transpile simple-project.satz --input stage=test` binds one for a run. |
+| [`acme/simple-project`](acme/simple-project/satz/simple-project.satz) | One Google project as a **template**: `inputs { application stage cost_centre }` are the values a reader binds, everything else is fixed — the id by the organisation's `customer_shortname` and the inputs, the parent the workload's own folder (`delivered_folder`), a four-digit cost centre as a label, and `roles/owner`, `roles/editor` and `roles/viewer` granted to three groups named after the project, which exist in the directory (synced from Microsoft Entra ID) before the apply. Compiled as it stands, its `hcl/` is the HCL team's form — `variables.tf` declares the three inputs, `terraform.tfvars` carries the example values, `main.tf` reads `var.<name>`, `interface.tf` holds the organisation's values — so a team edits `terraform.tfvars` or passes `-var` and runs `tofu` without satz. `satz transpile simple-project.satz --input stage=test` binds one for a run. |
 | [`acme/shop-dev`](acme/shop-dev/satz/shop_dev.satz) | The same template the **Satz** way: a thin estate that binds the inputs in its `params { }` and `use`s the template, compiling to the same `main.tf` with the bound values in `terraform.tfvars`. One template, two kinds of team. |
 
 ## Adding an example
 
 A new folder under `acme/` with a `config.toml` and its estate in `satz/` is compiled
-by the smoke matrix with `interfaces/common/` of the organisation in its `vendor/`. An
+by the smoke matrix with the organisation's `interfaces/` in its `vendor/`. An
 example that needs more from the organisation adds the export to
 `acme/satz/C0example.satz`. Values come from the table in `docs/examples.md`; `satz fmt
 examples` formats the files.
