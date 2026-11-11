@@ -534,6 +534,34 @@ halves are written before either is verified, so the estate is never left half-e
 A project declared outside the estate file (in a pack, which the next `merge-presets`
 would overwrite) is named with the APIs to add to it by hand, and nothing is written.
 
+**A workload's estate is judged against what was delivered to it.** An estate that runs as
+an account the organisation's estate created with `presets/folder-workload.satz` reads the
+interface `workload-<name>`, which carries what that account holds: `delivered_folder_roles`
+on each of its folders, `delivered_billing_roles` on the billing account, and
+`delivered_apis` on its infrastructure project, the project its providers bill to. For
+such an estate:
+
+- a need on a folder or a project is met by a delivered folder role, or by a role the
+  estate grants its own account on a folder or a project it declares; a need on a project
+  is met as well when `roles/resourcemanager.projectCreator` was delivered, because a
+  project's creator is its owner;
+- a need on the billing account is met by a delivered billing role;
+- an API on the infrastructure project is enabled when it was delivered; one on a project
+  the estate declares is its own `project_service` entry, as above;
+- the reads are not asked for: `import`, `adopt` and `report-compliance` over an
+  organisation are not a workload's.
+
+What is not delivered is reported as what to ask the organisation's estate for — a role in
+`folder_workload_roles`, a role in the workload's `billing_roles`, an API in its `apis` —
+and nothing at the organization is ever proposed: the account could not apply such a
+grant. `update-prerequisites` writes the APIs of the estate's own projects, writes nothing
+for what was not delivered, and exits non-zero while anything is; `transpile --apply`
+refuses while an API is not delivered. `whoami <estate>` tests the billing account live
+and names the rest as judged against the delivery. An estate that reads an interface
+without these exports — a project of `presets/project-onboarding.satz` — is judged at the
+organization as before, and a note says so
+([ADR 0087](docs/adr/0087-a-workload-estate-is-judged-against-what-was-delivered-to-its-account.md)).
+
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`
 (the default) prints the missing roles and APIs with the `update-prerequisites` command
 that writes them, `error` refuses the compile, `none` skips the check. The two commands

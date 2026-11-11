@@ -1517,8 +1517,18 @@ pub(crate) async fn run_merge_presets(
             Ok(report) => {
                 let missing: Vec<String> = crate::prerequisites::describe(&report.write)
                     .into_iter()
-                    .chain(report.missing_apis.iter().map(|a| format!("{} on {}", a.api, a.project)))
+                    .chain(report.writable_apis().iter().map(|a| format!("{} on {}", a.api, a.project)))
                     .collect();
+                // a workload's estate: what was not delivered to its account is asked
+                // for in the organisation's estate, and nothing here writes it
+                if !report.request.is_empty() {
+                    events.push(MergeEvent::Prerequisites {
+                        wrote: Vec::new(),
+                        missing: report.request.clone(),
+                        refused: Some("not delivered to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz`)".to_string()),
+                    });
+                    needs_attention = true;
+                }
                 if missing.is_empty() {
                     // nothing to say: the estate already declares what its packs need
                 } else if report_only {

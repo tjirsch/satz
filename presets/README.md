@@ -1420,6 +1420,11 @@ transpile and taken whole to the estate's `vendor/`:
 One estate reads one folder's interface. A workload with two folders is rolled out by two
 estates that run as the same account.
 
+The `delivered_*` exports are what satz judges the workload's estate against: a resource
+type that needs a role or an API not in them is reported in that estate as what to ask for
+here, and nothing is proposed at the organization ([What an estate must
+declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
+
 **Overridable defaults:**
 
 | Param | Default | Meaning |

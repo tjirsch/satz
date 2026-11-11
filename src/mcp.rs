@@ -2491,7 +2491,9 @@ impl SatzMcp {
             Ok(r) => r,
             Err(e) => return Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         };
-        if args.report_only || (report.missing.is_empty() && report.missing_apis.is_empty()) {
+        // a workload's estate writes the APIs of its own projects alone: what was not
+        // delivered to its account stands in the report's `request`
+        if args.report_only || report.writable_gap() == 0 {
             return Ok(Ok(Json(PrerequisitesResult { report, written: Vec::new() })));
         }
         match crate::prerequisites_write(&estate, &report, &open.tool, &open.runtime, quiet) {
