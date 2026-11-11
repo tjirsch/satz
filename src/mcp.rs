@@ -179,6 +179,11 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("adopt", Parity::Tools(&["satz_adopt"])),
     ("update-prerequisites", Parity::Tools(&["satz_update_prerequisites"])),
     ("review-preset", Parity::Tools(&["satz_review_preset"])),
+    ("packs", Parity::Tools(&["satz_packs"])),
+    ("get-pack", Parity::Tools(&["satz_get_pack"])),
+    ("update-pack", Parity::Tools(&["satz_update_pack"])),
+    ("detach-pack", Parity::Tools(&["satz_detach_pack"])),
+    ("review-pack", Parity::Tools(&["satz_review_pack"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
     ("fmt", Parity::Tools(&["satz_fmt"])),
@@ -703,6 +708,51 @@ pub(crate) struct ReviewPackArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct PacksArgs {
+    /// A folder of packs under the server's root to read instead of the satz repository
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct GetPackArgs {
+    /// The pack's id: its path under `packs/` without `.satz`. Omit it with `all`
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Every pack the source holds that `packs_dir` does not
+    #[serde(default)]
+    pub all: bool,
+    /// A folder of packs under the server's root to take it from instead of the satz repository
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct UpdatePackArgs {
+    /// The pack's id: its path under `packs/` without `.satz`. Omit it with `all`
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Every pack with a recorded origin
+    #[serde(default)]
+    pub all: bool,
+    /// A folder of packs under the server's root to read instead of the satz repository
+    #[serde(default)]
+    pub from: Option<String>,
+    /// Report what would happen and write nothing
+    #[serde(default)]
+    pub report_only: bool,
+    /// Overwrite a pack edited here with the source's file
+    #[serde(default)]
+    pub take_upstream: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct DetachPackArgs {
+    /// The pack's id: its path under `packs/` without `.satz`
+    pub id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct AddPackArgs {
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
     #[serde(default)]
@@ -1110,6 +1160,17 @@ impl SatzMcp {
                         .to_string(),
                 )
             })
+    }
+
+    /// The open estate with its `packs_dir` held inside the server's root, and where a
+    /// workload-pack tool reads packs from: `from`, a folder under the root, or the
+    /// satz repository.
+    fn pack_source(&self, from: Option<&str>) -> Result<(Open, crate::workload_packs::Source), CallToolResult> {
+        let (open, _estate) = self.target(None)?;
+        self.confine(PathBuf::from(&open.runtime.packs_dir))?;
+        let from = from.map(|f| self.file(f)).transpose()?;
+        let source = crate::workload_packs::Source::new(from).map_err(refused)?;
+        Ok((open, source))
     }
 
     /// Any other path argument that must exist — a Prowler export, a pack, a library
@@ -1811,9 +1872,172 @@ impl SatzMcp {
             },
             None => None,
         };
-        match crate::review_pack::review(&pack, against.as_deref(), &open.tool, &open.runtime) {
+        match crate::review_pack::review(&pack, against.as_deref(), crate::review_pack::Bar::Library, &open.tool, &open.runtime) {
             Ok(review) => Ok(Ok(Json(review))),
             Err(e) => Ok(Err(refused(format!("review-preset: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_packs",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::PacksReport>(),
+        description = "The workload packs of the open estate's packs_dir, as `satz packs` lists them: each with its \
+                       `state` — `own` (no recorded origin: the repository's own, which no tool writes), `current`, \
+                       `behind`, `edited` (changed here since it was fetched), `gone` (the source holds it no longer), \
+                       `not-checked` (fetched from another kind of source than this call reads) — its version, the \
+                       source's version and the `use` line that reads it; and every pack the source holds that \
+                       packs_dir does not, as `available`. Reads the satz repository's `packs/` tree, or `from`.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn workload_packs(
+        &self,
+        Parameters(args): Parameters<PacksArgs>,
+    ) -> Result<Result<Json<crate::workload_packs::PacksReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("packs");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, source) = match self.pack_source(args.from.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::workload_packs::list(&open.runtime, &source).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_get_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::GetReport>(),
+        description = "Fetch one workload pack into the open estate's packs_dir, as `satz get-pack` does, and record \
+                       where it came from in packs_dir/origin.toml, so `satz_update_pack` keeps it current. Refused \
+                       when packs_dir already holds a pack of that id — one fetched before is updated, one without \
+                       a recorded origin is the repository's own. `all` fetches every pack the source holds that \
+                       packs_dir lacks. Each installed pack carries the `use_line` an estate reads it with. Needs \
+                       the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
+    )]
+    async fn get_workload_pack(
+        &self,
+        Parameters(args): Parameters<GetPackArgs>,
+    ) -> Result<Result<Json<crate::workload_packs::GetReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("get-pack");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, source) = match self.pack_source(args.from.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let which = match crate::workload_packs::Which::new(args.id, args.all, "get-pack") {
+            Ok(w) => w,
+            Err(e) => return Ok(Err(refused(e))),
+        };
+        match crate::workload_packs::get(&open.runtime, &source, &which).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("get-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_update_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::UpdateReport>(),
+        description = "Bring one fetched workload pack up to date with its source, as `satz update-pack` does; `all` \
+                       covers every pack with a recorded origin. Per pack, `action`: `current`; `updated` (unchanged \
+                       since it was fetched, overwritten with the source's file); `would-update` (`report_only`); \
+                       `edited` (changed here: left as it is, with the `diff` against the source's file and what to \
+                       do in `note`); `took-upstream` (`take_upstream`: an edited pack overwritten); `gone`; \
+                       `not-checked`. A pack without a recorded origin is the repository's own and is never written. \
+                       `attention` is true when a pack is edited or gone. Needs 'write'; with `report_only`, 'read'.",
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = true)
+    )]
+    async fn update_workload_pack(
+        &self,
+        Parameters(args): Parameters<UpdatePackArgs>,
+    ) -> Result<Result<Json<crate::workload_packs::UpdateReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("update-pack");
+        let group = if args.report_only { Group::Read } else { Group::Write };
+        if let Err(r) = self.permits(group, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, source) = match self.pack_source(args.from.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let which = match crate::workload_packs::Which::new(args.id, args.all, "update-pack") {
+            Ok(w) => w,
+            Err(e) => return Ok(Err(refused(e))),
+        };
+        match crate::workload_packs::update(&open.runtime, &source, &which, args.report_only, args.take_upstream).await {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("update-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_detach_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::Detached>(),
+        description = "Forget where a fetched workload pack came from, as `satz detach-pack` does: its row leaves \
+                       packs_dir/origin.toml, its file stays, and it is the repository's own pack from here on — no \
+                       update writes it. Needs the 'write' capability.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn detach_workload_pack(
+        &self,
+        Parameters(args): Parameters<DetachPackArgs>,
+    ) -> Result<Result<Json<crate::workload_packs::Detached>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("detach-pack");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, _) = match self.pack_source(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::workload_packs::detach(&open.runtime, &args.id) {
+            Ok(detached) => Ok(Ok(Json(detached))),
+            Err(e) => Ok(Err(refused(format!("detach-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_review_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::review_pack::Review>(),
+        description = "Judge one workload pack, as `satz review-pack` does: the bar of `satz_review_preset` without \
+                       the two checks that belong to the preset library, the changelog row and the adoption rule. \
+                       It parses, it is formatted, its header says what it is, it states its version, it carries no \
+                       value shaped like private data, it declares no membership, every type it emits has a \
+                       prerequisite row, and it compiles. Offline, reads only.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn review_workload_pack(
+        &self,
+        Parameters(args): Parameters<ReviewPackArgs>,
+    ) -> Result<Result<Json<crate::review_pack::Review>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("review-pack");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
+            return Ok(Err(r));
+        }
+        let pack = match self.file(&args.pack) {
+            Ok(p) => p,
+            Err(r) => return Ok(Err(r)),
+        };
+        let (open, _) = match self.target(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let against = match args.against.as_deref() {
+            Some(a) => match self.estate_arg(a, &open.config, &open.runtime) {
+                Ok(p) if p.is_file() => Some(p),
+                Ok(p) => return Ok(Err(refused(format!("no estate file at {}", p.display())))),
+                Err(r) => return Ok(Err(r)),
+            },
+            None => None,
+        };
+        match crate::review_pack::review(&pack, against.as_deref(), crate::review_pack::Bar::Workload, &open.tool, &open.runtime) {
+            Ok(review) => Ok(Ok(Json(review))),
+            Err(e) => Ok(Err(refused(format!("review-pack: {}", e)))),
         }
     }
 

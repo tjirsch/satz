@@ -1,0 +1,101 @@
+// One Google project for a workload, with the three groups that work in it granted
+// viewer, editor and owner on that project alone.
+//
+//   use "packs/workload-project.satz"
+//
+// A workload pack: an estate beside the organisation takes it with
+// `satz get-pack workload-project`, binds the params below and applies as its own
+// account — a team's deployer (`presets/workload-deployer.satz` in the organisation's
+// estate), which may create projects under the folder it is given.
+//
+// THE PROJECT. `workload_project_id` under `workload_project_parent`, linked to
+// `workload_billing_account`, with `workload_project_services` enabled and protected
+// against deletion.
+//
+// THE GROUPS. Three addresses that exist in the directory before the apply; the pack
+// creates none and declares no membership. An apply naming a group that does not exist
+// fails at that grant.
+//
+// The parent is a folder id, or the organisation's interface read by the estate:
+// `workload_project_parent = "${{interface.workload_folder}}"`.
+
+pack workload_project version "1.0"
+
+params {
+  // The project's id, globally unique.
+  workload_project_id      = "{customer_shortname}-workload-001"
+  // Its display name.
+  workload_project_name    = "workload"
+  // The folder it is created in: `folders/<number>`, or a reference.
+  workload_project_parent  = ""
+  // The billing account it is linked to.
+  workload_billing_account = ""
+  // The APIs enabled on it. The first is what the grants below are calls to.
+  workload_project_services = [
+    "cloudresourcemanager.googleapis.com",
+    "iam.googleapis.com",
+    "serviceusage.googleapis.com",
+  ]
+  // The three groups, as addresses.
+  workload_viewer_group = ""
+  workload_editor_group = ""
+  workload_owner_group  = ""
+}
+
+question workload_project_id {
+  prompt   = "The Google project id of the workload"
+  why      = "A project id is globally unique and permanent: a project is never renamed, and a deleted id is not free again."
+  reversal = recreate
+  blast    = high
+}
+
+question workload_project_parent {
+  prompt   = "The folder the workload's project is created in"
+  why      = "The folder decides the organisation policies the project inherits; moving the project later is a manual move."
+  reversal = edit
+  blast    = low
+}
+
+question workload_billing_account {
+  prompt   = "The billing account the workload's project is billed to"
+  why      = "Every resource of the workload is billed to it, and the account that applies needs the right to link a project to it."
+  reversal = edit
+  blast    = low
+}
+
+question workload_viewer_group {
+  prompt   = "The address of the group that reads the workload's project"
+  why      = "The grant names the group: one that does not exist in the directory fails the apply at that grant."
+  reversal = edit
+  blast    = low
+}
+
+question workload_editor_group {
+  prompt   = "The address of the group that changes the workload's resources"
+  why      = "The grant names the group: one that does not exist in the directory fails the apply at that grant."
+  reversal = edit
+  blast    = low
+}
+
+question workload_owner_group {
+  prompt   = "The address of the group that owns the workload's project"
+  why      = "Owner includes the project's IAM, so the members of this group decide who else works in it."
+  reversal = edit
+  blast    = high
+}
+
+google_project {
+  workload {
+    name            = workload_project_name
+    project_id      = workload_project_id
+    folder_id       = workload_project_parent
+    billing_account = workload_billing_account
+    deletion_policy = "PREVENT"
+    project_service = workload_project_services
+    google_project_iam_member {
+      "group:{workload_viewer_group}" = ["roles/viewer"]
+      "group:{workload_editor_group}" = ["roles/editor"]
+      "group:{workload_owner_group}"  = ["roles/owner"]
+    }
+  }
+}

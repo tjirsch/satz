@@ -70,6 +70,11 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::MapTypes { .. } => Reads("it reads the organisation and writes nothing to it"),
         // the file-writers: an estate, a preset, a report, this machine's config
         Commands::Init { .. }
+        | Commands::Packs { .. }
+        | Commands::GetPack { .. }
+        | Commands::UpdatePack { .. }
+        | Commands::DetachPack { .. }
+        | Commands::ReviewPack { .. }
         | Commands::Import { .. }
         | Commands::UpdatePrerequisites { .. }
         | Commands::Interview { .. }

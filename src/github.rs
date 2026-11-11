@@ -254,6 +254,53 @@ impl Progress {
     }
 }
 
+/// Appended to a quota message by the workload-pack commands, which can take their
+/// packs from a folder instead.
+pub(crate) const PACKS_HINT: &str = ", or take the packs from a local checkout with `--from <checkout>/packs`";
+
+/// One workload pack of the repository's `packs/` tree (from `main`): the text of
+/// `packs/<id>.satz`, or `None` when the tree holds no such file.
+///
+/// The file comes from raw.githubusercontent.com, so fetching one pack costs no API
+/// request.
+pub(crate) async fn fetch_pack(id: &str) -> Result<Option<String>, String> {
+    let http = client("satz-get-pack").map_err(|e| e.to_string())?;
+    let raw = format!("https://raw.githubusercontent.com/{REPO}/main/packs/{id}.satz");
+    let resp = http.get(&raw).send().await.map_err(|e| format!("fetching pack {id} from github.com/{REPO}: {e}"))?;
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(format!("fetching pack {id} from github.com/{REPO}: GitHub returned {}", resp.status()));
+    }
+    resp.text().await.map(Some).map_err(|e| format!("fetching pack {id} from github.com/{REPO}: {e}"))
+}
+
+/// The ids of every workload pack under the repository's `packs/` tree (from `main`):
+/// each `.satz` file's path under `packs/` without the extension, sorted. One API
+/// request.
+pub(crate) async fn list_packs() -> Result<Vec<String>, String> {
+    let http = client("satz-packs").map_err(|e| e.to_string())?;
+    let url = format!("{API_URL}/{REPO}/git/trees/main?recursive=1");
+    let resp = api_get(&http, &url).send().await.map_err(|e| format!("listing the packs of github.com/{REPO}: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(api_error("Failed to list upstream packs", resp.status(), resp.headers(), PACKS_HINT));
+    }
+    let tree: TreeResponse = resp.json().await.map_err(|e| format!("listing the packs of github.com/{REPO}: {e}"))?;
+    if tree.truncated {
+        // a cut-off listing would read as packs upstream deleted
+        return Err(format!("GitHub cut the file listing of github.com/{REPO} short, so the packs it holds cannot be listed{PACKS_HINT}"));
+    }
+    let mut ids: Vec<String> = tree
+        .tree
+        .into_iter()
+        .filter(|e| e.typ == "blob")
+        .filter_map(|e| e.path.strip_prefix("packs/").and_then(|p| p.strip_suffix(".satz")).map(str::to_string))
+        .collect();
+    ids.sort();
+    Ok(ids)
+}
+
 fn write_blob(dest: &Path, rel: &str, content: &[u8]) -> Result<(), BoxErr> {
     let dest_file = dest.join(rel);
     if let Some(p) = dest_file.parent() {
