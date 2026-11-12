@@ -308,14 +308,18 @@ central estate, written from the interface file `presets/project-workload.satz` 
 project's own IaC service account, keeps its state in the project's bucket, and `use`s the
 interface file so its resources read the central estate as `${{interface.<export>}}`.
 Nothing is derived from the credentials; the interface answered it all
-([Onboarding a project, and a project on satz](docs/workflows.md#onboarding-a-project-and-a-project-on-satz)).
+([Delegating a project, and a project on satz](docs/workflows.md#delegating-a-project-and-a-project-on-satz)).
 
 **Without the flags:** `satz interview satz/<name>.satz --create` writes an estate that
 asks for the same day-0 values one at a time and offers the derived ones as defaults;
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
-### A team's own account (`presets/folder-workload.satz`, `presets/project-workload.satz`)
+### Delegated access (`presets/folder-workload.satz`, `presets/project-workload.satz`)
+
+**Delegated access** gives a team access to a part of the organisation's resources — a
+folder, a project — with scoped permissions: an account of its own that holds roles there
+and nowhere else, and cannot widen them.
 
 A team that works beside the organisation — in its own repository, with its own state and
 pipeline — runs as an account of its own, never as the organisation's. Two packs of the
@@ -337,20 +341,21 @@ params {
 use "presets/folder-workload.satz" when use_folder_workload
 ```
 
-Each pack publishes what it delivered in the interface the team's estate reads, and the
+Each pack publishes what it delegated in the interface the team's estate reads, and the
 compile judges that estate against it ([What an estate must
 declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [projects beside
 the organisation](docs/tutorial-projects.md) says which pack is for whom and walks both;
-[handing a team its account](docs/tutorial-handover.md) is the procedure the organisation
+[delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organisation
 team and the workload team follow, by side; the next section is the project pack in short.
 
-### Onboard a project (`presets/project-workload.satz`)
+### Delegating a project (`presets/project-workload.satz`)
+
 A project is an entry of the list param `project_workload_projects` of
 `presets/project-workload.satz`, `{ name owner_group }`. Per entry the pack declares the
 project's Google project, its own service account, its state bucket, the grants, and the
 `interface "<name>"` that publishes them — `project_id` (an attach point for
 `google_project_iam_member`), `project_number`, `iac_account`, `state_bucket`, and what was
-delivered to the account. A second list, `project_workload_shared_projects`
+delegated to the account. A second list, `project_workload_shared_projects`
 (`{ name workload }`), is a project with no account of its own: the account of a workload of
 `presets/folder-workload.satz` works in it, so one account serves several projects
 ([the pack](presets/README.md#project-workloadsatz)).
@@ -567,36 +572,36 @@ halves are written before either is verified, so the estate is never left half-e
 A project declared outside the estate file (in a pack, which the next `merge-presets`
 would overwrite) is named with the APIs to add to it by hand, and nothing is written.
 
-**A workload's estate is judged against what was delivered to it.** An estate that runs as
+**A workload's estate is judged against what was delegated to it.** An estate that runs as
 an account the organisation's estate created with `presets/folder-workload.satz` reads the
-interface `workload-<name>`, which carries what that account holds: `delivered_folder_roles`
-on each of its folders, `delivered_billing_roles` on the billing account, and
-`delivered_apis` on its infrastructure project, the project its providers bill to. For
+interface `workload-<name>`, which carries what that account holds: `delegated_folder_roles`
+on each of its folders, `delegated_billing_roles` on the billing account, and
+`delegated_apis` on its infrastructure project, the project its providers bill to. For
 such an estate:
 
-- a need on a folder or a project is met by a delivered folder role, or by a role the
+- a need on a folder or a project is met by a delegated folder role, or by a role the
   estate grants its own account on a folder or a project; a need on a project is met as
-  well by a role delivered on that project (`delivered_project_roles`, from
+  well by a role delegated on that project (`delegated_project_roles`, from
   `presets/project-workload.satz`), and when `roles/resourcemanager.projectCreator` was
-  delivered on a folder, because a project's creator is its owner. The folder roles count
+  delegated on a folder, because a project's creator is its owner. The folder roles count
   for an estate that reads a folder's interface: an account without a folder creates no
   project;
-- a need on the billing account is met by a delivered billing role;
-- an API on the infrastructure project is enabled when it was delivered; one on a project
+- a need on the billing account is met by a delegated billing role;
+- an API on the infrastructure project is enabled when it was delegated; one on a project
   the estate declares is its own `project_service` entry, as above;
 - the reads are not asked for: `import`, `adopt` and `report-compliance` over an
   organisation are not a workload's.
 
-What is not delivered is reported as what to ask the organisation's estate for — a role in
+What is not delegated is reported as what to ask the organisation's estate for — a role in
 `folder_workload_roles`, a role in the workload's `billing_roles`, an API in the `apis` of
 the entry that created the project the calls are billed to — and nothing at the
 organization is ever proposed: the account could not apply such a grant. A role the
 account lacks on a project it was given is the one thing it closes itself, with a
 `google_project_iam_member` on the interface's `project_id` in its own estate; the finding
 says so on that line. `update-prerequisites` writes the APIs of the estate's own projects, writes nothing
-for what was not delivered, and exits non-zero while anything is; `transpile --apply`
-refuses while an API is not delivered. `whoami <estate>` tests the billing account live
-and names the rest as judged against the delivery. An estate that reads an interface
+for what was not delegated, and exits non-zero while anything is; `transpile --apply`
+refuses while an API is not delegated. `whoami <estate>` tests the billing account live
+and names the rest as judged against what was delegated. An estate that reads an interface
 without these exports is judged at the organization as before, and a note says so
 ([ADR 0087](docs/adr/0087-a-workload-estate-is-judged-against-what-was-delivered-to-its-account.md)).
 

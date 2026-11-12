@@ -8,7 +8,11 @@ the organisation's account. Two kinds of team do this: one writes Satz, one writ
 and nothing else. Both read the organisation through its **interface**, and the same
 template serves both. The files are [`examples/acme/`](../examples/README.md).
 
-## Two packs, two kinds of team
+## Delegated access: two packs, two kinds of team
+
+**Delegated access** gives a team access to a part of the organisation's resources — a
+folder, a project — with scoped permissions: an account of its own that holds roles there
+and nowhere else, and cannot widen them.
 
 A team beside the organisation needs three things from the organisation's estate: an
 account its pipelines run as, a place its state lives, and somewhere it may build. It
@@ -32,14 +36,14 @@ itself nothing there. A `project-workload` account holds its project's access co
 nothing else, so what it grants itself stays inside the project.
 
 Each pack also tells the team's estate what it was given. The interface carries the roles
-and APIs that were delivered, satz judges the team's estate against them at every compile,
+and APIs that were delegated, satz judges the team's estate against them at every compile,
 and a gap is reported as what to ask the organisation for — never as a grant at the
 organisation ([what an estate must
 declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 
 Steps 1 to 5 walk the first pack with the team `shop`; step 6 walks the second. The same
 ground as a procedure for the two teams, by side — what to ask, what to hand over, what to
-do next — is [handing a team its account](tutorial-handover.md).
+do next — is [delegated access: the procedure for both sides](tutorial-delegated-access.md).
 
 ## 1. What the organisation publishes, and what a lookup is
 
@@ -108,7 +112,7 @@ names `shop`, under any parent; a workload that needs more APIs or a further bil
 says so in its entry ([the pack](../presets/README.md#folder-workloadsatz)).
 
 Every transpile of the organisation writes the current `interfaces/`; the team takes
-`workload-shop/` — its identity, and what was delivered to it — and `shop/` — its folder —
+`workload-shop/` — its identity, and what was delegated to it — and `shop/` — its folder —
 from there. Everything the team does from here runs as `svc-deploy-shop`.
 
 ## 3. The template
@@ -152,7 +156,7 @@ use "vendor/shop/shop/satz/interface.satz"
 ```
 
 **The interface files**, from the two folders the team took, read as
-`${{interface.<export>}}`: the workload's identity with what was delivered to it, and the
+`${{interface.<export>}}`: the workload's identity with what was delegated to it, and the
 folder it works in. Each carries the organisation's core values too.
 
 ```
@@ -160,7 +164,7 @@ google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.delivered_folder}}"
+    folder_id       = "${{interface.delegated_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     project_service = ["cloudresourcemanager.googleapis.com"]
@@ -222,8 +226,8 @@ satz transpile shop_dev.satz
 
 | file | what |
 |---|---|
-| `interface.tf` | the organisation's values, in two locals: `interface_static` with the ones satz knows, which the providers read, and `interface`, which merges the looked-up ones in — `delivered_folder = data.google_active_folder.shop.name` — followed by the `data` blocks themselves, each with the permission it needs in a comment above it |
-| `main.tf` | the project: `project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"`, `folder_id = local.interface.delivered_folder`, `"cost_centre" = var.cost_centre`, the three grants. No value of the organisation stands in it |
+| `interface.tf` | the organisation's values, in two locals: `interface_static` with the ones satz knows, which the providers read, and `interface`, which merges the looked-up ones in — `delegated_folder = data.google_active_folder.shop.name` — followed by the `data` blocks themselves, each with the permission it needs in a comment above it |
+| `main.tf` | the project: `project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"`, `folder_id = local.interface.delegated_folder`, `"cost_centre" = var.cost_centre`, the three grants. No value of the organisation stands in it |
 | `providers.tf` | the `google` provider on the team's project, impersonating the team's account, its region from `local.interface_static.default_region`; the `gcs` backend on the team's bucket; one alias per project the estate declares |
 | `variables.tf` | `variable "application"`, `"stage"`, `"cost_centre"`, each described by the comment above its input. The template's params follow them, as every estate's do, and no resource reads those |
 | `terraform.tfvars` | `application = "shop"`, `stage = "dev"`, `cost_centre = "4711"` — the bound values, with the params after them |
@@ -240,12 +244,12 @@ The plan reads the workload's folder live (`roles/browser`), creates `acme-shop-
 it (`roles/resourcemanager.projectCreator` on that folder), links the billing account
 (`roles/billing.user`) and sets its grants (`roles/resourcemanager.projectIamAdmin`).
 
-The compile checks exactly that. It reads what was delivered to the account from the
+The compile checks exactly that. It reads what was delegated to the account from the
 interface `workload-shop` and judges the estate's resource types against it, so this estate
 compiles without a prerequisite warning. A template that needs more — a budget needs
 `billingbudgets.googleapis.com` on `acme-deploy-shop` and `roles/billing.costsManager` — is
 told what to ask the organisation's estate for, and `--apply` refuses until the API is
-delivered: the team's account can grant itself nothing above its own projects. A
+delegated: the team's account can grant itself nothing above its own projects. A
 second project is a second thin estate — `shop-test/satz/shop_test.satz` with
 `stage = "test"` — or, for a run, `satz transpile shop_dev.satz --input stage=test`.
 
@@ -298,7 +302,7 @@ no attach point allows, an authoritative grant or an organisation policy on the
 organisation's nodes, or a resource the organisation declares too. The organisation's
 CI runs it against the team's repository.
 
-## 6. The other pack: a project the organisation creates
+## 6. The other pack: delegating a project the organisation creates
 
 The team `payments` does not roll out projects. It gets one, with an account of its own.
 In `C0example.satz`:
@@ -322,7 +326,7 @@ the account `svc-iac-payments` and the state bucket `acme-payments-001-state`. T
 holds the project's access control and its services on that project and nowhere else; the
 members of `payments-owners@example.com` read the project and may become the account.
 `interfaces/payments/` publishes `project_id`, `project_number`, `iac_account`,
-`state_bucket`, and what was delivered: `delivered_project_roles` and `delivered_apis`.
+`state_bucket`, and what was delegated: `delegated_project_roles` and `delegated_apis`.
 
 The team writes its estate from that interface, in its own repository:
 
@@ -336,7 +340,7 @@ project's bucket and reads the organisation through the interface. Its resources
 project as `project = "${{interface.project_id}}"`.
 
 **What the account lacks on its project, it grants itself.** A bucket needs
-`roles/storage.admin`, which the pack did not deliver. The compile says so on the
+`roles/storage.admin`, which the pack did not delegate. The compile says so on the
 finding's line — `roles/storage.admin on the project — to grant in this estate` — and the
 team writes the grant in its own estate, which the interface allows on `project_id`:
 

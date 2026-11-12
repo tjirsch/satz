@@ -220,7 +220,7 @@ is obtained and what may be attached to it. That folder is what a project beside
 organisation reads, and the next tutorial starts from it:
 [projects beside the organisation](tutorial-projects.md).
 
-Nothing in this estate gives a team an account yet. Two packs of the menu do, both off
+Nothing in this estate delegates access to a team yet. Two packs of the menu do, both off
 until you ask: `use_folder_workload` for a team that rolls out its own projects in a folder
 of its own, `use_project_workload` for a team that works in a project this estate creates.
 The next tutorial says which is for whom and walks both.

@@ -40,7 +40,7 @@ SITE_DOCS: list[str] = [
     "tutorials",
     "tutorial-organisation",
     "tutorial-projects",
-    "tutorial-handover",
+    "tutorial-delegated-access",
     "language",
     "workflows",
     "interview",
@@ -150,7 +150,7 @@ NAV_ORDER = [
 TUTORIALS: list[tuple[str, str]] = [
     ("tutorial-organisation", "An organisation from scratch"),
     ("tutorial-projects", "Projects beside the organisation"),
-    ("tutorial-handover", "Handing a team its account: both sides"),
+    ("tutorial-delegated-access", "Delegated access: the procedure for both sides"),
 ]
 _tutorial_stems = {stem for stem, _ in TUTORIALS}
 if not _tutorial_stems <= set(SITE_DOCS):

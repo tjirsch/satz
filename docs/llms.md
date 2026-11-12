@@ -342,7 +342,7 @@ the block only where the param carries a value — `when not` for the opposite, 
 
 Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
 `satz interfaces` and `satz check-request` have no tool: ask a human for them. A project is
-onboarded by an entry of `project_workload_projects` (its own account) or `project_workload_shared_projects` (a workload's account) in `presets/project-workload.satz`, added by a reviewed
+delegated to a team by an entry of `project_workload_projects` (its own account) or `project_workload_shared_projects` (a workload's account) in `presets/project-workload.satz`, added by a reviewed
 pull request, and a request file is checked in the project's pipeline.
 
 ## Working through the MCP server
@@ -450,8 +450,8 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the finding's `fix`, then bind its `subject` — the param — `true` |
 | the IaC service account … lacks roles, kind `prerequisites` | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
 | … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate emits is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
-| the account … was not delivered roles …, kind `prerequisites` | a workload's estate (it reads an interface with `delivered_folder_roles`) needs a role its account was not given; nothing in this estate can grant it — ask for the role in `folder_workload_roles`, or in `billing_roles` of the workload's entry in `folder_workloads`, of `presets/folder-workload.satz` in the organisation's estate. There is no `fix` |
-| … API(s) … not enabled on …, the workload's infrastructure project …, kind `prerequisites` | a workload's estate needs an API on the project its calls are billed to, which the organisation's estate declares; ask for it in `apis` of the workload's entry in `folder_workloads`. There is no `fix`, and `apply` refuses until it is delivered |
+| the account … was not delegated roles …, kind `prerequisites` | a workload's estate (it reads an interface with `delegated_folder_roles`) needs a role its account was not given; nothing in this estate can grant it — ask for the role in `folder_workload_roles`, or in `billing_roles` of the workload's entry in `folder_workloads`, of `presets/folder-workload.satz` in the organisation's estate. There is no `fix` |
+| … API(s) … not enabled on …, the workload's infrastructure project …, kind `prerequisites` | a workload's estate needs an API on the project its calls are billed to, which the organisation's estate declares; ask for it in `apis` of the workload's entry in `folder_workloads`. There is no `fix`, and `apply` refuses until it is delegated |
 | `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-preset` that switches the needed one on |
 | `"${{interface.x}}"` names no export, kind `interface-use` | the interface file the estate `use`s has no export `x`; the message lists what it has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |

@@ -1,4 +1,8 @@
-# Handing a team its account: both sides
+# Delegated access: the procedure for both sides
+
+**Delegated access** gives a team access to a part of the organisation's resources — a
+folder, a project — with scoped permissions: an account of its own that holds roles there
+and nowhere else, and cannot widen them.
 
 Two teams meet here. The **organisation team** owns the organisation's estate and may
 change it. The **workload team** builds something beside it — in its own repository, with
@@ -13,7 +17,7 @@ example is Acme Corp. of [`docs/examples.md`](examples.md) and its team `shop`.
 
 ## The process
 
-![Two lanes, the organisation team and the workload team, and nine steps: the workload team asks; the organisation team decides, writes the entries, plans and applies, and hands over the interface folders; the workload team sets up its estate, compiles, joins the group and logs in, then plans and applies as its own account. A dashed arrow leads from the compile back to the decision: something is not delivered, ask for it](handover-first.svg)
+![Two lanes, the organisation team and the workload team, and nine steps: the workload team asks; the organisation team decides, writes the entries, plans and applies, and hands over the interface folders; the workload team sets up its estate, compiles, joins the group and logs in, then plans and applies as its own account. A dashed arrow leads from the compile back to the decision: something is not delegated, ask for it](delegated-access-first.svg)
 
 A dashed box is a step people do: a conversation, a decision, a hand-over. A solid box is
 a step done with satz. The numbers are the sections below.
@@ -28,7 +32,7 @@ Three things are true throughout:
 
 ## Which pack
 
-The organisation team picks one of two packs, by one question: who creates the Google
+Access is delegated by one of two packs. The organisation team picks by one question: who creates the Google
 projects?
 
 | the workload team | pack | what it gets |
@@ -167,7 +171,7 @@ Every transpile writes `interfaces/` beside the estate. Hand over these folders,
 A copy is enough; so is read access to the organisation's repository at a tag.
 
 **The folders explain themselves.** Each has a `README.md` that satz writes for the team
-that receives it. Under "What this hands over" it says which account the team's estate
+that receives it. Under "Delegated access: what you were given" it says which account the team's estate
 runs as, which group's members may act as it and what that group holds on the account,
 where the state lives, which billing account a new project is linked to, what the account
 holds on its folders, its project and the billing account, and which APIs are on. Under
@@ -221,7 +225,7 @@ params {
   deployment_mode    = "cloud"
 }
 
-// what the organisation handed over: the account with what was delivered, and the folder
+// what the organisation handed over: the account with what was delegated, and the folder
 use "vendor/workload-shop/workload-shop/satz/interface.satz"
 use "vendor/shop/shop/satz/interface.satz"
 
@@ -248,14 +252,14 @@ google_project {
   shop_dev {
     name            = "shop-dev"
     project_id      = "${{interface.customer_shortname}}-shop-dev"
-    folder_id       = "${{interface.delivered_folder}}"
+    folder_id       = "${{interface.delegated_folder}}"
     billing_account = "${{interface.billing_account}}"
     project_service = ["cloudresourcemanager.googleapis.com"]
   }
 }
 ```
 
-Everything the team creates stands under `${{interface.delivered_folder}}`. One estate
+Everything the team creates stands under `${{interface.delegated_folder}}`. One estate
 works in one folder: a second folder of the same workload is a second estate that runs as
 the same account.
 
@@ -275,7 +279,7 @@ project's folder, and the same `project = …`.
 satz transpile shop.satz --check
 ```
 
-The compile judges the estate against what was delivered. It is quiet when everything
+The compile judges the estate against what was delegated. It is quiet when everything
 the estate needs was handed over. Otherwise each line says who closes it:
 
 | the line says | who acts | what to do |
@@ -299,7 +303,7 @@ google_project_iam_member {
 ```
 
 `satz update-prerequisites shop.satz --report-only` prints the same as a list, with what
-was delivered. Nothing at the organisation is ever proposed, and `satz update-prerequisites`
+was delegated. Nothing at the organisation is ever proposed, and `satz update-prerequisites`
 writes no grant for a workload's estate. `--apply` is refused while an API is missing.
 
 A note `presets/pack-graph.json is not here` is about the organisation's pack library,
@@ -334,7 +338,7 @@ account. The team's account is the owner of every project it creates.
 
 ## Afterwards
 
-![Two lanes and two cases. A, the team needs more: the compile names the gap, the team asks for it, the organisation team edits the entry, plans and applies and hands the folders over again, the team takes them again and compiles. B, the organisation changed: an apply changes a published value and satz writes CHANGES.md into the interface folder, the organisation team tells the teams or lets the change notice do it, the team takes the folders again, reads CHANGES.md, compiles and plans](handover-later.svg)
+![Two lanes and two cases. A, the team needs more: the compile names the gap, the team asks for it, the organisation team edits the entry, plans and applies and hands the folders over again, the team takes them again and compiles. B, the organisation changed: an apply changes a published value and satz writes CHANGES.md into the interface folder, the organisation team tells the teams or lets the change notice do it, the team takes the folders again, reads CHANGES.md, compiles and plans](delegated-access-later.svg)
 
 **A. The team needs more.** The compile says what, and which list takes it (step 7). The
 organisation team edits the workload's entry — an API, a billing role, one more folder or

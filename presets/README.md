@@ -134,8 +134,8 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_budget` | off | `organization-budget` |
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
-| `use_folder_workload` | off | `folder-workload` — per team that rolls out its own projects: an account of its own, a state bucket, and the folders it works in, with its roles on those folders alone |
-| `use_project_workload` | off | `project-workload` — per Google project a team works in from an estate of its own: the project, with its own account and state bucket or worked by a `folder-workload` account, and the roles on that project alone |
+| `use_folder_workload` | off | `folder-workload` — delegated access to folders; per team that rolls out its own projects: an account of its own, a state bucket, and the folders it works in, with its roles on those folders alone |
+| `use_project_workload` | off | `project-workload` — delegated access to projects; per Google project a team works in from an estate of its own: the project, with its own account and state bucket or worked by a `folder-workload` account, and the roles on that project alone |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the four below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
@@ -1258,7 +1258,7 @@ Nothing in the pack bills while idle.
 
 ### project-workload.satz
 
-The Google projects of the estate that teams work in from estates of their own, and the
+Delegated access to projects: the Google projects of the estate that teams work in from estates of their own, and the
 account each is worked as. Two lists, for two kinds of team: a project with its own account,
 and a project worked by the account of a workload that works in several. Either way the
 account holds its roles on that project and nowhere else, and creates no project itself.
@@ -1341,14 +1341,14 @@ holds nothing outside the project.
 |---|---|---|
 | `project_id` | the Google project's id | `google_project_iam_member`: the estate grants on its own Google project in its own state |
 | `project_number` | its number, looked up | — |
-| `delivered_project_roles` | `project_workload_roles` | — |
-| `iac_account`, `state_bucket`, `delivered_apis`, `account_group`, `account_group_roles` | a project with its own account alone: the account's email, the state bucket, the project's `apis`, the group whose members may act as the account and what it holds on it | — |
+| `delegated_project_roles` | `project_workload_roles` | — |
+| `iac_account`, `state_bucket`, `delegated_apis`, `account_group`, `account_group_roles` | a project with its own account alone: the account's email, the state bucket, the project's `apis`, the group whose members may act as the account and what it holds on it | — |
 
 `satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
 writes the estate of a project with its own account from these and the core export
 `default_region`. The estate of a project a workload's account works in uses two files: the
 project's interface, and `workload-<workload>` of `folder-workload.satz` for the account,
-the state bucket and the APIs of the project its calls are billed to. The `delivered_*`
+the state bucket and the APIs of the project its calls are billed to. The `delegated_*`
 exports are what satz judges the estate against ([What an estate must
 declare](../README.md#what-an-estate-must-declare-update-prerequisites)). The organisation's
 estate adds to a project's interface with a block of the same name in its own file —
@@ -1368,7 +1368,7 @@ Nothing in the pack bills while idle.
 
 ### folder-workload.satz
 
-One identity per workload, and the folders it works in. A workload is a team's or a
+Delegated access to folders: one identity per workload, and the folders it works in. A workload is a team's or a
 product's set of deployments, rolled out by an estate of its own beside the organisation's.
 The pack gives it a Google project holding the service account its pipelines run as and the
 bucket its states live in, creates the folders it may work in, and grants the account its
@@ -1450,20 +1450,20 @@ transpile and taken whole to the estate's `vendor/`:
 |---|---|---|
 | `workload-shop` | `deploy_project_id`, `iac_account`, `state_bucket` | the workload's infrastructure project, the account its estates run as, the bucket their states live in |
 | | `account_group`, `account_group_roles`, `billing_account` | the group whose members may act as the account and what it holds on it; the billing account a new project is linked to |
-| | `delivered_folder_roles`, `delivered_billing_roles`, `delivered_apis` | what was delivered to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
-| `shop-frontend` | `delivered_folder` | the folder, looked up: the parent of what the estate creates |
+| | `delegated_folder_roles`, `delegated_billing_roles`, `delegated_apis` | what was delegated to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
+| `shop-frontend` | `delegated_folder` | the folder, looked up: the parent of what the estate creates |
 
 The README satz writes into each of these folders opens with what it hands over — the
 account, who may act as it, what it holds — and the receiving team's next steps, so the
 folders are the hand-over ([the procedure for both
-teams](../docs/tutorial-handover.md)).
+teams](../docs/tutorial-delegated-access.md)).
 
 One estate reads one folder's interface. A workload with two folders is rolled out by two
 estates that run as the same account. A workload needs no folder: an entry of
 `folder_workloads` alone is an account that works in the projects
 [`project-workload.satz`](#project-workloadsatz) gives it.
 
-The `delivered_*` exports are what satz judges the workload's estate against: a resource
+The `delegated_*` exports are what satz judges the workload's estate against: a resource
 type that needs a role or an API not in them is reported in that estate as what to ask for
 here, and nothing is proposed at the organization ([What an estate must
 declare](../README.md#what-an-estate-must-declare-update-prerequisites)).

@@ -2493,11 +2493,11 @@ impl SatzMcp {
         };
         // A workload's estate writes the APIs of its own projects alone. With nothing of
         // that kind to write, a call that asked for the write is refused while something
-        // was not delivered to its account: "nothing written" would read as "nothing
+        // was not delegated to its account: "nothing written" would read as "nothing
         // missing", and the caller has to be told whom to ask.
         if !args.report_only && report.writable_gap() == 0 && !report.request.is_empty() {
             return Ok(Err(refused(format!(
-                "update-prerequisites: {} prerequisite(s) are not delivered to {} — the organisation's estate adds what it lacks (`presets/folder-workload.satz` or `presets/project-workload.satz`), a role on a project it was given the estate grants itself, and nothing is written for them:\n  {}",
+                "update-prerequisites: {} prerequisite(s) are not delegated to {} — the organisation's estate adds what it lacks (`presets/folder-workload.satz` or `presets/project-workload.satz`), a role on a project it was given the estate grants itself, and nothing is written for them:\n  {}",
                 report.request.len(),
                 report.service_account,
                 report.request.join("\n  ")

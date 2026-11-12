@@ -7,7 +7,7 @@
     },
     {
       "path": "presets/estate-map.satz",
-      "version": "4.0",
+      "version": "4.1",
       "role": "map",
       "order": 0,
       "phase": "once the estate runs as the service account — the map, which declares the questions\nevery line below is gated on. This is the one to uncomment first.",
@@ -71,7 +71,7 @@
     },
     {
       "path": "presets/project-workload.satz",
-      "version": "1.1",
+      "version": "2.0",
       "role": "pack",
       "gate": "use_project_workload",
       "gate_declared_in": "presets/estate-map.satz",
@@ -81,7 +81,7 @@
     },
     {
       "path": "presets/folder-workload.satz",
-      "version": "1.2",
+      "version": "2.0",
       "role": "pack",
       "gate": "use_folder_workload",
       "gate_declared_in": "presets/estate-map.satz",
@@ -96,7 +96,7 @@
       "gate": "use_shared_network",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 8,
-      "phase": "once the estate runs as the service account and the projects are onboarded — the network they request subnets and rules in",
+      "phase": "once the estate runs as the service account and access to the projects is delegated — the network they request subnets and rules in",
       "at": "presets/estate-map.satz:327"
     },
     {

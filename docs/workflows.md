@@ -1045,7 +1045,7 @@ it comes from, how it is obtained and what it takes. The root module's `tofu out
 names a project's values `<project>__<export>`, with `-` written `_`
 (`payments__folder`).
 
-### Onboarding a project, and a project on satz
+### Delegating a project, and a project on satz
 
 A project is one entry of `project_workload_projects` in `presets/project-workload.satz`:
 
@@ -1080,7 +1080,7 @@ each project_workload_projects by name {
     export "project_number" = "${{google_project.{each.name}.number}}" description "Its number, looked up"
     export "iac_account"    = "${{google_service_account.{each.name}_iac.email}}" description "The IaC service account the project's estate runs as"
     export "state_bucket"   = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
-    // … and `delivered_project_roles`, `delivered_apis`: what the account was given
+    // … and `delegated_project_roles`, `delegated_apis`: what the account was given
   }
 }
 ```
@@ -1131,7 +1131,7 @@ resources read the central estate as `${{interface.<export>}}` — `project =
 compile. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
 it, after a change of the central estate, says what to do about it.
 
-### A workload's identity and its folders
+### Delegated access: a folder for a team
 
 A workload that rolls out Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an account of its own, never as the
@@ -1150,7 +1150,7 @@ are fields of its entry.
 
 The workload's pipeline impersonates the account and keeps its state in the workload's
 bucket. It reads the organisation through the two interface folders it took — its identity
-with what was delivered to it, and its folder — and never the organisation's state: a
+with what was delegated to it, and its folder — and never the organisation's state: a
 looked-up value asks the Google API for the live resource with the workload's own
 credentials ([the pack](../presets/README.md#folder-workloadsatz)).
 

@@ -1,6 +1,7 @@
-// The projects of the estate that are worked from an estate beside it, and the account
-// each is worked as. A project is a Google project this estate creates; the team's own
-// estate, in its own repository, fills it. Two lists, for two kinds of team.
+// Delegated access to projects: the Google projects teams work in from estates of their own,
+// and the account each is worked as. The account holds its roles on that project alone.
+// A project is a Google project this estate creates; the team's own estate, in its own
+// repository, fills it. Two lists, for two kinds of team.
 //
 //   use "presets/project-workload.satz" when use_project_workload
 //
@@ -38,9 +39,9 @@
 // `satz check-request` and vendored by pull request.
 //
 // WHAT A PROJECT'S ESTATE READS. `interface "<name>"` publishes `project_id` (an attach
-// point for `google_project_iam_member`), `project_number`, and `delivered_project_roles`,
+// point for `google_project_iam_member`), `project_number`, and `delegated_project_roles`,
 // which `satz` judges the estate's needs against. A project with its own account
-// publishes `iac_account`, `state_bucket` and `delivered_apis` there too, and `satz init
+// publishes `iac_account`, `state_bucket` and `delegated_apis` there too, and `satz init
 // --project <name> --interface interfaces/<name>/<name>/satz/interface.satz` writes its
 // estate from them. A project worked by a workload's account reads those from the
 // interface `workload-<workload>` of `presets/folder-workload.satz`, and uses both files.
@@ -51,7 +52,7 @@
 //
 // NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
 
-pack project_workload version "1.1"
+pack project_workload version "2.0"
 
 params {
   // One entry per project with its own account, `{ name owner_group apis }`: the name, the
@@ -193,8 +194,8 @@ each project_workload_projects by name {
     export "state_bucket"            = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
     export "account_group"           = "{each.owner_group}" description "The group whose members may act as the account"
     export "account_group_roles"     = ["roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser"] description "What that group holds on the account"
-    export "delivered_project_roles" = project_workload_roles description "The roles the account holds on the project"
-    export "delivered_apis"          = each.apis description "The APIs enabled on the project, which the estate's calls are billed to"
+    export "delegated_project_roles" = project_workload_roles description "The roles the account holds on the project"
+    export "delegated_apis"          = each.apis description "The APIs enabled on the project, which the estate's calls are billed to"
   }
 }
 
@@ -202,6 +203,6 @@ each project_workload_shared_projects by name {
   interface "{each.name}" {
     export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
     export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
-    export "delivered_project_roles" = project_workload_roles description "The roles the workload's account holds on the project"
+    export "delegated_project_roles" = project_workload_roles description "The roles the workload's account holds on the project"
   }
 }
