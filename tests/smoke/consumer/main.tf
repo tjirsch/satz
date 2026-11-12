@@ -2,7 +2,7 @@
 # one attachment at an attach point, and one onto an export that is none.
 
 module "satz" {
-  source = "../estate/interfaces/archive/archive/hcl"
+  source = "../estate/interfaces/outgoing/archive/archive/hcl"
 }
 
 # allowed: `archive_project_id` is an attach point for google_project_iam_member

@@ -178,7 +178,7 @@ need it for its params: `init` binds every param from its flags, and a bound par
 answered question.
 
 **The core exports.** An estate that uses the pack publishes these to the projects beside
-it — outputs of `hcl/outputs.tf` and values of every interface under `interfaces/`
+it — outputs of `hcl/outputs.tf` and values of every interface under `interfaces/outgoing/`
 ([workflows](../docs/workflows.md#projects-beside-the-estate)), all known at compile
 time:
 
@@ -1350,7 +1350,7 @@ With the first, the project's estate grants its own account what its resource ty
 beyond that, on the project (`google_project_iam_member`, which the interface allows). It
 holds nothing outside the project.
 
-**What the project's estate reads** — its interface `<name>`, in `interfaces/<name>/`:
+**What the project's estate reads** — its interface `<name>`, in `interfaces/outgoing/<name>/`:
 
 | export | value | attach point for |
 |---|---|---|
@@ -1360,7 +1360,7 @@ holds nothing outside the project.
 | `delegated_budgets` | whether the entry said `budgets = true` | — |
 | `iac_account`, `state_bucket`, `delegated_apis`, `account_group`, `account_group_roles` | a project with its own account alone: the account's email, the state bucket, the project's `apis`, the group whose members may act as the account and what it holds on it | — |
 
-`satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
+`satz init --project payments --interface interfaces/outgoing/payments/payments/satz/interface.satz`
 writes the estate of a project with its own account from these and the core export
 `default_region`. The estate of a project a workload's account works in uses two files: the
 project's interface, and `workload-<workload>` of `folder-workload.satz` for the account,
@@ -1459,8 +1459,8 @@ A folder that already exists is declared as an entry and taken over once with `s
 which finds it by its display name under its parent. The pack grants on no folder it does
 not manage.
 
-**What the workload's estate reads.** Two interfaces, written to `interfaces/` by every
-transpile and taken whole to the estate's `vendor/`:
+**What the workload's estate reads.** Two interfaces, written to `interfaces/outgoing/` by every
+transpile and taken whole to the estate's `interfaces/incoming/`:
 
 | interface | export | what |
 |---|---|---|
@@ -1583,13 +1583,13 @@ project is an estate that depends on parts of the estate's interface, with its o
 repository or folder, config, state and pipeline.
 
 **A pack's interface is common.** An interface a pack declares — `interface "network" {
-export … }` — is in the library every project's folder carries (`interfaces/common/` and
-`interfaces/<project>/`), without the word `common`. One an `each` writes is the
+export … }` — is in the library every project's folder carries (`interfaces/outgoing/common/` and
+`interfaces/outgoing/<project>/`), without the word `common`. One an `each` writes is the
 exception: `each project_workload_projects by name { interface "{each.name}" { … } }` writes one interface
 per entry, and each is that project's own (`project-workload.satz`). A project's interface takes it with
 `use interface "network"`: the author keeps the set stable, and every project receives
 it. A pack's interface uses only common interfaces. What satz generates from it —
-`interfaces/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
+`interfaces/outgoing/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
 estate: it holds one estate's values and lookup keys, and nothing generated goes into the
 preset library (`satz doc-presets` and `satz preset-graph` refuse an interface file there).
 
@@ -1640,7 +1640,7 @@ rows to find a project's attachments ([language §6.17](../docs/language.md#617-
 
 ### interface-lookups.yaml
 
-Not a pack: how the interfaces under `interfaces/` read back what an estate emits,
+Not a pack: how the interfaces under `interfaces/outgoing/` read back what an estate emits,
 per resource type — the data source, the keys it is looked up by, the read permission the
 lookup needs, the attributes it yields, and the attributes that derive from what satz
 writes (a service account's `email`, a bucket's `url`). The table is compiled into satz;

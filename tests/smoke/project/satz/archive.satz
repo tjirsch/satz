@@ -1,6 +1,6 @@
 // A project beside the showcase estate: its own repository, config, state and
-// pipeline. It takes the folder interfaces/archive/ of the showcase whole — here
-// vendor/archive/ — and reads the central estate's values as
+// pipeline. It takes the folder interfaces/outgoing/archive/ of the showcase whole — here
+// interfaces/incoming/archive/ — and reads the central estate's values as
 // `${{interface.<export>}}`. A static value becomes its literal; a looked-up one
 // becomes the same `data` source the HCL module reads, written once into hcl/.
 
@@ -28,7 +28,7 @@ providers {
   }
 }
 
-use "vendor/archive/archive/satz/interface.satz"
+use "interfaces/incoming/archive/archive/satz/interface.satz"
 
 // A Google project of the project's own, under the central estate's folder.
 google_project {

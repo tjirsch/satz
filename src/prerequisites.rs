@@ -1747,7 +1747,7 @@ mod tests {
     #[test]
     fn the_delegation_is_read_from_the_interface_that_carries_it() {
         let file = |name: &str, outputs: Vec<(&str, serde_yaml::Value)>| satz_core::pipeline::UsedInterfaceFile {
-            file: format!("vendor/{0}/{0}/satz/interface.satz", name),
+            file: format!("interfaces/incoming/{0}/{0}/satz/interface.satz", name),
             interface: satz_core::satz::InterfaceFile {
                 name: name.to_string(),
                 estate: "c0example".to_string(),
@@ -1806,7 +1806,7 @@ mod tests {
     #[test]
     fn folder_roles_count_only_for_an_estate_that_reads_a_folder() {
         let file = |name: &str, outputs: Vec<(&str, serde_yaml::Value)>| satz_core::pipeline::UsedInterfaceFile {
-            file: format!("vendor/{0}/{0}/satz/interface.satz", name),
+            file: format!("interfaces/incoming/{0}/{0}/satz/interface.satz", name),
             interface: satz_core::satz::InterfaceFile {
                 name: name.to_string(),
                 estate: "c0example".to_string(),
@@ -1840,7 +1840,7 @@ mod tests {
     #[test]
     fn an_interface_written_before_the_rename_is_found_by_its_old_export() {
         let file = |name: &str, export: &str| satz_core::pipeline::UsedInterfaceFile {
-            file: format!("vendor/{0}/{0}/satz/interface.satz", name),
+            file: format!("interfaces/incoming/{0}/{0}/satz/interface.satz", name),
             interface: satz_core::satz::InterfaceFile {
                 name: name.to_string(),
                 estate: "c0example".to_string(),
@@ -1862,7 +1862,7 @@ mod tests {
         let new = file("shop", DELEGATED_FOLDER);
         assert_eq!(
             written_before_delegated(&[new.clone(), old.clone()]),
-            [("vendor/workload-shop/workload-shop/satz/interface.satz".to_string(), 7, "delivered_folder_roles".to_string())]
+            [("interfaces/incoming/workload-shop/workload-shop/satz/interface.satz".to_string(), 7, "delivered_folder_roles".to_string())]
         );
         assert!(written_before_delegated(&[new]).is_empty());
         // read as it is, the old file would say nothing of a delegation

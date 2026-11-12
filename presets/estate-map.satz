@@ -269,7 +269,7 @@ question use_exemption_tag {
 
 question oneof interface_notice {
   prompt   = "How do the projects that read this estate's interface hear that an exported value changed?"
-  why      = "The projects beside the estate read its exports through interfaces/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. The choice has one option per delivery form, and none is an answer: Pub/Sub is the one satz has. Turning a form off later removes what it created, and every project that listens to it stops hearing."
+  why      = "The projects beside the estate read its exports through interfaces/outgoing/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. The choice has one option per delivery form, and none is an answer: Pub/Sub is the one satz has. Turning a form off later removes what it created, and every project that listens to it stops hearing."
   reversal = edit
   blast    = low
   option interface_notice_pubsub { label = "Pub/Sub — a message on a topic in the infrastructure project" why = "A bucket holds the exported values as one JSON object, and a storage notification publishes one message to a topic for every apply that changes one. A project subscribes in its own state: a push to its CI's webhook or a pull from a runner." }

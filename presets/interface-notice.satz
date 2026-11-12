@@ -8,7 +8,7 @@
 // and this pack is it. A second form — a webhook, a push of the interface to a
 // customer repository — is a second option and a pack of its own beside this one.
 //
-// The estate's exports (`export` statements, interfaces/) are what the projects beside
+// The estate's exports (`export` statements, interfaces/outgoing/) are what the projects beside
 // it read, in their own state and their own pipelines. This pack puts a notice behind
 // them, in four pieces in the infrastructure project:
 //

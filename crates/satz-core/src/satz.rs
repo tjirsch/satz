@@ -388,7 +388,7 @@ pub struct NoticeDecl {
 /// the projects beside it — estates with their own repository, config, state and pipeline.
 ///
 /// An export at the top level of a file is a CORE export: a value of every interface
-/// under `interfaces/`. One inside `interface "<name>" { … }` belongs to that
+/// under `interfaces/outgoing/`. One inside `interface "<name>" { … }` belongs to that
 /// interface alone. Every export is also an output of the root module's
 /// `outputs.tf`. The value is a param, a literal, or a string that carries
 /// `${{type.label.attr}}` references to what the estate emits; the compile decides per
@@ -466,11 +466,11 @@ pub fn valid_export_name(name: &str) -> bool {
 /// The interface that holds the top-level exports, and the folder its module is written to.
 pub const CORE_INTERFACE: &str = "core";
 
-/// The folder under `interfaces/` that holds the common interfaces alone — the library
+/// The folder under `interfaces/outgoing/` that holds the common interfaces alone — the library
 /// every project's folder also carries — so no interface takes its name.
 pub const COMMON_LIBRARY: &str = "common";
 
-/// An interface name is a folder name: `interfaces/<project>/<name>/`.
+/// An interface name is a folder name: `interfaces/outgoing/<project>/<name>/`.
 pub fn valid_interface_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
@@ -478,7 +478,7 @@ pub fn valid_interface_name(name: &str) -> bool {
 }
 
 /// `interface "<name>" [common] { export … }` — the exports one project reads, written to
-/// its own folder `interfaces/<name>/` beside the core exports every interface carries. The
+/// its own folder `interfaces/outgoing/<name>/` beside the core exports every interface carries. The
 /// same name in two files is one interface: their exports merge. `common` puts it into the
 /// library every project's folder carries; an interface a pack declares is common without
 /// the word, unless an `each` writes it — one per entry, each one project's.
@@ -523,7 +523,7 @@ pub struct InterfaceUse {
     pub line: usize,
 }
 
-/// A generated interface file, `interfaces/<project>/<name>/satz/interface.satz`: the
+/// A generated interface file, `interfaces/outgoing/<project>/<name>/satz/interface.satz`: the
 /// header `interface "<name>"` alone on its line, then data only — what the central estate
 /// publishes to a project written in Satz. satz writes it on every transpile of the central
 /// estate; a project `use`s it and names a value `${{interface.<export>}}`.
@@ -2144,7 +2144,7 @@ impl P {
             return err(
                 line,
                 format!(
-                    "interface \"{}\": the name is the folder interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter",
+                    "interface \"{}\": the name is the folder interfaces/outgoing/<name>/ — lowercase letters, digits and `-`, starting with a letter",
                     name
                 ),
             );
@@ -2158,7 +2158,7 @@ impl P {
         if name == COMMON_LIBRARY {
             return err(
                 line,
-                format!("interface \"{}\": the name is reserved — interfaces/{}/ holds the common interfaces alone", name, COMMON_LIBRARY),
+                format!("interface \"{}\": the name is reserved — interfaces/outgoing/{}/ holds the common interfaces alone", name, COMMON_LIBRARY),
             );
         }
         let common = matches!(self.peek(), Some(Tok::Ident(c)) if c == "common");
@@ -3960,7 +3960,7 @@ action "scc-services" {
         assert_eq!(f.interfaces.iter().map(|i| i.common).collect::<Vec<_>>(), [true, false]);
         assert!(canonical(&f).contains("common_interface(dns)"));
         let e = parse("estate e\ninterface \"common\" {\n}\n").unwrap_err();
-        assert!(e.msg.contains("interfaces/common/ holds the common interfaces alone"), "{}", e.msg);
+        assert!(e.msg.contains("interfaces/outgoing/common/ holds the common interfaces alone"), "{}", e.msg);
         assert_eq!(quote("a{b}\"c\\"), "\"a{{b}}\\\"c\\\\\"");
         assert_eq!(parse(&format!("interface \"q\"\ncentral {{\n  estate = {}\n}}\n", quote("x{y}\"\\z"))).unwrap().interface_file.unwrap().estate, "x{y}\"\\z");
     }

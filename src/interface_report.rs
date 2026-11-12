@@ -2,7 +2,7 @@
 //! interface it stands in, whether a project reads it as a literal, a lookup or a map, what
 //! it names and what may be attached to it, and every interface with what it uses. It is
 //! read off the same compile `transpile` runs, so it says what the next transpile writes to
-//! `interfaces/`. satz-studio reads the json form.
+//! `interfaces/outgoing/`. satz-studio reads the json form.
 
 use serde::Serialize;
 

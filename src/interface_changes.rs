@@ -1,6 +1,6 @@
 //! `CHANGES.md` beside an interface's README: what the last transpile changed in it, as
 //! the todo a project follows. It is the previous `satz/interface.satz` of the interface,
-//! read from disk before satz rewrites `interfaces/`, diffed against the new one — so no
+//! read from disk before satz rewrites `interfaces/outgoing/`, diffed against the new one — so no
 //! contract version and no pack provenance is needed: a rename is a removed output and an
 //! added one with the same targets and shape, and everything else is what the two files
 //! say. One transpile is one step; the estate's history of the file is the guide across
@@ -14,14 +14,14 @@ use satz_core::satz::{InterfaceFile, OfferedLookup, OfferedOutput};
 /// Beside an interface's `README.md`, when the last transpile changed it.
 pub(crate) const FILE: &str = "CHANGES.md";
 
-/// The interface files under `interfaces_dir` as the last transpile left them, by
+/// The interface files under `interfaces_dir`'s outgoing half as the last transpile left them, by
 /// interface name — every folder carries the same copy of an interface, so the first
 /// found is the one. An absent directory is no previous state. A file that does not
 /// parse is refused: satz wrote it and rewrites the directory whole, so a hand edit or a
 /// file an older satz wrote is removed, not read around.
-pub(crate) fn previous(interfaces_dir: &Path) -> Result<BTreeMap<String, InterfaceFile>, String> {
+pub(crate) fn previous(outgoing: &Path) -> Result<BTreeMap<String, InterfaceFile>, String> {
     let mut out = BTreeMap::new();
-    if !interfaces_dir.is_dir() {
+    if !outgoing.is_dir() {
         return Ok(out);
     }
     let dirs = |d: &Path| -> Result<Vec<std::path::PathBuf>, String> {
@@ -33,7 +33,7 @@ pub(crate) fn previous(interfaces_dir: &Path) -> Result<BTreeMap<String, Interfa
         v.sort();
         Ok(v)
     };
-    for folder in dirs(interfaces_dir)? {
+    for folder in dirs(outgoing)? {
         for m in dirs(&folder)? {
             let name = m.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
             let p = m.join(crate::interface::SATZ_DIR).join(crate::interface::SATZ_FILE);
@@ -48,11 +48,11 @@ pub(crate) fn previous(interfaces_dir: &Path) -> Result<BTreeMap<String, Interfa
                         p.display(),
                         e.line,
                         e.msg,
-                        interfaces_dir.display()
+                        outgoing.display()
                     )
                 })?
                 .interface_file
-                .ok_or_else(|| format!("{}: no interface file — satz wrote this path and rewrites `{}` whole; remove the directory", p.display(), interfaces_dir.display()))?;
+                .ok_or_else(|| format!("{}: no interface file — satz wrote this path and rewrites `{}` whole; remove the directory", p.display(), outgoing.display()))?;
             out.insert(name, file);
         }
     }

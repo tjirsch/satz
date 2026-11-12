@@ -48,7 +48,7 @@ AN ENTRY THAT ASKS FOR MORE. `apis` and `billing_roles` are lists, and an entry 
 states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
 its own.
 
-WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `vendor/` folder:
+WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `interfaces/incoming/` folder:
 `workload-<name>` — `deploy_project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
 delegated to the account, `delegated_folder_roles`, `delegated_billing_roles`,
 `delegated_apis`, which `satz` judges the estate's needs against — and `<folder name>`,
@@ -130,7 +130,7 @@ An empty answer, `""`, is an answer: the organisation itself.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

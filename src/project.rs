@@ -13,7 +13,7 @@ const STATE_BUCKET: &str = "state_bucket";
 const REGION: &str = "default_region";
 
 /// A project's name is an interface name and a folder name: `[a-z][a-z0-9-]*`, and not
-/// the two folders `interfaces/` reserves.
+/// the two folders `interfaces/outgoing/` reserves.
 pub(crate) fn valid_name(name: &str) -> Result<(), String> {
     let ok = name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
@@ -21,7 +21,7 @@ pub(crate) fn valid_name(name: &str) -> Result<(), String> {
         return Err(format!("`{}`: a project's name is an interface name — lowercase letters, digits and `-`, starting with a letter", name));
     }
     if name == satz_core::satz::CORE_INTERFACE || name == satz_core::satz::COMMON_LIBRARY {
-        return Err(format!("`{}` is reserved: interfaces/{}/ is satz's", name, name));
+        return Err(format!("`{}` is reserved: interfaces/outgoing/{}/ is satz's", name, name));
     }
     Ok(())
 }
@@ -237,7 +237,7 @@ mod tests {
         let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
         let text = satz_core::fmt::format(&i.satz_file("payments", &facts, "0.0.0", "e.satz")).unwrap();
         let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
-        let estate = estate("payments", &file, "vendor/payments/payments/satz/interface.satz").unwrap();
+        let estate = estate("payments", &file, "interfaces/incoming/payments/payments/satz/interface.satz").unwrap();
         assert_eq!(satz_core::fmt::format(&estate).unwrap(), estate, "the project estate is not in the canonical layout");
         assert!(estate.contains("estate payments\n") && estate.contains("svc_iac_account    = \"svc-iac-payments\"") && estate.contains("infra_bucket_name  = \"acme-payments-001-state\""), "{}", estate);
         // compiled through the tail: cloud mode impersonates the project's account

@@ -1,5 +1,5 @@
 # A project beside the showcase estate, written in Satz, for scripts/smoke.sh: it reads
-# the showcase's interface from vendor/, where the smoke copies interfaces/archive/ whole.
+# the showcase's interface from interfaces/incoming/, where the smoke copies interfaces/outgoing/archive/ whole.
 # Paths resolve against this file's directory.
 yaml_dir = "satz"
 hcl_dir = "hcl"

@@ -206,13 +206,13 @@ history into `evidence/`, beside the estate and git-ignored.
 
 ## 6. What the organisation publishes
 
-Every `transpile` writes `interfaces/` beside `hcl/`:
+Every `transpile` writes `interfaces/outgoing/` beside `hcl/`:
 
 ```bash
 satz interfaces C0example.satz --format text --out -
 ```
 
-`interfaces/common/core/` holds the core exports — `organization_id`,
+`interfaces/outgoing/common/core/` holds the core exports — `organization_id`,
 `customer_domain`, `customer_shortname`, `default_region`, `infra_project_id`,
 `iac_service_account` from `estate-core`, `infra_folder` and `workload_folder` from the
 estate — as an HCL module and as a Satz file, with a README that names each value, how it
@@ -233,7 +233,7 @@ The next tutorial says which is for whom and walks both.
 | the state | `gs://acme-infra-001-state`, read and written as the IaC service account |
 | the identity | `svc-iac-001@acme-infra-001.iam.gserviceaccount.com`, impersonated by the members of `svc-iac-users@example.com` |
 | the organisation | the infrastructure folder with its project and bucket, the `Workloads` folder, the five S1 groups and their roles, the CIS baseline's policies |
-| what it publishes | `interfaces/common/`, taken whole by every project beside it |
+| what it publishes | `interfaces/outgoing/common/`, taken whole by every project beside it |
 | the next change | edit the file, `satz transpile C0example.satz --plan`, read, `--apply` |
 
 A pack the library gains later is one `satz merge-presets C0example.satz` away, written

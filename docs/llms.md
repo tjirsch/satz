@@ -323,7 +323,7 @@ An estate publishes values with `export "<name>" = <value> [attach ["<type>", �
 [description "…"]` — outside every block a core export, inside `interface "<project>"
 [common] { … }` one project's; `use interface "<other>"` composes; `export … = all <type>
 [under <type>.<label>]` publishes a map keyed by label; `private = true` in a body or
-`private <type>.<label>` keeps a resource out. `satz transpile` writes `interfaces/` beside
+`private <type>.<label>` keeps a resource out. `satz transpile` writes `interfaces/outgoing/` beside
 `hcl/`: `common/` and one folder per project, each interface as an HCL module and as
 `satz/interface.satz`, which a project estate `use`s and reads as `"${{interface.<name>}}"`
 — in a resource body only; inside `hcl { }` it is refused (kind `interface-use`).
@@ -461,7 +461,7 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 
 ## Hard rules
 
-1. Never edit `hcl/` or `interfaces/` — both are generated.
+1. Never edit `hcl/` or `interfaces/outgoing/` — both are generated.
 2. Never invent an id, a project number, a directory customer id or a domain. Ask, or
    resolve it with `adopt`.
 3. Prefer a param to a fork; prefer a fork to editing a pristine pack.

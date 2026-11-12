@@ -2223,7 +2223,7 @@ messages, "project" alone always means such an estate; a GCP project is always w
 
 `export` names a value projects read; `interface` groups the ones one project reads.
 Each export is an output of the root module (`hcl/outputs.tf`, read with `tofu output`)
-and a value of the generated interfaces under `interfaces/`, beside `hcl/`
+and a value of the generated interfaces under `interfaces/outgoing/`, beside `hcl/`
 ([workflows: projects beside the estate](workflows.md#projects-beside-the-estate)).
 
 ```
@@ -2261,7 +2261,7 @@ interface "archive" {
 - **Common or one project's.** An interface is **common** when the block says so —
   `interface "<name>" common { … }` — or when a pack declares it outside an `each`; `core`
   is common too. The
-  common interfaces are the **library**: `interfaces/common/` holds it alone, and every
+  common interfaces are the **library**: `interfaces/outgoing/common/` holds it alone, and every
   project's folder carries it whole. Every other interface is one project's own, and
   only that project's folder carries it. A common interface uses only common ones: one
   that uses a project's interface is refused, naming both, because every project's
@@ -2327,7 +2327,7 @@ interface "archive" {
 
 **Known now, or looked up.** Per reference, the compile decides what the value is:
 
-| the attribute | the value in `interfaces/…/<name>/` |
+| the attribute | the value in `interfaces/outgoing/…/<name>/` |
 |---|---|
 | a param or a literal | the literal |
 | an attribute satz writes on the resource — a `project_id`, a `name`, a `display_name` | the literal satz writes |
@@ -2361,12 +2361,16 @@ files is one export, and with a different one it is an error naming both files.
   interface's is `<interface>__<export>`, with `-` written `_`
   (`archive__archive_project_id`), so two never meet. `presets/interface-notice.satz`
   publishes that local as an object.
-- `interfaces_dir` (`interfaces`, beside `hcl/`; a key of `config.toml`) holds
-  `common/`, the library alone, and one folder per project, `<project>/`, with the
-  project's own interface and the whole library beside it:
+- `interfaces_dir` (`interfaces`, beside `hcl/`; a key of `config.toml`) has two halves
+  and nothing else. `outgoing/` is what the estate publishes: satz removes it and writes
+  it whole on every transpile. `incoming/` is what the estate was given — the copies of
+  other estates' `outgoing/<project>/` folders, which its `use` lines read — and satz
+  never writes there. Anything else under `interfaces_dir` is refused by name.
+  `outgoing/` holds `common/`, the library alone, and one folder per project,
+  `<project>/`, with the project's own interface and the whole library beside it:
 
   ```text
-  interfaces/
+  interfaces/outgoing/
     common/
       README.md
       core/      README.md  hcl/  satz/
@@ -2466,7 +2470,7 @@ and so is a copy of it in the preset library (`satz doc-presets`, `satz preset-g
 **`${{interface.<export>}}` — a project estate reads the values.**
 
 ```
-use "vendor/archive/archive/satz/interface.satz"
+use "interfaces/incoming/archive/archive/satz/interface.satz"
 
 google_project {
   archive_work {
@@ -2486,8 +2490,8 @@ google_project_iam_member {
 }
 ```
 
-(`tests/smoke/project/satz/archive.satz`, which reads the showcase's `interfaces/archive/`
-copied to `vendor/archive/`.)
+(`tests/smoke/project/satz/archive.satz`, which reads the showcase's `interfaces/outgoing/archive/`
+copied to `interfaces/incoming/archive/`.)
 
 - The file is `use`d at the top level of a file, without `as`; `when` gates it like a
   pack line. Used anywhere else it is refused. Its exports are then reachable under the
@@ -2933,14 +2937,14 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | one interface per entry of a list param | `each project_workload_projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
 | let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
-| read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
+| read a central estate's value in a project estate | `use "interfaces/incoming/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language
 
 | command | layer | does |
 |---|---|---|
-| `transpile <estate>.satz` | Satz → HCL | emit `hcl/` and `interfaces/`; `--check` compiles in memory and writes nothing; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
+| `transpile <estate>.satz` | Satz → HCL | emit `hcl/` and `interfaces/outgoing/`; `--check` compiles in memory and writes nothing; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the compile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
 | `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance [<framework>] <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). With no framework it reports each one the estate's `compliance_frameworks` names, one section per framework in the one file, and `--format json` answers `{frameworks, reports}`. `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |

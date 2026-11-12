@@ -30,10 +30,13 @@ customer-repo/ (e.g. project-root/)
 ├── hcl/                 # Generated .tf files: the estate's root module
 │   ├── main.tf, providers.tf, variables.tf, terraform.tfvars, imports.tf
 │   └── outputs.tf       # what the estate exports, as outputs of the root module
-└── interfaces/          # Generated: what the estate exports, for the projects beside it
-    ├── common/          #   the library alone: README.md (the content hash), core/ and every common interface
-    │   └── <interface>/ #     README.md, hcl/ (a module), satz/interface.satz (a file a Satz estate uses)
-    └── <project>/       #   one project's folder, taken whole: README.md, its own interface and the library
+└── interfaces/
+    ├── outgoing/        # Generated, whole on every transpile: what the estate publishes
+    │   ├── common/      #   the library alone: README.md (the content hash), core/ and every common interface
+    │   │   └── <interface>/  # README.md, hcl/ (a module), satz/interface.satz (a file a Satz estate uses)
+    │   └── <project>/   #   one project's folder, taken whole: README.md, its own interface and the library
+    └── incoming/        # Never written by satz: the copies of what other estates published to this one
+        └── <project>/   #   another estate's outgoing/<project>/, copied whole; the estate's `use` lines read it
         └── <interface>/ #     the same three, and CHANGES.md when the last transpile changed the interface
 ```
 
@@ -378,8 +381,8 @@ The entry is bound in the estate, or requested by the project as `contributes_pr
 in a file of its own, checked with `satz check-request` and vendored into the estate by
 pull request; the pull request is the request's review. `project_workload_folder` is
 the parent, the organisation when it is empty. `satz transpile` then writes
-`interfaces/payments/`, and the project's own estate is `satz init --project payments
---interface interfaces/payments/payments/satz/interface.satz` in its directory. An
+`interfaces/outgoing/payments/`, and the project's own estate is `satz init --project payments
+--interface interfaces/outgoing/payments/payments/satz/interface.satz` in its directory. An
 interface declared in two files is one interface, so the estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — and a workload that brings its own Google project gets an
@@ -2430,7 +2433,7 @@ The tag pattern is `**[0-9]+.[0-9]+.[0-9]+*`; the tagged commit must carry that 
 and `use`s into per-file fragments, `algebra.rs` folds them by Terraform address (⊕), and
 the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
 `terraform.tfvars` and `imports.tf`. The estate's `export`s become `outputs.tf` and, per
-interface under `interfaces/`, a relocatable module and an interface file a project estate
+interface under `interfaces/outgoing/`, a relocatable module and an interface file a project estate
 `use`s (`src/interface.rs`): a value known at compile time is a literal, one only the
 cloud knows is a `data` source keyed by what satz writes (`presets/interface-lookups.yaml`).
 A project estate's `${{interface.<export>}}` is replaced before emission, and its

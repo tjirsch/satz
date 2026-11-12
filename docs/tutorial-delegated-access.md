@@ -164,15 +164,21 @@ that plan. If one is, stop: something other than the pack wrote it.
 
 ## 5. Organisation team: hand over
 
-Every transpile writes `interfaces/` beside the estate. Hand over these folders, whole:
+Every transpile writes `interfaces/outgoing/` beside the estate. Hand over these folders, whole:
 
 | case | folders |
 |---|---|
-| a team with folders | `interfaces/workload-shop/` and one per folder, `interfaces/shop/` |
-| a project with its own account | `interfaces/payments/` |
-| a project for an existing account | `interfaces/shop-backend/`; the team has `interfaces/workload-shop/` already |
+| a team with folders | `interfaces/outgoing/workload-shop/` and one per folder, `interfaces/outgoing/shop/` |
+| a project with its own account | `interfaces/outgoing/payments/` |
+| a project for an existing account | `interfaces/outgoing/shop-backend/`; the team has `interfaces/outgoing/workload-shop/` already |
 
 A copy is enough; so is read access to the organisation's repository at a tag.
+
+The team puts each folder into `interfaces/incoming/` of its own repository. The two halves
+of `interfaces/` are the two directions: `outgoing/` is what an estate publishes, removed and
+written whole by every transpile; `incoming/` is what it was given, and satz never writes
+there. The organisation's `interfaces/outgoing/payments/` is the team's
+`interfaces/incoming/payments/`.
 
 **The folders explain themselves.** Each has a `README.md` that satz writes for the team
 that receives it. Under "Delegated access: what you were given" it says which account the team's estate
@@ -193,8 +199,8 @@ In the team's own repository:
 shop/
   config.toml
   satz/shop.satz
-  vendor/workload-shop/       from the organisation, whole
-  vendor/shop/                from the organisation, whole
+  interfaces/incoming/workload-shop/   from the organisation, whole
+  interfaces/incoming/shop/            from the organisation, whole
 ```
 
 `config.toml`:
@@ -216,7 +222,7 @@ satz update-schema        # fetches the provider schemas into schemas/, once
 ```
 
 `satz/shop.satz`. The three names at the top are written out in the README of
-`vendor/workload-shop/`, under "What to do with it":
+`interfaces/incoming/workload-shop/`, under "What to do with it":
 
 ```
 estate shop
@@ -230,8 +236,8 @@ params {
 }
 
 // what the organisation handed over: the account with what was delegated, and the folder
-use "vendor/workload-shop/workload-shop/satz/interface.satz"
-use "vendor/shop/shop/satz/interface.satz"
+use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/shop/shop/satz/interface.satz"
 
 terraform {
   backend {
@@ -270,7 +276,7 @@ the same account.
 A team with **a project of its own account** does not write this by hand:
 
 ```bash
-satz init --project payments --interface vendor/payments/payments/satz/interface.satz
+satz init --project payments --interface interfaces/incoming/payments/payments/satz/interface.satz
 ```
 
 Its resources name the project as `project = "${{interface.project_id}}"`. A team with
