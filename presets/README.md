@@ -289,6 +289,17 @@ adopting the new group, but every project admin loses two roles at that
 apply. The role-by-role table and who-sits-where guide are on the
 [S2 pack page](docs/s2-security-groups.md).
 
+**The project admins' roles are a list param**, `gcp_project_admins_roles`, whose default is
+the model's list with `roles/owner` — the horizontal reach over every project, present and
+future, that the platform team holds while business units hold vertical roles on their own
+folders and projects. An estate binds the param to `roles/writer` (Google's basic role for
+every service's write permissions, which Privileged Access Manager grants and a condition
+bounds; Owner takes neither) plus `roles/resourcemanager.projectIamAdmin`,
+`roles/iam.serviceAccountAdmin`, `roles/resourcemanager.projectDeleter` and
+`roles/billing.projectManager` to hold the same reach with no legacy basic role; the plan then
+shows two destroys and four creates. The API and gcloud grant Writer; the console cannot
+(ADR 0090).
+
 The groups: `gcp-organization-admins` (break-glass owners of the org tree,
 policies and org IAM), `gcp-project-admins` (day-2 workload projects),
 `gcp-security-admins` (guardrails: org policies, SCC, folder IAM, log
