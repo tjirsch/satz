@@ -315,6 +315,34 @@ asks for the same day-0 values one at a time and offers the derived ones as defa
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
+### A team's own account (`presets/folder-workload.satz`, `presets/project-workload.satz`)
+
+A team that works beside the organisation — in its own repository, with its own state and
+pipeline — runs as an account of its own, never as the organisation's. Two packs of the
+library hand that account out, and the choice between them is who creates the Google
+projects:
+
+| pack | for a team that | the organisation creates | the account holds |
+|---|---|---|---|
+| [`folder-workload`](presets/README.md#folder-workloadsatz) | rolls out its own projects | the account, its state bucket, and the folders it works in | project and folder creation, project access and APIs **on its own folders only**; no access control on any folder |
+| [`project-workload`](presets/README.md#project-workloadsatz) | works in a project it is given | the project, with its own account and state bucket — or for a `folder-workload` account that already exists | access and APIs **on that project only** |
+
+```
+params {
+  use_folder_workload     = true
+  folder_workloads        = [{ name = "shop" group = "gcp-shop-admins@example.com" }]
+  folder_workload_folders = [{ name = "shop" workload = "shop" }]
+}
+
+use "presets/folder-workload.satz" when use_folder_workload
+```
+
+Each pack publishes what it delivered in the interface the team's estate reads, and the
+compile judges that estate against it ([What an estate must
+declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [projects beside
+the organisation](docs/tutorial-projects.md) says which pack is for whom and walks both;
+the next section is the project pack in short.
+
 ### Onboard a project (`presets/project-workload.satz`)
 A project is an entry of the list param `project_workload_projects` of
 `presets/project-workload.satz`, `{ name owner_group }`. Per entry the pack declares the

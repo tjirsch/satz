@@ -8,6 +8,37 @@ the organisation's account. Two kinds of team do this: one writes Satz, one writ
 and nothing else. Both read the organisation through its **interface**, and the same
 template serves both. The files are [`examples/acme/`](../examples/README.md).
 
+## Two packs, two kinds of team
+
+A team beside the organisation needs three things from the organisation's estate: an
+account its pipelines run as, a place its state lives, and somewhere it may build. It
+must hold no more than that — not the organisation's account, and nothing that reaches
+another team. Two packs of the library hand this out, and they differ in one question:
+**who creates the Google projects.**
+
+| | [`presets/folder-workload.satz`](../presets/README.md#folder-workloadsatz) | [`presets/project-workload.satz`](../presets/README.md#project-workloadsatz) |
+|---|---|---|
+| the team | rolls out its own projects — one per stage, one per customer — and needs no approval for each | works in a project, or a few, that the platform team creates and approves |
+| the organisation creates | the account, in a small project of its own with the state bucket, and one or more **folders** for it | each **project**, with its own account and state bucket inside it, or for an account that already exists |
+| the account may | create folders and projects in its folders, set the access of its projects, enable their APIs | set the access of its project and enable its APIs; it creates no project |
+| the account may not | set access on any folder, its own included; touch organisation policies, tags or billing administration; reach anything beside its folders | reach anything outside its project |
+| one account for several places | yes: every folder entry names its workload, and the folders need no common root | yes: a project entry names a workload of `folder-workload`, and that account gets the project too |
+| switched on by | `use_folder_workload` | `use_project_workload` |
+
+The intention behind both is the same. The organisation's estate decides, in one reviewed
+file, what an account can reach; the pack creates exactly that; and the account cannot
+widen it. A `folder-workload` account holds no access control on a folder, so it grants
+itself nothing there. A `project-workload` account holds its project's access control and
+nothing else, so what it grants itself stays inside the project.
+
+Each pack also tells the team's estate what it was given. The interface carries the roles
+and APIs that were delivered, satz judges the team's estate against them at every compile,
+and a gap is reported as what to ask the organisation for — never as a grant at the
+organisation ([what an estate must
+declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
+
+Steps 1 to 5 walk the first pack with the team `shop`; step 6 walks the second.
+
 ## 1. What the organisation publishes, and what a lookup is
 
 ```bash
@@ -264,6 +295,98 @@ sourced by a `module` block; `check-consumer` names the file and line of an atta
 no attach point allows, an authoritative grant or an organisation policy on the
 organisation's nodes, or a resource the organisation declares too. The organisation's
 CI runs it against the team's repository.
+
+## 6. The other pack: a project the organisation creates
+
+The team `payments` does not roll out projects. It gets one, with an account of its own.
+In `C0example.satz`:
+
+```
+params {
+  use_project_workload      = true
+  project_workload_folder   = "google_folder.workload_folder.name"
+  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]
+}
+```
+
+```bash
+satz add-preset C0example.satz use_project_workload
+satz transpile C0example.satz --plan
+satz transpile C0example.satz --apply
+```
+
+The apply creates the Google project `acme-payments-001` under `Workloads` and, inside it,
+the account `svc-iac-payments` and the state bucket `acme-payments-001-state`. The account
+holds the project's access control and its services on that project and nowhere else; the
+members of `payments-owners@example.com` read the project and may become the account.
+`interfaces/payments/` publishes `project_id`, `project_number`, `iac_account`,
+`state_bucket`, and what was delivered: `delivered_project_roles` and `delivered_apis`.
+
+The team writes its estate from that interface, in its own repository:
+
+```bash
+cp -R <the organisation>/interfaces/payments vendor/
+satz init --project payments --interface vendor/payments/payments/satz/interface.satz
+```
+
+`init --project` writes an estate that runs as `svc-iac-payments`, keeps its state in the
+project's bucket and reads the organisation through the interface. Its resources name the
+project as `project = "${{interface.project_id}}"`.
+
+**What the account lacks on its project, it grants itself.** A bucket needs
+`roles/storage.admin`, which the pack did not deliver. The compile says so on the
+finding's line — `roles/storage.admin on the project — to grant in this estate` — and the
+team writes the grant in its own estate, which the interface allows on `project_id`:
+
+```
+google_project_iam_member {
+  project = "${{interface.project_id}}"
+  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
+    "roles/storage.admin",
+  ]
+}
+```
+
+Anything else — a folder, an organisation policy — is reported as `outside the project`:
+this account does not get it. An API the project lacks is what to ask the organisation
+for: `apis` of the project's entry.
+
+**One account for several projects.** The team `shop` of the steps above has an account
+already. The organisation gives it two projects it does not create itself:
+
+```
+params {
+  project_workload_shared_projects = [
+    { name = "shop-backend" workload = "shop" },
+    { name = "shop-frontend" workload = "shop" },
+  ]
+}
+```
+
+Each entry is a Google project with no account of its own: `svc-deploy-shop` gets the same
+two roles on it. The entry names the account by its workload, and one that names a
+workload nobody declared is refused by the compile, which lists the accounts that exist.
+An account that works in projects only is a `folder_workloads` entry without a folder.
+
+The estate that works in `shop-backend` reads two interfaces — the account from
+`workload-shop`, the project from `shop-backend` — and is written by hand:
+
+```
+use "vendor/workload-shop/workload-shop/satz/interface.satz"
+use "vendor/shop-backend/shop-backend/satz/interface.satz"
+
+google_storage_bucket {
+  assets {
+    project  = "${{interface.project_id}}"
+    name     = "acme-shop-backend-assets"
+    location = "EU"
+  }
+}
+```
+
+Its `params`, backend and providers are those of the template in step 3: it runs as
+`svc-deploy-shop` and keeps its state in the workload's bucket. One estate works in one
+project; two projects are two estates that run as the same account.
 
 ## What the two ways share
 
