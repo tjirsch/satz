@@ -1558,7 +1558,7 @@ not checked.
 ### The commands
 
 ```bash
-satz packs --format text --out -          # what is here, and what the source holds
+satz packs --format text --out -          # what is here, what the source holds, and what each needs
 satz get-pack workload-project            # fetch one pack, record its origin
 satz update-pack workload-project         # bring it up to date
 satz update-pack --all --report-only      # what an update of every fetched pack would do

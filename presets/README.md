@@ -134,6 +134,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_budget` | off | `organization-budget` |
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
+| `use_delegated_budgets` | off | `delegated-budget-role` — the role an entry of delegated access with `budgets = true` is granted: budgets for its own project or folder, nothing on the billing account |
 | `use_folder_workload` | off | `folder-workload` — delegated access to folders; per team that rolls out its own projects: an account of its own, a state bucket, and the folders it works in, with its roles on those folders alone |
 | `use_project_workload` | off | `project-workload` — delegated access to projects; per Google project a team works in from an estate of its own: the project, with its own account and state bucket or worked by a `folder-workload` account, and the roles on that project alone |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
@@ -1315,7 +1316,10 @@ params {
 | request point | key | fields |
 |---|---|---|
 | `project_workload_projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that reads the project and may become its account, `<name>@<domain>`), `apis` (the APIs enabled on the project; the five below when left out) |
-| `project_workload_shared_projects` | `name` | `name`, `workload` (the workload of `folder-workload.satz` whose account works in the project), `apis` |
+| `project_workload_shared_projects` | `name` | `name`, `workload` (the workload of `folder-workload.satz` whose account works in the project), `apis`, `budgets` |
+
+An entry of either list may say `budgets = true`: the account may then manage budgets for
+that project, and for nothing else ([`delegated-budget-role.satz`](#delegated-budget-rolesatz)).
 
 The request point's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
 `owner_group` that is not `<name>@<domain>` — `payments-owners`, or `group:payments-owners@example.com`
@@ -1353,6 +1357,7 @@ holds nothing outside the project.
 | `project_id` | the Google project's id | `google_project_iam_member`: the estate grants on its own Google project in its own state |
 | `project_number` | its number, looked up | — |
 | `delegated_project_roles` | `project_workload_roles` | — |
+| `delegated_budgets` | whether the entry said `budgets = true` | — |
 | `iac_account`, `state_bucket`, `delegated_apis`, `account_group`, `account_group_roles` | a project with its own account alone: the account's email, the state bucket, the project's `apis`, the group whose members may act as the account and what it holds on it | — |
 
 `satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
@@ -1463,6 +1468,7 @@ transpile and taken whole to the estate's `vendor/`:
 | | `account_group`, `account_group_roles`, `billing_account` | the group whose members may act as the account and what it holds on it; the billing account a new project is linked to |
 | | `delegated_folder_roles`, `delegated_billing_roles`, `delegated_apis` | what was delegated to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
 | `shop-frontend` | `delegated_folder` | the folder, looked up: the parent of what the estate creates |
+| | `delegated_budgets` | whether the folder's entry said `budgets = true`: the account may then manage budgets for the projects in it ([`delegated-budget-role.satz`](#delegated-budget-rolesatz)) |
 
 The README satz writes into each of these folders opens with what it hands over — the
 account, who may act as it, what it holds — and the receiving team's next steps, so the
@@ -1491,6 +1497,50 @@ declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 | `folder_workload_group_roles` | tokenCreator, serviceAccountUser | what a workload's group holds on the account |
 
 Nothing in the pack bills while idle.
+
+### delegated-budget-role.satz
+
+Delegated access to budgets: the role an account manages budgets with, for its own project
+or folder alone. Many delegated workloads need a budget; a budget lives on the billing
+account, and a right there would show a team every other project's costs. Google has a
+narrower form: with the project-level permissions `billing.resourcebudgets.read` and
+`billing.resourcebudgets.write` an account manages a budget for one project, which Google
+scopes to that project, and with `billing.resourceCosts.get` it sees that project's own
+costs. Only the broad Owner and Editor roles carry them, so this pack declares a custom
+role with exactly these three.
+
+**Use** — once for the organisation, with the first entry that asks:
+
+```
+params {
+  use_delegated_budgets     = true
+  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" budgets = true }]
+}
+
+use "presets/delegated-budget-role.satz" when use_delegated_budgets
+```
+
+| who asks | where the role is granted | what the account may do |
+|---|---|---|
+| an entry of `project_workload_projects` or `project_workload_shared_projects` with `budgets = true` | on that project | create and change budgets that count that project; see its costs |
+| an entry of `folder_workload_folders` with `budgets = true` | on that folder | the same for every project in the folder |
+
+It holds nothing on the billing account: no other project's costs, no budget for the
+account as a whole. An entry that asks while this pack is off is refused by the compile —
+its grant names a role the estate does not declare.
+
+The team's side is the workload pack `packs/project-budget.satz` (`satz get-pack
+project-budget`): it reads the project and the billing account from the hand-over folder,
+asks for the amount, the currency and an address to tell, and creates the budget. The
+interface says whether budgets were delegated (`delegated_budgets`), and the compile of the
+team's estate judges a budget against it.
+
+| Param | Default | Meaning |
+|---|---|---|
+| `delegated_budget_role_id` | `"satzDelegatedBudgets"` | the role's id in the organisation |
+
+**Not verified against a live organisation:** that the Budget API, which OpenTofu calls,
+accepts these permissions as Google's console does.
 
 ### interface-notice.satz
 

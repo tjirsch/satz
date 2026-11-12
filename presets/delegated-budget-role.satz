@@ -1,0 +1,39 @@
+// Delegated access to budgets: the role an account manages budgets with, for its own
+// project or folder alone. It is declared once for the organisation and granted by the
+// two access packs to the entries that ask for it.
+//
+//   use "presets/delegated-budget-role.satz" when use_delegated_budgets
+//
+// WHAT THE ROLE CARRIES. `billing.resourcebudgets.read` and `billing.resourcebudgets.write`:
+// with them, on a project, an account manages a budget for that project, and Google scopes
+// the budget to it. `billing.resourceCosts.get`: it sees that project's own costs. Nothing
+// on the billing account — it sees no other project's costs and no account-wide budget.
+// Google's predefined roles carry these three only inside Owner and Editor, which is why
+// this is a custom role.
+//
+// WHO GETS IT. An entry of `presets/project-workload.satz` or a folder entry of
+// `presets/folder-workload.satz` that says `budgets = true`. On a folder the role is
+// inherited by the projects in it. An entry that asks while this pack is off is refused by
+// the compile: its grant names a role the estate does not declare.
+//
+// NO CLAIM. A delegation, not a control: this pack witnesses nothing.
+
+pack delegated_budget_role version "1.0"
+
+params {
+  // The role's id in the organisation: letters, digits, `_` and `.`, unique there.
+  delegated_budget_role_id = "satzDelegatedBudgets"
+}
+
+google_organization_iam_custom_role {
+  delegated_budgets {
+    role_id     = delegated_budget_role_id
+    title       = "Budgets for a delegated scope"
+    description = "Manage budgets for the project or folder it is granted on, and see that scope's costs. Granted by satz to delegated accounts."
+    permissions = [
+      "billing.resourcebudgets.read",
+      "billing.resourcebudgets.write",
+      "billing.resourceCosts.get",
+    ]
+  }
+}

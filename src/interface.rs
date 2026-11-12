@@ -1281,6 +1281,14 @@ impl Interface {
         if let Some(r) = list("delegated_billing_roles") {
             row("on the billing account it holds", code(&r));
         }
+        match text("delegated_budgets").as_deref() {
+            Some("true") => row(
+                "budgets",
+                "delegated: the account may create and change budgets for this scope, and sees its costs; it holds nothing on the billing account".to_string(),
+            ),
+            Some(_) => row("budgets", "not delegated: ask the estate's owners for `budgets = true` on this entry".to_string()),
+            None => {}
+        }
         if let Some(r) = list("delegated_apis") {
             row("APIs enabled on the project its calls are billed to", code(&r));
         }

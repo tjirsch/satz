@@ -824,9 +824,40 @@ pub(crate) struct Unmanaged {
     pub at_line: usize,
 }
 
+/// What an estate works in: the organisation itself, or a place its account was delegated
+/// access to. Read from the interface files it uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum WorksIn {
+    /// it uses no interface file: an organisation's estate
+    Organisation,
+    /// an interface it uses publishes `delegated_folder`
+    Folder,
+    /// it uses an interface file and none publishes a delegated folder: a delegated project
+    Project,
+}
+
+/// What the estate works in, from the exports of the interface files it uses.
+fn works_in(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> WorksIn {
+    if interfaces.is_empty() {
+        return WorksIn::Organisation;
+    }
+    let load = crate::satz_loader(estate, &runtime.include_dirs);
+    let folder = interfaces.iter().any(|u| {
+        load(&u.path)
+            .ok()
+            .and_then(|t| satz_core::satz::parse(&t).ok())
+            .and_then(|f| f.interface_file)
+            .is_some_and(|i| i.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER))
+    });
+    if folder { WorksIn::Folder } else { WorksIn::Project }
+}
+
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PacksReport {
     pub estate: String,
+    /// what the estate works in: the organisation, a delegated folder or a delegated project
+    pub works_in: WorksIn,
     /// why the report has no packs: the presets carry no pack graph
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -865,7 +896,8 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         // every `use` is one the graph does not know, because there is none
         let s = scan(&src);
         let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect());
-        return Ok(PacksReport { estate: label, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, findings: Vec::new() });
+        let works_in = works_in(estate, runtime, &interfaces);
+        return Ok(PacksReport { estate: label, works_in, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, findings: Vec::new() });
     };
     let lib = Library::load(&graph, &dir)?;
     let view = View::new(&graph, &lib, &src).map_err(|e| format!("{}: {}", label, e))?;
@@ -876,6 +908,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
     let (interfaces, unmanaged) = interface_files(estate, runtime, view.unmanaged());
     Ok(PacksReport {
         estate: label,
+        works_in: works_in(estate, runtime, &interfaces),
         note: None,
         packs: nodes.iter().map(|n| view.row(n, &found)).collect(),
         unmanaged,
@@ -898,6 +931,11 @@ fn interface_files(estate: &Path, runtime: &ToolConfig, lines: Vec<Unmanaged>) -
 
 pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> String {
     let mut s = format!("packs — {}\n", r.estate);
+    s.push_str(match r.works_in {
+        WorksIn::Organisation => "  works in: the organisation\n",
+        WorksIn::Folder => "  works in: a delegated folder\n",
+        WorksIn::Project => "  works in: a delegated project\n",
+    });
     if let Some(n) = &r.note {
         s.push_str(&format!("  {}\n", n));
     }

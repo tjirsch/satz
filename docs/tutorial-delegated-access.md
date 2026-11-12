@@ -52,7 +52,8 @@ so the clearer it is, the fewer rounds.
 | the group that may act as the account | `gcp-shop-admins@example.com` | its members run the plans; it must exist in the directory |
 | the folders it works in, or the projects it needs | one folder `shop` under `Workloads` | the account gets its rights there and nowhere else |
 | APIs beyond the standard ones, on the project its calls are billed to | `billingbudgets.googleapis.com` | the team cannot enable an API on a project it does not own |
-| billing roles beyond linking a project | `roles/billing.costsManager`, for budgets | the team cannot grant itself anything on the billing account |
+| a budget for its own project or folder | `budgets = true` | the team cannot grant itself anything on the billing account; this gives it budgets for its own scope and nothing else |
+| billing roles beyond linking a project | rarely: `roles/billing.costsManager` covers every project's budgets and costs | prefer `budgets = true` above |
 
 If the team does not know the last two yet, it asks without them. Step 7 names exactly
 what is missing, and the second diagram below is the round that adds it.
@@ -96,7 +97,10 @@ params {
 }
 ```
 
-A second folder for the same account is a second entry that names `shop`. More APIs or
+A second folder for the same account is a second entry that names `shop`. A folder or a
+project whose team wants a budget says `budgets = true`, and the estate switches
+`use_delegated_budgets` on once ([the role](../presets/README.md#delegated-budget-rolesatz)).
+ More APIs or
 billing roles are fields of the workload's entry, and a list that is stated is stated
 whole — the six standard APIs and the additions:
 
@@ -309,6 +313,25 @@ writes no grant for a workload's estate. `--apply` is refused while an API is mi
 A note `presets/pack-graph.json is not here` is about the organisation's pack library,
 which a workload's repository does not hold. It asks nothing of the team.
 
+**Workload packs.** What a team builds can come as a pack: `satz packs --format text --out -`
+lists the ones the satz repository holds and says what each needs — a delegated folder or
+a delegated project — and `satz get-pack <name>` fetches one. `project-budget` is such a
+pack: with `budgets = true` on the team's entry it creates a budget for the delegated
+project, after two questions (the amount, the currency) and an address to tell.
+
+```bash
+satz get-pack project-budget
+```
+
+```
+use "packs/project-budget.satz"
+```
+
+**A pack may switch on the APIs it adds.** The organisation switched on the standard ones
+(the hand-over folder lists them); a pack declares the others in the project itself, and
+the account's role on its project allows it. Declaring one the organisation already
+switched on is reported: two estates would own one switch.
+
 ## 8. Workload team: be in the group, and log in
 
 Whoever runs the plan is a member of the group from step 1 — added in the directory, by
@@ -389,5 +412,6 @@ the same.
 | hands over | the interface folders, after every change; their READMEs are the instructions | — |
 | creates projects in a workload's folder | no | yes |
 | grants roles on a project the team was given | no | yes, in its own estate |
-| adds an API, a billing role, a folder | yes, on request | asks |
+| adds an API, a billing role, a folder, `budgets = true` | yes, on request | asks |
+| switches on an API a pack adds, in a project the team was given | no | yes, in its own estate |
 | removes a workload | yes, after the team emptied it | empties it |

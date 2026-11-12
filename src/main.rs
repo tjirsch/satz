@@ -3728,6 +3728,25 @@ fn api_findings(
     // an API missing there is asked for, never written
     let (not_delegated, missing): (Vec<_>, Vec<_>) =
         check.missing().into_iter().partition(|a| delegation.is_some() && Some(a.project.as_str()) == billing.default_project());
+    if let Some(d) = delegation {
+        let doubled = crate::prerequisites::doubled_apis(manifest, billing.default_project(), d);
+        if !doubled.is_empty() {
+            f.push(Finding::new(
+                sev,
+                Kind::Prerequisites,
+                format!(
+                    "{} API(s) are switched on twice on {}: the organisation's estate already switched them on \
+                     (the interface `{}` says so), and this estate declares them again. Remove the \
+                     declaration here — two estates then own one switch, and taking it out of either \
+                     switches the API off for both:\n  {}",
+                    doubled.len(),
+                    billing.default_project().unwrap_or_default(),
+                    d.interface,
+                    doubled.iter().map(|(address, api)| format!("{} — {}", api, address)).collect::<Vec<_>>().join("\n  ")
+                ),
+            ));
+        }
+    }
     if let (Some(d), false) = (delegation, not_delegated.is_empty()) {
         f.push(Finding::new(
             sev,
@@ -4988,6 +5007,9 @@ fn emitted_manifest(hcl_dir: &Path) -> Result<Option<crate::manifest::Manifest>,
     };
     let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
     let mut manifest = crate::manifest::Manifest::from_blocks(body.blocks());
+    // a project named through the interface or an input is its literal here, as it is
+    // in the compile's own manifest
+    manifest.resolve_projects(&emitted_names(hcl_dir));
     let imports_tf = hcl_dir.join("imports.tf");
     match std::fs::read_to_string(&imports_tf) {
         Ok(t) => {
@@ -5100,8 +5122,9 @@ fn parse_inputs(args: &[String]) -> Result<Vec<(String, String)>, Box<dyn std::e
 
 /// The project each provider in the emitted `providers.tf` bills to. A project estate's
 /// providers read `interface.tf` and `terraform.tfvars`, which stand beside the file.
-fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, String> {
-    let path = hcl_dir.join("providers.tf");
+/// What the references in the emitted files stand for: the static values of
+/// `interface.tf` and the bindings of `terraform.tfvars`.
+fn emitted_names(hcl_dir: &Path) -> crate::prerequisites::Names {
     let mut names = crate::prerequisites::Names::new();
     if let Ok(text) = std::fs::read_to_string(hcl_dir.join("interface.tf")) {
         names.extend(crate::prerequisites::names_in_interface_tf(&text));
@@ -5109,6 +5132,12 @@ fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, Stri
     if let Ok(text) = std::fs::read_to_string(hcl_dir.join("terraform.tfvars")) {
         names.extend(crate::prerequisites::names_in_tfvars(&text));
     }
+    names
+}
+
+fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, String> {
+    let path = hcl_dir.join("providers.tf");
+    let names = emitted_names(hcl_dir);
     match std::fs::read_to_string(&path) {
         Ok(text) => crate::prerequisites::Billing::parse(&text, &names).map_err(|e| format!("{}: {}", path.display(), e)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
@@ -7707,6 +7736,7 @@ mod prerequisite_findings_speak {
             interface: "workload-shop".to_string(),
             folder_roles: set(&["roles/resourcemanager.projectCreator"]),
             project_roles: Default::default(),
+            budgets: false,
             billing_roles: set(&["roles/billing.user"]),
             apis: set(&["cloudresourcemanager.googleapis.com", "cloudbilling.googleapis.com"]),
         };

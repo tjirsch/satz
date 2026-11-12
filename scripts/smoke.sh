@@ -517,6 +517,103 @@ done
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the project-workload step"
 
+step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0090)"
+python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+old = "  use_folder_workload            = true\n"
+assert s.count(old) == 1
+s = s.replace(old, old + '  use_project_workload = true\n  use_delegated_budgets = true\n  project_workload_folder = "google_folder.workload_folder.name"\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" budgets = true }, { name = "plain" owner_group = "plain-owners@example.com" }]\n')
+old = 'use "presets/folder-workload.satz" when use_folder_workload\n'
+assert s.count(old) == 1
+s = s.replace(old, old + 'use "presets/project-workload.satz" when use_project_workload\nuse "presets/delegated-budget-role.satz" when use_delegated_budgets\n')
+open(sys.argv[2], "w", encoding="utf-8").write(s)
+PY2
+mkdir -p tmp/bud
+"$satz" --config "$ex" transpile "$PWD/tmp/bud-org.satz" --output "$PWD/tmp/bud/hcl" > tmp/bud.txt 2>&1 || fail "the estate that delegates budgets does not transpile:\n$(cat tmp/bud.txt)"
+bm=tmp/bud/hcl/main.tf
+grep -q '^resource "google_organization_iam_custom_role" "delegated_budgets"' "$bm" && grep -q '"billing.resourcebudgets.write"' "$bm" || fail "the budget role is not declared with the project-level permissions"
+grep -q '"billing.budgets\.\|"billing.accounts\.' "$bm" && fail "the budget role carries a permission on the billing account"
+[ "$(grep -c 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"' "$bm")" = 1 ] || fail "the budget role is granted to something other than the one entry that asked:\n$(grep -B2 -A4 'delegated_budgets.name' "$bm")"
+grep -A3 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"' "$bm" | grep -q 'project = "${google_project.payments.project_id}"' || fail "the budget role is not granted on the project that asked"
+bi="$ex/interfaces"
+grep -A1 '^output "delegated_budgets"' "$bi/payments/payments/satz/interface.satz" | grep -q 'value *= true' && grep -A1 '^output "delegated_budgets"' "$bi/plain/plain/satz/interface.satz" | grep -q 'value *= false' \
+  || fail "the interfaces do not say which project was delegated budgets"
+grep -q '| budgets | delegated' "$bi/payments/payments/README.md" && grep -q '| budgets | not delegated' "$bi/plain/plain/README.md" || fail "the hand-over README does not say whether budgets were delegated"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/bud/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate that delegates budgets does not validate"
+fi
+# an entry that asks while the role's pack is off names a role nobody declares
+sed 's|use_delegated_budgets = true|use_delegated_budgets = false|' tmp/bud-org.satz > tmp/bud-off.satz
+"$satz" --config "$ex" transpile "$PWD/tmp/bud-off.satz" --output "$PWD/tmp/bud/hcl" --check > tmp/bud-off.txt 2>&1 && fail "an entry asked for budgets while the role is not declared, and compiled"
+grep -q 'google_organization_iam_custom_role.delegated_budgets' tmp/bud-off.txt || fail "the refusal does not name the missing role:\n$(cat tmp/bud-off.txt)"
+# the team's estate in the project that was delegated budgets: the budget pack, nothing missing
+bud_estate() { # <dir> <interface name>
+  rm -rf "$1" && mkdir -p "$1/satz" "$1/vendor" "$1/packs"
+  cp -R "$bi/$2" "$1/vendor/" && cp "$root/packs/project-budget.satz" "$1/packs/"
+  { grep -v '^presets_dir\|^interfaces_dir' "$pt/config.toml" | sed "s#\.\./\.\./\.\./#$root/#g"; echo 'packs_dir = "packs"'; } > "$1/config.toml"
+  cat > "$1/satz/team.satz" <<SATZ
+estate team
+
+params {
+  infra_project_name = "acme-$2-001"
+  infra_bucket_name  = "acme-$2-001-state"
+  svc_iac_account    = "svc-iac-$2"
+  deployment_engine  = "tofu"
+  deployment_mode    = "cloud"
+  budget_amount      = "300"
+  budget_currency    = "EUR"
+  budget_email       = "$2-team@example.com"
+}
+
+use "vendor/$2/$2/satz/interface.satz"
+use "packs/project-budget.satz"
+
+terraform {
+  backend {
+    gcs {
+      bucket = infra_bucket_name
+      prefix = "hcl/state"
+    }
+  }
+}
+
+providers {
+  "google" {
+    alias                 = "google"
+    project               = infra_project_name
+    region                = "\${{interface.default_region}}"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+}
+SATZ
+}
+bud_estate tmp/bud/team payments
+"$satz" --config tmp/bud/team transpile team.satz > tmp/bud-team.txt 2>&1 || fail "the team's estate with the budget pack does not transpile:\n$(cat tmp/bud-team.txt)"
+grep -q 'prerequisites' tmp/bud-team.txt && fail "a budget in a project that was delegated budgets has an open prerequisite:\n$(cat tmp/bud-team.txt)"
+bt=tmp/bud/team/hcl/main.tf
+grep -q '"projects/${local.interface.project_number}"' "$bt" && grep -q 'billing_account = local.interface.billing_account' "$bt" || fail "the budget does not count the delegated project on its billing account:\n$(grep -A12 google_billing_budget "$bt")"
+grep -A4 '^resource "google_project_service" "budget_api"' "$bt" | grep -q 'disable_on_destroy = false' || fail "the pack's API switch would switch the API off when the pack is taken out"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/bud/team/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the team's estate with the budget pack does not validate"
+fi
+"$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated project' || fail "the presets report does not say the estate works in a delegated project"
+"$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated folder' || fail "the presets report does not say the example works in a delegated folder"
+"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organisation' || fail "the presets report does not say the organisation's estate works in the organisation"
+"$satz" --config tmp/bud/team packs --from "$root/packs" --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the team's estate:\n$(cat tmp/bud-packs.txt)"
+grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
+# the same estate in the project that was not: told what to ask for, and how
+bud_estate tmp/bud/plain plain
+"$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the team's estate without delegated budgets does not compile at level warn:\n$(cat tmp/bud-plain.txt)"
+grep -q '`budgets = true` on the entry of this project or folder' tmp/bud-plain.txt || fail "an estate that was not delegated budgets is not told how to ask:\n$(cat tmp/bud-plain.txt)"
+# an API the organisation already switched on, declared again by the team
+printf '\ngoogle_project_service {\n  again {\n    project = infra_project_name\n    service = "storage.googleapis.com"\n  }\n}\n' >> tmp/bud/team/satz/team.satz
+"$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not compile at level warn:\n$(cat tmp/bud-twice.txt)"
+grep -q '1 API(s) are switched on twice on acme-payments-001' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
+# the example organisation's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the budgets step"
+
 step "a workload's estate is judged against what was delegated to its account, and what is missing is asked for (ADR 0087)"
 # the example: everything it needs was delegated, so the check is quiet — no role at the organization, no API to write
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
@@ -540,7 +637,7 @@ grep -q 'exports `delivered_folder_roles`: it was written by satz before v0.98.0
 "$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate with a need that was not delegated does not compile at level warn:\n$(cat tmp/wl.txt)"; }
 grep -q "not enabled on acme-deploy-shop, the project its calls are billed to" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated API is not asked for:\n$(cat tmp/wl.txt)"; }
-grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the workload'"'"'s entry in `folder_workloads`' tmp/wl.txt \
+grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the workload'"'"'s entry in `folder_workloads`' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated billing role is not asked for:\n$(cat tmp/wl.txt)"; }
 grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
 # the write: nothing is written for what was not delegated, the file stays as it is, and the command fails

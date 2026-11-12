@@ -3,13 +3,13 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-presets`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**49 packs · 241 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**50 packs · 245 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`estate_map`](estate-map.md) | 4.1 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 4.2 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`estate_core`](estate-core.md) | 2.4 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
 
 ## Security groups and exemptions
@@ -70,8 +70,9 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`project_workload`](project-workload.md) | 2.0 | Delegated access to projects: the Google projects teams work in from estates of their own, and the account each is worked as. | 3 | — |
-| [`folder_workload`](folder-workload.md) | 2.0 | Delegated access to folders: one identity per workload, and the folders it works in. | 7 | — |
+| [`project_workload`](project-workload.md) | 2.1 | Delegated access to projects: the Google projects teams work in from estates of their own, and the account each is worked as. | 5 | — |
+| [`folder_workload`](folder-workload.md) | 2.1 | Delegated access to folders: one identity per workload, and the folders it works in. | 8 | — |
+| [`delegated_budget_role`](delegated-budget-role.md) | 1.0 | Delegated access to budgets: the role an account manages budgets with, for its own project or folder alone. | 1 | — |
 | [`interface_notice`](interface-notice.md) | 1.2 | Tells the projects that read this estate's interface when an exported value changes: one Pub/Sub message per apply that changes one. | 5 | — |
 
 ## Security operations and integrations
