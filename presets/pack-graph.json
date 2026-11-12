@@ -71,7 +71,7 @@
     },
     {
       "path": "presets/project-workload.satz",
-      "version": "1.0",
+      "version": "1.1",
       "role": "pack",
       "gate": "use_project_workload",
       "gate_declared_in": "presets/estate-map.satz",
@@ -81,7 +81,7 @@
     },
     {
       "path": "presets/folder-workload.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "use_folder_workload",
       "gate_declared_in": "presets/estate-map.satz",

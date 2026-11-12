@@ -37,7 +37,9 @@ and a gap is reported as what to ask the organisation for — never as a grant a
 organisation ([what an estate must
 declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 
-Steps 1 to 5 walk the first pack with the team `shop`; step 6 walks the second.
+Steps 1 to 5 walk the first pack with the team `shop`; step 6 walks the second. The same
+ground as a procedure for the two teams, by side — what to ask, what to hand over, what to
+do next — is [handing a team its account](tutorial-handover.md).
 
 ## 1. What the organisation publishes, and what a lookup is
 

@@ -437,6 +437,15 @@ grep -q '^output "deploy_project_id"' "$pwi/workload-shop/workload-shop/satz/int
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project-workload estate does not validate"
 fi
+# the folder that is handed over says what it hands over and what to do with it
+hr="$pwi/workload-shop/workload-shop/README.md"
+grep -q '^## What this hands over' "$hr" && grep -q 'the members of `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
+  && grep -q 'use "vendor/workload-shop/workload-shop/satz/interface.satz"' "$hr" && grep -q 'no role that sets a folder'"'"'s access' "$hr" \
+  || fail "the README of a workload's interface does not say who may act as the account and what to do:\n$(sed -n '/^## What this hands over/,/^## How to use it/p' "$hr")"
+grep -q 'the project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'the members of `payments-owners@example.com`' "$pwi/payments/payments/README.md" \
+  || fail "the README of a project with its own account does not say what was handed over:\n$(sed -n '/^## What this hands over/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
+grep -q 'the folder to build in' "$pwi/shop/shop/README.md" || fail "the README of a workload's folder does not say it is the folder to build in"
+grep -q 'What this hands over' "$pwi/common/core/README.md" && fail "the library's README speaks of a hand-over"
 # a shared project for a workload nobody declared is refused at the compile
 sed 's|{ name = "shop-backend" workload = "shop" }|{ name = "shop-backend" workload = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
 "$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a workload nobody declared compiled"

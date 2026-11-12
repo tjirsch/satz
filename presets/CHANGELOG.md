@@ -1201,6 +1201,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `folder_workload` | 1.2 | 2026-11-12 | the interface `workload-<name>` also publishes `account_group` and `account_group_roles` — who may act as the account — and `billing_account`, which a new project is linked to: the interface's README tells the team what it was handed and what to do with it |
+| `project_workload` | 1.1 | 2026-11-12 | the interface of a project with its own account also publishes `account_group` and `account_group_roles` |
 | `project_workload` | 1.0 | 2026-11-12 | first version, replacing `project_onboarding`: `project_workload_projects` is the old `projects` list, a project with its own account and state bucket, unchanged in what it deploys; new, `project_workload_shared_projects` (`{ name workload }`) is a project with no account of its own, on which the account of a workload of `folder-workload.satz` gets `project_workload_roles` — one account for several projects, the grant written by reference so an undeclared workload is refused; every entry takes `apis`; the interfaces publish `delivered_project_roles`, and `delivered_apis` for a project with its own account |
 | `folder_workload` | 1.1 | 2026-11-12 | the interface `workload-<name>` publishes the infrastructure project as `deploy_project_id`, where it said `project_id`: an estate that also reads a project's interface (`project-workload.satz`) reads `project_id` there |
 | `estate_map` | 4.0 | 2026-11-12 | offers `project-workload` on `use_project_workload` in place of `project-onboarding` on `use_project_onboarding`; the old gate is refused and names the new one |

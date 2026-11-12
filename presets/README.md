@@ -1342,7 +1342,7 @@ holds nothing outside the project.
 | `project_id` | the Google project's id | `google_project_iam_member`: the estate grants on its own Google project in its own state |
 | `project_number` | its number, looked up | — |
 | `delivered_project_roles` | `project_workload_roles` | — |
-| `iac_account`, `state_bucket`, `delivered_apis` | a project with its own account alone: the account's email, the state bucket, the project's `apis` | — |
+| `iac_account`, `state_bucket`, `delivered_apis`, `account_group`, `account_group_roles` | a project with its own account alone: the account's email, the state bucket, the project's `apis`, the group whose members may act as the account and what it holds on it | — |
 
 `satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
 writes the estate of a project with its own account from these and the core export
@@ -1449,8 +1449,14 @@ transpile and taken whole to the estate's `vendor/`:
 | interface | export | what |
 |---|---|---|
 | `workload-shop` | `deploy_project_id`, `iac_account`, `state_bucket` | the workload's infrastructure project, the account its estates run as, the bucket their states live in |
+| | `account_group`, `account_group_roles`, `billing_account` | the group whose members may act as the account and what it holds on it; the billing account a new project is linked to |
 | | `delivered_folder_roles`, `delivered_billing_roles`, `delivered_apis` | what was delivered to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
 | `shop-frontend` | `delivered_folder` | the folder, looked up: the parent of what the estate creates |
+
+The README satz writes into each of these folders opens with what it hands over — the
+account, who may act as it, what it holds — and the receiving team's next steps, so the
+folders are the hand-over ([the procedure for both
+teams](../docs/tutorial-handover.md)).
 
 One estate reads one folder's interface. A workload with two folders is rolled out by two
 estates that run as the same account. A workload needs no folder: an entry of
