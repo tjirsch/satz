@@ -517,7 +517,7 @@ done
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the project-workload step"
 
-step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0090)"
+step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0091)"
 python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
