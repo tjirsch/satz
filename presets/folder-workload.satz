@@ -43,7 +43,7 @@
 // states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
 // its own.
 //
-// WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `vendor/` folder:
+// WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `interfaces/incoming/` folder:
 // `workload-<name>` — `deploy_project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
 // delegated to the account, `delegated_folder_roles`, `delegated_billing_roles`,
 // `delegated_apis`, which `satz` judges the estate's needs against — and `<folder name>`,

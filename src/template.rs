@@ -186,7 +186,7 @@ google_folder {
   }
 }
 
-// The folder, published to the projects beside the estate (interfaces/). Its number
+// The folder, published to the projects beside the estate (interfaces/outgoing/). Its number
 // exists once the folder does, so the interfaces look it up.
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;

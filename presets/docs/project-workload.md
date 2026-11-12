@@ -47,7 +47,7 @@ WHAT A PROJECT'S ESTATE READS. `interface "<name>"` publishes `project_id` (an a
 point for `google_project_iam_member`), `project_number`, and `delegated_project_roles`,
 which `satz` judges the estate's needs against. A project with its own account
 publishes `iac_account`, `state_bucket` and `delegated_apis` there too, and `satz init
---project <name> --interface interfaces/<name>/<name>/satz/interface.satz` writes its
+--project <name> --interface interfaces/outgoing/<name>/<name>/satz/interface.satz` writes its
 estate from them. A project worked by a workload's account reads those from the
 interface `workload-<workload>` of `presets/folder-workload.satz`, and uses both files.
 
@@ -113,7 +113,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

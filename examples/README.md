@@ -22,7 +22,7 @@ examples/
 --workload-folder-name Workloads` writes, with `presets/estate-core.satz` in use. It
 publishes the core exports — `workload_folder`, `customer_domain`,
 `customer_shortname`, `default_region`, `organization_id`, `infra_project_id`,
-`iac_service_account`, `infra_folder` — as `interfaces/common/core/`.
+`iac_service_account`, `infra_folder` — as `interfaces/outgoing/common/core/`.
 
 Each subfolder of `acme/` is one example: a project, an estate with its own config and
 state that reads the organisation through the interface file and changes nothing in the
@@ -51,20 +51,20 @@ own these are the `presets/` and `schemas/` folders beside the estate.
 From the repository root, with `satz` on the path:
 
 ```bash
-# 1. the organisation: writes examples/acme/hcl/ and examples/acme/interfaces/
+# 1. the organisation: writes examples/acme/hcl/ and examples/acme/interfaces/outgoing/
 satz --config examples/acme transpile C0example.satz
 
 # 2. the example takes its two interface folders whole: its identity, and its folder
-mkdir -p examples/acme/simple-project/vendor
-cp -R examples/acme/interfaces/workload-shop examples/acme/interfaces/shop examples/acme/simple-project/vendor/
+mkdir -p examples/acme/simple-project/interfaces/incoming
+cp -R examples/acme/interfaces/outgoing/workload-shop examples/acme/interfaces/outgoing/shop examples/acme/simple-project/interfaces/incoming/
 
 # 3. the example: writes examples/acme/simple-project/hcl/
 satz --config examples/acme/simple-project transpile simple-project.satz
 ```
 
-`hcl/`, `interfaces/` and `vendor/` are written by these commands and are not tracked.
+`hcl/`, `interfaces/outgoing/` and `interfaces/incoming/` are written by these commands and are not tracked.
 Step 2 is repeated after every change of the organisation's estate. `shop-dev` reaches
-the template through its `include_dirs` and needs its own `vendor/` copy. What the
+the template through its `include_dirs` and needs its own `interfaces/incoming/` copy. What the
 compile writes for a project estate — `interface.tf`, the `local.interface.<export>`
 references, the variables of the inputs — is [language
 §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)
@@ -83,7 +83,7 @@ organisation](../docs/tutorial-projects.md)).
 ## Adding an example
 
 A new folder under `acme/` with a `config.toml` and its estate in `satz/` is compiled
-by the smoke matrix with the organisation's `interfaces/` in its `vendor/`. An
+by the smoke matrix with the organisation's `interfaces/outgoing/` in its `interfaces/incoming/`. An
 example that needs more from the organisation adds the export to
 `acme/satz/C0example.satz`. Values come from the table in `docs/examples.md`; `satz fmt
 examples` formats the files.

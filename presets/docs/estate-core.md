@@ -27,7 +27,7 @@ next pack, estate-map.satz: this one is the day-0 params and nothing else.
 
 This pack declares no resource. It publishes the day-0 answers every project beside
 the estate needs as the estate's core exports — values of every interface under
-interfaces/, which a project's own HCL or Satz reads them from — so an estate has
+interfaces/outgoing/, which a project's own HCL or Satz reads them from — so an estate has
 them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 everything compiles to exactly what `satz init` would have written.
 
@@ -166,7 +166,7 @@ _No resources — params and claims only._
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

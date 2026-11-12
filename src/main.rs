@@ -286,7 +286,7 @@ pub(crate) enum Commands {
         /// as the project's own IaC service account
         #[arg(long, requires = "interface")]
         project: Option<String>,
-        /// With `--project`: the project's `interfaces/<project>/<project>/satz/interface.satz`,
+        /// With `--project`: the project's `interfaces/outgoing/<project>/<project>/satz/interface.satz`,
         /// as the central estate wrote it for an entry of `project_workload_projects` (`presets/project-workload.satz`)
         #[arg(long, requires = "project")]
         interface: Option<PathBuf>,
@@ -1464,12 +1464,12 @@ Thumbs.db
                 // A project estate: written from the interface file — `project_id`, `iac_account`,
                 // `state_bucket` and the core export `default_region` — so nothing is derived from
                 // the credentials: the central estate answered it all.
-                let interface_path = interface.ok_or("init --project: `--interface <path>` names the project's interface file, `interfaces/<project>/<project>/satz/interface.satz` of the central estate")?;
+                let interface_path = interface.ok_or("init --project: `--interface <path>` names the project's interface file, `interfaces/outgoing/<project>/<project>/satz/interface.satz` of the central estate, or your copy of it under `interfaces/incoming/`")?;
                 let text = fsx::read_to_string(&interface_path).map_err(|e| format!("{}: {}", interface_path.display(), e))?;
                 let file = satz_core::satz::parse(&text)
                     .map_err(|e| format!("{}:{}: {}", interface_path.display(), e.line, e.msg))?
                     .interface_file
-                    .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/", interface_path.display()))?;
+                    .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/outgoing/", interface_path.display()))?;
                 // the path the estate `use`s: relative to the config directory when it is under it
                 // `./config.toml` has the empty path for its directory, which is the current one
                 let absolute = fsx::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
@@ -4504,12 +4504,14 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     Ok(written)
 }
 
-/// The estate's interfaces: the root `outputs.tf` in `dir`, and `interfaces_dir` — the
-/// library in `common/`, and per project `<project>/` with its own interface and the whole
-/// library — each interface in both forms, each folder stamped with its content hash. Each
-/// is written whole and none left from an earlier run: satz owns `interfaces_dir`, so the
-/// folder of an interface the estate no longer declares goes with the rest, and the
-/// directory and `outputs.tf` go when the estate exports nothing. `hcl/interfaces/`, where
+/// The estate's interfaces: the root `outputs.tf` in `dir`, and the outgoing half of
+/// `interfaces_dir` — the library in `common/`, and per project `<project>/` with its own
+/// interface and the whole library — each interface in both forms, each folder stamped with
+/// its content hash. Each is written whole and none left from an earlier run: satz owns
+/// `interfaces_dir/outgoing`, so the folder of an interface the estate no longer declares
+/// goes with the rest, and it and `outputs.tf` go when the estate exports nothing.
+/// `interfaces_dir/incoming` — the copies of what other estates published to this one — is
+/// never written; anything else under `interfaces_dir` is refused by name. `hcl/interfaces/`, where
 /// the modules stood before `interfaces_dir`, is satz's too and goes.
 pub(crate) fn write_interface(
     interface: Option<&crate::interface::Interface>,
@@ -4519,19 +4521,40 @@ pub(crate) fn write_interface(
     interfaces_dir: &Path,
     estate: &str,
 ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    use crate::interface::{COMMON, HCL_DIR, SATZ_DIR, SATZ_FILE};
-    // satz removes `interfaces_dir` whole, so it may hold nothing satz does not write
+    use crate::interface::{COMMON, HCL_DIR, INCOMING, OUTGOING, SATZ_DIR, SATZ_FILE};
+    // `interfaces_dir` has two halves and nothing else: `outgoing/`, which satz removes and
+    // writes whole, and `incoming/`, which it never touches
     if dir.starts_with(interfaces_dir) {
         return Err(format!(
-            "interfaces_dir {} holds hcl_dir {} — satz rewrites interfaces_dir whole, so it is a directory of its own (`interfaces`, beside `hcl`)",
+            "interfaces_dir {} holds hcl_dir {} — interfaces_dir holds the interfaces alone, so it is a directory of its own (`interfaces`, beside `hcl`)",
             interfaces_dir.display(),
             dir.display()
         )
         .into());
     }
+    if interfaces_dir.is_dir() {
+        let mut strays: Vec<String> = std::fs::read_dir(interfaces_dir)
+            .map_err(|e| format!("{}: {}", interfaces_dir.display(), e))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n != OUTGOING && n != INCOMING && !n.starts_with('.'))
+            .collect();
+        strays.sort();
+        if !strays.is_empty() {
+            let d = interfaces_dir.display();
+            return Err(format!(
+                "{d} holds {}: only `{OUTGOING}/` and `{INCOMING}/` belong there. satz writes what the estate publishes into {d}/{OUTGOING}/, whole on every transpile, \
+                 and never touches {d}/{INCOMING}/, the copies of what the estate was given. Remove an interface folder an older satz wrote here — it is written \
+                 again under {OUTGOING}/ — and move a copy of another estate's interface into {INCOMING}/",
+                strays.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", "),
+            )
+            .into());
+        }
+    }
+    let outgoing = interfaces_dir.join(OUTGOING);
     // the interface files the last transpile left, by name: what each `CHANGES.md` is
     // diffed against — read before the directory goes
-    let previous = crate::interface_changes::previous(interfaces_dir)?;
+    let previous = crate::interface_changes::previous(&outgoing)?;
     let outputs = dir.join("outputs.tf");
     if outputs.exists() {
         fsx::remove_file(&outputs)?;
@@ -4540,8 +4563,12 @@ pub(crate) fn write_interface(
     if old.exists() {
         fsx::remove_dir_all(&old)?;
     }
-    if interfaces_dir.exists() {
-        fsx::remove_dir_all(interfaces_dir)?;
+    if outgoing.exists() {
+        fsx::remove_dir_all(&outgoing)?;
+    }
+    // with nothing given either, the directory goes with its outgoing half
+    if interface.is_none() && interfaces_dir.is_dir() && std::fs::read_dir(interfaces_dir).map(|mut d| d.next().is_none()).unwrap_or(false) {
+        std::fs::remove_dir(interfaces_dir)?;
     }
     let Some(i) = interface else { return Ok(Vec::new()) };
     let version = env!("CARGO_PKG_VERSION");
@@ -4575,7 +4602,7 @@ pub(crate) fn write_interface(
             files.extend(files_of(m)?);
         }
         let hash = crate::interface::content_hash(&files);
-        let root = interfaces_dir.join(&folder);
+        let root = outgoing.join(&folder);
         for (rel, bytes) in &files {
             let p = root.join(rel);
             if let Some(parent) = p.parent() {

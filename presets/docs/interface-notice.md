@@ -13,7 +13,7 @@ interface_notice`, with one option per delivery form; Pub/Sub is the one satz ha
 and this pack is it. A second form — a webhook, a push of the interface to a
 customer repository — is a second option and a pack of its own beside this one.
 
-The estate's exports (`export` statements, interfaces/) are what the projects beside
+The estate's exports (`export` statements, interfaces/outgoing/) are what the projects beside
 it read, in their own state and their own pipelines. This pack puts a notice behind
 them, in four pieces in the infrastructure project:
 
@@ -102,7 +102,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

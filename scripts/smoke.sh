@@ -34,7 +34,7 @@ export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cach
 export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
 cd "$root/tests/smoke"
-rm -rf hcl interfaces project/vendor project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
+rm -rf hcl interfaces project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 mkdir -p tmp
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -197,18 +197,19 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
 
-step "interfaces: the showcase's exports as outputs.tf, the library in interfaces/common/, and one folder per project"
-si=interfaces/archive
+step "interfaces: the showcase's exports as outputs.tf, the library in interfaces/outgoing/common/, and one folder per project"
+si=interfaces/outgoing/archive
 for m in core audit archive; do
   for f in README.md hcl/versions.tf hcl/main.tf hcl/outputs.tf satz/interface.satz; do
-    [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/archive/$m/$f was not written"
+    [ -f "$si/$m/$f" ] || fail "the showcase exports and interfaces/outgoing/archive/$m/$f was not written"
   done
 done
 for m in core audit; do
-  [ -f "interfaces/common/$m/satz/interface.satz" ] || fail "the library lacks interfaces/common/$m/"
+  [ -f "interfaces/outgoing/common/$m/satz/interface.satz" ] || fail "the library lacks interfaces/outgoing/common/$m/"
 done
-[ -e interfaces/common/archive ] && fail "the library carries a project's interface"
-[ "$(ls interfaces)" = "$(printf 'archive\nbilling-events\ncommon\norders-events')" ] || fail "interfaces/ holds more than the library and the projects:\n$(ls interfaces)"
+[ -e interfaces/outgoing/common/archive ] && fail "the library carries a project's interface"
+[ "$(ls interfaces/outgoing)" = "$(printf 'archive\nbilling-events\ncommon\norders-events')" ] || fail "interfaces/outgoing/ holds more than the library and the projects:\n$(ls interfaces/outgoing)"
+[ "$(ls interfaces)" = "outgoing" ] || fail "interfaces/ holds more than its outgoing half:\n$(ls interfaces)"
 grep -q 'Content hash: `sha256:[0-9a-f]\{64\}`' $si/README.md || fail "the project's folder carries no content hash:\n$(cat $si/README.md)"
 [ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
 [ -e tmp/showcase-hcl/interfaces ] && fail "the root module holds interfaces/"
@@ -249,8 +250,8 @@ if command -v tofu >/dev/null 2>&1; then
     || fail "the archive module does not validate away from the estate"
 fi
 
-step "project: a Satz estate takes interfaces/archive/ whole and reads the showcase's values as \${{interface.<export>}}"
-mkdir -p project/vendor && cp -R "$si" project/vendor/archive
+step "project: a Satz estate takes interfaces/outgoing/archive/ whole and reads the showcase's values as \${{interface.<export>}}"
+mkdir -p project/interfaces/incoming && cp -R "$si" project/interfaces/incoming/archive
 "$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project.txt)"
 pm=project/hcl/main.tf
 pi=project/hcl/interface.tf
@@ -263,9 +264,10 @@ grep -q 'folder_id = local.interface.infra_folder' "$pm" || fail "a looked-up va
 grep -q 'parent = local.interface.infra_folder' "$pm" || fail "a folder's looked-up parent is not read as the local:\n$(cat $pm)"
 grep -q '"central" = local.interface.customer_domain' "$pm" || fail "a whole value inside a map is not the bare local:\n$(cat $pm)"
 grep -q 'corp-archive-001\|^data ' "$pm" && fail "main.tf carries the central estate's value or a lookup:\n$(cat $pm)"
-[ -e project/interfaces ] && fail "a project that exports nothing wrote interfaces/"
+[ -e project/interfaces/outgoing ] && fail "a project that exports nothing wrote interfaces/outgoing/"
+[ -f project/interfaces/incoming/archive/archive/satz/interface.satz ] || fail "the transpile of the project touched interfaces/incoming/"
 "$satz" --config project/config.toml presets archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz presets failed on the project:\n$(cat tmp/project-packs.txt)"
-grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'vendor/archive/archive/satz/interface.satz' || fail "satz presets does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
+grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'interfaces/incoming/archive/archive/satz/interface.satz' || fail "satz presets does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
 sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && fail "satz presets reads the interface file as a pack:\n$(cat tmp/project-packs.txt)"
 if command -v tofu >/dev/null 2>&1; then
   (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's root module does not validate"
@@ -297,7 +299,7 @@ grep -q 'export "archive_number"' tmp/renamed.satz || fail "the showcase has no 
 grep -qF -- '- [ ] Replace `module.satz.archive_project_number` / `${{interface.archive_project_number}}` with `…archive_number`: renamed, the same `google_project.archive`.' $si/archive/CHANGES.md \
   || fail "the rename is not the todo:\n$(cat $si/archive/CHANGES.md)"
 [ -e $si/core/CHANGES.md ] && fail "an unchanged interface carries a CHANGES.md"
-[ -e interfaces/common/core/CHANGES.md ] && fail "an unchanged library interface carries a CHANGES.md"
+[ -e interfaces/outgoing/common/core/CHANGES.md ] && fail "an unchanged library interface carries a CHANGES.md"
 grep -q 'CHANGES.md' $si/archive/README.md && grep -q 'CHANGES.md' $si/README.md || fail "the READMEs do not point at CHANGES.md"
 hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 "$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>&1 || fail "the second transpile of the renamed showcase failed"
@@ -306,16 +308,16 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 
 step "examples: the organisation's estate compiles, and each example beside it compiles against its interface"
 # examples/acme/ is the organisation; every subfolder with a config.toml is one example,
-# a workload's estate that reads the interfaces copied to its vendor/.
+# a workload's estate that reads the interfaces copied to its interfaces/incoming/.
 ex="$root/examples/acme"
 rm -rf "$ex/hcl" "$ex/interfaces"
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile:\n$(cat tmp/example-org.txt)"
-[ -f "$ex/interfaces/common/core/satz/interface.satz" ] || fail "the example organisation wrote no common interface:\n$(cat tmp/example-org.txt)"
+[ -f "$ex/interfaces/outgoing/common/core/satz/interface.satz" ] || fail "the example organisation wrote no common interface:\n$(cat tmp/example-org.txt)"
 examples=0
 for cfg in "$ex"/*/config.toml; do
   [ -f "$cfg" ] || continue
   d=$(dirname "$cfg"); n=$(basename "$d"); examples=$((examples + 1))
-  rm -rf "$d/hcl" "$d/vendor" && mkdir -p "$d/vendor" && cp -R "$ex/interfaces/." "$d/vendor/"
+  rm -rf "$d/hcl" "$d/interfaces/incoming" && mkdir -p "$d/interfaces/incoming" && cp -R "$ex/interfaces/outgoing/." "$d/interfaces/incoming/"
   for e in "$d"/satz/*.satz; do
     "$satz" --config "$d" transpile "$(basename "$e")" > "tmp/example-$n.txt" 2>&1 || fail "the example $n does not transpile:\n$(cat "tmp/example-$n.txt")"
   done
@@ -369,7 +371,7 @@ grep -A3 '^resource "google_folder" "rag_acme"' "$fwm" | grep -q 'display_name *
 grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a workload's account holds a role that sets folder IAM, policies or tags"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a workload's own billing_roles did not reach the billing account"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one workload's billing role reached another workload"
-fwi="$ex/interfaces"
+fwi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_apis"' "$fwi/workload-rag/workload-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the workload's interface does not publish its APIs:\n$(cat "$fwi/workload-rag/workload-rag/satz/interface.satz")"
 grep -A1 '^output "delegated_billing_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a workload without billing_roles does not publish the default"
 grep -A1 '^output "delegated_folder_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "the workload's interface does not publish its folder roles"
@@ -426,7 +428,7 @@ for p in shop_backend shop_frontend; do
     || fail "the workload's account does not hold the two project roles on $p:\n$(grep -B3 -A3 'deploy_shop.email' "$pwm")"
 done
 grep -B6 'google_project.shop_frontend.project_id' "$pwm" | grep -q 'service = "run.googleapis.com"' || fail "a shared project's own apis did not reach it"
-pwi="$ex/interfaces"
+pwi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_project_roles"' "$pwi/shop-backend/shop-backend/satz/interface.satz" | grep -q 'roles/resourcemanager.projectIamAdmin' || fail "a shared project's interface does not publish what was delegated on it"
 grep -q '^output "iac_account"' "$pwi/shop-backend/shop-backend/satz/interface.satz" && fail "a shared project's interface publishes an account it does not have"
 for o in project_id project_number iac_account state_bucket delegated_project_roles delegated_apis; do
@@ -440,7 +442,7 @@ fi
 # the folder that is handed over says what it hands over and what to do with it
 hr="$pwi/workload-shop/workload-shop/README.md"
 grep -q '^## Delegated access: what you were given' "$hr" && grep -q 'the members of `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
-  && grep -q 'use "vendor/workload-shop/workload-shop/satz/interface.satz"' "$hr" && grep -q 'no role that sets a folder'"'"'s access' "$hr" \
+  && grep -q 'use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"' "$hr" && grep -q 'no role that sets a folder'"'"'s access' "$hr" \
   || fail "the README of a workload's interface does not say who may act as the account and what to do:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$hr")"
 grep -q 'the project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'the members of `payments-owners@example.com`' "$pwi/payments/payments/README.md" \
   || fail "the README of a project with its own account does not say what was handed over:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
@@ -452,8 +454,8 @@ sed 's|{ name = "shop-backend" workload = "shop" }|{ name = "shop-backend" workl
 grep -q 'google_service_account.deploy_ghost' tmp/pw-ghost.txt && grep -q 'deploy_shop' tmp/pw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/pw-ghost.txt)"
 # the estate that works in shop-backend as the workload's account: it reads two interfaces, and
 # what its bucket needs on the project is its own to grant
-rm -rf tmp/pw/estate && mkdir -p tmp/pw/estate/satz tmp/pw/estate/vendor
-cp -R "$pwi/workload-shop" "$pwi/shop-backend" tmp/pw/estate/vendor/
+rm -rf tmp/pw/estate && mkdir -p tmp/pw/estate/satz tmp/pw/estate/interfaces/incoming
+cp -R "$pwi/workload-shop" "$pwi/shop-backend" tmp/pw/estate/interfaces/incoming/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/pw/estate/config.toml
 cat > tmp/pw/estate/satz/backend.satz <<'SATZ'
 estate shop_backend
@@ -484,8 +486,8 @@ providers {
   }
 }
 
-use "vendor/workload-shop/workload-shop/satz/interface.satz"
-use "vendor/shop-backend/shop-backend/satz/interface.satz"
+use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/shop-backend/shop-backend/satz/interface.satz"
 
 google_storage_bucket {
   assets {
@@ -536,7 +538,7 @@ grep -q '^resource "google_organization_iam_custom_role" "delegated_budgets"' "$
 grep -q '"billing.budgets\.\|"billing.accounts\.' "$bm" && fail "the budget role carries a permission on the billing account"
 [ "$(grep -c 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"' "$bm")" = 1 ] || fail "the budget role is granted to something other than the one entry that asked:\n$(grep -B2 -A4 'delegated_budgets.name' "$bm")"
 grep -A3 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"' "$bm" | grep -q 'project = "${google_project.payments.project_id}"' || fail "the budget role is not granted on the project that asked"
-bi="$ex/interfaces"
+bi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_budgets"' "$bi/payments/payments/satz/interface.satz" | grep -q 'value *= true' && grep -A1 '^output "delegated_budgets"' "$bi/plain/plain/satz/interface.satz" | grep -q 'value *= false' \
   || fail "the interfaces do not say which project was delegated budgets"
 grep -q '| budgets | delegated' "$bi/payments/payments/README.md" && grep -q '| budgets | not delegated' "$bi/plain/plain/README.md" || fail "the hand-over README does not say whether budgets were delegated"
@@ -549,8 +551,8 @@ sed 's|use_delegated_budgets = true|use_delegated_budgets = false|' tmp/bud-org.
 grep -q 'google_organization_iam_custom_role.delegated_budgets' tmp/bud-off.txt || fail "the refusal does not name the missing role:\n$(cat tmp/bud-off.txt)"
 # the team's estate in the project that was delegated budgets: the budget pack, nothing missing
 bud_estate() { # <dir> <interface name>
-  rm -rf "$1" && mkdir -p "$1/satz" "$1/vendor" "$1/packs"
-  cp -R "$bi/$2" "$1/vendor/" && cp "$root/packs/project-budget.satz" "$1/packs/"
+  rm -rf "$1" && mkdir -p "$1/satz" "$1/interfaces/incoming" "$1/packs"
+  cp -R "$bi/$2" "$1/interfaces/incoming/" && cp "$root/packs/project-budget.satz" "$1/packs/"
   { grep -v '^presets_dir\|^interfaces_dir' "$pt/config.toml" | sed "s#\.\./\.\./\.\./#$root/#g"; echo 'packs_dir = "packs"'; } > "$1/config.toml"
   cat > "$1/satz/team.satz" <<SATZ
 estate team
@@ -566,7 +568,7 @@ params {
   budget_email       = "$2-team@example.com"
 }
 
-use "vendor/$2/$2/satz/interface.satz"
+use "interfaces/incoming/$2/$2/satz/interface.satz"
 use "packs/project-budget.satz"
 
 terraform {
@@ -623,10 +625,10 @@ grep -q "a workload's account: the interface \`workload-shop\` delegates 6 role(
   || fail "the report does not say what was delegated:\n$(cat tmp/wl-report.txt)"
 # the published values say `delegated_…` (ADR 0089): nothing the example writes carries an old
 # name, and an interface copied before the rename is refused where it is used, not read
-grep -rq 'delivered_' "$ex/interfaces" && fail "an interface the example organisation writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces")"
-rm -rf tmp/oldif && mkdir -p tmp/oldif && cp -R "$pt/satz" "$pt/vendor" tmp/oldif/
+grep -rq 'delivered_' "$ex/interfaces/outgoing" && fail "an interface the example organisation writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces/outgoing")"
+rm -rf tmp/oldif && mkdir -p tmp/oldif/interfaces && cp -R "$pt/satz" tmp/oldif/ && cp -R "$pt/interfaces/incoming" tmp/oldif/interfaces/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/oldif/config.toml
-oldif=tmp/oldif/vendor/workload-shop/workload-shop/satz/interface.satz
+oldif=tmp/oldif/interfaces/incoming/workload-shop/workload-shop/satz/interface.satz
 sed 's/"delegated_folder_roles"/"delivered_folder_roles"/' "$oldif" > tmp/oldif.satz && cp tmp/oldif.satz "$oldif"
 grep -q '"delivered_folder_roles"' "$oldif" || fail "the interface with the old name was not written"
 "$satz" --config tmp/oldif transpile simple-project.satz --check > tmp/oldif.txt 2>&1 && fail "an interface that still exports delivered_folder_roles was read"
@@ -691,16 +693,16 @@ PY
 "$satz" --config . check-request "$root/tests/smoke/requests/ok.satz" "$PWD/tmp/with-project.satz" > tmp/check-request.txt 2>&1 || fail "a fitting request file was refused:\n$(cat tmp/check-request.txt)"
 "$satz" --config . check-request "$root/tests/smoke/requests/bad.satz" "$PWD/tmp/with-project.satz" > tmp/check-request-bad.txt 2>&1 && fail "a request file with an undeclared field passed"
 grep -q 'has `labels`, which is no field of this request' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
-grep -q '## What you may request' interfaces/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/common/core/README.md)"
+grep -q '## What you may request' interfaces/outgoing/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/outgoing/common/core/README.md)"
 "$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
-pi=interfaces/payments/payments/satz/interface.satz
-[ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces)"
+pi=interfaces/outgoing/payments/payments/satz/interface.satz
+[ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces/outgoing)"
 for o in project_id project_number iac_account state_bucket audit_bucket_name; do
   grep -q "^output \"$o\"" "$pi" || fail "the interface lacks $o:\n$(cat $pi)"
 done
-[ -d interfaces/common/payments ] && fail "the interface an each writes reached the library"
+[ -d interfaces/outgoing/common/payments ] && fail "the interface an each writes reached the library"
 for t in orders billing; do
-  grep -q '^output "topic"' "interfaces/$t-events/$t-events/satz/interface.satz" || fail "the showcase's each wrote no interface $t-events:\n$(ls interfaces)"
+  grep -q '^output "topic"' "interfaces/outgoing/$t-events/$t-events/satz/interface.satz" || fail "the showcase's each wrote no interface $t-events:\n$(ls interfaces/outgoing)"
 done
 grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not emitted"
 pia="$PWD/$pi"
@@ -747,8 +749,8 @@ SATZ
 grep -q 'resource "google_storage_notification" "interface_notice"' tmp/notice-hcl/main.tf || fail "no storage notification"
 grep -q 'topic = "${google_pubsub_topic_iam_member.interface_notice_publisher.topic}"' tmp/notice-hcl/main.tf || fail "the notification does not wait for the grant:\n$(grep -A6 'google_storage_notification' tmp/notice-hcl/main.tf)"
 grep -q 'content = "${jsonencode(local.satz_interface)}"' tmp/notice-hcl/main.tf || fail "the object does not carry the interface"
-grep -q 'value *= "projects/corp-infra-001/topics/corp-satz-interface"' interfaces/common/core/hcl/outputs.tf || fail "the topic is not a static export:\n$(cat interfaces/common/core/hcl/outputs.tf)"
-grep -q 'google_pubsub_subscription' interfaces/common/core/README.md || fail "the README does not show the subscription to write"
+grep -q 'value *= "projects/corp-infra-001/topics/corp-satz-interface"' interfaces/outgoing/common/core/hcl/outputs.tf || fail "the topic is not a static export:\n$(cat interfaces/outgoing/common/core/hcl/outputs.tf)"
+grep -q 'google_pubsub_subscription' interfaces/outgoing/common/core/README.md || fail "the README does not show the subscription to write"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/notice-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the interface notice does not validate"
 fi
@@ -3062,5 +3064,5 @@ else
   (cd "$root" && cargo test --workspace --locked --quiet 2>&1 | tail -3)
 fi
 
-rm -rf hcl interfaces project/vendor project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
+rm -rf hcl interfaces project/hcl project/interfaces tmp yaml/imported-*.satz yaml/identity-*.satz evidence
 printf '\nsmoke: every command ran.\n'

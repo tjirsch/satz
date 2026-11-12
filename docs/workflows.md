@@ -833,7 +833,7 @@ names one value. `satz transpile` writes each one twice:
 
 - as an output of the root module, in `hcl/outputs.tf`, which the operator reads with
   `tofu output`;
-- as a value of the interfaces under `interfaces/`, beside `hcl/`, which the projects
+- as a value of the interfaces under `interfaces/outgoing/`, beside `hcl/`, which the projects
   read — each interface as an HCL module and as a Satz file.
 
 An export outside every `interface` block is a core export, and every interface carries
@@ -942,10 +942,12 @@ one.
 
 ### The folder a project takes
 
-`satz transpile` writes `interfaces_dir` (`interfaces`, a key of `config.toml`) whole:
+`satz transpile` writes the outgoing half of `interfaces_dir` (`interfaces`, a key of
+`config.toml`) whole, and never touches the other half, `interfaces/incoming/`, where an
+estate keeps the folders it took from others:
 
 ```text
-interfaces/
+interfaces/outgoing/
   common/                       the library alone, for a project without an interface of its own
     README.md
     core/      README.md  hcl/  satz/
@@ -957,7 +959,7 @@ interfaces/
     network/   README.md  hcl/  satz/
 ```
 
-**A project takes its folder whole**, `interfaces/<project>/`, into its own repository or
+**A project takes its folder whole**, `interfaces/outgoing/<project>/`, into its own repository or
 beside its code, and takes it again after every change of the central estate. The folder
 holds the project's own interface and the whole library, never another project's, so it
 is one snapshot and nothing in it is picked by hand. An interface the project does not
@@ -1001,12 +1003,12 @@ Every interface has the same two forms, with the same values:
   ```hcl
   # the folder, copied into the project's repository
   module "satz" {
-    source = "./vendor/payments/payments/hcl"
+    source = "./interfaces/incoming/payments/payments/hcl"
   }
 
   # or sourced from the central estate's repository, pinned to a commit
   module "satz" {
-    source = "git::<the estate repository URL>//interfaces/payments/payments/hcl?ref=<commit>"
+    source = "git::<the estate repository URL>//interfaces/outgoing/payments/payments/hcl?ref=<commit>"
   }
 
   resource "google_project" "payments" {
@@ -1022,7 +1024,7 @@ Every interface has the same two forms, with the same values:
   the top level; the estate names a value `"${{interface.<export>}}"`:
 
   ```
-  use "vendor/payments/payments/satz/interface.satz"
+  use "interfaces/incoming/payments/payments/satz/interface.satz"
 
   google_project {
     payments_work {
@@ -1089,7 +1091,7 @@ The entry is the estate's own, or the project's request: `contributes_project_wo
 a small pack of the project's, checked with `satz check-request` and vendored into the
 estate by pull request ([language §6.17](language.md#request--what-a-project-may-add-to-a-list)). The pull request
 is the request's review; the apply creates the project; `satz transpile` writes
-`interfaces/payments/`. Two entries of one name are refused.
+`interfaces/outgoing/payments/`. Two entries of one name are refused.
 
 A project's natural set is often what stands under its folder:
 `export "team_projects" = all google_project under google_folder.team_a` publishes that
@@ -1114,7 +1116,7 @@ written by hand, `interface "billing" { … }`, and no entry.
 **A project on satz** starts from that interface. In its own directory:
 
 ```bash
-satz init --project payments --interface <the estate>/interfaces/payments/payments/satz/interface.satz
+satz init --project payments --interface <the estate>/interfaces/outgoing/payments/payments/satz/interface.satz
 satz transpile payments.satz
 ```
 
@@ -1472,7 +1474,7 @@ a customer's documentation package from the estate. Each is a folder (`SKILL.md`
 Both skills start from a customer's shortcode and read the folder `~/projects/ccc/<shortcode>/`
 (`CCC_ROOT` names another root): the central estate repository `<shortcode>-C<dirid>/` with its
 `config.toml` (`yaml_dir` names the estate directory, `satz/` when absent), the estate file inside
-it, `hcl/` and `interfaces/`; beside it the workload folders — a satz project estate (a
+it, `hcl/` and `interfaces/outgoing/`; beside it the workload folders — a satz project estate (a
 `config.toml` and a `.satz` that `use`s an `interface.satz`) or an HCL project (`.tf` files that
 read `module.satz.<export>`); and `audit/`, which the review owns. Everything else there is left
 alone. The central estate's own view of its projects is `satz interfaces <estate>.satz --format

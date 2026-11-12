@@ -460,7 +460,7 @@ fn interfaces_of(file: &satz::File, file_name: &str, env: &Env) -> Result<Vec<(s
                 return Err(at(
                     i.line,
                     format!(
-                        "interface \"{}\": an interface name is the folder interfaces/<name>/ — lowercase letters, digits and `-`, starting with a letter, and not `{}` or `{}`",
+                        "interface \"{}\": an interface name is the folder interfaces/outgoing/<name>/ — lowercase letters, digits and `-`, starting with a letter, and not `{}` or `{}`",
                         name,
                         satz::CORE_INTERFACE,
                         satz::COMMON_LIBRARY

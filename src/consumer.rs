@@ -580,7 +580,7 @@ resource "google_project" "team" {
         let facts = Facts::of_estate("e", Some(&i), &m);
         let text = satz_core::fmt::format(&i.satz_file("payments", &facts, "0.0.0", "e.satz")).unwrap();
         let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
-        let used = [satz_core::pipeline::UsedInterfaceFile { file: "vendor/payments/satz/interface.satz".into(), interface: file }];
+        let used = [satz_core::pipeline::UsedInterfaceFile { file: "interfaces/incoming/payments/satz/interface.satz".into(), interface: file }];
         // (HCL a project writes, the resource a project estate emits for the same intent)
         let cases: [(&str, &str, bool); 5] = [
             (

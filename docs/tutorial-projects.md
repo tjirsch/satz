@@ -1,7 +1,7 @@
 # Projects beside the organisation
 
 This tutorial starts where [an organisation from scratch](tutorial-organisation.md)
-ends: Acme's estate runs as its IaC service account and publishes `interfaces/common/`.
+ends: Acme's estate runs as its IaC service account and publishes `interfaces/outgoing/common/`.
 A customer team — `shop` — now needs Google projects of its own, in a folder of its own
 under `Workloads`, with its own repository, state and pipeline, and it must never run as
 the organisation's account. Two kinds of team do this: one writes Satz, one writes OpenTofu
@@ -51,7 +51,7 @@ do next — is [delegated access: the procedure for both sides](tutorial-delegat
 satz interfaces C0example.satz --format text --out -
 ```
 
-Every `transpile` of the organisation writes `interfaces/common/core/` — its core
+Every `transpile` of the organisation writes `interfaces/outgoing/common/core/` — its core
 exports in two forms, an HCL module under `hcl/` and a Satz file `satz/interface.satz`,
 with a `README.md` that names each value. A value has one of two kinds:
 
@@ -66,7 +66,7 @@ with a `README.md` that names each value. A value has one of two kinds:
   `resourcemanager.folders.list` on the organisation; the README names the permission
   beside the value. The organisation's state is never read.
 
-A project takes `interfaces/common/` whole — a copy, or the organisation's repository at
+A project takes `interfaces/outgoing/common/` whole — a copy, or the organisation's repository at
 a tag — and takes it again after every change of the organisation. The folder's README
 carries a content hash, and a transpile that changes a value writes `CHANGES.md` beside
 the interface's README with what a project does about it.
@@ -111,7 +111,7 @@ A second folder for the same account is a second entry of `folder_workload_folde
 names `shop`, under any parent; a workload that needs more APIs or a further billing role
 says so in its entry ([the pack](../presets/README.md#folder-workloadsatz)).
 
-Every transpile of the organisation writes the current `interfaces/`; the team takes
+Every transpile of the organisation writes the current `interfaces/outgoing/`; the team takes
 `workload-shop/` — its identity, and what was delegated to it — and `shop/` — its folder —
 from there. Everything the team does from here runs as `svc-deploy-shop`.
 
@@ -151,8 +151,8 @@ billing account. `deployment_mode = "cloud"` makes every provider and the backen
 impersonate `svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com`.
 
 ```
-use "vendor/workload-shop/workload-shop/satz/interface.satz"
-use "vendor/shop/shop/satz/interface.satz"
+use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/shop/shop/satz/interface.satz"
 ```
 
 **The interface files**, from the two folders the team took, read as
@@ -195,7 +195,7 @@ team's repository:
 shop-dev/
   config.toml                 include_dirs reaches the template; schemas/ and presets/ beside
   satz/shop_dev.satz          the instance: the inputs bound, the template used
-  vendor/                     interfaces/workload-shop/ and interfaces/shop/ of the organisation, taken whole
+  interfaces/incoming/        outgoing/workload-shop/ and outgoing/shop/ of the organisation, taken whole
   hcl/                        written by satz
 ```
 
@@ -218,7 +218,8 @@ use "simple-project.satz"
 A using document's `params { }` binds a template's inputs as it binds any param. Then:
 
 ```bash
-cp -R <the organisation>/interfaces/workload-shop <the organisation>/interfaces/shop vendor/
+mkdir -p interfaces/incoming
+cp -R <the organisation>/interfaces/outgoing/workload-shop <the organisation>/interfaces/outgoing/shop interfaces/incoming/
 satz transpile shop_dev.satz
 ```
 
@@ -325,14 +326,15 @@ The apply creates the Google project `acme-payments-001` under `Workloads` and, 
 the account `svc-iac-payments` and the state bucket `acme-payments-001-state`. The account
 holds the project's access control and its services on that project and nowhere else; the
 members of `payments-owners@example.com` read the project and may become the account.
-`interfaces/payments/` publishes `project_id`, `project_number`, `iac_account`,
+`interfaces/outgoing/payments/` publishes `project_id`, `project_number`, `iac_account`,
 `state_bucket`, and what was delegated: `delegated_project_roles` and `delegated_apis`.
 
 The team writes its estate from that interface, in its own repository:
 
 ```bash
-cp -R <the organisation>/interfaces/payments vendor/
-satz init --project payments --interface vendor/payments/payments/satz/interface.satz
+mkdir -p interfaces/incoming
+cp -R <the organisation>/interfaces/outgoing/payments interfaces/incoming/
+satz init --project payments --interface interfaces/incoming/payments/payments/satz/interface.satz
 ```
 
 `init --project` writes an estate that runs as `svc-iac-payments`, keeps its state in the
@@ -378,8 +380,8 @@ The estate that works in `shop-backend` reads two interfaces — the account fro
 `workload-shop`, the project from `shop-backend` — and is written by hand:
 
 ```
-use "vendor/workload-shop/workload-shop/satz/interface.satz"
-use "vendor/shop-backend/shop-backend/satz/interface.satz"
+use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/shop-backend/shop-backend/satz/interface.satz"
 
 google_storage_bucket {
   assets {
@@ -398,7 +400,7 @@ project; two projects are two estates that run as the same account.
 
 | | the Satz way | the HCL way |
 |---|---|---|
-| the truth about the organisation | the two `interface.satz` files under `vendor/` | `interface.tf` |
+| the truth about the organisation | the two `interface.satz` files under `interfaces/incoming/` | `interface.tf` |
 | the values that change per instance | `params { }` of a thin estate, or `--input` | `terraform.tfvars`, or `-var` |
 | the identity | the workload's account, in `params` of the template | the workload's account, in `providers.tf` |
 | the state | the team's bucket, `gcs` backend | the same |

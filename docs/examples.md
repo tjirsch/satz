@@ -213,7 +213,7 @@ file, and CI compiles it.
 `examples/` holds estates that show one use of satz each. `examples/acme/` is one
 organisation — the estate `satz init --workload-folder-name Workloads` writes, with
 `presets/estate-core.satz` in use — and each subfolder of it is one example: a project
-that reads the organisation through `interfaces/common/` copied to its `vendor/`.
+that reads the organisation through `interfaces/outgoing/common/` copied to its `interfaces/incoming/`.
 `examples/README.md` gives the commands and names the values to replace.
 
 `examples/acme/simple-project/satz/simple-project.satz` is one Google project as a
@@ -229,7 +229,7 @@ inputs {
   cost_centre = "4711"
 }
 
-use "vendor/common/core/satz/interface.satz"
+use "interfaces/incoming/common/core/satz/interface.satz"
 
 google_project {
   project {

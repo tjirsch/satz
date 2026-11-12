@@ -65,8 +65,8 @@ providers {
 
 // The organisation's values, read from two interface files as `${{interface.<export>}}`:
 // the workload's identity with what was delegated to it, and the folder it works in.
-use "vendor/workload-shop/workload-shop/satz/interface.satz"
-use "vendor/shop/shop/satz/interface.satz"
+use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/shop/shop/satz/interface.satz"
 
 google_project {
   project {

@@ -97,7 +97,7 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("export", "joins the estate's interface, the outputs customer HCL reads", Used::Absorbed),
     ("hcl", "passes through to main.tf beside the resources", Used::Absorbed),
     ("inputs", "goes to the estate's parameter namespace as the template's contract, each a variable of the HCL", Used::Absorbed),
-    ("interface", "joins one project's interface, interfaces/<name>/, or — as a header — names a generated interface file", Used::Absorbed),
+    ("interface", "joins one project's interface, interfaces/outgoing/<name>/, or — as a header — names a generated interface file", Used::Absorbed),
     ("notice", "joins the estate's notices", Used::Absorbed),
     ("offers", "goes to the pack graph", Used::Absorbed),
     ("pack", "names the file", Used::Header),

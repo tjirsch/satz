@@ -310,7 +310,7 @@ google_pubsub_topic_iam_member {
 // --- `export`: what the estate publishes to the projects beside it — estates with
 //     their own repository, config, state and pipeline, written in HCL or in Satz.
 //     Each one is an output of the root module and a value of the generated
-//     interfaces under interfaces/. A param, a literal, or an attribute satz writes
+//     interfaces under interfaces/outgoing/. A param, a literal, or an attribute satz writes
 //     is known now and is a literal; an attribute only the cloud knows is a lookup,
 //     a `data` source the project's plan reads. An export outside every `interface`
 //     block is a core export, in every interface.
@@ -334,7 +334,7 @@ export "infra_projects" = all google_project under google_folder.infra descripti
 // --- `private`: the pack's bucket stays out of every export, without forking the pack.
 private google_storage_bucket.pack_bucket
 
-// --- `interface`: what one project reads — interfaces/archive/, the folder the
+// --- `interface`: what one project reads — interfaces/outgoing/archive/, the folder the
 //     project takes whole — beside the core exports above, which every interface
 //     carries. The same interface in another file adds to it. `common` puts an
 //     interface into the library every project's folder carries (a pack's
@@ -353,7 +353,7 @@ interface "archive" {
 }
 
 // --- `each` around `interface`: one interface per entry of a list param, named and
-//     filled from the entry — interfaces/orders-events/ and interfaces/billing-events/,
+//     filled from the entry — interfaces/outgoing/orders-events/ and interfaces/outgoing/billing-events/,
 //     each one project's own, a pack's too. Inside `${{…}}` the entry's text is a label,
 //     written with `-` as `_`.
 each event_topics by name {

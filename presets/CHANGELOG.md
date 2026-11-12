@@ -13,6 +13,36 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.100.0
+
+**`interfaces/` has two halves, and the folders an older satz wrote directly into it are
+refused.** What an estate publishes is written to `interfaces/outgoing/`, removed and
+written whole by every transpile. What an estate was given — the copies of other estates'
+interface folders — stands in `interfaces/incoming/`, which satz never writes. Nothing
+else belongs in `interfaces/`. No resource changes, and **no plan moves**.
+
+| before | now |
+|---|---|
+| `interfaces/common/`, `interfaces/<project>/` | `interfaces/outgoing/common/`, `interfaces/outgoing/<project>/` |
+| a copy of another estate's folder, by convention `vendor/<project>/` | `interfaces/incoming/<project>/` |
+| `use "vendor/<project>/<project>/satz/interface.satz"` | `use "interfaces/incoming/<project>/<project>/satz/interface.satz"` |
+
+**What is refused:** a transpile of an estate whose `interfaces/` holds anything but
+`outgoing/` and `incoming/`. The error names what it found ("interfaces holds `common`,
+`payments`: only `outgoing/` and `incoming/` belong there"). Nothing is removed.
+
+**How to find it:** `ls interfaces` in the estate's folder.
+
+**What to do:**
+
+- In an estate that publishes interfaces: delete the folders in `interfaces/` and
+  transpile; they are written again under `interfaces/outgoing/`.
+- In an estate that reads interfaces: move each copy to `interfaces/incoming/` and change
+  the path of its `use` line. A copy under another path is still read — the move is what
+  makes the folder say what it is — but a copy that stood inside `interfaces/` must move.
+- Hand-written HCL that sources an interface module follows the path:
+  `…//interfaces/outgoing/<project>/<project>/hcl`.
+
 ### v0.98.0
 
 **The values the two access packs publish are named `delegated_…`, where they said
