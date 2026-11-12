@@ -134,6 +134,8 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_budget` | off | `organization-budget` |
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
+| `use_folder_workload` | off | `folder-workload` — per team that rolls out its own projects: an account of its own, a state bucket, and the folders it works in, with its roles on those folders alone |
+| `use_project_workload` | off | `project-workload` — per Google project a team works in from an estate of its own: the project, with its own account and state bucket or worked by a `folder-workload` account, and the roles on that project alone |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
 | `use_scc_enablement` | off | `scc/scc-service-enablement` — recommended; the four below are asked only when it is on |
 | `use_scc_notifications` | off | `scc/scc-notifications` — the Pub/Sub chain findings travel on |
