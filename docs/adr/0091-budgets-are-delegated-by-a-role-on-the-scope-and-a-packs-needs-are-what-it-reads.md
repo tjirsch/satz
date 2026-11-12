@@ -1,4 +1,4 @@
-# 0090 — budgets are delegated by a role on the scope, and a pack's needs are what it reads
+# 0091 — budgets are delegated by a role on the scope, and a pack's needs are what it reads
 
 - **Status:** accepted
 - **Date:** 2026-11-12
