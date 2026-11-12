@@ -1016,6 +1016,9 @@ impl Interface {
                 ));
             }
         }
+        if let Some(handover) = self.handover(module, &outputs) {
+            s.push_str(&handover);
+        }
         s.push_str("## How to use it\n\n");
         s.push_str("From HCL, source the module:\n\n");
         s.push_str(&format!("```hcl\nmodule \"satz\" {{\n  source = \"<path or git URL>/{}/{}\"\n}}\n", module, HCL_DIR));
@@ -1202,6 +1205,127 @@ impl Interface {
 
     /// `interfaces/<folder>/README.md`: what the folder holds, where it came from, and the
     /// content hash of every other file in it. `folder` is `common` or a project.
+    /// What an interface hands to a team that works beside the estate, said to that team:
+    /// the account, who may act as it, what it holds, and what to do next. Written when the
+    /// interface carries what a workload pack publishes (`presets/folder-workload.satz`,
+    /// `presets/project-workload.satz`), by the names those exports have; `None` for every
+    /// other interface. The folder is what changes hands, so the instructions travel in it.
+    fn handover(&self, module: &str, outputs: &[&Output]) -> Option<String> {
+        let own = |name: &str| outputs.iter().find(|o| o.interface.is_some() && o.name == name);
+        let text = |name: &str| -> Option<String> {
+            own(name).and_then(|o| match &o.how {
+                How::Static(v) => Some(v.trim_matches('"').to_string()),
+                How::Lookup(_) => None,
+            })
+        };
+        let list = |name: &str| -> Option<Vec<String>> {
+            text(name).map(|v| {
+                v.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',')
+                    .map(|r| r.trim().trim_matches('"').to_string())
+                    .filter(|r| !r.is_empty())
+                    .collect()
+            })
+        };
+        let code = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.iter().map(|r| format!("`{}`", r)).collect::<Vec<_>>().join(", ") };
+        let account = text("iac_account");
+        let folder = own("delivered_folder").is_some();
+        let folder_roles = list("delivered_folder_roles");
+        let project_roles = list("delivered_project_roles");
+        if account.is_none() && !folder && folder_roles.is_none() && project_roles.is_none() {
+            return None;
+        }
+        let mut s = String::from("## What this hands over\n\n");
+        s.push_str(
+            "This folder is handed to a team that works beside the estate, in a repository of its own.\n\
+             Nothing in it is secret: it holds names, and what was granted. No key is issued.\n\n| | |\n|---|---|\n",
+        );
+        let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
+        if let Some(a) = &account {
+            row("the account your estate runs as", format!("`{}`", a));
+            match (text("account_group"), list("account_group_roles")) {
+                (Some(g), roles) => row(
+                    "who may act as it",
+                    format!(
+                        "the members of `{}`{}. Who is a member is decided in the directory, not here; a member needs nothing else",
+                        g,
+                        roles.map(|r| format!(", which holds {} on the account", code(&r))).unwrap_or_default()
+                    ),
+                ),
+                (None, _) => row("who may act as it", "the members of the group the estate names for this account; ask its owners which".to_string()),
+            }
+        }
+        if let Some(p) = text("deploy_project_id") {
+            row("the project its calls are billed to", format!("`{}`", p));
+        }
+        if let Some(b) = text("state_bucket") {
+            row("where its estates keep their state", format!("`gs://{}`", b));
+        }
+        if let Some(b) = text("billing_account") {
+            row("the billing account a new project is linked to", format!("`{}`", b));
+        }
+        if folder {
+            row("the folder to build in", "`${{interface.delivered_folder}}`: looked up at plan time; everything the estate creates stands under it".to_string());
+        }
+        if let Some(p) = text("project_id") {
+            row("the project to build in", format!("`{}`, named `${{{{interface.project_id}}}}` in the estate", p));
+        }
+        if let Some(r) = &folder_roles {
+            row("on each of its folders the account holds", format!("{} — and no role that sets a folder's access", code(r)));
+        }
+        if let Some(r) = &project_roles {
+            row("on this project the account holds", code(r));
+        }
+        if let Some(r) = list("delivered_billing_roles") {
+            row("on the billing account it holds", code(&r));
+        }
+        if let Some(r) = list("delivered_apis") {
+            row("APIs enabled on the project its calls are billed to", code(&r));
+        }
+        s.push_str("\n### What to do with it\n\n");
+        let mut steps: Vec<String> = Vec::new();
+        steps.push(format!(
+            "Take this folder whole into `vendor/` of your repository{}.",
+            if account.is_some() && (folder_roles.is_some()) {
+                ", with the folder of each place the estate's owners gave you beside it"
+            } else if account.is_none() {
+                ", beside the folder that carries your account"
+            } else {
+                ""
+            }
+        ));
+        if let Some(a) = &account {
+            let (id, project) = a.split_once('@').map(|(i, d)| (i, d.split('.').next().unwrap_or_default())).unwrap_or((a.as_str(), ""));
+            steps.push(format!(
+                "In your estate's `params {{ }}` bind `svc_iac_account = \"{}\"`, `infra_project_name = \"{}\"`{} and `deployment_mode = \"cloud\"`, and `use \"vendor/{}/{}/satz/interface.satz\"`.",
+                id,
+                project,
+                text("state_bucket").map(|b| format!(", `infra_bucket_name = \"{}\"`", b)).unwrap_or_default(),
+                module,
+                module
+            ));
+        } else {
+            steps.push(format!("In your estate, `use \"vendor/{}/{}/satz/interface.satz\"` beside the line of your account's interface.", module, module));
+        }
+        steps.push(
+            "Compile: `satz transpile <estate> --check`. satz judges the estate against what this table says was granted. A line that names \
+             something missing says who closes it: the estate's owners, or you with a grant on a project you were given. Nothing at the \
+             organisation is yours to grant."
+                .to_string(),
+        );
+        if account.is_some() {
+            steps.push("Be a member of the group above, then `gcloud auth application-default login` and `satz whoami <estate>`.".to_string());
+            steps.push("`satz transpile <estate> --plan`, read it, then `--apply`: both run as the account.".to_string());
+        }
+        steps.push("Take the folder again after every change of the estate; `CHANGES.md` here says what moved.".to_string());
+        for (n, step) in steps.iter().enumerate() {
+            s.push_str(&format!("{}. {}\n", n + 1, step));
+        }
+        s.push_str(&format!("\nThe whole procedure, for both sides: <{}>.\n\n", HANDOVER_GUIDE));
+        Some(s)
+    }
+
     pub fn index_readme(&self, folder: &str, version: &str, estate_path: &str, hash: &str) -> String {
         let mut s = String::new();
         if folder == COMMON {
@@ -1315,6 +1439,9 @@ pub(crate) fn notice(interface: &Interface) -> Option<Notice> {
 }
 
 /// Text as one Markdown table cell: no pipe ends it, no angle bracket opens a tag.
+/// The procedure the two teams follow, on the published site.
+const HANDOVER_GUIDE: &str = "https://tjirsch.github.io/satz/docs/tutorial-handover.html";
+
 fn table_cell(s: &str) -> String {
     s.replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;").replace('\n', " ")
 }

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 842" width="960" height="842" role="img" aria-label="Two lanes, the organisation team on the left and the workload team on the right, and two cases. Case A, the team needs more. A1, workload team, with satz: the compile names what is not delivered. A2, workload team, a step people do: ask for that role, API or folder. A3, organisation team, with satz: edit the entry, plan, apply. A4, organisation team, a step people do: hand over the interface folders again. A5, workload team, with satz: take the folders again and compile. Case B, the organisation changed. B1, organisation team, with satz: an apply changes a published value, and satz writes CHANGES.md into the interface folder. B2, organisation team, a step people do: tell the teams, or let the change notice do it. B3, workload team, with satz: take the folders again, read CHANGES.md, compile, plan.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/></marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/></marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="842" fill="#FFFFFF"/>
+  <rect x="20" y="20" width="440" height="746" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">ORGANISATION TEAM</text>
+  <text x="34" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">owns the organisation's estate, and may change it</text>
+  <rect x="500" y="20" width="440" height="746" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="514" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">WORKLOAD TEAM</text>
+  <text x="514" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">builds beside it, in its own repository</text>
+  <rect x="520" y="78" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="98" r="11" fill="#1B2430"/>
+  <text x="540" y="102" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A1</text>
+  <text x="560" y="102" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">the compile names the gap</text>
+  <text x="560" y="121" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">a role, an API or a folder that was not delivered</text>
+  <rect x="520" y="164" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="540" cy="184" r="11" fill="#0F766E"/>
+  <text x="540" y="188" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A2</text>
+  <text x="560" y="188" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Ask for it</text>
+  <text x="560" y="207" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the finding says which list of which pack takes it</text>
+  <rect x="40" y="250" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="60" cy="270" r="11" fill="#1B2430"/>
+  <text x="60" y="274" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A3</text>
+  <text x="80" y="274" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">edit the entry, plan, apply</text>
+  <text x="80" y="293" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">apis, billing_roles or a folder entry of the workload</text>
+  <rect x="40" y="336" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="60" cy="356" r="11" fill="#0F766E"/>
+  <text x="60" y="360" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A4</text>
+  <text x="80" y="360" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Hand over again</text>
+  <text x="80" y="379" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the same folders, written anew by the transpile</text>
+  <rect x="520" y="422" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="442" r="11" fill="#1B2430"/>
+  <text x="540" y="446" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A5</text>
+  <text x="560" y="446" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">take the folders again, compile</text>
+  <text x="560" y="465" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the check is quiet once everything needed was delivered</text>
+  <rect x="40" y="508" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="60" cy="528" r="11" fill="#1B2430"/>
+  <text x="60" y="532" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">B1</text>
+  <text x="80" y="532" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">an apply changes a published value</text>
+  <text x="80" y="551" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz writes CHANGES.md into the interface folder: what moved</text>
+  <rect x="40" y="594" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="60" cy="614" r="11" fill="#0F766E"/>
+  <text x="60" y="618" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">B2</text>
+  <text x="80" y="618" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Tell the teams</text>
+  <text x="80" y="637" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">or let the change notice do it: presets/interface-notice.satz</text>
+  <rect x="520" y="680" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="700" r="11" fill="#1B2430"/>
+  <text x="540" y="704" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">B3</text>
+  <text x="560" y="704" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">take the folders again, read, plan</text>
+  <text x="560" y="723" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">CHANGES.md says what to do; then compile and plan</text>
+  <line x1="720.0" y1="136" x2="720.0" y2="162" stroke="#1B2430" marker-end="url(#arr)"/>
+  <path d="M720.0,222 L720.0,236 L240.0,236 L240.0,248" fill="none" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="240.0" y1="308" x2="240.0" y2="334" stroke="#1B2430" marker-end="url(#arr)"/>
+  <path d="M240.0,394 L240.0,408 L720.0,408 L720.0,420" fill="none" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="240.0" y1="566" x2="240.0" y2="592" stroke="#1B2430" marker-end="url(#arr)"/>
+  <path d="M240.0,652 L240.0,666 L720.0,666 L720.0,678" fill="none" stroke="#1B2430" marker-end="url(#arr)"/>
+  <rect x="20" y="784" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#0F766E" stroke-dasharray="5 4"/>
+  <text x="74" y="797" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">a step people do: a conversation, a decision, a hand-over</text>
+  <rect x="430" y="784" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="484" y="797" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">a step done with satz, in the terminal or in satz studio</text>
+  <text x="20" y="820" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">A: the team needs more than it was given (steps A1 to A5).   B: the organisation changed something the team reads (steps B1 to B3).</text>
+</svg>

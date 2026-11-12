@@ -51,7 +51,7 @@
 //
 // NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
 
-pack project_workload version "1.0"
+pack project_workload version "1.1"
 
 params {
   // One entry per project with its own account, `{ name owner_group apis }`: the name, the
@@ -191,6 +191,8 @@ each project_workload_projects by name {
     export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
     export "iac_account"             = "${{google_service_account.{each.name}_iac.email}}" description "The service account the project's estate runs as"
     export "state_bucket"            = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
+    export "account_group"           = "{each.owner_group}" description "The group whose members may act as the account"
+    export "account_group_roles"     = ["roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser"] description "What that group holds on the account"
     export "delivered_project_roles" = project_workload_roles description "The roles the account holds on the project"
     export "delivered_apis"          = each.apis description "The APIs enabled on the project, which the estate's calls are billed to"
   }

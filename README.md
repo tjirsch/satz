@@ -341,7 +341,8 @@ Each pack publishes what it delivered in the interface the team's estate reads, 
 compile judges that estate against it ([What an estate must
 declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [projects beside
 the organisation](docs/tutorial-projects.md) says which pack is for whom and walks both;
-the next section is the project pack in short.
+[handing a team its account](docs/tutorial-handover.md) is the procedure the organisation
+team and the workload team follow, by side; the next section is the project pack in short.
 
 ### Onboard a project (`presets/project-workload.satz`)
 A project is an entry of the list param `project_workload_projects` of

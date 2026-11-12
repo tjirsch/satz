@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 928" width="960" height="928" role="img" aria-label="Two lanes, the organisation team on the left and the workload team on the right, and nine steps. 1, workload team, a step people do: ask — a name, the folders or projects, the group, more APIs or billing roles if needed. 2, organisation team, a step people do: decide — which pack, where the folders go, which group may act as the account. 3, organisation team, with satz: write the entries into the params of the organisation's estate. 4, organisation team, with satz: plan, read, apply — satz transpile with --plan, then --apply. 5, organisation team, a step people do: hand over the interface folders and the account's name. 6, workload team, with satz: set up the estate — vendor, config.toml, the estate file. 7, workload team, with satz: compile — satz transpile --check judges the estate against what was delivered. A dashed arrow leads from step 7 back to step 2: something is not delivered, ask for it. 8, workload team, a step people do: be in the group and log in. 9, workload team, with satz: plan, read, apply — it runs as the team's account.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/></marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/></marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="928" fill="#FFFFFF"/>
+  <rect x="20" y="20" width="440" height="832" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">ORGANISATION TEAM</text>
+  <text x="34" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">owns the organisation's estate, and may change it</text>
+  <rect x="500" y="20" width="440" height="832" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="514" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">WORKLOAD TEAM</text>
+  <text x="514" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">builds beside it, in its own repository</text>
+  <rect x="520" y="78" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="540" cy="98" r="11" fill="#0F766E"/>
+  <text x="540" y="102" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">1</text>
+  <text x="560" y="102" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Ask</text>
+  <text x="560" y="121" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">a name, the folders or projects, the group, more APIs or billing roles</text>
+  <rect x="40" y="164" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="60" cy="184" r="11" fill="#0F766E"/>
+  <text x="60" y="188" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">2</text>
+  <text x="80" y="188" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Decide</text>
+  <text x="80" y="207" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">which pack, where the folders go, which group may act as the account</text>
+  <rect x="40" y="250" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="60" cy="270" r="11" fill="#1B2430"/>
+  <text x="60" y="274" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">3</text>
+  <text x="80" y="274" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">write the entries</text>
+  <text x="80" y="293" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the entries, in params { } of the organisation's estate</text>
+  <rect x="40" y="336" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="60" cy="356" r="11" fill="#1B2430"/>
+  <text x="60" y="360" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">4</text>
+  <text x="80" y="360" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">plan, read, apply</text>
+  <text x="80" y="379" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz transpile &lt;estate&gt; --plan, then --apply</text>
+  <rect x="40" y="422" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="60" cy="442" r="11" fill="#0F766E"/>
+  <text x="60" y="446" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">5</text>
+  <text x="80" y="446" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Hand over</text>
+  <text x="80" y="465" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the interface folders satz wrote, and the account's name</text>
+  <rect x="520" y="508" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="528" r="11" fill="#1B2430"/>
+  <text x="540" y="532" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">6</text>
+  <text x="560" y="532" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">set up the estate</text>
+  <text x="560" y="551" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">vendor/ with the interface folders, config.toml, the estate file</text>
+  <rect x="520" y="594" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="614" r="11" fill="#1B2430"/>
+  <text x="540" y="618" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">7</text>
+  <text x="560" y="618" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">compile</text>
+  <text x="560" y="637" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz transpile &lt;estate&gt; --check: judged against what was delivered</text>
+  <rect x="520" y="680" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <circle cx="540" cy="700" r="11" fill="#0F766E"/>
+  <text x="540" y="704" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">8</text>
+  <text x="560" y="704" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Be in the group, and log in</text>
+  <text x="560" y="723" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">membership is the directory's; gcloud auth application-default login</text>
+  <rect x="520" y="766" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <circle cx="540" cy="786" r="11" fill="#1B2430"/>
+  <text x="540" y="790" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">9</text>
+  <text x="560" y="790" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">plan, read, apply</text>
+  <text x="560" y="809" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz transpile &lt;estate&gt; --plan, then --apply: runs as the team's account</text>
+  <path d="M720.0,136 L720.0,150 L240.0,150 L240.0,162" fill="none" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="240.0" y1="222" x2="240.0" y2="248" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="240.0" y1="308" x2="240.0" y2="334" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="240.0" y1="394" x2="240.0" y2="420" stroke="#1B2430" marker-end="url(#arr)"/>
+  <path d="M240.0,480 L240.0,494 L720.0,494 L720.0,506" fill="none" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="720.0" y1="566" x2="720.0" y2="592" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="720.0" y1="652" x2="720.0" y2="678" stroke="#1B2430" marker-end="url(#arr)"/>
+  <line x1="720.0" y1="738" x2="720.0" y2="764" stroke="#1B2430" marker-end="url(#arr)"/>
+  <path d="M520,623.0 L474,623.0 L474,205.0 L442,205.0" fill="none" stroke="#0F766E" stroke-dasharray="5 4" marker-end="url(#arr-acc)"/>
+  <text x="468" y="614" text-anchor="end" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="12" fill="#0F766E">something is not delivered: ask for it</text>
+  <rect x="20" y="870" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#0F766E" stroke-dasharray="5 4"/>
+  <text x="74" y="883" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">a step people do: a conversation, a decision, a hand-over</text>
+  <rect x="430" y="870" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="484" y="883" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">a step done with satz, in the terminal or in satz studio</text>
+  <text x="20" y="906" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">Nothing secret changes hands: no key, no password. The interface folders hold names and what was granted; the right to act as the account comes from the group.</text>
+</svg>

@@ -52,7 +52,7 @@
 //
 // NO CLAIM. The workloads' identities are workloads, not controls: this pack witnesses nothing.
 
-pack folder_workload version "1.1"
+pack folder_workload version "1.2"
 
 params {
   // One entry per workload, `{ name group apis billing_roles }`: the name, the group that
@@ -213,6 +213,9 @@ each folder_workloads by name {
     export "deploy_project_id"       = "{customer_shortname}-deploy-{each.name}" description "The workload's infrastructure project: its plans are billed to it"
     export "iac_account"             = "svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" description "The service account the workload's estates run as"
     export "state_bucket"            = "{customer_shortname}-deploy-{each.name}-state" description "The bucket the workload's estates keep their states in"
+    export "account_group"           = "{each.group}" description "The group whose members may act as the account"
+    export "account_group_roles"     = folder_workload_group_roles description "What that group holds on the account"
+    export "billing_account"         = billing_account_infra description "The billing account a new project is linked to"
     export "delivered_folder_roles"  = folder_workload_roles description "The roles the account holds on each of the workload's folders"
     export "delivered_billing_roles" = each.billing_roles description "The roles the account holds on the billing account"
     export "delivered_apis"          = each.apis description "The APIs enabled on the workload's infrastructure project"
