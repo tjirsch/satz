@@ -1,8 +1,9 @@
-// One identity per workload, and the folders it works in. A workload is a team's or a
-// product's set of deployments — a shop, a RAG store per customer — that is rolled out by
-// an estate of its own beside this one. The pack gives it an infrastructure project with
-// the service account its pipelines run as and the bucket its states live in, creates the
-// folders it may work in, and grants the account its roles on THOSE folders and nowhere else.
+// Delegated access to folders: one identity per workload, and the folders it works in.
+// The account holds its roles on those folders alone. A workload is a team's or a product's
+// set of deployments — a shop, a RAG store per customer — that is rolled out by an estate of
+// its own beside this one. The pack gives it an infrastructure project with the service
+// account its pipelines run as and the bucket its states live in, creates the folders it may
+// work in, and grants the account its roles on THOSE folders and nowhere else.
 //
 //   use "presets/folder-workload.satz" when use_folder_workload
 //
@@ -44,15 +45,15 @@
 //
 // WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `vendor/` folder:
 // `workload-<name>` — `deploy_project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
-// delivered to the account, `delivered_folder_roles`, `delivered_billing_roles`,
-// `delivered_apis`, which `satz` judges the estate's needs against — and `<folder name>`,
-// with `delivered_folder`, the parent of everything the estate creates. One estate reads
+// delegated to the account, `delegated_folder_roles`, `delegated_billing_roles`,
+// `delegated_apis`, which `satz` judges the estate's needs against — and `<folder name>`,
+// with `delegated_folder`, the parent of everything the estate creates. One estate reads
 // one folder's interface: a workload with two folders is rolled out by two estates that
 // run as the same account.
 //
 // NO CLAIM. The workloads' identities are workloads, not controls: this pack witnesses nothing.
 
-pack folder_workload version "1.2"
+pack folder_workload version "2.0"
 
 params {
   // One entry per workload, `{ name group apis billing_roles }`: the name, the group that
@@ -216,14 +217,14 @@ each folder_workloads by name {
     export "account_group"           = "{each.group}" description "The group whose members may act as the account"
     export "account_group_roles"     = folder_workload_group_roles description "What that group holds on the account"
     export "billing_account"         = billing_account_infra description "The billing account a new project is linked to"
-    export "delivered_folder_roles"  = folder_workload_roles description "The roles the account holds on each of the workload's folders"
-    export "delivered_billing_roles" = each.billing_roles description "The roles the account holds on the billing account"
-    export "delivered_apis"          = each.apis description "The APIs enabled on the workload's infrastructure project"
+    export "delegated_folder_roles"  = folder_workload_roles description "The roles the account holds on each of the workload's folders"
+    export "delegated_billing_roles" = each.billing_roles description "The roles the account holds on the billing account"
+    export "delegated_apis"          = each.apis description "The APIs enabled on the workload's infrastructure project"
   }
 }
 
 each folder_workload_folders by name {
   interface "{each.name}" {
-    export "delivered_folder" = "${{google_folder.{each.name}.name}}" description "The folder the workload's account works in: the parent of what its estate creates"
+    export "delegated_folder" = "${{google_folder.{each.name}.name}}" description "The folder the workload's account works in: the parent of what its estate creates"
   }
 }

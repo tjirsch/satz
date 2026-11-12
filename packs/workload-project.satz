@@ -17,7 +17,7 @@
 // fails at that grant.
 //
 // The parent is a folder id, or the workload's folder as the organisation publishes it,
-// read by the estate: `workload_project_parent = "${{interface.delivered_folder}}"`.
+// read by the estate: `workload_project_parent = "${{interface.delegated_folder}}"`.
 
 pack workload_project version "1.0"
 

@@ -1230,15 +1230,16 @@ impl Interface {
         };
         let code = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.iter().map(|r| format!("`{}`", r)).collect::<Vec<_>>().join(", ") };
         let account = text("iac_account");
-        let folder = own("delivered_folder").is_some();
-        let folder_roles = list("delivered_folder_roles");
-        let project_roles = list("delivered_project_roles");
+        let folder = own("delegated_folder").is_some();
+        let folder_roles = list("delegated_folder_roles");
+        let project_roles = list("delegated_project_roles");
         if account.is_none() && !folder && folder_roles.is_none() && project_roles.is_none() {
             return None;
         }
-        let mut s = String::from("## What this hands over\n\n");
+        let mut s = String::from("## Delegated access: what you were given\n\n");
         s.push_str(
-            "This folder is handed to a team that works beside the estate, in a repository of its own.\n\
+            "This folder is handed to a team the estate delegates access to: an account of its own that holds\n\
+             roles on a part of the organisation and nowhere else, used from a repository of its own.\n\
              Nothing in it is secret: it holds names, and what was granted. No key is issued.\n\n| | |\n|---|---|\n",
         );
         let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
@@ -1266,7 +1267,7 @@ impl Interface {
             row("the billing account a new project is linked to", format!("`{}`", b));
         }
         if folder {
-            row("the folder to build in", "`${{interface.delivered_folder}}`: looked up at plan time; everything the estate creates stands under it".to_string());
+            row("the folder to build in", "`${{interface.delegated_folder}}`: looked up at plan time; everything the estate creates stands under it".to_string());
         }
         if let Some(p) = text("project_id") {
             row("the project to build in", format!("`{}`, named `${{{{interface.project_id}}}}` in the estate", p));
@@ -1277,10 +1278,10 @@ impl Interface {
         if let Some(r) = &project_roles {
             row("on this project the account holds", code(r));
         }
-        if let Some(r) = list("delivered_billing_roles") {
+        if let Some(r) = list("delegated_billing_roles") {
             row("on the billing account it holds", code(&r));
         }
-        if let Some(r) = list("delivered_apis") {
+        if let Some(r) = list("delegated_apis") {
             row("APIs enabled on the project its calls are billed to", code(&r));
         }
         s.push_str("\n### What to do with it\n\n");
@@ -1440,7 +1441,7 @@ pub(crate) fn notice(interface: &Interface) -> Option<Notice> {
 
 /// Text as one Markdown table cell: no pipe ends it, no angle bracket opens a tag.
 /// The procedure the two teams follow, on the published site.
-const HANDOVER_GUIDE: &str = "https://tjirsch.github.io/satz/docs/tutorial-handover.html";
+const HANDOVER_GUIDE: &str = "https://tjirsch.github.io/satz/docs/tutorial-delegated-access.html";
 
 fn table_cell(s: &str) -> String {
     s.replace('|', "\\|").replace('<', "&lt;").replace('>', "&gt;").replace('\n', " ")

@@ -64,7 +64,7 @@ providers {
 }
 
 // The organisation's values, read from two interface files as `${{interface.<export>}}`:
-// the workload's identity with what was delivered to it, and the folder it works in.
+// the workload's identity with what was delegated to it, and the folder it works in.
 use "vendor/workload-shop/workload-shop/satz/interface.satz"
 use "vendor/shop/shop/satz/interface.satz"
 
@@ -72,7 +72,7 @@ google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.delivered_folder}}"
+    folder_id       = "${{interface.delegated_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     // The grants below are calls to this API, billed to the project itself.

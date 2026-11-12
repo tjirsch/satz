@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "4.0"
+pack estate_map version "4.1"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -134,15 +134,15 @@ question use_shared_network {
 }
 
 question use_project_workload {
-  prompt   = "Create the Google projects that teams work in from estates of their own: per project either its own service account and state bucket, or the account of a workload that works in several, and the interface the project's estate reads?"
+  prompt   = "Delegate access to projects — create the Google projects that teams work in from estates of their own: per project either its own service account and state bucket, or the account of a workload that works in several, and the interface the project's estate reads?"
   why      = "A project — a team's estate beside this one, in its own repository — is then one entry of `project_workload_projects` (its own account) or of `project_workload_shared_projects` (a workload's account), requested by pull request; the account holds the project's IAM and services on that project alone. Turning it off later destroys every such Google project, with everything the team built in it."
   reversal = recreate
   blast    = high
 }
 
 question use_folder_workload {
-  prompt   = "Give each workload that is rolled out by an estate of its own — a team's deployments, a product — its own identity and its own folders: an infrastructure project with the service account its pipelines run as and the bucket its states live in, the folders it works in, and the account's roles on those folders alone?"
-  why      = "A workload then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds what the estate delivers — roles on its own folders, on the billing account, and the one read on the organisation the interface lookups need. It holds no access control on any folder. Turning it off later destroys every workload's infrastructure project, with its state bucket and every state in it, and every workload folder that is empty."
+  prompt   = "Delegate access to folders — give each workload that is rolled out by an estate of its own, a team's deployments or a product, its own identity and its own folders: an infrastructure project with the service account its pipelines run as and the bucket its states live in, the folders it works in, and the account's roles on those folders alone?"
+  why      = "A workload then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds what the estate delegates — roles on its own folders, on the billing account, and the one read on the organisation the interface lookups need. It holds no access control on any folder. Turning it off later destroys every workload's infrastructure project, with its state bucket and every state in it, and every workload folder that is empty."
   reversal = recreate
   blast    = high
 }
@@ -326,7 +326,7 @@ offers "presets/folder-workload.satz" {
 
 offers "presets/shared-network.satz" {
   when  = use_shared_network
-  phase = "once the estate runs as the service account and the projects are onboarded — the network they request subnets and rules in"
+  phase = "once the estate runs as the service account and access to the projects is delegated — the network they request subnets and rules in"
 }
 
 offers "presets/security-audit/sa-security-audit.satz" {

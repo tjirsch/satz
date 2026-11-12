@@ -2566,7 +2566,7 @@ included, so an entry a project requests is an interface too.
 An interface an `each` writes is one project's own, in a pack too — one entry is one
 project — unless its block says `common`. One of the same name in another file is the same
 interface, and their exports merge: that is how an estate adds to the interfaces a pack
-writes. The library's `presets/project-workload.satz` writes one per project it onboards.
+writes. The library's `presets/project-workload.satz` writes one per project it delegates access to.
 
 Refused: what the resource `each` refuses about the list and its entries (§6.4), anything
 but `interface` blocks inside it, an `each` with none, a name that reads no field of the

@@ -1519,13 +1519,13 @@ pub(crate) async fn run_merge_presets(
                     .into_iter()
                     .chain(report.writable_apis().iter().map(|a| format!("{} on {}", a.api, a.project)))
                     .collect();
-                // a workload's estate: what was not delivered to its account is asked
+                // a workload's estate: what was not delegated to its account is asked
                 // for in the organisation's estate, and nothing here writes it
                 if !report.request.is_empty() {
                     events.push(MergeEvent::Prerequisites {
                         wrote: Vec::new(),
                         missing: report.request.clone(),
-                        refused: Some("not delivered to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz` or `presets/project-workload.satz`), or the estate grants itself a role on a project it was given".to_string()),
+                        refused: Some("not delegated to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz` or `presets/project-workload.satz`), or the estate grants itself a role on a project it was given".to_string()),
                     });
                     needs_attention = true;
                 }

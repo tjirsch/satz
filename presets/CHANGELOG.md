@@ -13,6 +13,41 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.98.0
+
+**The values the two access packs publish are named `delegated_…`, where they said
+`delivered_…`, and an interface that still carries an old name is refused.** The mechanism
+of `presets/folder-workload.satz` and `presets/project-workload.satz` is called *delegated
+access* from this release on, in every text and in these names. Nothing either pack
+deploys changes, and **the plan of neither side moves**.
+
+| before | now |
+|---|---|
+| `delivered_folder` | `delegated_folder` |
+| `delivered_folder_roles` | `delegated_folder_roles` |
+| `delivered_project_roles` | `delegated_project_roles` |
+| `delivered_billing_roles` | `delegated_billing_roles` |
+| `delivered_apis` | `delegated_apis` |
+
+**What is refused, and where.** In a team's estate, not in the organisation's: a
+`${{interface.delivered_folder}}` names an export the interface no longer has, and an
+interface folder copied before v0.98.0 is refused at its first old name — read as it is,
+it would say nothing of what was delegated, and the team's account would be judged as an
+organisation's.
+
+**How to find it:** `grep -rn 'delivered_'` over the team's repository, its `vendor/`
+folder included.
+
+**What to do:**
+
+1. The organisation's side: `satz get-presets`, then `satz transpile <estate>` with
+   v0.98.0. It writes `interfaces/` anew; hand the folders over again.
+2. The team's side: replace the copies under `vendor/`, and write
+   `${{interface.delegated_folder}}` where the estate said `delivered_folder`.
+
+`satz update-prerequisites --format json` names the report's fields `delegation` and
+`not_delegated_apis`, where v0.96.1 said `delivery` and `undelivered_apis`.
+
 ### v0.97.0
 
 **`presets/project-onboarding.satz` is renamed `presets/project-workload.satz`, and the old
@@ -1201,6 +1236,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `folder_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…` where they said `delivered_…`: `delegated_folder`, `delegated_folder_roles`, `delegated_billing_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
+| `project_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…`: `delegated_project_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
+| `estate_map` | 4.1 | 2026-11-12 | the two questions and the network pack's phase say "delegate access" where they said "give" and "onboarded"; no choice, default or gate changes |
 | `folder_workload` | 1.2 | 2026-11-12 | the interface `workload-<name>` also publishes `account_group` and `account_group_roles` — who may act as the account — and `billing_account`, which a new project is linked to: the interface's README tells the team what it was handed and what to do with it |
 | `project_workload` | 1.1 | 2026-11-12 | the interface of a project with its own account also publishes `account_group` and `account_group_roles` |
 | `project_workload` | 1.0 | 2026-11-12 | first version, replacing `project_onboarding`: `project_workload_projects` is the old `projects` list, a project with its own account and state bucket, unchanged in what it deploys; new, `project_workload_shared_projects` (`{ name workload }`) is a project with no account of its own, on which the account of a workload of `folder-workload.satz` gets `project_workload_roles` — one account for several projects, the grant written by reference so an undeclared workload is refused; every entry takes `apis`; the interfaces publish `delivered_project_roles`, and `delivered_apis` for a project with its own account |
