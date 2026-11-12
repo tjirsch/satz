@@ -671,7 +671,15 @@ pub(crate) struct Delegation {
     pub billing_roles: BTreeSet<String>,
     /// the APIs enabled on its infrastructure project, which its providers bill to
     pub apis: BTreeSet<String>,
+    /// whether it may manage budgets for its own project or folder: the organisation's
+    /// role for it, which carries the project-level budget permissions and nothing on the
+    /// billing account (`presets/delegated-budget-role.satz`)
+    pub budgets: bool,
 }
+
+/// The export that says budgets were delegated, and the permission a budget is judged by.
+pub(crate) const DELEGATED_BUDGETS: &str = "delegated_budgets";
+const BUDGET_PERMISSION: &str = "billing.budgets.create";
 
 /// The delegation an estate reads, from every interface file it uses. An estate is a
 /// workload's when one of them exports `delegated_folder_roles` or
@@ -713,6 +721,9 @@ pub(crate) fn delegation(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Op
         project_roles: project.map(|(r, _)| r).unwrap_or_default(),
         billing_roles: billing.map(|(r, _)| r).unwrap_or_default(),
         apis: apis.map(|(r, _)| r).unwrap_or_default(),
+        budgets: files
+            .iter()
+            .any(|f| f.interface.outputs.iter().any(|o| o.name == DELEGATED_BUDGETS && o.value == serde_yaml::Value::Bool(true))),
     })
 }
 
@@ -752,7 +763,12 @@ pub(crate) fn not_delegated(needs: &[Need], granted: &Granted, delegation: &Dele
                     .any(|r| delegation.folder_roles.contains(r) || granted.own.contains(r) || (on_a_project && delegation.project_roles.contains(r)));
                 !(held || (on_a_project && owns_its_projects))
             }
-            Scope::BillingAccount => !n.roles.iter().any(|r| delegation.billing_roles.contains(r) || granted.billing_account.contains(r)),
+            // a budget for its own scope needs nothing on the billing account when the
+            // organisation delegated budgets there
+            Scope::BillingAccount => {
+                let own_budget = delegation.budgets && n.permission.as_deref() == Some(BUDGET_PERMISSION);
+                !(own_budget || n.roles.iter().any(|r| delegation.billing_roles.contains(r) || granted.billing_account.contains(r)))
+            }
             Scope::Workspace => false,
         })
         .cloned()
@@ -777,7 +793,9 @@ pub(crate) fn describe_not_delegated(needs: &[Need], delegation: &Delegation) ->
     needs
         .iter()
         .map(|n| {
-            let at = if n.scope == Scope::BillingAccount {
+            let at = if n.permission.as_deref() == Some(BUDGET_PERMISSION) {
+                "on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them"
+            } else if n.scope == Scope::BillingAccount {
                 "on the billing account"
             } else if grants_itself(n, delegation) {
                 "on the project — to grant in this estate"
@@ -789,6 +807,21 @@ pub(crate) fn describe_not_delegated(needs: &[Need], delegation: &Delegation) ->
             format!("{} {} — for {}", n.roles.join(" or "), at, n.reason.join(", "))
         })
         .collect()
+}
+
+/// The API switches a delegated estate declares on the project its calls are billed to
+/// although the organisation's estate already switched that API on there: the address and
+/// the API of each. Two estates then own one switch, and taking it out of either state —
+/// a destroy, a removed line — switches the API off for both.
+pub(crate) fn doubled_apis(manifest: &Manifest, default_project: Option<&str>, delegation: &Delegation) -> Vec<(String, String)> {
+    let Some(project) = default_project else { return Vec::new() };
+    let mut out: Vec<(String, String)> = manifest
+        .of_type("google_project_service")
+        .filter(|r| manifest.project_of(r).as_deref() == Some(project))
+        .filter_map(|r| r.attrs.get("service").filter(|s| delegation.apis.contains(*s)).map(|s| (r.address(), s.clone())))
+        .collect();
+    out.sort();
+    out
 }
 
 impl ApiCheck {
@@ -1620,7 +1653,7 @@ mod tests {
 
     fn delegated(folder: &[&str], billing: &[&str], apis: &[&str]) -> Delegation {
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
-        Delegation { interface: "workload-shop".to_string(), folder_roles: set(folder), project_roles: BTreeSet::new(), billing_roles: set(billing), apis: set(apis) }
+        Delegation { interface: "workload-shop".to_string(), folder_roles: set(folder), project_roles: BTreeSet::new(), billing_roles: set(billing), apis: set(apis), budgets: false }
     }
 
     /// What `presets/folder-workload.satz` grants by default.
@@ -1834,6 +1867,39 @@ mod tests {
         assert!(written_before_delegated(&[new]).is_empty());
         // read as it is, the old file would say nothing of a delegation
         assert_eq!(delegation(&[old]), None);
+    }
+
+    #[test]
+    fn a_budget_is_met_by_delegated_budgets_and_by_nothing_else_it_was_not_given() {
+        let m = manifest("resource \"google_billing_budget\" \"bud\" {\n  display_name = \"x\"\n}\n");
+        let (want, _) = needs_of(&m, false);
+        let g = granted(&m, SA);
+        let mut d = delegated(&[], &["roles/billing.user"], &[]);
+        let miss = not_delegated(&want, &g, &d);
+        assert_eq!(miss.len(), 1, "{:?}", miss);
+        let lines = describe_not_delegated(&miss, &d);
+        assert!(lines[0].contains("`budgets = true` on the entry"), "{:?}", lines);
+        // the organisation's role for it on the project: no billing role is needed
+        d.budgets = true;
+        assert!(not_delegated(&want, &g, &d).is_empty());
+        // it meets the budget alone: another need on the billing account stays open
+        let grant = manifest("resource \"google_billing_account_iam_member\" \"g\" {\n  role = \"roles/billing.viewer\"\n  member = \"group:g@example.com\"\n}\n");
+        assert_eq!(not_delegated(&needs_of(&grant, false).0, &granted(&grant, SA), &d).len(), 1);
+    }
+
+    #[test]
+    fn an_api_the_organisation_already_switched_on_is_found_when_declared_again() {
+        let m = manifest(
+            "resource \"google_project_service\" \"again\" {\n  project = \"acme-payments-001\"\n  service = \"storage.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"extra\" {\n  project = \"acme-payments-001\"\n  service = \"run.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"elsewhere\" {\n  project = \"acme-other-001\"\n  service = \"storage.googleapis.com\"\n}\n",
+        );
+        let d = delegated(&[], &[], &["storage.googleapis.com", "iam.googleapis.com"]);
+        assert_eq!(
+            doubled_apis(&m, Some("acme-payments-001"), &d),
+            [("google_project_service.again".to_string(), "storage.googleapis.com".to_string())]
+        );
+        assert!(doubled_apis(&m, None, &d).is_empty());
     }
 
     #[test]

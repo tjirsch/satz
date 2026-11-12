@@ -216,7 +216,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
 | `review-preset <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the compile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it emits has a prerequisite row, and it compiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-preset) |
-| `packs` | `--from <DIR>`, `--format` (`text`\|`json`), `--out <FILE>` — every workload pack in `packs_dir` with its state (`own`, `current`, `behind`, `edited`, `gone`, `not-checked`) and every pack the source holds that `packs_dir` does not (`available`). The source is the `packs/` tree of the satz repository, or `--from` ([Workload packs](docs/workflows.md#workload-packs)) |
+| `packs` | `--from <DIR>`, `--format` (`text`\|`json`), `--out <FILE>` — every workload pack in `packs_dir` with its state (`own`, `current`, `behind`, `edited`, `gone`, `not-checked`) and every pack the source holds that `packs_dir` does not (`available`), each with what it needs of the estate that uses it — a delegated folder, a delegated project, or neither — which is what it reads from the interface, not something it declares. The source is the `packs/` tree of the satz repository, or `--from` ([Workload packs](docs/workflows.md#workload-packs)) |
 | `get-pack [ID]` | `--all`, `--from <DIR>`, `--format` (`text`\|`json`) — fetch one workload pack into `packs_dir` and record where it came from in `packs_dir/origin.toml`; refused when `packs_dir` holds a pack of that id. `--all` fetches every pack the source holds that `packs_dir` lacks |
 | `update-pack [ID]` | `--all`, `--from <DIR>`, `--report-only`, `--take-upstream`, `--format` (`text`\|`json`) — bring one fetched pack up to date: unchanged since it was fetched, it is overwritten with the source's file; edited here, it is left as it is and printed with its difference, and `--take-upstream` overwrites it. A pack without a recorded origin is never written. Exits 1 when a pack is edited or gone from the source |
 | `detach-pack <ID>` | `--format` (`text`\|`json`) — remove a pack's row from `packs_dir/origin.toml`: the file stays and is the repository's own pack from here on |
@@ -340,6 +340,11 @@ params {
 
 use "presets/folder-workload.satz" when use_folder_workload
 ```
+
+An entry of either pack may say `budgets = true`: the account then manages budgets for its
+own project or folder, with nothing on the billing account
+([`delegated-budget-role`](presets/README.md#delegated-budget-rolesatz)); the workload pack
+`packs/project-budget.satz` is the budget itself.
 
 Each pack publishes what it delegated in the interface the team's estate reads, and the
 compile judges that estate against it ([What an estate must

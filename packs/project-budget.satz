@@ -1,0 +1,120 @@
+// A budget for the project an estate was given, with alerts at half, most and all of it.
+//
+//   use "packs/project-budget.satz"
+//
+// A workload pack: an estate that works in a delegated project takes it with
+// `satz get-pack project-budget` and answers the two questions below. It needs the
+// organisation to have delegated budgets for that project — `budgets = true` on the
+// project's entry of `presets/project-workload.satz` — and nothing on the billing account:
+// with that delegation the account manages budgets for its own project alone, and sees no
+// other project's costs.
+//
+// WHAT IT READS. The project, its number and the billing account come from the interface
+// the estate uses: the three params below default to `${{interface.project_id}}`,
+// `${{interface.project_number}}` and `${{interface.billing_account}}`.
+//
+// WHAT IT CREATES. The Cloud Billing Budget API switched on in the project, and one budget
+// on the billing account that counts this project alone.
+//
+// WHO IS TOLD. `budget_email`, when it is answered: the pack switches Cloud Monitoring on,
+// creates an email channel for the address in the project, grants the account the role
+// that takes, and the budget writes to the channel at each threshold. Left empty, the
+// budget names no channel, and Google writes to the billing account's administrators —
+// who are not the team.
+
+pack project_budget version "1.0"
+
+params {
+  // The project the budget counts, its number, and the billing account it is linked to.
+  budget_project_id      = "${{interface.project_id}}"
+  budget_project_number  = "${{interface.project_number}}"
+  budget_billing_account = "${{interface.billing_account}}"
+  // The amount, in whole units of the currency, per calendar month.
+  budget_amount          = ""
+  budget_currency        = ""
+  // The address that is told at each threshold: a person's or a group's. Empty names none.
+  budget_email           = ""
+  // The shares of the amount at which an alert is sent.
+  budget_thresholds = [
+    { threshold_percent = 0.5 },
+    { threshold_percent = 0.9 },
+    { threshold_percent = 1.0 },
+  ]
+}
+
+question budget_amount {
+  prompt   = "The monthly budget of the project, in whole units of the currency"
+  why      = "A budget stops nothing: it tells the project's owners at half, at nine tenths and at all of this amount."
+  reversal = edit
+  blast    = none
+}
+
+question budget_currency {
+  prompt   = "The currency of the budget, as its three-letter code — it must be the billing account's"
+  why      = "Google refuses a budget in a currency other than the billing account's."
+  reversal = edit
+  blast    = none
+}
+
+question budget_email {
+  prompt   = "The address that is told when the budget's thresholds are reached"
+  why      = "Without one the alerts go to the billing account's administrators, not to the team that spends."
+  reversal = edit
+  blast    = none
+  empty    = "no channel: Google writes to the billing account's administrators"
+}
+
+// The API a budget is a call to, on the project the call is billed to. The organisation's
+// estate does not switch it on; left on when the pack is taken out.
+google_project_service {
+  budget_api {
+    project            = budget_project_id
+    service            = "billingbudgets.googleapis.com"
+    disable_on_destroy = false
+  }
+  budget_monitoring_api when budget_email {
+    project            = budget_project_id
+    service            = "monitoring.googleapis.com"
+    disable_on_destroy = false
+  }
+}
+
+// The channel the budget writes to, and what the account needs to create it: it grants
+// itself the role on its own project.
+google_project_iam_member {
+  budget_channel_editor when budget_email {
+    project = budget_project_id
+    role    = "roles/monitoring.notificationChannelEditor"
+    member  = "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"
+  }
+}
+
+google_monitoring_notification_channel {
+  budget when budget_email {
+    project      = "${{google_project_service.budget_monitoring_api.project}}"
+    display_name = "Budget of {budget_project_id}"
+    type         = "email"
+    labels       = { email_address = budget_email }
+  }
+}
+
+google_billing_budget {
+  project {
+    billing_account = budget_billing_account
+    display_name    = "{budget_project_id}"
+    budget_filter {
+      projects = ["projects/{budget_project_number}"]
+    }
+    amount {
+      specified_amount {
+        currency_code = budget_currency
+        units         = budget_amount
+      }
+    }
+    threshold_rules = budget_thresholds
+    all_updates_rule when budget_email {
+      monitoring_notification_channels = ["${{google_monitoring_notification_channel.budget.name}}"]
+      disable_default_iam_recipients   = true
+    }
+  }
+}

@@ -1236,6 +1236,10 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegated_budget_role` | 1.0 | 2026-11-12 | first version: the organisation's custom role for budgets on a delegated scope — `billing.resourcebudgets.read`, `billing.resourcebudgets.write`, `billing.resourceCosts.get`, nothing on the billing account — which the two access packs grant to the entries that say `budgets = true` |
+| `project_workload` | 2.1 | 2026-11-12 | a project entry of either list takes `budgets` (`false` when left out): `true` grants the account the organisation's budget role on that project alone; the interface publishes `delegated_budgets`, and `billing_account` for a project with its own account |
+| `folder_workload` | 2.1 | 2026-11-12 | a folder entry takes `budgets` (`false` when left out): `true` grants the workload's account the organisation's budget role on that folder, and so on the projects in it; the folder's interface publishes `delegated_budgets` |
+| `estate_map` | 4.2 | 2026-11-12 | offers `delegated-budget-role` on `use_delegated_budgets`, off by default, with its question; nothing already on changes |
 | `folder_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…` where they said `delivered_…`: `delegated_folder`, `delegated_folder_roles`, `delegated_billing_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
 | `project_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…`: `delegated_project_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
 | `estate_map` | 4.1 | 2026-11-12 | the two questions and the network pack's phase say "delegate access" where they said "give" and "onboarded"; no choice, default or gate changes |

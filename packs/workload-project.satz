@@ -16,10 +16,10 @@
 // creates none and declares no membership. An apply naming a group that does not exist
 // fails at that grant.
 //
-// The parent is a folder id, or the workload's folder as the organisation publishes it,
-// read by the estate: `workload_project_parent = "${{interface.delegated_folder}}"`.
+// The parent is the folder the estate was delegated access to, read from the interface it
+// uses (`${{interface.delegated_folder}}`, the default), or a folder id.
 
-pack workload_project version "1.0"
+pack workload_project version "1.1"
 
 params {
   // The project's id, globally unique.
@@ -27,7 +27,7 @@ params {
   // Its display name.
   workload_project_name    = "workload"
   // The folder it is created in: `folders/<number>`, or a reference.
-  workload_project_parent  = ""
+  workload_project_parent  = "${{interface.delegated_folder}}"
   // The billing account it is linked to.
   workload_billing_account = ""
   // The APIs enabled on it. The first is what the grants below are calls to.

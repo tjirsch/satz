@@ -599,10 +599,57 @@ pub(crate) fn render_update(r: &UpdateReport) -> String {
 // packs
 // ---------------------------------------------------------------------------
 
+/// What a pack needs of the estate that uses it: a place its account was delegated access
+/// to. It is not declared. It is what the pack READS from the interface the estate uses —
+/// a pack that reads the delegated folder is of no use in an estate that was given none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Need {
+    /// it reads `${{interface.delegated_folder}}`
+    Folder,
+    /// it reads `${{interface.project_id}}` or `${{interface.project_number}}`
+    Project,
+}
+
+/// The interface values a pack reads, by export name: every `${{interface.<name>}}` outside
+/// its comments.
+pub(crate) fn interface_reads(text: &str) -> std::collections::BTreeSet<String> {
+    const OPEN: &str = "${{interface.";
+    let mut out = std::collections::BTreeSet::new();
+    for line in text.lines().filter(|l| !l.trim_start().starts_with("//")) {
+        let mut rest = line;
+        while let Some(i) = rest.find(OPEN) {
+            rest = &rest[i + OPEN.len()..];
+            let name: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect();
+            if !name.is_empty() && rest[name.len()..].starts_with("}}") {
+                out.insert(name);
+            }
+        }
+    }
+    out
+}
+
+/// The needs of a pack, from its text: the interface values it reads outside comments.
+pub(crate) fn needs(text: &str) -> Vec<Need> {
+    let read = interface_reads(text);
+    let reads = |export: &str| read.contains(export);
+    let mut out = Vec::new();
+    if reads(crate::prerequisites::DELEGATED_FOLDER) {
+        out.push(Need::Folder);
+    }
+    if reads("project_id") || reads("project_number") {
+        out.push(Need::Project);
+    }
+    out
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct PackRow {
     pub id: String,
     pub state: State,
+    /// what the pack needs of the estate that uses it, derived from what it reads: empty
+    /// for a pack that reads neither a delegated folder nor a delegated project
+    pub needs: Vec<Need>,
     /// the version the local file states; none for a pack that is only available
     pub version: Option<String>,
     /// the version the source's file states, where the source holds the pack
@@ -650,6 +697,7 @@ pub(crate) async fn list(runtime: &ToolConfig, source: &Source) -> Result<PacksR
         packs.push(PackRow {
             id: id.clone(),
             state,
+            needs: needs(&text),
             version: crate::presets::pack_version(&text),
             upstream_version: match upstream {
                 Upstream::Found(t) => crate::presets::pack_version(t),
@@ -664,6 +712,7 @@ pub(crate) async fn list(runtime: &ToolConfig, source: &Source) -> Result<PacksR
         packs.push(PackRow {
             id: id.clone(),
             state: State::Available,
+            needs: text.as_deref().map(needs).unwrap_or_default(),
             version: None,
             upstream_version: text.as_deref().and_then(crate::presets::pack_version),
             source: Some(label.clone()),
@@ -697,7 +746,14 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
             (None, Some(u)) => u.clone(),
             (None, None) => "-".to_string(),
         };
-        out.push_str(&format!("  {:width$}  {:10}  {}\n", p.id, version, state));
+        let needs = match p.needs.as_slice() {
+            [] => String::new(),
+            n => format!(
+                "  — needs {}",
+                n.iter().map(|x| if *x == Need::Folder { "a delegated folder" } else { "a delegated project" }).collect::<Vec<_>>().join(" and ")
+            ),
+        };
+        out.push_str(&format!("  {:width$}  {:10}  {}{}\n", p.id, version, state, needs));
     }
     out
 }
@@ -735,6 +791,24 @@ mod tests {
 
     fn row(text: &str) -> Row {
         Row { id: "demo".into(), source: "dir".into(), version: "1.0".into(), sha256: sha256(text) }
+    }
+
+    #[test]
+    fn a_packs_needs_are_what_it_reads_from_the_interface() {
+        let project = "pack p version \"1.0\"\nparams {\n  p = \"${{interface.project_id}}\"\n}\n";
+        let folder = "pack f version \"1.0\"\nparams {\n  parent = \"${{interface.delegated_folder}}\"\n}\n";
+        let number = "pack n version \"1.0\"\ngoogle_billing_budget {\n  b {\n    x = \"projects/${{interface.project_number}}\"\n  }\n}\n";
+        // a comment that names a value reads nothing, and a pack that reads neither needs neither
+        let neither = "// `${{interface.delegated_folder}}` is what another pack reads\npack o version \"1.0\"\nparams {\n  region = \"${{interface.default_region}}\"\n}\n";
+        assert_eq!(needs(project), [Need::Project]);
+        assert_eq!(needs(folder), [Need::Folder]);
+        assert_eq!(needs(number), [Need::Project]);
+        assert!(needs(neither).is_empty());
+        assert_eq!(needs(&format!("{}{}", folder, project)), [Need::Folder, Need::Project]);
+        // the two packs the repository ships say what they are for
+        let shipped = |name: &str| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("packs").join(name)).unwrap();
+        assert_eq!(needs(&shipped("workload-project.satz")), [Need::Folder]);
+        assert_eq!(needs(&shipped("project-budget.satz")), [Need::Project]);
     }
 
     #[test]

@@ -53,7 +53,7 @@
 //
 // NO CLAIM. The workloads' identities are workloads, not controls: this pack witnesses nothing.
 
-pack folder_workload version "2.0"
+pack folder_workload version "2.1"
 
 params {
   // One entry per workload, `{ name group apis billing_roles }`: the name, the group that
@@ -123,9 +123,9 @@ request folder_workloads {
 
 request folder_workload_folders {
   key         = "name"
-  fields      = ["name", "workload", "display_name", "parent"]
+  fields      = ["name", "workload", "display_name", "parent", "budgets"]
   patterns    = { name = "[a-z][a-z0-9-]*" workload = "[a-z][a-z0-9-]*" }
-  defaults    = { parent = "google_folder.workload_folder.name" }
+  defaults    = { parent = "google_folder.workload_folder.name" budgets = false }
   description = "A folder a workload works in: the folder's name, the workload's name, the name the folder is shown under, and its parent"
 }
 
@@ -205,6 +205,13 @@ google_folder_iam_member {
     folder                                                                    = "${{google_folder.{each.name}.name}}"
     "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = folder_workload_roles
   }
+  // Budgets, for the folders that ask: the organisation's role for it, on that folder and
+  // so on the projects in it (`presets/delegated-budget-role.satz`, which the estate
+  // switches on).
+  each folder_workload_folders by name when budgets {
+    folder                                                                    = "${{google_folder.{each.name}.name}}"
+    "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = ["${{google_organization_iam_custom_role.delegated_budgets.name}}"]
+  }
 }
 
 // ---- what a workload's estate reads -----------------------------------------------------
@@ -225,6 +232,7 @@ each folder_workloads by name {
 
 each folder_workload_folders by name {
   interface "{each.name}" {
-    export "delegated_folder" = "${{google_folder.{each.name}.name}}" description "The folder the workload's account works in: the parent of what its estate creates"
+    export "delegated_budgets" = each.budgets description "Whether the account may manage budgets for the projects in this folder"
+    export "delegated_folder"  = "${{google_folder.{each.name}.name}}" description "The folder the workload's account works in: the parent of what its estate creates"
   }
 }

@@ -94,6 +94,23 @@ impl Manifest {
     /// `project_id` of the `google_project` its `project` reference names. `None`
     /// when it has neither — an organisation-, folder- or billing-scoped resource —
     /// or when the reference resolves to nothing satz can read.
+    /// Give every resource whose `project` reads a name — `local.interface.project_id`
+    /// of a delegated project, `var.<input>` — the project that name stands for, as its
+    /// literal. A manifest rebuilt from emitted files holds the reference; the compile's
+    /// own holds the literal already. Without this the API preflight finds no project
+    /// for a service a delegated estate switches on, and switches nothing on ahead.
+    pub fn resolve_projects(&mut self, names: &std::collections::BTreeMap<String, String>) {
+        for r in self.resources.values_mut() {
+            if r.attrs.contains_key("project") {
+                continue;
+            }
+            if let Some(literal) = r.refs.get("project").and_then(|name| names.get(name)).cloned() {
+                r.refs.remove("project");
+                r.attrs.insert("project".to_string(), literal);
+            }
+        }
+    }
+
     pub fn project_of(&self, r: &EmittedResource) -> Option<String> {
         let literal = r.attrs.get("project").filter(|p| !p.is_empty()).cloned();
         literal.or_else(|| {
@@ -534,6 +551,22 @@ resource "google_org_policy_policy" "p" {
 "#);
         assert_eq!(plain.enforce, Some(false));
         assert!(!plain.dry_run);
+    }
+
+    #[test]
+    fn a_project_named_through_the_interface_is_resolved_from_the_emitted_names() {
+        // what `main.tf` holds for a service a delegated estate switches on
+        let mut m = Manifest::parse(
+            "resource \"google_project_service\" \"budget_api\" {\n  project = local.interface.project_id\n  service = \"billingbudgets.googleapis.com\"\n}\n\
+             resource \"google_project_service\" \"literal\" {\n  project = \"acme-other-001\"\n  service = \"run.googleapis.com\"\n}\n",
+        );
+        let api = |m: &Manifest| m.resources.get("google_project_service.budget_api").map(|r| m.project_of(r)).unwrap();
+        assert_eq!(api(&m), None, "the reference names no resource of the estate");
+        let names = std::collections::BTreeMap::from([("local.interface.project_id".to_string(), "acme-payments-001".to_string())]);
+        m.resolve_projects(&names);
+        assert_eq!(api(&m).as_deref(), Some("acme-payments-001"));
+        let literal = m.resources.get("google_project_service.literal").unwrap();
+        assert_eq!(m.project_of(literal).as_deref(), Some("acme-other-001"), "a literal stays what it is");
     }
 
     #[test]

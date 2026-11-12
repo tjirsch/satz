@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "4.1"
+pack estate_map version "4.2"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -49,6 +49,7 @@ params {
   use_shared_network            = false
   use_project_workload          = false
   use_folder_workload           = false
+  use_delegated_budgets         = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
   use_scc_notifications         = false
@@ -138,6 +139,13 @@ question use_project_workload {
   why      = "A project — a team's estate beside this one, in its own repository — is then one entry of `project_workload_projects` (its own account) or of `project_workload_shared_projects` (a workload's account), requested by pull request; the account holds the project's IAM and services on that project alone. Turning it off later destroys every such Google project, with everything the team built in it."
   reversal = recreate
   blast    = high
+}
+
+question use_delegated_budgets {
+  prompt   = "Let delegated accounts manage budgets for their own project or folder: declare the role an entry with `budgets = true` is granted?"
+  why      = "The role carries the project-level budget permissions and nothing on the billing account: an account with it manages budgets for its own scope and sees no other project's costs. An entry that asks for budgets while this is off is refused. Turning it off later removes the role, and with it every such account's budgets right."
+  reversal = edit
+  blast    = low
 }
 
 question use_folder_workload {
@@ -322,6 +330,11 @@ offers "presets/project-workload.satz" {
 offers "presets/folder-workload.satz" {
   when  = use_folder_workload
   phase = "once the estate runs as the service account and the workload folder exists — the workloads' folders are created under it"
+}
+
+offers "presets/delegated-budget-role.satz" {
+  when  = use_delegated_budgets
+  phase = "with the first entry of delegated access that asks for budgets — the role its grant names"
 }
 
 offers "presets/shared-network.satz" {

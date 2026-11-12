@@ -52,7 +52,7 @@
 //
 // NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
 
-pack project_workload version "2.0"
+pack project_workload version "2.1"
 
 params {
   // One entry per project with its own account, `{ name owner_group apis }`: the name, the
@@ -86,7 +86,7 @@ question project_workload_folder {
 
 request project_workload_projects {
   key      = "name"
-  fields   = ["name", "owner_group", "apis"]
+  fields   = ["name", "owner_group", "apis", "budgets"]
   patterns = { name = "[a-z][a-z0-9-]*" owner_group = "[^@: ]+@[^@: ]+" }
   defaults = {
     apis = [
@@ -96,13 +96,14 @@ request project_workload_projects {
       "serviceusage.googleapis.com",
       "storage.googleapis.com",
     ]
+    budgets = false
   }
   description = "A project with its own account: its name, which is its interface's, the address of the group that owns it, and the APIs enabled on it"
 }
 
 request project_workload_shared_projects {
   key      = "name"
-  fields   = ["name", "workload", "apis"]
+  fields   = ["name", "workload", "apis", "budgets"]
   patterns = { name = "[a-z][a-z0-9-]*" workload = "[a-z][a-z0-9-]*" }
   defaults = {
     apis = [
@@ -112,6 +113,7 @@ request project_workload_shared_projects {
       "serviceusage.googleapis.com",
       "storage.googleapis.com",
     ]
+    budgets = false
   }
   description = "A project a workload's account works in: its name, which is its interface's, the workload of `presets/folder-workload.satz` whose account works in it, and the APIs enabled on it"
 }
@@ -182,6 +184,16 @@ google_project_iam_member {
     project                                                                   = "${{google_project.{each.name}.project_id}}"
     "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = project_workload_roles
   }
+  // Budgets, for the entries that ask: the organisation's role for it, on that project alone
+  // (`presets/delegated-budget-role.satz`, which the estate switches on).
+  each project_workload_projects by name when budgets {
+    project                                                                                           = "${{google_project.{each.name}.project_id}}"
+    "serviceAccount:svc-iac-{each.name}@{customer_shortname}-{each.name}-001.iam.gserviceaccount.com" = ["${{google_organization_iam_custom_role.delegated_budgets.name}}"]
+  }
+  each project_workload_shared_projects by name when budgets {
+    project                                                                   = "${{google_project.{each.name}.project_id}}"
+    "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = ["${{google_organization_iam_custom_role.delegated_budgets.name}}"]
+  }
 }
 
 // ---- what each project's estate reads -------------------------------------------------
@@ -196,6 +208,8 @@ each project_workload_projects by name {
     export "account_group_roles"     = ["roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser"] description "What that group holds on the account"
     export "delegated_project_roles" = project_workload_roles description "The roles the account holds on the project"
     export "delegated_apis"          = each.apis description "The APIs enabled on the project, which the estate's calls are billed to"
+    export "delegated_budgets"       = each.budgets description "Whether the account may manage budgets for this project"
+    export "billing_account"         = billing_account_infra description "The billing account the project is linked to: a budget for the project is created on it"
   }
 }
 
@@ -204,5 +218,6 @@ each project_workload_shared_projects by name {
     export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
     export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
     export "delegated_project_roles" = project_workload_roles description "The roles the workload's account holds on the project"
+    export "delegated_budgets"       = each.budgets description "Whether the account may manage budgets for this project"
   }
 }

@@ -56,8 +56,40 @@ const EXAMPLE_PARAMS: &[(&str, &str)] = &[
 /// than this is an instruction, and the operator it stops is left to guess why.
 const REASON: usize = 80;
 
-/// The estate satz writes to fold the pack into: the example params, then the pack.
-pub(crate) fn synthetic_estate(pack: &Path) -> String {
+/// The example value of an interface export a pack reads, for the review's stand-in
+/// interface: the documented examples (`docs/examples.md`), by the export's name.
+fn example_export(name: &str) -> &'static str {
+    match name {
+        "project_id" => "acme-payments-001",
+        "project_number" => "100000000001",
+        "billing_account" => "012345-6789AB-CDEF01",
+        "delegated_folder" => "folders/222222222222",
+        "organization_id" => "123456789012",
+        "customer_domain" => "example.com",
+        "customer_shortname" => "acme",
+        "default_region" => "europe-west3",
+        _ => "example",
+    }
+}
+
+/// The interface file the review's estate uses when the pack reads interface values: a
+/// pack written for delegated access reads the project or the folder it was given, and
+/// outside an estate that was given one it does not compile. Every value it reads is
+/// here, as a literal example.
+pub(crate) fn synthetic_interface(reads: &std::collections::BTreeSet<String>) -> String {
+    let mut s = String::from(
+        "// Written by `satz review-preset`: the interface values the pack under review reads, as\n\
+         // example values.\ninterface \"review\"\n\ncentral {\n  estate        = \"review_central\"\n  organizations = [\"organizations/123456789012\"]\n}\n",
+    );
+    for name in reads {
+        s.push_str(&format!("\noutput \"{}\" {{\n  value = \"{}\"\n}}\n", name, example_export(name)));
+    }
+    s
+}
+
+/// The estate satz writes to fold the pack into: the example params, the stand-in
+/// interface file when the pack reads interface values, then the pack.
+pub(crate) fn synthetic_estate(pack: &Path, interface: Option<&Path>) -> String {
     let mut s = String::from(
         "// Written by `satz review-preset` to fold one pack into an estate. The params are\n\
          // the documented example values; the pack's own questions are answered with the\n\
@@ -71,6 +103,9 @@ pub(crate) fn synthetic_estate(pack: &Path) -> String {
     // to be one: a local backend, which is what a fresh estate carries before its
     // state moves to a bucket
     s.push_str("terraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n\n");
+    if let Some(i) = interface {
+        s.push_str(&format!("use \"{}\"\n", crate::fsx::slash(i)));
+    }
     // `/` between components: a `\` in a Satz string is an escape
     s.push_str(&format!("use \"{}\"\n", crate::fsx::slash(pack)));
     s
@@ -258,8 +293,19 @@ pub(crate) fn review(
     let (estate, folded_into) = match against {
         Some(e) => (e.to_path_buf(), e.display().to_string()),
         None => {
-            let path = scratch.insert(Scratch::new(&name_of(&pack))?).0.join("review.satz");
-            crate::fsx::write_generated_satz(&path, &synthetic_estate(&pack))?;
+            let dir = scratch.insert(Scratch::new(&name_of(&pack))?).0.clone();
+            let path = dir.join("review.satz");
+            // a pack for delegated access reads the place it was given: the stand-in
+            // interface holds every value it reads
+            let reads = crate::workload_packs::interface_reads(&src);
+            let interface = if reads.is_empty() {
+                None
+            } else {
+                let i = dir.join("review-interface.satz");
+                crate::fsx::write_generated_satz(&i, &synthetic_interface(&reads))?;
+                Some(i)
+            };
+            crate::fsx::write_generated_satz(&path, &synthetic_estate(&pack, interface.as_deref()))?;
             (path, "synthetic".to_string())
         }
     };
@@ -662,8 +708,23 @@ mod tests {
     }
 
     #[test]
+    fn a_pack_that_reads_the_interface_is_folded_with_a_stand_in_for_it() {
+        let reads = crate::workload_packs::interface_reads(
+            "// `${{interface.delegated_folder}}` in a comment is not read\nparams {\n  p = \"${{interface.project_id}}\"\n  n = \"projects/${{interface.project_number}}\"\n}\n",
+        );
+        assert_eq!(reads.iter().map(String::as_str).collect::<Vec<_>>(), ["project_id", "project_number"]);
+        let i = synthetic_interface(&reads);
+        let file = satz_core::satz::parse(&i).expect("the stand-in parses").interface_file.expect("as an interface file");
+        assert_eq!(file.outputs.iter().map(|o| o.name.as_str()).collect::<Vec<_>>(), ["project_id", "project_number"]);
+        assert!(satz_core::fmt::is_formatted(&i).unwrap(), "{}", i);
+        let e = synthetic_estate(Path::new("/tmp/x/my-pack.satz"), Some(Path::new("/tmp/x/review-interface.satz")));
+        assert!(e.contains("use \"/tmp/x/review-interface.satz\"\nuse \"/tmp/x/my-pack.satz\""), "{}", e);
+        assert!(satz_core::fmt::is_formatted(&e).unwrap(), "{}", e);
+    }
+
+    #[test]
     fn the_synthetic_estate_binds_the_documented_examples_and_uses_the_pack() {
-        let e = synthetic_estate(Path::new("/tmp/x/my-pack.satz"));
+        let e = synthetic_estate(Path::new("/tmp/x/my-pack.satz"), None);
         assert!(e.contains("customer_organization_id = \"123456789012\""), "{}", e);
         assert!(e.contains("use \"/tmp/x/my-pack.satz\""), "{}", e);
         // it is a Satz file satz composes whole, so it must be in the canonical layout

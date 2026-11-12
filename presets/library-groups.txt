@@ -57,6 +57,7 @@ shared-network.satz
 [Projects and interfaces]
 project-workload.satz
 folder-workload.satz
+delegated-budget-role.satz
 interface-notice.satz
 
 [Security operations and integrations]
