@@ -1,12 +1,12 @@
-//! A project on satz, end to end. An entry of `projects` in
-//! `presets/project-onboarding.satz` gives the central estate the project's Google project,
+//! A project on satz, end to end. An entry of `project_workload_projects` in
+//! `presets/project-workload.satz` gives the central estate the project's Google project,
 //! IaC service account and state bucket, and the `interface "<name>"` that publishes them;
 //! the pull request that adds the entry is the request's review. `satz init --project`
 //! writes the project's own estate from that interface file.
 
 use satz_core::satz::InterfaceFile;
 
-/// The exports `presets/project-onboarding.satz` publishes and `init --project` reads, by name.
+/// The exports `presets/project-workload.satz` publishes for a project with its own account and `init --project` reads, by name.
 const PROJECT_ID: &str = "project_id";
 const IAC_ACCOUNT: &str = "iac_account";
 const STATE_BUCKET: &str = "state_bucket";
@@ -36,7 +36,7 @@ fn static_output(file: &InterfaceFile, name: &str) -> Option<String> {
     file.outputs.iter().find(|o| o.name == name).and_then(|o| crate::interface::static_text(&o.value))
 }
 
-/// The project's own estate, from the interface `presets/project-onboarding.satz` published
+/// The project's own estate, from the interface `presets/project-workload.satz` published
 /// for it: it runs as the project's IaC service account, keeps its state in the project's
 /// bucket, and reads the central estate through `use_path`. Refused when the interface lacks
 /// one of the four exports the pack publishes.
@@ -47,7 +47,7 @@ pub(crate) fn estate(name: &str, file: &InterfaceFile, use_path: &str) -> Result
             let writer = if export == REGION {
                 "`presets/estate-core.satz` exports it: switch its `use` line on in the central estate".to_string()
             } else {
-                format!("an entry `{{ name = \"{}\" … }}` in `projects` of `presets/project-onboarding.satz` publishes it", name)
+                format!("an entry `{{ name = \"{}\" … }}` in `project_workload_projects` of `presets/project-workload.satz` publishes it; a project a workload's account works in (`project_workload_shared_projects`) has no account of its own, and its estate is written by hand from the two interfaces", name)
             };
             format!(
                 "the interface `{}` of the estate `{}` publishes no static `{}` — {}; it publishes: {}",
@@ -143,15 +143,15 @@ mod tests {
         crate::template::generate_template(&args, None, &path).unwrap();
         let src = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
-        let parent = if folder.is_some() { "  project_onboarding_folder = \"google_folder.workload_folder.name\"\n" } else { "" };
-        let src = src.replacen("params {\n", &format!("params {{\n  projects = [{}]\n{}", projects, parent), 1);
-        format!("{}\nuse \"presets/project-onboarding.satz\"\n", src)
+        let parent = if folder.is_some() { "  project_workload_folder = \"google_folder.workload_folder.name\"\n" } else { "" };
+        let src = src.replacen("params {\n", &format!("params {{\n  project_workload_projects = [{}]\n{}", projects, parent), 1);
+        format!("{}\nuse \"presets/project-workload.satz\"\n", src)
     }
 
     /// The library's pack from the repository, every other path refused.
     fn presets(p: &str) -> Result<String, String> {
         match p {
-            "presets/project-onboarding.satz" => std::fs::read_to_string(p).map_err(|e| e.to_string()),
+            "presets/project-workload.satz" => std::fs::read_to_string(p).map_err(|e| e.to_string()),
             other => Err(format!("no {}", other)),
         }
     }
@@ -254,7 +254,7 @@ mod tests {
         // an interface without the exports is refused by name
         let bare = satz_core::satz::parse("interface \"x\"\n\ncentral {\n  estate = \"e\"\n  organizations = []\n}\n\noutput \"project_id\" {\n  value = \"p\"\n}\n").unwrap().interface_file.unwrap();
         let err = super::estate("payments", &bare, "x").unwrap_err();
-        assert!(err.contains("publishes no static `iac_account`") && err.contains("`project_id`") && err.contains("project-onboarding.satz"), "{}", err);
+        assert!(err.contains("publishes no static `iac_account`") && err.contains("`project_id`") && err.contains("project-workload.satz"), "{}", err);
         let no_region = satz_core::satz::parse(&text.replace("output \"default_region\"", "output \"region_gone\"")).unwrap().interface_file.unwrap();
         assert!(super::estate("payments", &no_region, "x").unwrap_err().contains("estate-core"));
     }

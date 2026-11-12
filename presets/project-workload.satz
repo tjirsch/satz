@@ -1,0 +1,205 @@
+// The projects of the estate that are worked from an estate beside it, and the account
+// each is worked as. A project is a Google project this estate creates; the team's own
+// estate, in its own repository, fills it. Two lists, for two kinds of team.
+//
+//   use "presets/project-workload.satz" when use_project_workload
+//
+// A PROJECT WITH ITS OWN ACCOUNT. One entry of `project_workload_projects`,
+//   { name = "payments" owner_group = "payments-owners@example.com" }
+// is one Google project `{customer_shortname}-<name>-001` and, inside it, the service
+// account `svc-iac-<name>` its estate runs as and the state bucket
+// `{customer_shortname}-<name>-001-state`. The owner group reads the project and may
+// become that account — that account only.
+//
+// A PROJECT WORKED BY A WORKLOAD'S ACCOUNT. One entry of
+// `project_workload_shared_projects`,
+//   { name = "shop-backend"  workload = "shop" }
+//   { name = "shop-frontend" workload = "shop" }
+// is one Google project and no account: the account of the workload `shop`, which
+// `presets/folder-workload.satz` declares (an entry of `folder_workloads`, with or
+// without folders of its own), gets the roles on it. One account then works in several
+// projects. The grant names the account by reference, so an entry that names a workload
+// no entry declares is refused by the compile, which lists the accounts that exist.
+//
+// WHAT AN ACCOUNT HOLDS ON ITS PROJECT. `project_workload_roles` — the project's IAM
+// and its services — on that project and nowhere else: it creates no project and reaches
+// none beside its own. What its estate's resource types need beyond that it grants its
+// own account in its estate, on the project (`google_project_iam_member`, which the
+// interface allows).
+//
+// BOTH KINDS. The project is billed to the infrastructure billing account and created in
+// `project_workload_folder`: empty is the organisation; the workload folder `satz init
+// --workload-folder-name` writes is `google_folder.workload_folder.name`. Its `apis` are
+// the five below unless the entry states its own list, whole. A `name` is the interface's
+// name and a folder name: lowercase letters, digits and `-`, starting with a letter; a
+// group is the group's address, `<name>@<domain>`. Both lists are bound in the estate, or
+// requested by the team as `contributes_project_workload_projects` /
+// `contributes_project_workload_shared_projects` in a small pack of its own, checked with
+// `satz check-request` and vendored by pull request.
+//
+// WHAT A PROJECT'S ESTATE READS. `interface "<name>"` publishes `project_id` (an attach
+// point for `google_project_iam_member`), `project_number`, and `delivered_project_roles`,
+// which `satz` judges the estate's needs against. A project with its own account
+// publishes `iac_account`, `state_bucket` and `delivered_apis` there too, and `satz init
+// --project <name> --interface interfaces/<name>/<name>/satz/interface.satz` writes its
+// estate from them. A project worked by a workload's account reads those from the
+// interface `workload-<workload>` of `presets/folder-workload.satz`, and uses both files.
+//
+// MORE IN AN INTERFACE. An interface declared in two files is one interface, so the estate
+// adds to a project's interface by writing a block of the same name in its own file:
+// `interface "payments" { use interface "network" }`.
+//
+// NO CLAIM. The projects are workloads, not controls: this pack witnesses nothing.
+
+pack project_workload version "1.0"
+
+params {
+  // One entry per project with its own account, `{ name owner_group apis }`: the name, the
+  // group — its address, `<name>@<domain>` — that reads the project and may become its
+  // account, and the APIs enabled on it (the defaults of the request below when left out).
+  project_workload_projects        = []
+  // One entry per project a workload's account works in, `{ name workload apis }`: the
+  // name, and the workload of `presets/folder-workload.satz` whose account works in it.
+  project_workload_shared_projects = []
+  // The folder the projects are created in. Empty is the organisation. A folder the
+  // estate declares is named by reference, `google_folder.<label>.name`; one that already
+  // exists by its id.
+  project_workload_folder          = ""
+  // What an account holds on its project: the project's IAM and its services.
+  project_workload_roles = [
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+  ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question project_workload_folder {
+  prompt   = "The folder the projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It decides the policies and the grants every project inherits. Changing it afterwards moves every live project between parents."
+  reversal = edit
+  blast    = low
+}
+
+// ---- what a team may ask for ----------------------------------------------------------
+
+request project_workload_projects {
+  key      = "name"
+  fields   = ["name", "owner_group", "apis"]
+  patterns = { name = "[a-z][a-z0-9-]*" owner_group = "[^@: ]+@[^@: ]+" }
+  defaults = {
+    apis = [
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+  }
+  description = "A project with its own account: its name, which is its interface's, the address of the group that owns it, and the APIs enabled on it"
+}
+
+request project_workload_shared_projects {
+  key      = "name"
+  fields   = ["name", "workload", "apis"]
+  patterns = { name = "[a-z][a-z0-9-]*" workload = "[a-z][a-z0-9-]*" }
+  defaults = {
+    apis = [
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+  }
+  description = "A project a workload's account works in: its name, which is its interface's, the workload of `presets/folder-workload.satz` whose account works in it, and the APIs enabled on it"
+}
+
+// ---- per project with its own account: the project, the account, the state bucket ------
+
+google_project {
+  each project_workload_projects by name {
+    name            = "{each.name}"
+    project_id      = "{customer_shortname}-{each.name}-001"
+    folder_id       = project_workload_folder
+    billing_account = billing_account_infra
+    project_service = each.apis
+    google_service_account {
+      "{each.name}_iac" {
+        account_id   = "svc-iac-{each.name}"
+        display_name = "IaC provisioner of the project {each.name}"
+      }
+    }
+    google_storage_bucket {
+      "{each.name}_state" {
+        name                        = "{customer_shortname}-{each.name}-001-state"
+        location                    = default_region
+        force_destroy               = true
+        public_access_prevention    = "enforced"
+        uniform_bucket_level_access = true
+        versioning { enabled = true }
+      }
+    }
+    // The account takes the project's IAM and its services, and the state bucket; what its
+    // estate's resource types need beyond that it grants itself there. The owner group
+    // reads the project.
+    google_project_iam_member {
+      "serviceAccount:svc-iac-{each.name}@{customer_shortname}-{each.name}-001.iam.gserviceaccount.com" = project_workload_roles
+      "group:{each.owner_group}" = [
+        "roles/viewer",
+      ]
+    }
+    google_storage_bucket_iam_member {
+      bucket = "{customer_shortname}-{each.name}-001-state"
+      "serviceAccount:svc-iac-{each.name}@{customer_shortname}-{each.name}-001.iam.gserviceaccount.com" = [
+        "roles/storage.objectAdmin",
+      ]
+    }
+    // The owner group may become the project's account — that account only.
+    google_service_account_iam_member {
+      service_account_id = "${{google_service_account.{each.name}_iac.name}}"
+      "group:{each.owner_group}" = [
+        "roles/iam.serviceAccountTokenCreator",
+        "roles/iam.serviceAccountUser",
+      ]
+    }
+  }
+  // ---- per project a workload's account works in: the project, and no account ---------
+  each project_workload_shared_projects by name {
+    name            = "{each.name}"
+    project_id      = "{customer_shortname}-{each.name}-001"
+    folder_id       = project_workload_folder
+    billing_account = billing_account_infra
+    project_service = each.apis
+  }
+}
+
+// The workload's account on each of its projects. At the top level with the project named:
+// one account on several projects is several grants, told apart by their project.
+google_project_iam_member {
+  each project_workload_shared_projects by name {
+    project                                                                   = "${{google_project.{each.name}.project_id}}"
+    "serviceAccount:${{google_service_account.deploy_{each.workload}.email}}" = project_workload_roles
+  }
+}
+
+// ---- what each project's estate reads -------------------------------------------------
+
+each project_workload_projects by name {
+  interface "{each.name}" {
+    export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "iac_account"             = "${{google_service_account.{each.name}_iac.email}}" description "The service account the project's estate runs as"
+    export "state_bucket"            = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
+    export "delivered_project_roles" = project_workload_roles description "The roles the account holds on the project"
+    export "delivered_apis"          = each.apis description "The APIs enabled on the project, which the estate's calls are billed to"
+  }
+}
+
+each project_workload_shared_projects by name {
+  interface "{each.name}" {
+    export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "delivered_project_roles" = project_workload_roles description "The roles the workload's account holds on the project"
+  }
+}

@@ -13,6 +13,41 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.97.0
+
+**`presets/project-onboarding.satz` is renamed `presets/project-workload.satz`, and the old
+path and its three params are refused.** Nothing the pack deploys changes: the addresses,
+the project ids, the accounts and the buckets are the ones they were, and **the plan does
+not move**. The pack gains a second list — a project worked by the account of a workload of
+`presets/folder-workload.satz`, so one account serves several projects.
+
+| before | now |
+|---|---|
+| `use "presets/project-onboarding.satz" when use_project_onboarding` | `use "presets/project-workload.satz" when use_project_workload` |
+| `projects = [{ name owner_group }]` | `project_workload_projects = [{ name owner_group }]` |
+| `project_onboarding_folder` | `project_workload_folder` |
+| a request file's `contributes_projects` | `contributes_project_workload_projects` |
+
+**How to find it:** `grep -rnE 'project-onboarding|use_project_onboarding|project_onboarding_folder|(^|[^_a-z])projects +=|contributes_projects'`
+over the estate's repository and the teams' request files; the compile refuses each at its
+line and names the replacement. **Read the refusal before anything else:** an estate left
+on `projects` would compile with an empty list of projects, and the next apply would
+destroy every project the pack created — which is why the old name is an error and not a
+param nobody reads. A pack of your own that declares a param named `projects` is refused by
+the same rule for this release line: rename it.
+
+**What to write instead:** the names in the right column, then `satz get-presets` and
+`satz transpile <estate> --plan`, which shows no change. A project's own estate takes its
+interface folder again: it now carries `delivered_project_roles` and `delivered_apis`, and
+`satz` judges that estate against them (ADR 0088).
+
+**The interface `workload-<name>` of `presets/folder-workload.satz` publishes
+`deploy_project_id`, where v0.96.0 said `project_id`.** An estate that reads a workload's
+interface and a project's reads `project_id` from the project's. `grep -rn
+'interface.project_id'` in an estate that uses a `workload-<name>` interface; write
+`interface.deploy_project_id`. The compile refuses the old name there: the interface has no
+such export.
+
 ### v0.96.0
 
 **`presets/workload-deployer.satz` is replaced by `presets/folder-workload.satz`, and the old
@@ -1166,6 +1201,9 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `project_workload` | 1.0 | 2026-11-12 | first version, replacing `project_onboarding`: `project_workload_projects` is the old `projects` list, a project with its own account and state bucket, unchanged in what it deploys; new, `project_workload_shared_projects` (`{ name workload }`) is a project with no account of its own, on which the account of a workload of `folder-workload.satz` gets `project_workload_roles` — one account for several projects, the grant written by reference so an undeclared workload is refused; every entry takes `apis`; the interfaces publish `delivered_project_roles`, and `delivered_apis` for a project with its own account |
+| `folder_workload` | 1.1 | 2026-11-12 | the interface `workload-<name>` publishes the infrastructure project as `deploy_project_id`, where it said `project_id`: an estate that also reads a project's interface (`project-workload.satz`) reads `project_id` there |
+| `estate_map` | 4.0 | 2026-11-12 | offers `project-workload` on `use_project_workload` in place of `project-onboarding` on `use_project_onboarding`; the old gate is refused and names the new one |
 | `folder_workload` | 1.0 | 2026-11-11 | first version, replacing `workload_deployer`: one identity per entry of `folder_workloads` (`{ name group apis billing_roles }` — infrastructure project, account, state bucket, the entry's APIs and billing roles) and one folder per entry of `folder_workload_folders` (`{ name workload display_name parent }`), created by the pack, with `folder_workload_roles` for the workload's account on that folder alone and no role that sets a folder's IAM; publishes the interfaces `workload-<name>` (identity and what was delivered) and `<folder>` (`delivered_folder`) |
 | `estate_map` | 3.0 | 2026-11-11 | offers `folder-workload` on `use_folder_workload` in place of `workload-deployer` on `use_workload_deployer`; the old gate is refused and names the new one |
 | `s1_security_groups` | 1.3 | 2026-10-23 | the first admin holds `roles/resourcemanager.projectCreator` and `roles/billing.creator` on the organisation explicitly — the two roles a new organisation grants its whole domain; once that grant and the groups' are live, `satz apply` takes the domain off those two roles and touches nothing else of the policy. Two `google_organization_iam_member` creates in the plan |
@@ -1173,8 +1211,6 @@ the private history recorded them.
 | `estate_map` | 2.9 | 2026-10-15 | offers `workload-deployer` on `use_workload_deployer`, off by default, with its question; nothing already on changes |
 | `monitoring.organization_audit_logsink` | 1.8 | 2026-10-14 | `logsink_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
 | `integrations.microsoft_defender_for_cloud` | 0.7 | 2026-10-14 | `mdc_mgmt_project_folder` says what an empty answer means — the organisation itself — so an estate that binds `""` has answered the question; before, `""` counted as unanswered although the prompt offered it. Nothing emitted changes |
-| `project_onboarding` | 1.1 | 2026-09-30 | the request point `projects` carries patterns: an entry whose `name` is not lowercase letters, digits and `-` starting with a letter, or whose `owner_group` is not an address `<name>@<domain>`, is refused at compile, naming the entry and the value |
-| `project_onboarding` | 1.0 | 2026-09-30 | first version: one entry of the request point `projects`, `{ name owner_group }`, per project — its Google project under `project_onboarding_folder`, its IaC service account and state bucket, the grants, and `interface "<name>"` written per entry with `project_id`, `project_number`, `iac_account` and `state_bucket`; what `satz add-project` wrote as a section |
 | `estate_map` | 2.8 | 2026-10-02 | `use_budget` asks for budgets on projects and folders too, and no longer speaks of a placeholder id; nothing on or off changes |
 | `estate_map` | 2.7 | 2026-09-30 | offers `project-onboarding` on `use_project_onboarding`, off by default, with its question; nothing already on changes |
 | `shared_network` | 1.0 | 2026-09-26 | first version: a shared VPC in a host project, a network firewall policy, and two request points — `shared_vpc_subnets` and `shared_firewall_rules` — whose entries become one subnet and one policy rule each, every subnet with flow logs; the common interface `network` publishes the host project, the network and every subnet |

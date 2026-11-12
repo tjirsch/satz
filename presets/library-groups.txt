@@ -55,7 +55,7 @@ essential-contacts-organization.satz
 shared-network.satz
 
 [Projects and interfaces]
-project-onboarding.satz
+project-workload.satz
 folder-workload.satz
 interface-notice.satz
 

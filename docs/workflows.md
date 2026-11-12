@@ -1047,40 +1047,45 @@ names a project's values `<project>__<export>`, with `-` written `_`
 
 ### Onboarding a project, and a project on satz
 
-A project is one entry of `projects` in `presets/project-onboarding.satz`:
+A project is one entry of `project_workload_projects` in `presets/project-workload.satz`:
 
 ```
 params {
-  projects = [
+  project_workload_projects = [
     { name = "payments" owner_group = "payments-owners@example.com" },
   ]
-  project_onboarding_folder = "google_folder.workload_folder.name"
+  project_workload_folder = "google_folder.workload_folder.name"
 }
 
-use "presets/project-onboarding.satz" when use_project_onboarding
+use "presets/project-workload.satz" when use_project_workload
 ```
 
 Per entry the pack declares the project's Google project `{customer_shortname}-payments-001`
-under `project_onboarding_folder` — the workload folder here; empty is the organisation —
-with its IaC service account (`svc-iac-payments`) and its state bucket inside it, the grants
+under `project_workload_folder` — the workload folder here; empty is the organisation —
+with its own service account (`svc-iac-payments`) and its state bucket inside it, the grants
 (the account takes the project's IAM and its services and the bucket, so its estate grants
-itself the rest with `satz update-prerequisites`; the owner group reads the project and may
-become the account), and the project's interface, written once per entry. The compile refuses
+its own account the rest, on the project; the owner group reads the project and may
+become the account), and the project's interface, written once per entry. An entry of
+`project_workload_shared_projects`, `{ name = "shop-backend" workload = "shop" }`, is a
+project without an account: the account of the workload `shop` of
+`presets/folder-workload.satz` gets the same roles on it, and one account works in several
+projects. The compile refuses
 an entry whose `owner_group` is not an address `<name>@<domain>` or whose `name` is not
 lowercase letters, digits and `-` starting with a letter, naming the entry and the value:
 
 ```
-each projects by name {
+each project_workload_projects by name {
   interface "{each.name}" {
     export "project_id"     = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
     export "project_number" = "${{google_project.{each.name}.number}}" description "Its number, looked up"
     export "iac_account"    = "${{google_service_account.{each.name}_iac.email}}" description "The IaC service account the project's estate runs as"
     export "state_bucket"   = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
+    // … and `delivered_project_roles`, `delivered_apis`: what the account was given
   }
 }
 ```
 
-The entry is the estate's own, or the project's request: `contributes_projects = [ … ]` in
+The entry is the estate's own, or the project's request: `contributes_project_workload_projects = [ … ]` in
 a small pack of the project's, checked with `satz check-request` and vendored into the
 estate by pull request ([language §6.17](language.md#request--what-a-project-may-add-to-a-list)). The pull request
 is the request's review; the apply creates the project; `satz transpile` writes

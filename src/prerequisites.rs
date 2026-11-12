@@ -639,9 +639,14 @@ pub(crate) fn granted(manifest: &Manifest, service_account: &str) -> Granted {
     }
 }
 
-/// The exports a workload's interface carries what was delivered in, by name
-/// (`presets/folder-workload.satz`, ADR 0087).
+/// The exports an interface carries what was delivered in, by name
+/// (`presets/folder-workload.satz` and `presets/project-workload.satz`, ADR 0087, 0088).
 pub(crate) const DELIVERED_FOLDER_ROLES: &str = "delivered_folder_roles";
+/// The folder itself: the roles on a workload's folders count for an estate that reads one.
+pub(crate) const DELIVERED_FOLDER: &str = "delivered_folder";
+pub(crate) const DELIVERED_PROJECT_ROLES: &str = "delivered_project_roles";
+/// The role whose holder sets a project's IAM, and so grants its own account there.
+pub(crate) const PROJECT_IAM_ADMIN: &str = "roles/resourcemanager.projectIamAdmin";
 pub(crate) const DELIVERED_BILLING_ROLES: &str = "delivered_billing_roles";
 pub(crate) const DELIVERED_APIS: &str = "delivered_apis";
 /// The role whose holder owns the projects it creates.
@@ -654,33 +659,60 @@ pub(crate) const PROJECT_CREATOR: &str = "roles/resourcemanager.projectCreator";
 /// not in it is the organisation's estate's to add.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Delivery {
-    /// the interface that carries it, `workload-<name>`
+    /// the interfaces that carry it, `workload-<name>` and a project's, comma-separated
     pub interface: String,
-    /// the account's roles on each of its folders
+    /// the account's roles on the folder the estate works in; empty for an estate that
+    /// reads no folder's interface
     pub folder_roles: BTreeSet<String>,
+    /// the account's roles on the project the organisation's estate created for it;
+    /// empty for an estate that reads no such project's interface
+    pub project_roles: BTreeSet<String>,
     /// its roles on the billing account
     pub billing_roles: BTreeSet<String>,
     /// the APIs enabled on its infrastructure project, which its providers bill to
     pub apis: BTreeSet<String>,
 }
 
-/// The delivery an estate reads: the first interface file that exports
-/// `delivered_folder_roles`. `None` for an organisation's estate, and for a project's
-/// estate whose interface says nothing of what was delivered.
+/// The delivery an estate reads, from every interface file it uses. An estate is a
+/// workload's when one of them exports `delivered_folder_roles` or
+/// `delivered_project_roles`; `None` for an organisation's estate, and for an estate whose
+/// interfaces say nothing of what was delivered.
+///
+/// The roles on a workload's folders count only for an estate that reads a folder's
+/// interface (`delivered_folder`): an account that was given no folder, or an estate that
+/// works in a project the organisation's estate created, creates no project of its own.
 pub(crate) fn delivery(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Option<Delivery> {
-    files.iter().find_map(|f| {
-        let list = |name: &str| -> Option<BTreeSet<String>> {
-            f.interface.outputs.iter().find(|o| o.name == name).map(|o| match &o.value {
-                serde_yaml::Value::Sequence(s) => s.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
-                _ => BTreeSet::new(),
+    let list = |name: &str| -> Option<(BTreeSet<String>, &str)> {
+        files.iter().find_map(|f| {
+            f.interface.outputs.iter().find(|o| o.name == name).map(|o| {
+                let values = match &o.value {
+                    serde_yaml::Value::Sequence(s) => s.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+                    _ => BTreeSet::new(),
+                };
+                (values, f.interface.name.as_str())
             })
-        };
-        Some(Delivery {
-            folder_roles: list(DELIVERED_FOLDER_ROLES)?,
-            billing_roles: list(DELIVERED_BILLING_ROLES).unwrap_or_default(),
-            apis: list(DELIVERED_APIS).unwrap_or_default(),
-            interface: f.interface.name.clone(),
         })
+    };
+    let folder = list(DELIVERED_FOLDER_ROLES);
+    let project = list(DELIVERED_PROJECT_ROLES);
+    if folder.is_none() && project.is_none() {
+        return None;
+    }
+    let works_in_a_folder = files.iter().any(|f| f.interface.outputs.iter().any(|o| o.name == DELIVERED_FOLDER));
+    let billing = list(DELIVERED_BILLING_ROLES);
+    let apis = list(DELIVERED_APIS);
+    let mut names: Vec<&str> = Vec::new();
+    for n in [&folder, &project, &billing, &apis].into_iter().flatten().map(|(_, n)| *n) {
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
+    Some(Delivery {
+        interface: names.join("`, `"),
+        folder_roles: folder.map(|(r, _)| r).filter(|_| works_in_a_folder).unwrap_or_default(),
+        project_roles: project.map(|(r, _)| r).unwrap_or_default(),
+        billing_roles: billing.map(|(r, _)| r).unwrap_or_default(),
+        apis: apis.map(|(r, _)| r).unwrap_or_default(),
     })
 }
 
@@ -688,20 +720,22 @@ pub(crate) fn delivery(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Opti
 ///
 /// A need on a folder or a project is met by a role delivered on the workload's folders,
 /// which everything the estate creates stands under, or by one the estate grants its own
-/// account on a node it declares. A need on a project is met as well when the account may
-/// create projects: Google makes a project's creator its owner, and the estate's projects
-/// are the ones it creates. A need on the billing account is met by a delivered billing
-/// role. No need is met at the organization — the account holds nothing there but the
-/// lookup's read.
+/// account on a node it declares or on the project it was given. A need on a project is
+/// met as well by a role delivered on that project, and when the account may create
+/// projects: Google makes a project's creator its owner, and the estate's projects are the
+/// ones it creates. A need on the billing account is met by a delivered billing role. No
+/// need is met at the organization — the account holds nothing there but the lookup's read.
 pub(crate) fn undelivered(needs: &[Need], granted: &Granted, delivery: &Delivery) -> Vec<Need> {
     let owns_its_projects = delivery.folder_roles.contains(PROJECT_CREATOR) || granted.own.contains(OWNER);
     needs
         .iter()
         .filter(|n| match n.scope {
             Scope::Organization | Scope::Project => {
-                let on_a_project =
-                    n.scope == Scope::Project || n.permission.as_deref().is_some_and(|p| p.starts_with("resourcemanager.projects."));
-                let held = n.roles.iter().any(|r| delivery.folder_roles.contains(r) || granted.own.contains(r));
+                let on_a_project = on_a_project(n);
+                let held = n
+                    .roles
+                    .iter()
+                    .any(|r| delivery.folder_roles.contains(r) || granted.own.contains(r) || (on_a_project && delivery.project_roles.contains(r)));
                 !(held || (on_a_project && owns_its_projects))
             }
             Scope::BillingAccount => !n.roles.iter().any(|r| delivery.billing_roles.contains(r) || granted.billing_account.contains(r)),
@@ -711,12 +745,33 @@ pub(crate) fn undelivered(needs: &[Need], granted: &Granted, delivery: &Delivery
         .collect()
 }
 
-/// One line per undelivered need: the roles that would meet it, where, and what needs it.
-pub(crate) fn describe_undelivered(needs: &[Need]) -> Vec<String> {
+/// A need Google tests on a project: one scoped there, or one of Resource Manager's own
+/// on the project.
+fn on_a_project(n: &Need) -> bool {
+    n.scope == Scope::Project || n.permission.as_deref().is_some_and(|p| p.starts_with("resourcemanager.projects."))
+}
+
+/// Whether the account can meet `n` by a grant in its own estate: a need on the project
+/// it was given, when it sets that project's IAM.
+pub(crate) fn grants_itself(n: &Need, delivery: &Delivery) -> bool {
+    on_a_project(n) && delivery.project_roles.contains(PROJECT_IAM_ADMIN)
+}
+
+/// One line per undelivered need: the roles that would meet it, where, who closes it, and
+/// what needs it.
+pub(crate) fn describe_undelivered(needs: &[Need], delivery: &Delivery) -> Vec<String> {
     needs
         .iter()
         .map(|n| {
-            let at = if n.scope == Scope::BillingAccount { "on the billing account" } else { "on the workload's folders" };
+            let at = if n.scope == Scope::BillingAccount {
+                "on the billing account"
+            } else if grants_itself(n, delivery) {
+                "on the project — to grant in this estate"
+            } else if delivery.folder_roles.is_empty() {
+                "outside the project"
+            } else {
+                "on the workload's folders"
+            };
             format!("{} {} — for {}", n.roles.join(" or "), at, n.reason.join(", "))
         })
         .collect()
@@ -1551,7 +1606,7 @@ mod tests {
 
     fn delivered(folder: &[&str], billing: &[&str], apis: &[&str]) -> Delivery {
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
-        Delivery { interface: "workload-shop".to_string(), folder_roles: set(folder), billing_roles: set(billing), apis: set(apis) }
+        Delivery { interface: "workload-shop".to_string(), folder_roles: set(folder), project_roles: BTreeSet::new(), billing_roles: set(billing), apis: set(apis) }
     }
 
     /// What `presets/folder-workload.satz` grants by default.
@@ -1602,7 +1657,7 @@ mod tests {
         let miss = undelivered(&want, &granted(&m, SA), &d);
         let why: BTreeSet<&str> = miss.iter().flat_map(|n| n.reason.iter().map(String::as_str)).collect();
         assert_eq!(why, BTreeSet::from(["google_folder_iam_member", "google_org_policy_policy"]), "{:?}", miss);
-        let lines = describe_undelivered(&miss);
+        let lines = describe_undelivered(&miss, &d);
         assert!(lines.iter().all(|l| l.contains("on the workload's folders") && !l.contains("at the organization")), "{:?}", lines);
 
         // without the right to create projects the account owns none: a need in a project
@@ -1673,6 +1728,66 @@ mod tests {
         );
         let d = delivery(&[folder, workload]).expect("the workload's interface carries it");
         assert_eq!(d, delivered(&["roles/resourcemanager.projectCreator"], &["roles/billing.user"], &["iam.googleapis.com"]));
+    }
+
+    #[test]
+    fn a_project_estate_is_judged_against_what_was_delivered_on_its_project() {
+        // what `presets/project-workload.satz` grants: the project's IAM and its services
+        let mut d = delivered(&[], &[], &[]);
+        d.project_roles = ["roles/resourcemanager.projectIamAdmin", "roles/serviceusage.serviceUsageAdmin"].iter().map(|s| s.to_string()).collect();
+        let tf = "resource \"google_project_service\" \"s\" {\n  service = \"run.googleapis.com\"\n}\n\
+                  resource \"google_project_iam_member\" \"m\" {\n  role = \"roles/viewer\"\n  member = \"group:g@example.com\"\n}\n\
+                  resource \"google_storage_bucket\" \"b\" {\n  name = \"b\"\n}\n\
+                  resource \"google_folder\" \"f\" {\n  display_name = \"f\"\n}\n";
+        let m = manifest(tf);
+        let (want, _) = needs_of(&m, false);
+        let miss = undelivered(&want, &granted(&m, SA), &d);
+        let why: BTreeSet<&str> = miss.iter().flat_map(|n| n.reason.iter().map(String::as_str)).collect();
+        // the delivered roles meet the services and the grants; the bucket is the estate's
+        // own to grant, a folder is outside the project
+        assert_eq!(why, BTreeSet::from(["google_folder", "google_storage_bucket"]), "{:?}", miss);
+        let lines = describe_undelivered(&miss, &d);
+        assert!(lines.iter().any(|l| l.contains("roles/storage.admin on the project — to grant in this estate")), "{:?}", lines);
+        assert!(lines.iter().any(|l| l.contains("outside the project") && l.contains("google_folder")), "{:?}", lines);
+        // the grant the estate writes for its own account closes the bucket's need
+        let own = format!("{}resource \"google_project_iam_member\" \"own\" {{\n  role = \"roles/storage.admin\"\n  member = \"serviceAccount:{SA}\"\n}}\n", tf);
+        let m = manifest(&own);
+        let miss = undelivered(&needs_of(&m, false).0, &granted(&m, SA), &d);
+        assert_eq!(miss.iter().flat_map(|n| n.reason.clone()).collect::<Vec<_>>(), ["google_folder"]);
+    }
+
+    #[test]
+    fn folder_roles_count_only_for_an_estate_that_reads_a_folder() {
+        let file = |name: &str, outputs: Vec<(&str, serde_yaml::Value)>| satz_core::pipeline::UsedInterfaceFile {
+            file: format!("vendor/{0}/{0}/satz/interface.satz", name),
+            interface: satz_core::satz::InterfaceFile {
+                name: name.to_string(),
+                estate: "c0example".to_string(),
+                organizations: Vec::new(),
+                outputs: outputs
+                    .into_iter()
+                    .map(|(n, value)| satz_core::satz::OfferedOutput { name: n.to_string(), value, description: None, attach: Vec::new(), targets: Vec::new(), line: 1 })
+                    .collect(),
+                lookups: Vec::new(),
+                managed: Vec::new(),
+                line: 1,
+            },
+        };
+        let list = |v: &[&str]| serde_yaml::Value::Sequence(v.iter().map(|s| serde_yaml::Value::from(*s)).collect());
+        let workload = || file("workload-shop", vec![(DELIVERED_FOLDER_ROLES, list(&[PROJECT_CREATOR])), (DELIVERED_APIS, list(&["iam.googleapis.com"]))]);
+        let project = file("shop-backend", vec![(DELIVERED_PROJECT_ROLES, list(&[PROJECT_IAM_ADMIN]))]);
+        let folder = file("shop", vec![(DELIVERED_FOLDER, serde_yaml::Value::from("${data.google_active_folder.shop.name}"))]);
+        // a workload's account in a project the organisation's estate created: no folder
+        let d = delivery(&[workload(), project]).expect("a workload's estate");
+        assert!(d.folder_roles.is_empty() && d.project_roles.contains(PROJECT_IAM_ADMIN) && d.apis.contains("iam.googleapis.com"), "{:?}", d);
+        assert_eq!(d.interface, "workload-shop`, `shop-backend");
+        // the same account in its folder
+        let d = delivery(&[workload(), folder]).expect("a workload's estate");
+        assert!(d.folder_roles.contains(PROJECT_CREATOR) && d.project_roles.is_empty(), "{:?}", d);
+        // a project with its own account reads one file
+        let own = file("payments", vec![(DELIVERED_PROJECT_ROLES, list(&[PROJECT_IAM_ADMIN])), (DELIVERED_APIS, list(&["storage.googleapis.com"]))]);
+        let d = delivery(&[own]).expect("a project's estate");
+        assert_eq!((d.interface.as_str(), d.project_roles.len(), d.apis.len()), ("payments", 1, 1));
     }
 
     #[test]

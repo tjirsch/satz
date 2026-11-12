@@ -2554,7 +2554,9 @@ each event_topics by name {
 `each <list param> by <field> { … }` at the top level of a file holds `interface` blocks
 and writes each once per entry of the list: the showcase writes `orders-events` and
 `billing-events`. The name reads the entry, `"{each.<field>}"`, with text around it, and is
-then judged as a written name is; an export's value reads it as a resource body in an
+then judged as a written name is. Two `each` over two different lists may write the same
+name — a pack publishes `"{each.name}"` for the entries of each of its lists — and two
+over one list may not; an export's value reads it as a resource body in an
 `each` does (§6.4) — `{each.x}` in a string, a bare `each.x` for the value itself. Inside a
 `${{…}}` reference the entry's text is a label, so it is written with `-` as `_`:
 `${{google_project.{each.name}.number}}` of the entry `data-lake` reads
@@ -2564,7 +2566,7 @@ included, so an entry a project requests is an interface too.
 An interface an `each` writes is one project's own, in a pack too — one entry is one
 project — unless its block says `common`. One of the same name in another file is the same
 interface, and their exports merge: that is how an estate adds to the interfaces a pack
-writes. The library's `presets/project-onboarding.satz` writes one per project it onboards.
+writes. The library's `presets/project-workload.satz` writes one per project it onboards.
 
 Refused: what the resource `each` refuses about the list and its entries (§6.4), anything
 but `interface` blocks inside it, an `each` with none, a name that reads no field of the
@@ -2606,7 +2608,7 @@ the pattern does not match is refused naming the entry, the field, the value and
 pattern:
 
 ```
-request projects: entry `payments` has `owner_group` = "payments-owners", which the request point's pattern `[^@: ]+@[^@: ]+` does not match
+request project_workload_projects: entry `payments` has `owner_group` = "payments-owners", which the request point's pattern `[^@: ]+@[^@: ]+` does not match
 ```
  `satz check-request <file> [<estate>]` holds a project's file to it offline,
 before the file is vendored: the file holds a `pack` header and `params {
@@ -2928,7 +2930,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
 | keep a pack's resource out of every export | `private google_storage_bucket.logs` |
 | one resource per entry of a list param | `google_pubsub_topic { each event_topics by name { name = "{each.name}" } }` |
-| one interface per entry of a list param | `each projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
+| one interface per entry of a list param | `each project_workload_projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
 | let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "vendor/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |

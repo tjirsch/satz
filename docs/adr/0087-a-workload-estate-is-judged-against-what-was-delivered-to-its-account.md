@@ -83,5 +83,5 @@ estate map and was told the map was off.
   organisation that has not applied yet has delivered nothing, and the plan says so.
 - Owning a project is assumed for projects the estate creates. A resource in a project
   somebody else created needs a role there that this check does not see.
-- `presets/project-onboarding.satz` publishes no delivery yet; its projects are judged
-  as before until it does.
+- `presets/project-onboarding.satz` published no delivery at the time; its successor
+  `presets/project-workload.satz` does (ADR 0088).

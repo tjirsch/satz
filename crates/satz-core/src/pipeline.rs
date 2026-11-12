@@ -1661,6 +1661,21 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
         "folder_workloads",
         "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the roles on the billing account are the field `billing_roles` of each workload's entry",
     ),
+    (
+        "use_project_onboarding",
+        "use_project_workload",
+        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps); the `use … when` line names the new param too",
+    ),
+    (
+        "projects",
+        "project_workload_projects",
+        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps); the entries are unchanged, `{ name owner_group }`",
+    ),
+    (
+        "project_onboarding_folder",
+        "project_workload_folder",
+        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
 ];
 
 /// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
@@ -1710,6 +1725,12 @@ const MOVED_PACKS: &[MovedPack] = &[
         to: "presets/folder-workload.satz",
         why: "the pack creates the folders a workload works in and grants its account on those alone, where it granted folder administration on a folder the teams share",
         edit: "Change the path inside the quotes, rename the params the compile then names, and give each workload its folders as entries of `folder_workload_folders` — `presets/CHANGELOG.md` under Breaking changes has the steps and what the plan moves",
+    },
+    MovedPack {
+        from: "presets/project-onboarding.satz",
+        to: "presets/project-workload.satz",
+        why: "the pack creates a project with its own account, as before, or one a workload's account works in",
+        edit: "Change the path inside the quotes and rename the three params the compile then names; nothing the pack deploys changes — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
 ];
 
@@ -4110,6 +4131,11 @@ mod tests {
             ("deployer_organization_roles", "folder_workload_organization_roles"),
             ("deployer_group_roles", "folder_workload_group_roles"),
             ("deployer_billing_roles", "billing_roles"),
+            // the project pack, renamed in v0.97.0: left on `projects`, an estate would
+            // compile with no project and the next apply would destroy them all
+            ("use_project_onboarding", "use_project_workload"),
+            ("projects", "project_workload_projects"),
+            ("project_onboarding_folder", "project_workload_folder"),
         ] {
             let err = renamed_param(from, "e.satz", 3).unwrap_or_else(|| panic!("`{}` must be refused", from));
             assert!(err.msg.contains(to), "`{}`: the error names `{}` — got {}", from, to, err.msg);
@@ -4125,6 +4151,10 @@ mod tests {
             };
             assert!(err.msg.contains(&path.replace("workload-deployer", "folder-workload")), "{}", err.msg);
         }
+        let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"presets/project-onboarding.satz\"\n", &Table, &load) else {
+            panic!("the old project pack's path must be refused");
+        };
+        assert!(err.msg.contains("presets/project-workload.satz"), "{}", err.msg);
         // a vendored request file that still adds to the old list: silent before, because a
         // contribution to a list no pack declares is how a pack that is off is skipped
         let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"requests/pay.satz\"\n", &Table, &load) else {
@@ -5753,15 +5783,15 @@ google_storage_bucket {
     const DEFAULTED: &str = r#"pack proj version "1.0"
 params {
   fallback_email = "ops@example.com"
-  projects = [ { name = "base" } ]
+  team_projects = [ { name = "base" } ]
 }
-request projects {
+request team_projects {
   key      = "name"
   fields   = ["name", "apis", "email", "budget"]
   defaults = { apis = ["storage.googleapis.com"] email = fallback_email }
 }
 google_project {
-  each projects by name {
+  each team_projects by name {
     name            = "{each.name}"
     project_id      = "acme-{each.name}"
     project_service = each.apis
@@ -5769,7 +5799,7 @@ google_project {
   }
 }
 google_cloud_identity_group {
-  each projects by name when budget {
+  each team_projects by name when budget {
     display_name = "{each.name}"
   }
 }
@@ -5780,7 +5810,7 @@ google_cloud_identity_group {
     /// read a param, and a field an entry carries is kept as written.
     #[test]
     fn request_defaults_fill_the_entries_that_leave_a_field_out() {
-        let team = "pack team version \"1.0\"\nparams {\n  contributes_projects = [ { name = \"team\" apis = [\"run.googleapis.com\"] budget = 50 } ]\n}\n";
+        let team = "pack team version \"1.0\"\nparams {\n  contributes_team_projects = [ { name = \"team\" apis = [\"run.googleapis.com\"] budget = 50 } ]\n}\n";
         let src = format!("{}use \"proj.satz\"\nuse \"team.satz\"\n", HEAD);
         let fe = compile_with(&src, &[("proj.satz", DEFAULTED), ("team.satz", team)]).expect("compiles");
         let got = expanded(&fe, "google_project");

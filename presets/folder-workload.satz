@@ -43,7 +43,7 @@
 // its own.
 //
 // WHAT A WORKLOAD'S ESTATE READS. Two interfaces, both taken to its `vendor/` folder:
-// `workload-<name>` — `project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
+// `workload-<name>` — `deploy_project_id` (its infrastructure project), `iac_account`, `state_bucket`, and what was
 // delivered to the account, `delivered_folder_roles`, `delivered_billing_roles`,
 // `delivered_apis`, which `satz` judges the estate's needs against — and `<folder name>`,
 // with `delivered_folder`, the parent of everything the estate creates. One estate reads
@@ -52,7 +52,7 @@
 //
 // NO CLAIM. The workloads' identities are workloads, not controls: this pack witnesses nothing.
 
-pack folder_workload version "1.0"
+pack folder_workload version "1.1"
 
 params {
   // One entry per workload, `{ name group apis billing_roles }`: the name, the group that
@@ -210,7 +210,7 @@ google_folder_iam_member {
 
 each folder_workloads by name {
   interface "workload-{each.name}" {
-    export "project_id"              = "{customer_shortname}-deploy-{each.name}" description "The workload's infrastructure project: its plans are billed to it"
+    export "deploy_project_id"       = "{customer_shortname}-deploy-{each.name}" description "The workload's infrastructure project: its plans are billed to it"
     export "iac_account"             = "svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" description "The service account the workload's estates run as"
     export "state_bucket"            = "{customer_shortname}-deploy-{each.name}-state" description "The bucket the workload's estates keep their states in"
     export "delivered_folder_roles"  = folder_workload_roles description "The roles the account holds on each of the workload's folders"
