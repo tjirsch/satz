@@ -373,7 +373,7 @@ fwi="$ex/interfaces"
 grep -A1 '^output "delivered_apis"' "$fwi/workload-rag/workload-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the workload's interface does not publish its APIs:\n$(cat "$fwi/workload-rag/workload-rag/satz/interface.satz")"
 grep -A1 '^output "delivered_billing_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a workload without billing_roles does not publish the default"
 grep -A1 '^output "delivered_folder_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "the workload's interface does not publish its folder roles"
-for o in project_id iac_account state_bucket; do
+for o in deploy_project_id iac_account state_bucket; do
   grep -q "^output \"$o\"" "$fwi/workload-shop/workload-shop/satz/interface.satz" || fail "the workload's interface does not publish $o"
 done
 grep -A1 '^output "delivered_folder"' "$fwi/shop-data/shop-data/satz/interface.satz" | grep -q 'data.google_active_folder.shop_data.name' || fail "a folder's interface does not publish the folder:\n$(cat "$fwi/shop-data/shop-data/satz/interface.satz")"
@@ -401,17 +401,124 @@ grep -q 'folder_workloads' tmp/fw-request.txt || fail "the request's refusal doe
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the folder-workload step"
 
+step "project-workload: a project with its own account, and two projects one workload's account works in (ADR 0088)"
+python3 - "$ex/satz/C0example.satz" tmp/pw-org.satz <<'PY2'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+old = "  use_folder_workload            = true\n"
+assert s.count(old) == 1
+s = s.replace(old, old + '  use_project_workload = true\n  project_workload_folder = "google_folder.workload_folder.name"\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n  project_workload_shared_projects = [{ name = "shop-backend" workload = "shop" }, { name = "shop-frontend" workload = "shop" apis = ["run.googleapis.com", "serviceusage.googleapis.com"] }]\n')
+old = 'use "presets/folder-workload.satz" when use_folder_workload\n'
+assert s.count(old) == 1
+s = s.replace(old, old + 'use "presets/project-workload.satz" when use_project_workload\n')
+open(sys.argv[2], "w", encoding="utf-8").write(s)
+PY2
+mkdir -p tmp/pw
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-org.satz" --output "$PWD/tmp/pw/hcl" > tmp/pw.txt 2>&1 || fail "the project-workload estate does not transpile:\n$(cat tmp/pw.txt)"
+pwm=tmp/pw/hcl/main.tf
+for p in payments shop_backend shop_frontend; do
+  grep -q "^resource \"google_project\" \"$p\"" "$pwm" || fail "the pack did not create the project $p"
+done
+grep -q '^resource "google_service_account" "payments_iac"' "$pwm" || fail "a project with its own account has none"
+grep -q '^resource "google_service_account" "shop_backend_iac"\|^resource "google_storage_bucket" "shop_backend_state"' "$pwm" && fail "a project a workload's account works in got an account or a state bucket of its own"
+for p in shop_backend shop_frontend; do
+  [ "$(grep -A4 '^resource "google_project_iam_member"' "$pwm" | grep -A2 'google_service_account.deploy_shop.email' | grep -c "project = \"\${google_project.$p.project_id}\"")" = 2 ] \
+    || fail "the workload's account does not hold the two project roles on $p:\n$(grep -B3 -A3 'deploy_shop.email' "$pwm")"
+done
+grep -B6 'google_project.shop_frontend.project_id' "$pwm" | grep -q 'service = "run.googleapis.com"' || fail "a shared project's own apis did not reach it"
+pwi="$ex/interfaces"
+grep -A1 '^output "delivered_project_roles"' "$pwi/shop-backend/shop-backend/satz/interface.satz" | grep -q 'roles/resourcemanager.projectIamAdmin' || fail "a shared project's interface does not publish what was delivered on it"
+grep -q '^output "iac_account"' "$pwi/shop-backend/shop-backend/satz/interface.satz" && fail "a shared project's interface publishes an account it does not have"
+for o in project_id project_number iac_account state_bucket delivered_project_roles delivered_apis; do
+  grep -q "^output \"$o\"" "$pwi/payments/payments/satz/interface.satz" || fail "the interface of a project with its own account does not publish $o"
+done
+grep -q '^output "deploy_project_id"' "$pwi/workload-shop/workload-shop/satz/interface.satz" && ! grep -q '^output "project_id"' "$pwi/workload-shop/workload-shop/satz/interface.satz" \
+  || fail "the workload's interface still names its infrastructure project project_id, which a project's interface names too"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project-workload estate does not validate"
+fi
+# a shared project for a workload nobody declared is refused at the compile
+sed 's|{ name = "shop-backend" workload = "shop" }|{ name = "shop-backend" workload = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a workload nobody declared compiled"
+grep -q 'google_service_account.deploy_ghost' tmp/pw-ghost.txt && grep -q 'deploy_shop' tmp/pw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/pw-ghost.txt)"
+# the estate that works in shop-backend as the workload's account: it reads two interfaces, and
+# what its bucket needs on the project is its own to grant
+rm -rf tmp/pw/estate && mkdir -p tmp/pw/estate/satz tmp/pw/estate/vendor
+cp -R "$pwi/workload-shop" "$pwi/shop-backend" tmp/pw/estate/vendor/
+sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/pw/estate/config.toml
+cat > tmp/pw/estate/satz/backend.satz <<'SATZ'
+estate shop_backend
+
+params {
+  infra_project_name = "acme-deploy-shop"
+  svc_iac_account    = "svc-deploy-shop"
+  infra_bucket_name  = "acme-deploy-shop-state"
+  deployment_mode    = "cloud"
+}
+
+terraform {
+  backend {
+    gcs {
+      bucket = infra_bucket_name
+      prefix = "backend/state"
+    }
+  }
+}
+
+providers {
+  "google" {
+    alias                 = "google"
+    project               = infra_project_name
+    region                = "${{interface.default_region}}"
+    user_project_override = true
+    billing_project       = infra_project_name
+  }
+}
+
+use "vendor/workload-shop/workload-shop/satz/interface.satz"
+use "vendor/shop-backend/shop-backend/satz/interface.satz"
+
+google_storage_bucket {
+  assets {
+    project  = "${{interface.project_id}}"
+    name     = "acme-shop-backend-assets"
+    location = "EU"
+  }
+}
+SATZ
+"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the shared project's estate does not transpile:\n$(cat tmp/pw-estate.txt)"
+grep -q 'roles/storage.admin on the project — to grant in this estate — for google_storage_bucket' tmp/pw-estate.txt || fail "a role the account lacks on its project is not its own to grant:\n$(cat tmp/pw-estate.txt)"
+grep -q 'at the organization\|on the workload'"'"'s folders —' tmp/pw-estate.txt && fail "a project's estate is asked for a role at the organization or on a folder it does not have:\n$(cat tmp/pw-estate.txt)"
+printf '\ngoogle_project_iam_member {\n  project = "${{interface.project_id}}"\n  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [\n    "roles/storage.admin",\n  ]\n}\n' >> tmp/pw/estate/satz/backend.satz
+"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the shared project's estate with its own grant does not transpile:\n$(cat tmp/pw-estate.txt)"
+grep -q 'prerequisites' tmp/pw-estate.txt && fail "the estate's own grant on its project does not close the need:\n$(cat tmp/pw-estate.txt)"
+"$satz" --config tmp/pw/estate update-prerequisites backend.satz --report-only > tmp/pw-report.txt 2>&1 || fail "the report of a project's estate with nothing missing is an error:\n$(cat tmp/pw-report.txt)"
+grep -q 'delivers 0 role(s) on its folders, 2 on its project' tmp/pw-report.txt || fail "the folder roles of a workload count for an estate that works in no folder:\n$(cat tmp/pw-report.txt)"
+# the pack this one replaced: its path and its params are refused by name
+sed 's|presets/project-workload.satz|presets/project-onboarding.satz|' tmp/pw-org.satz > tmp/pw-old.satz
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old project pack path compiled"
+grep -q 'moved to "presets/project-workload.satz"' tmp/pw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/pw-old.txt)"
+for pair in use_project_workload:use_project_onboarding project_workload_projects:projects project_workload_folder:project_onboarding_folder; do
+  new=${pair%%:*}; old=${pair##*:}
+  sed "s|^  $new\( *\)= |  $old\1= |" tmp/pw-org.satz > tmp/pw-old.satz
+  grep -q "^  $old  *= " tmp/pw-old.satz || fail "the estate with the old param $old was not written"
+  "$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old param $old compiled"
+  grep -q "param \`$old\` was renamed to \`$new\`" tmp/pw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/pw-old.txt)"
+done
+# the example organisation's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the project-workload step"
+
 step "a workload's estate is judged against what was delivered to its account, and what is missing is asked for (ADR 0087)"
 # the example: everything it needs was delivered, so the check is quiet — no role at the organization, no API to write
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
 grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organisation binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
 "$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload's estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
-grep -q "a workload's account: the interface \`workload-shop\` delivers 6 role(s) on its folders, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q '^not delivered: none' tmp/wl-report.txt \
+grep -q "a workload's account: the interface \`workload-shop\` delivers 6 role(s) on its folders, 0 on its project, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q '^not delivered: none' tmp/wl-report.txt \
   || fail "the report does not say what was delivered:\n$(cat tmp/wl-report.txt)"
 # a budget needs an API on the workload's infrastructure project and a billing role: neither was delivered
 { cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-undelivered.satz"
 "$satz" --config "$pt" transpile tmp-undelivered.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "a workload's estate with an undelivered need does not compile at level warn:\n$(cat tmp/wl.txt)"; }
-grep -q "not enabled on acme-deploy-shop, the workload's infrastructure project" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
+grep -q "not enabled on acme-deploy-shop, the project its calls are billed to" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "the undelivered API is not asked for:\n$(cat tmp/wl.txt)"; }
 grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the workload'"'"'s entry in `folder_workloads`' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-undelivered.satz"; fail "the undelivered billing role is not asked for:\n$(cat tmp/wl.txt)"; }
@@ -425,7 +532,7 @@ grep -q '2 prerequisite(s) are not delivered to svc-deploy-shop@acme-deploy-shop
 # the apply: refused while an API is not delivered, with whom to ask
 "$satz" --config "$pt" transpile tmp-undelivered.satz --output "$PWD/tmp/wl-hcl" --apply > tmp/wl-apply.txt 2>&1 && { rm -f "$pt/satz/tmp-undelivered.satz"; fail "an estate with an undelivered API was applied"; }
 rm -f "$pt/satz/tmp-undelivered.satz"
-grep -q "apply refused: 1 API(s) this estate's resources need are not enabled on the workload's infrastructure project — billingbudgets.googleapis.com on acme-deploy-shop" tmp/wl-apply.txt \
+grep -q "apply refused: 1 API(s) this estate's resources need are not enabled on the project its calls are billed to — billingbudgets.googleapis.com on acme-deploy-shop" tmp/wl-apply.txt \
   && grep -q "the organisation's estate's" tmp/wl-apply.txt || fail "the apply's refusal does not name the API and whom to ask:\n$(cat tmp/wl-apply.txt)"
 
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
@@ -441,12 +548,12 @@ grep -q '^showcase_retention = "600s"' tmp/input.txt || fail "--input did not bi
 "$satz" --config . transpile yaml/showcase.satz --input nope=1 --check > tmp/input-bad.txt 2>&1 && fail "--input bound a name no file declares as an input"
 grep -q 'no file of the estate declares `nope` in an `inputs` block' tmp/input-bad.txt && grep -q '`showcase_retention`' tmp/input-bad.txt || fail "the refusal does not list the inputs:\n$(cat tmp/input-bad.txt)"
 
-step "project onboarding: an entry of the pack's list, its interface out, and a project estate written from it"
+step "project-workload: an entry of the pack's list, its interface out, and a project estate written from it"
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-s = s.replace("params {\n", 'params {\n  projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n', 1)
-s += '\nuse "presets/project-onboarding.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
+s = s.replace("params {\n", 'params {\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n', 1)
+s += '\nuse "presets/project-workload.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 PY2
 # the report satz-studio reads: every export with its interface, and every interface

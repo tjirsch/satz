@@ -302,7 +302,7 @@ satz init \
 - Fetches the latest provider schemas for the configured providers.
 
 **A project estate** (`--project <name> --interface <path>`): the estate of one project of a
-central estate, written from the interface file `presets/project-onboarding.satz` published for it —
+central estate, written from the interface file `presets/project-workload.satz` published for it —
 `project_id`, `iac_account`, `state_bucket`, and the core export `default_region` (from
 `estate-core.satz`; a central estate without it is refused). It runs in cloud mode as the
 project's own IaC service account, keeps its state in the project's bucket, and `use`s the
@@ -315,25 +315,29 @@ asks for the same day-0 values one at a time and offers the derived ones as defa
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
-### Onboard a project (`presets/project-onboarding.satz`)
-A project is an entry of the list param `projects` of `presets/project-onboarding.satz`,
-`{ name owner_group }`. Per entry the pack declares the project's Google project, its IaC
-service account, its state bucket, the grants, and the `interface "<name>"` that publishes
-them — `project_id` (an attach point for `google_project_iam_member`), `project_number`,
-`iac_account`, `state_bucket`.
+### Onboard a project (`presets/project-workload.satz`)
+A project is an entry of the list param `project_workload_projects` of
+`presets/project-workload.satz`, `{ name owner_group }`. Per entry the pack declares the
+project's Google project, its own service account, its state bucket, the grants, and the
+`interface "<name>"` that publishes them — `project_id` (an attach point for
+`google_project_iam_member`), `project_number`, `iac_account`, `state_bucket`, and what was
+delivered to the account. A second list, `project_workload_shared_projects`
+(`{ name workload }`), is a project with no account of its own: the account of a workload of
+`presets/folder-workload.satz` works in it, so one account serves several projects
+([the pack](presets/README.md#project-workloadsatz)).
 
 ```
 params {
-  projects                  = [{ name = "payments" owner_group = "payments-owners@example.com" }]
-  project_onboarding_folder = "google_folder.workload_folder.name"
+  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]
+  project_workload_folder = "google_folder.workload_folder.name"
 }
 
-use "presets/project-onboarding.satz" when use_project_onboarding
+use "presets/project-workload.satz" when use_project_workload
 ```
 
-The entry is bound in the estate, or requested by the project as `contributes_projects`
+The entry is bound in the estate, or requested by the project as `contributes_project_workload_projects`
 in a file of its own, checked with `satz check-request` and vendored into the estate by
-pull request; the pull request is the request's review. `project_onboarding_folder` is
+pull request; the pull request is the request's review. `project_workload_folder` is
 the parent, the organisation when it is empty. `satz transpile` then writes
 `interfaces/payments/`, and the project's own estate is `satz init --project payments
 --interface interfaces/payments/payments/satz/interface.satz` in its directory. An
@@ -542,9 +546,12 @@ on each of its folders, `delivered_billing_roles` on the billing account, and
 such an estate:
 
 - a need on a folder or a project is met by a delivered folder role, or by a role the
-  estate grants its own account on a folder or a project it declares; a need on a project
-  is met as well when `roles/resourcemanager.projectCreator` was delivered, because a
-  project's creator is its owner;
+  estate grants its own account on a folder or a project; a need on a project is met as
+  well by a role delivered on that project (`delivered_project_roles`, from
+  `presets/project-workload.satz`), and when `roles/resourcemanager.projectCreator` was
+  delivered on a folder, because a project's creator is its owner. The folder roles count
+  for an estate that reads a folder's interface: an account without a folder creates no
+  project;
 - a need on the billing account is met by a delivered billing role;
 - an API on the infrastructure project is enabled when it was delivered; one on a project
   the estate declares is its own `project_service` entry, as above;
@@ -552,14 +559,16 @@ such an estate:
   organisation are not a workload's.
 
 What is not delivered is reported as what to ask the organisation's estate for — a role in
-`folder_workload_roles`, a role in the workload's `billing_roles`, an API in its `apis` —
-and nothing at the organization is ever proposed: the account could not apply such a
-grant. `update-prerequisites` writes the APIs of the estate's own projects, writes nothing
+`folder_workload_roles`, a role in the workload's `billing_roles`, an API in the `apis` of
+the entry that created the project the calls are billed to — and nothing at the
+organization is ever proposed: the account could not apply such a grant. A role the
+account lacks on a project it was given is the one thing it closes itself, with a
+`google_project_iam_member` on the interface's `project_id` in its own estate; the finding
+says so on that line. `update-prerequisites` writes the APIs of the estate's own projects, writes nothing
 for what was not delivered, and exits non-zero while anything is; `transpile --apply`
 refuses while an API is not delivered. `whoami <estate>` tests the billing account live
 and names the rest as judged against the delivery. An estate that reads an interface
-without these exports — a project of `presets/project-onboarding.satz` — is judged at the
-organization as before, and a note says so
+without these exports is judged at the organization as before, and a note says so
 ([ADR 0087](docs/adr/0087-a-workload-estate-is-judged-against-what-was-delivered-to-its-account.md)).
 
 **Every compile checks the same**, at the [validation level](#schema-validation): `warn`

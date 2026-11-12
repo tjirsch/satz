@@ -2729,7 +2729,12 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                                         Some(Tok::RBrace) => break,
                                         Some(Tok::Ident(id)) if id == "interface" => {
                                             let i = p.interface_stmt(at, Some((&list, &field, line)))?;
-                                            if let Some(first) = file.interfaces.iter().find(|x| x.name == i.name) {
+                                            // The same written name under two `each` over DIFFERENT lists is two
+                                            // sets of interfaces, one per list — a pack publishes `"{each.name}"`
+                                            // for the entries of each of its lists. Two entries that come to one
+                                            // name are refused where the names are known, after the expansion.
+                                            let same_list = |x: &&InterfaceDecl| x.each.as_ref().is_none_or(|e| e.list == list);
+                                            if let Some(first) = file.interfaces.iter().filter(same_list).find(|x| x.name == i.name) {
                                                 return err(i.line, format!("interface \"{}\": declared twice in this file (line {} and line {})", i.name, first.line, i.line));
                                             }
                                             file.interfaces.push(i);
@@ -3958,6 +3963,18 @@ action "scc-services" {
         assert!(e.msg.contains("interfaces/common/ holds the common interfaces alone"), "{}", e.msg);
         assert_eq!(quote("a{b}\"c\\"), "\"a{{b}}\\\"c\\\\\"");
         assert_eq!(parse(&format!("interface \"q\"\ncentral {{\n  estate = {}\n}}\n", quote("x{y}\"\\z"))).unwrap().interface_file.unwrap().estate, "x{y}\"\\z");
+    }
+
+    /// One written name under two `each`: two lists are two sets of interfaces, one list
+    /// is the same interface twice.
+    #[test]
+    fn two_lists_may_write_an_interface_of_the_same_written_name() {
+        let two = "estate e\neach a by name {\n  interface \"{each.name}\" {\n    export \"x\" = 1\n  }\n}\neach b by name {\n  interface \"{each.name}\" {\n    export \"x\" = 2\n  }\n}\n";
+        let f = parse(two).expect("two lists, one written name");
+        assert_eq!(f.interfaces.iter().filter(|i| i.name == "{each.name}").count(), 2);
+        let one = two.replace("each b by name", "each a by name");
+        let e = parse(&one).unwrap_err();
+        assert!(e.msg.contains("declared twice in this file"), "{}", e.msg);
     }
 
     /// `use interface` takes a name or a list of names and an optional `when`; it is no

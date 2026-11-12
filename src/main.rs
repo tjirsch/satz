@@ -287,7 +287,7 @@ pub(crate) enum Commands {
         #[arg(long, requires = "interface")]
         project: Option<String>,
         /// With `--project`: the project's `interfaces/<project>/<project>/satz/interface.satz`,
-        /// as the central estate wrote it for an entry of `presets/project-onboarding.satz`
+        /// as the central estate wrote it for an entry of `project_workload_projects` (`presets/project-workload.satz`)
         #[arg(long, requires = "project")]
         interface: Option<PathBuf>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
@@ -3689,7 +3689,7 @@ struct Reads {
 }
 
 /// Where a workload's account gets what it lacks: the lists of the pack that created it.
-const ASK_THE_ORGANISATION: &str = "`presets/folder-workload.satz` in the organisation's estate";
+const ASK_THE_ORGANISATION: &str = "`presets/folder-workload.satz` or `presets/project-workload.satz` in the organisation's estate";
 
 /// The API half of [`prerequisite_findings`].
 fn api_findings(
@@ -3716,10 +3716,11 @@ fn api_findings(
             sev,
             Kind::Prerequisites,
             format!(
-                "{} API(s) this estate's resources need are not enabled on {}, the workload's infrastructure \
-                 project, which its calls are billed to. That project is the organisation's estate's: ask \
-                 for each to be added to `apis` of the workload's entry in `folder_workloads` ({}); the \
-                 interface `{}` says what is delivered:\n  {}",
+                "{} API(s) this estate's resources need are not enabled on {}, the project its calls are \
+                 billed to. That project is the organisation's estate's: ask for each to be added to the \
+                 `apis` of the entry that created it — the workload's in `folder_workloads`, or the \
+                 project's in `project_workload_projects` ({}); the interface `{}` says what is \
+                 delivered:\n  {}",
                 undelivered.len(),
                 billing.default_project().unwrap_or_default(),
                 ASK_THE_ORGANISATION,
@@ -3822,13 +3823,15 @@ fn prerequisite_role_findings(
                     format!(
                         "the account {} was not delivered roles this estate's resource types need. It holds \
                          what the interface `{}` says and can grant itself nothing above its own projects: \
-                         ask for a role on the workload's folders to be added to `folder_workload_roles`, \
-                         and for one on the billing account to `billing_roles` of the workload's entry in \
-                         `folder_workloads` ({}):\n  {}",
+                         a role on a project it was given it grants itself in this estate \
+                         (`google_project_iam_member` on the interface's `project_id`); ask for a role on \
+                         the workload's folders to be added to `folder_workload_roles`, and for one on the \
+                         billing account to `billing_roles` of the workload's entry in `folder_workloads` \
+                         ({}):\n  {}",
                         sa,
                         d.interface,
                         ASK_THE_ORGANISATION,
-                        crate::prerequisites::describe_undelivered(&missing).join("\n  ")
+                        crate::prerequisites::describe_undelivered(&missing, d).join("\n  ")
                     ),
                 )
                 .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
@@ -4025,9 +4028,9 @@ fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(
     let mut why = Vec::new();
     if !report.undelivered_apis.is_empty() {
         why.push(format!(
-            "{} API(s) this estate's resources need are not enabled on the workload's infrastructure project — {}. That \
-             project is the organisation's estate's: ask for each to be added to `apis` of the workload's entry in \
-             `folder_workloads` ({}).",
+            "{} API(s) this estate's resources need are not enabled on the project its calls are billed to — {}. That \
+             project is the organisation's estate's: ask for each to be added to the `apis` of the entry that \
+             created it ({}).",
             report.undelivered_apis.len(),
             list(&report.undelivered_apis),
             ASK_THE_ORGANISATION
@@ -4155,7 +4158,7 @@ pub(crate) fn prerequisites_report(
         .cloned()
         .collect();
     let request: Vec<String> = match &out.delivery {
-        Some(_) => crate::prerequisites::describe_undelivered(&missing)
+        Some(d) => crate::prerequisites::describe_undelivered(&missing, d)
             .into_iter()
             .chain(undelivered_apis.iter().map(|a| format!("{} on {} — for {}", a.api, a.project, a.reason.join(", "))))
             .collect(),
@@ -4198,9 +4201,10 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
     match &r.delivery {
         Some(d) => {
             out.push_str(&format!(
-                "a workload's account: the interface `{}` delivers {} role(s) on its folders, {} on the billing account and {} API(s) on its infrastructure project; the estate grants it {} more on its own folders and projects; its resource types need {} permission(s)\n",
+                "a workload's account: the interface `{}` delivers {} role(s) on its folders, {} on its project, {} on the billing account and {} API(s) on the project its calls are billed to; the estate grants it {} more on its own folders and projects; its resource types need {} permission(s)\n",
                 d.interface,
                 d.folder_roles.len(),
+                d.project_roles.len(),
                 d.billing_roles.len(),
                 d.apis.len(),
                 r.granted.own.len(),
@@ -4209,7 +4213,7 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             if r.request.is_empty() {
                 out.push_str("not delivered: none\n");
             } else {
-                out.push_str(&format!("not delivered — to ask for in {}:\n", ASK_THE_ORGANISATION));
+                out.push_str(&format!("not delivered — to ask for in {}, or to grant in this estate where a line says so:\n", ASK_THE_ORGANISATION));
                 for l in &r.request {
                     out.push_str(&format!("  {}\n", l));
                 }
@@ -4327,7 +4331,7 @@ fn run_update_prerequisites(
             return Ok(());
         }
         Err(format!(
-            "{} prerequisite(s) are not delivered to {} — they are the organisation's estate's to add ({}); nothing is written for them",
+            "{} prerequisite(s) are not delivered to {} — the organisation's estate adds what it lacks ({}), and a role on a project it was given the estate grants itself; nothing is written for them",
             r.request.len(),
             r.service_account,
             ASK_THE_ORGANISATION
@@ -7685,6 +7689,7 @@ mod prerequisite_findings_speak {
         let delivery = crate::prerequisites::Delivery {
             interface: "workload-shop".to_string(),
             folder_roles: set(&["roles/resourcemanager.projectCreator"]),
+            project_roles: Default::default(),
             billing_roles: set(&["roles/billing.user"]),
             apis: set(&["cloudresourcemanager.googleapis.com", "cloudbilling.googleapis.com"]),
         };

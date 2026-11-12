@@ -1525,7 +1525,7 @@ pub(crate) async fn run_merge_presets(
                     events.push(MergeEvent::Prerequisites {
                         wrote: Vec::new(),
                         missing: report.request.clone(),
-                        refused: Some("not delivered to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz`)".to_string()),
+                        refused: Some("not delivered to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz` or `presets/project-workload.satz`), or the estate grants itself a role on a project it was given".to_string()),
                     });
                     needs_attention = true;
                 }

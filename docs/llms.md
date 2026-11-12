@@ -342,7 +342,7 @@ the block only where the param carries a value — `when not` for the opposite, 
 
 Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
 `satz interfaces` and `satz check-request` have no tool: ask a human for them. A project is
-onboarded by an entry of `projects` in `presets/project-onboarding.satz`, added by a reviewed
+onboarded by an entry of `project_workload_projects` (its own account) or `project_workload_shared_projects` (a workload's account) in `presets/project-workload.satz`, added by a reviewed
 pull request, and a request file is checked in the project's pipeline.
 
 ## Working through the MCP server

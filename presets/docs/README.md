@@ -3,13 +3,13 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-presets`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**49 packs · 239 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**49 packs · 241 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`estate_map`](estate-map.md) | 3.0 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 4.0 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`estate_core`](estate-core.md) | 2.4 | The questions every estate has to answer on day 0, with the params they answer. | 0 | — |
 
 ## Security groups and exemptions
@@ -70,8 +70,8 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`project_onboarding`](project-onboarding.md) | 1.1 | The projects on the estate, one entry of `projects` each. | 1 | — |
-| [`folder_workload`](folder-workload.md) | 1.0 | One identity per workload, and the folders it works in. | 7 | — |
+| [`project_workload`](project-workload.md) | 1.0 | The projects of the estate that are worked from an estate beside it, and the account each is worked as. | 3 | — |
+| [`folder_workload`](folder-workload.md) | 1.1 | One identity per workload, and the folders it works in. | 7 | — |
 | [`interface_notice`](interface-notice.md) | 1.2 | Tells the projects that read this estate's interface when an exported value changes: one Pub/Sub message per apply that changes one. | 5 | — |
 
 ## Security operations and integrations

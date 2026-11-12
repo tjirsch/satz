@@ -1254,36 +1254,46 @@ Nothing in the pack bills while idle.
 
 ## Projects and interfaces
 
-### project-onboarding.satz
+### project-workload.satz
 
-The projects on the estate: one entry of `projects` per project, and per entry its Google
-project, its IaC service account and state bucket, the grants, and the project's own
-interface — written by `each projects by name { interface "{each.name}" { … } }`
-([language §6.17](../docs/language.md#each-around-interface--one-interface-per-entry-of-a-list)).
+The Google projects of the estate that teams work in from estates of their own, and the
+account each is worked as. Two lists, for two kinds of team: a project with its own account,
+and a project worked by the account of a workload that works in several. Either way the
+account holds its roles on that project and nowhere else, and creates no project itself.
 
-**Use** — the projects land in the folder `project_onboarding_folder` names, so the line
+**Use** — the projects land in the folder `project_workload_folder` names, so the line
 stands at the top level:
 
 ```
 params {
-  use_project_onboarding    = true
-  project_onboarding_folder = "google_folder.workload_folder.name"
-  projects = [
+  use_project_workload    = true
+  project_workload_folder = "google_folder.workload_folder.name"
+  project_workload_projects = [
     { name = "payments" owner_group = "payments-owners@example.com" },
+  ]
+  project_workload_shared_projects = [
+    { name = "shop-backend" workload = "shop" },
+    { name = "shop-frontend" workload = "shop" },
   ]
 }
 
-use "presets/project-onboarding.satz" when use_project_onboarding
+use "presets/project-workload.satz" when use_project_workload
 ```
 
-**Requests.** A project asks to be onboarded with a small pack of its own, checked with
+`shop` is a workload of [`folder-workload.satz`](#folder-workloadsatz) — an entry of
+`folder_workloads`, with or without folders of its own. A shared project names it, and the
+grant names its account by reference: an entry whose workload no entry declares is refused
+by the compile, which lists the accounts that exist. One account then works in several
+projects, and an account that works in folders can be given a single project elsewhere.
+
+**Requests.** A team asks for a project with a small pack of its own, checked with
 `satz check-request <file> <estate>` and vendored into the estate by pull request:
 
 ```
 pack requests_payments version "1.0"
 
 params {
-  contributes_projects = [
+  contributes_project_workload_projects = [
     { name = "payments" owner_group = "payments-owners@example.com" },
   ]
 }
@@ -1291,43 +1301,66 @@ params {
 
 | request point | key | fields |
 |---|---|---|
-| `projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that reads the project and may become its IaC service account, `<name>@<domain>`) |
+| `project_workload_projects` | `name` | `name` (the project's name: its interface's, and a folder name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that reads the project and may become its account, `<name>@<domain>`), `apis` (the APIs enabled on the project; the five below when left out) |
+| `project_workload_shared_projects` | `name` | `name`, `workload` (the workload of `folder-workload.satz` whose account works in the project), `apis` |
 
-The request point's patterns hold both fields: a `name` outside `[a-z][a-z0-9-]*` and an
+The request point's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
 `owner_group` that is not `<name>@<domain>` — `payments-owners`, or `group:payments-owners@example.com`
-— are refused at compile and by `satz check-request`, naming the entry and the value.
+— are refused at compile and by `satz check-request`, naming the entry and the value. `apis`
+is a list, and an entry that states it states it whole.
 
-**Per entry** `payments`:
+**Per project with its own account**, `payments`:
 
 | resource | what |
 |---|---|
-| `google_project.payments` | `{customer_shortname}-payments-001` under `project_onboarding_folder`, billed to `billing_account_infra`, with the Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs |
-| `google_service_account.payments_iac` | `svc-iac-payments`, the IaC service account the project's estate runs as; it holds `roles/resourcemanager.projectIamAdmin` and `roles/serviceusage.serviceUsageAdmin` on the project, so the project's estate grants itself the rest (`satz update-prerequisites` there) |
+| `google_project.payments` | `{customer_shortname}-payments-001` under `project_workload_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
+| `google_service_account.payments_iac` | `svc-iac-payments`, the account the project's estate runs as; it holds `project_workload_roles` on the project |
 | `google_storage_bucket.payments_state` | `{customer_shortname}-payments-001-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
 | the owner group's grants | `roles/viewer` on the project; `roles/iam.serviceAccountTokenCreator` and `roles/iam.serviceAccountUser` on the account alone |
 
-A name with `-` is the label with `_`: `data-lake` is `google_project.data_lake`.
+**Per project a workload's account works in**, `shop-backend`:
 
-**What the project reads** — its own interface `payments`, in `interfaces/payments/`:
+| resource | what |
+|---|---|
+| `google_project.shop_backend` | `{customer_shortname}-shop-backend-001` under `project_workload_folder`, billed to `billing_account_infra`, with the entry's `apis` |
+| the workload's grants | `project_workload_roles` on this project, for `google_service_account.deploy_shop` |
+
+No account and no state bucket: the workload's are in its infrastructure project. A name
+with `-` is the label with `_`: `data-lake` is `google_project.data_lake`.
+
+**What the account may do.** `project_workload_roles` is the project's IAM and its services.
+With the first, the project's estate grants its own account what its resource types need
+beyond that, on the project (`google_project_iam_member`, which the interface allows). It
+holds nothing outside the project.
+
+**What the project's estate reads** — its interface `<name>`, in `interfaces/<name>/`:
 
 | export | value | attach point for |
 |---|---|---|
-| `project_id` | the Google project's id | `google_project_iam_member`: the project grants on its own Google project in its own state |
+| `project_id` | the Google project's id | `google_project_iam_member`: the estate grants on its own Google project in its own state |
 | `project_number` | its number, looked up | — |
-| `iac_account` | the IaC service account's email | — |
-| `state_bucket` | the state bucket's name | — |
+| `delivered_project_roles` | `project_workload_roles` | — |
+| `iac_account`, `state_bucket`, `delivered_apis` | a project with its own account alone: the account's email, the state bucket, the project's `apis` | — |
 
 `satz init --project payments --interface interfaces/payments/payments/satz/interface.satz`
-writes the project's estate from these and the core export `default_region`. The estate
-adds to a project's interface with a block of the same name in its own file — `interface
-"payments" { use interface "network" }` — since an interface declared in two files is one.
+writes the estate of a project with its own account from these and the core export
+`default_region`. The estate of a project a workload's account works in uses two files: the
+project's interface, and `workload-<workload>` of `folder-workload.satz` for the account,
+the state bucket and the APIs of the project its calls are billed to. The `delivered_*`
+exports are what satz judges the estate against ([What an estate must
+declare](../README.md#what-an-estate-must-declare-update-prerequisites)). The organisation's
+estate adds to a project's interface with a block of the same name in its own file —
+`interface "payments" { use interface "network" }` — since an interface declared in two
+files is one.
 
 **Overridable defaults:**
 
 | Param | Default | Meaning |
 |---|---|---|
-| `projects` | `[]` | the projects, bound in the estate or filled by requests |
-| `project_onboarding_folder` | `""` | the folder the projects are created in, asked; empty is the organisation, the workload folder is `"google_folder.workload_folder.name"` |
+| `project_workload_projects` | `[]` | the projects with their own account, bound in the estate or filled by requests |
+| `project_workload_shared_projects` | `[]` | the projects a workload's account works in |
+| `project_workload_folder` | `""` | the folder the projects are created in, asked; empty is the organisation, the workload folder is `"google_folder.workload_folder.name"` |
+| `project_workload_roles` | projectIamAdmin, serviceUsageAdmin | what an account holds on its project |
 
 Nothing in the pack bills while idle.
 
@@ -1413,12 +1446,14 @@ transpile and taken whole to the estate's `vendor/`:
 
 | interface | export | what |
 |---|---|---|
-| `workload-shop` | `project_id`, `iac_account`, `state_bucket` | the workload's infrastructure project, the account its estates run as, the bucket their states live in |
+| `workload-shop` | `deploy_project_id`, `iac_account`, `state_bucket` | the workload's infrastructure project, the account its estates run as, the bucket their states live in |
 | | `delivered_folder_roles`, `delivered_billing_roles`, `delivered_apis` | what was delivered to the account: its roles on each of its folders and on the billing account, and the APIs of its infrastructure project |
 | `shop-frontend` | `delivered_folder` | the folder, looked up: the parent of what the estate creates |
 
 One estate reads one folder's interface. A workload with two folders is rolled out by two
-estates that run as the same account.
+estates that run as the same account. A workload needs no folder: an entry of
+`folder_workloads` alone is an account that works in the projects
+[`project-workload.satz`](#project-workloadsatz) gives it.
 
 The `delivered_*` exports are what satz judges the workload's estate against: a resource
 type that needs a role or an API not in them is reported in that estate as what to ask for
@@ -1481,8 +1516,8 @@ repository or folder, config, state and pipeline.
 **A pack's interface is common.** An interface a pack declares — `interface "network" {
 export … }` — is in the library every project's folder carries (`interfaces/common/` and
 `interfaces/<project>/`), without the word `common`. One an `each` writes is the
-exception: `each projects by name { interface "{each.name}" { … } }` writes one interface
-per entry, and each is that project's own (`project-onboarding.satz`). A project's interface takes it with
+exception: `each project_workload_projects by name { interface "{each.name}" { … } }` writes one interface
+per entry, and each is that project's own (`project-workload.satz`). A project's interface takes it with
 `use interface "network"`: the author keeps the set stable, and every project receives
 it. A pack's interface uses only common interfaces. What satz generates from it —
 `interfaces/…/network/hcl/` and `satz/interface.satz` — is written per estate beside that
