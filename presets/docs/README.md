@@ -16,8 +16,8 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`s1_security_groups`](s1-security-groups.md) | 1.3 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 12 | — |
-| [`s2_security_groups`](s2-security-groups.md) | 1.3 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 14 | — |
+| [`s1_security_groups`](s1-security-groups.md) | 1.4 | The S1 security group model in ONE file: the five admin groups and their organization-level role grants. | 12 | — |
+| [`s2_security_groups`](s2-security-groups.md) | 1.4 | The S2 security group model: S1's five admin groups plus a distinct NETWORK ADMINS group, and the org-level grants split accordingly. | 14 | — |
 | [`exemptions.exemption_tag`](exemption-tag.md) | 2.0 | Exemption classes: one organisation tag key, one value per KIND of exemption, and nothing bound to any of them. | 9 | — |
 
 ## Billing and budget

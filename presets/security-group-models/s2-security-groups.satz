@@ -20,9 +20,20 @@
 // live, `satz apply` takes the domain off those two roles and touches nothing else of the
 // organisation's policy; `satz plan` says what the apply would do.
 //
+// The project admins' roles are the list param `gcp_project_admins_roles`; its default is the
+// list the grant below reads, `roles/owner` included — the horizontal reach over every project,
+// present and future, that the platform team holds while business units hold vertical roles on
+// their own folders and projects. An estate that wants that reach PAM-grantable binds the param
+// to `roles/writer` (every service's write permissions in every project — Google's basic role
+// that Privileged Access Manager grants and a condition bounds, which Owner cannot be) together
+// with `roles/resourcemanager.projectIamAdmin`, `roles/iam.serviceAccountAdmin`,
+// `roles/resourcemanager.projectDeleter` and `roles/billing.projectManager` — what Owner gives
+// beyond Writer — and the rest of the list; the plan then shows two destroys and four creates.
+// The API and gcloud grant Writer; the console cannot. ADR 0090.
+//
 // Required from the estate: customer_domain, first_admin, svc_iac_account, infra_project_name
 
-pack s2_security_groups version "1.3"
+pack s2_security_groups version "1.4"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"
@@ -31,6 +42,25 @@ params {
   gcp_security_admins_name     = "gcp-security-admins"
   gcp_security_viewers_name    = "gcp-security-viewers"
   gcp_billing_admins_name      = "gcp-billing-admins"
+  gcp_project_admins_roles = [
+    "roles/resourcemanager.folderViewer",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/resourcemanager.tagAdmin",
+    "roles/iam.organizationRoleViewer",
+    "roles/iam.serviceAccountCreator",
+    "roles/owner",
+    "roles/bigquery.admin",
+    "roles/pubsub.admin",
+    "roles/cloudsupport.admin",
+    "roles/compute.viewer",
+    "roles/container.viewer",
+    "roles/monitoring.admin",
+    "roles/logging.admin",
+    "roles/logging.configWriter",
+    "roles/logging.privateLogViewer",
+    "roles/monitoring.viewer",
+    "roles/billing.user",
+  ]
 }
 
 // ---- what a customer decides, asked -------------------------------------------
@@ -143,25 +173,7 @@ google_organization_iam_member {
 
   // S1 minus compute.networkAdmin and compute.xpnAdmin — those are the
   // network-admins group's in S2.
-  "group:{gcp_project_admins_name}@{customer_domain}" = [
-    "roles/resourcemanager.folderViewer",
-    "roles/resourcemanager.projectIamAdmin",
-    "roles/resourcemanager.tagAdmin",
-    "roles/iam.organizationRoleViewer",
-    "roles/iam.serviceAccountCreator",
-    "roles/owner",
-    "roles/bigquery.admin",
-    "roles/pubsub.admin",
-    "roles/cloudsupport.admin",
-    "roles/compute.viewer",
-    "roles/container.viewer",
-    "roles/monitoring.admin",
-    "roles/logging.admin",
-    "roles/logging.configWriter",
-    "roles/logging.privateLogViewer",
-    "roles/monitoring.viewer",
-    "roles/billing.user",
-  ]
+  "group:{gcp_project_admins_name}@{customer_domain}" = gcp_project_admins_roles
 
   // The network authority, org-wide: create and manage networks, Shared VPC
   // host/service attachments, firewall rules and policies, DNS zones, hybrid
