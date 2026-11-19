@@ -1239,7 +1239,7 @@ impl Interface {
             })
         };
         let code = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.iter().map(|r| format!("`{}`", r)).collect::<Vec<_>>().join(", ") };
-        let account = text("iac_account");
+        let account = text("estate_account");
         let folder = own("delegated_folder").is_some();
         let folder_roles = list("delegated_folder_roles");
         let project_roles = list("delegated_project_roles");
@@ -1256,7 +1256,7 @@ impl Interface {
         let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
         if let Some(a) = &account {
             row("the estate account your workload estate runs as", format!("`{}`", a));
-            match (text("account_group"), list("account_group_roles")) {
+            match (text("estate_account_user_group"), list("account_group_roles")) {
                 (Some(g), roles) => row(
                     "who may act as it",
                     format!(
@@ -1268,7 +1268,7 @@ impl Interface {
                 (None, _) => row("who may act as it", "the members of the estate account user group the organization's estate names for this account; ask the organization's team which".to_string()),
             }
         }
-        if let Some(p) = text("deploy_project_id") {
+        if let Some(p) = text("infrastructure_project_id") {
             row("the delegation's infrastructure project, which its calls are billed to", format!("`{}`", p));
         }
         if let Some(b) = text("state_bucket") {

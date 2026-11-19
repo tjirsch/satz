@@ -28,9 +28,6 @@ pub struct TemplateArgs {
     /// both compose members as `user:{first_admin}@{customer_domain}`, so this must not
     /// carry the domain.
     pub first_admin: String,
-    /// The display name of the folder directly under the organization that holds the
-    /// customer's and the projects' folders; `None` when they live at the organization.
-    pub workload_folder_name: Option<String>,
 }
 
 /// The estate name: the customer id as a Satz identifier.
@@ -78,7 +75,7 @@ providers {
 
 google_cloud_identity_group {
   svc_iac_users {
-    id           = "{svc_iac_users_group}@{customer_domain}"
+    id           = "{estate_account_user_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
     description  = "Service account users allowed to impersonate the estate account"
     owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
@@ -108,7 +105,7 @@ google_organization_iam_member {
     "roles/iam.serviceAccountAdmin",
     "roles/storage.admin",
   ]
-  "group:{svc_iac_users_group}@{customer_domain}" = [
+  "group:{estate_account_user_group}@{customer_domain}" = [
     "roles/serviceusage.serviceUsageConsumer",
   ]
 }
@@ -117,7 +114,7 @@ google_organization_iam_member {
 // every service account in the organization.
 google_service_account_iam_member {
   service_account_id = "${{google_service_account.provisioner.name}}"
-  "group:{svc_iac_users_group}@{customer_domain}" = [
+  "group:{estate_account_user_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
     "roles/iam.serviceAccountUser",
   ]
@@ -191,20 +188,22 @@ google_folder {
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;
 
-/// The param that names the workload folder; empty is the organization.
+/// The param that names the workload folder. An organization's estate always has one.
 pub(crate) const WORKLOAD_FOLDER_NAME: &str = "workload_folder_name";
 
-/// The workload folder: where the customer's and the projects' folders live, published as the
-/// core export `workload_folder` — the organization (`organizations/<id>`, a static value,
-/// nothing created) or one folder directly under it (`folders/<number>`, looked up). `init`
-/// writes it from its flag, a re-run with the flag through [`with_workload_folder`]. The
-/// folder's name is the param, so renaming it moves nothing here.
-pub(crate) fn workload_folder_section(folder: bool) -> String {
-    const HEAD: &str = "// ---- the workload folder: where the customer's and the projects' folders live -------\n";
-    const DESCRIPTION: &str = "Where the customer's and the projects' folders live: organizations/<id>, or folders/<number> for a folder directly under it";
-    if folder {
-        format!(
-            r#"{HEAD}// One folder directly under the organization, `workload_folder_name`. Google refuses a
+/// What an empty `workload_folder_name` is told, wherever it is refused.
+pub(crate) const WORKLOAD_FOLDER_REQUIRED: &str = "`workload_folder_name` is required: answer it with the display name of the workload folder, the folder directly under the organization that holds the delegated resources of workloads (`Workloads`). A folder the customer already has by that name is imported with `satz adopt <estate> --execute --import`";
+
+/// The workload folder: one folder directly under the organization that holds the
+/// delegated resources of workloads, published as the core export `workload_folder`
+/// (`folders/<number>`, looked up). The answer to `workload_folder_name` writes it through
+/// [`with_workload_folder`] — `satz interview`, or satz-studio, which answers through it.
+/// The folder's name is the param, so renaming it moves nothing here.
+pub(crate) fn workload_folder_section() -> String {
+    const HEAD: &str = "// ---- the workload folder: where the delegated resources of workloads live -----------\n";
+    const DESCRIPTION: &str = "The workload folder, directly under the organization, that holds the delegated resources of workloads: folders/<number>";
+    format!(
+        r#"{HEAD}// One folder directly under the organization, `workload_folder_name`. Google refuses a
 // second folder of one name under one parent: a folder the customer already has is imported
 // (`satz adopt <estate> --execute --import`), and until it is, the apply stops on it.
 google_folder {{
@@ -217,21 +216,14 @@ google_folder {{
 // exists once the folder does, so the interfaces look it up.
 export "workload_folder" = "${{{{google_folder.workload_folder.name}}}}" description "{DESCRIPTION}"
 "#
-        )
-    } else {
-        format!(
-            r#"{HEAD}// The organization itself. Published to the projects, whose folders take it as their parent.
-export "workload_folder" = "organizations/{{customer_organization_id}}" description "{DESCRIPTION}"
-"#
-        )
-    }
+    )
 }
 
-/// `src` with its workload folder in the form `folder` names: the section appended when the
-/// estate publishes none, `src` unchanged when it already publishes that form. The other
-/// form is refused, never rewritten: the projects' folders sit under the root, and turning a
-/// folder into the organization, or the reverse, moves every one of them.
-pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, String> {
+/// `src` with its workload folder: the section appended when the estate publishes none,
+/// `src` unchanged when it publishes the folder. An export that publishes anything else —
+/// the organization — is refused, never rewritten: the delegated resources sit under it,
+/// and the edit that moves them into a folder is the operator's.
+pub(crate) fn with_workload_folder(src: &str) -> Result<String, String> {
     let export = src
         .lines()
         .enumerate()
@@ -242,30 +234,15 @@ pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, St
             out.push('\n');
         }
         out.push('\n');
-        out.push_str(&workload_folder_section(folder));
+        out.push_str(&workload_folder_section());
         return Ok(out);
     };
-    let is_folder = line.contains("google_folder.workload_folder.");
-    if is_folder == folder {
+    if line.contains("google_folder.workload_folder.") {
         return Ok(src.to_string());
     }
-    let (now, edit) = if is_folder {
-        (
-            "the folder `google_folder.workload_folder`",
-            "once the projects' folders have moved to the organization, remove the folder and export \"organizations/{customer_organization_id}\"",
-        )
-    } else {
-        (
-            "the organization",
-            "declare `google_folder { workload_folder { display_name = workload_folder_name } }` and export \"${{google_folder.workload_folder.name}}\"",
-        )
-    };
     Err(format!(
-        "{}: line {} publishes the workload folder as {}. Changing it moves every folder the projects created under it, so satz does not rewrite it — edit that section by hand ({}), then run this again",
-        if folder { "a workload folder" } else { "the organization as the workload folder" },
-        n + 1,
-        now,
-        edit
+        "line {} publishes the organization as the workload folder; an organization's estate has a workload folder. Replace that line with `google_folder {{ workload_folder {{ display_name = workload_folder_name }} }}` and `export \"workload_folder\" = \"${{{{google_folder.workload_folder.name}}}}\"`, then run this again: the delegated resources that stood directly under the organization move into the folder in place",
+        n + 1
     ))
 }
 
@@ -550,10 +527,6 @@ pub(crate) fn bare_skeleton() -> String {
 /// The estate `satz init` writes, with the pack lines of `graph` — none without one, as
 /// [`skeleton`] does.
 pub fn generate_template(args: &TemplateArgs, graph: Option<&PackGraph>, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let workload_folder = format!(
-        "  workload_folder_name = {:?}\n",
-        args.workload_folder_name.as_deref().unwrap_or("")
-    );
     let content = format!(
         r#"// Generated by `satz init` — the estate `satz bootstrap` starts from.
 // Every value below is a param: change it here, never in a pack.
@@ -561,33 +534,30 @@ pub fn generate_template(args: &TemplateArgs, graph: Option<&PackGraph>, output_
 estate {estate}
 
 params {{
-  infra_folder_name        = "Infrastructure"
-  infra_project_name       = "{project_id}"
-  infra_bucket_name        = "{bucket_id}"
-  customer_id              = "{customer_id}"
-  customer_organization_id = "{org_id}"
-  customer_domain          = "{domain}"
-  first_admin              = "{first_admin}"
-  customer_longname        = ""
-  customer_shortname       = "{shortname}"
-  svc_iac_account          = "svc-iac-001"
-  svc_iac_users_group      = "svc-iac-users"
-  billing_account_infra    = "{billing_id}"
-  deployment_engine        = "tofu"
-  deployment_mode          = "local" // switched by `satz migrate`
-  default_region           = "{region}"
-  default_zone             = "{region}-a"
+  infra_folder_name         = "Infrastructure"
+  infra_project_name        = "{project_id}"
+  infra_bucket_name         = "{bucket_id}"
+  customer_id               = "{customer_id}"
+  customer_organization_id  = "{org_id}"
+  customer_domain           = "{domain}"
+  first_admin               = "{first_admin}"
+  customer_longname         = ""
+  customer_shortname        = "{shortname}"
+  svc_iac_account           = "svc-iac-001"
+  estate_account_user_group = "svc-iac-users"
+  billing_account_infra     = "{billing_id}"
+  deployment_engine         = "tofu"
+  deployment_mode           = "local" // switched by `satz migrate`
+  default_region            = "{region}"
+  default_zone              = "{region}-a"
   // The compliance frameworks this customer is held to, as catalog ids from
   // `presets/catalogs/`. Not what this estate claims — that comes from its packs.
-  compliance_frameworks    = ["cis-gcp-5.0"]
+  compliance_frameworks     = ["cis-gcp-5.0"]
   // The folder the audit archive's project is created in, read by
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
   // the folder: unbound, that pack creates its project under the organization.
-  logsink_project_folder = "google_folder.infra_folder.name"
-  // Where the customer's and the projects' folders live: "" is the organization, a name one
-  // folder directly under it. The section at the end of this file publishes it as
-  // `workload_folder`; the transpile refuses a name and a section that disagree.
-{workload_folder}}}
+  logsink_project_folder    = "google_folder.infra_folder.name"
+}}
 
 // The bootstrap params and their questions: init binds what it derived above, and this pack
 // declares the rest, each with its question. It stays commented until the library is
@@ -599,11 +569,8 @@ params {{
 {menu}google_essential_contacts_contact {{
 }}
 
-{scaffold}
-{workload_folder_section}"#,
+{scaffold}"#,
         scaffold = SCAFFOLD,
-        workload_folder = workload_folder,
-        workload_folder_section = workload_folder_section(args.workload_folder_name.is_some()),
         menu = graph.map(|g| format!("{}\n", pack_menu(g))).unwrap_or_default(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
@@ -645,6 +612,13 @@ pub(crate) mod tests {
         serde_json::from_str(&text).unwrap()
     }
 
+    /// The estate `src` with `workload_folder_name` answered as the interview answers it:
+    /// the binding, and the section that publishes the folder.
+    pub(crate) fn answered_workload_folder(src: &str, folder: &str) -> String {
+        let bound = crate::interview::bind(src, WORKLOAD_FOLDER_NAME, &serde_yaml::Value::String(folder.to_string())).unwrap();
+        satz_core::fmt::format(&with_workload_folder(&bound).unwrap()).unwrap()
+    }
+
     pub(crate) fn args(first_admin: &str, domain: &str) -> TemplateArgs {
         TemplateArgs {
             customer_id: "C0example".into(),
@@ -656,7 +630,6 @@ pub(crate) mod tests {
             project_id: "acme-iac-infra".into(),
             bucket_id: "acme-iac-infra".into(),
             first_admin: first_admin.into(),
-            workload_folder_name: None,
         }
     }
 
@@ -884,30 +857,28 @@ pub(crate) mod tests {
         let out = std::fs::read_to_string(&path).unwrap();
         assert!(out.contains(r#"member       = ["user:{first_admin}@{customer_domain}"]"#), "{out}");
         assert!(!out.contains("first.admin@example.com"), "{out}");
-        assert!(out.contains(r#"first_admin              = "first.admin""#), "{out}");
-        assert!(out.contains(r#"customer_domain          = "example.com""#), "{out}");
+        assert!(out.contains(r#"first_admin               = "first.admin""#), "{out}");
+        assert!(out.contains(r#"customer_domain           = "example.com""#), "{out}");
         assert!(out.contains("estate c0example"), "{out}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The section is written once, in the form asked for; the other form is refused,
-    /// because the projects' folders sit under the root.
+    /// The section is written once; an estate that publishes the organization as the
+    /// workload folder is refused, never rewritten.
     #[test]
-    fn the_workload_folder_section_follows_the_answer_and_is_never_flipped() {
+    fn the_workload_folder_section_is_written_once_and_the_organization_is_refused() {
         let sk = skeleton("x", None);
-        assert!(!sk.contains("export \"workload_folder\""), "the skeleton publishes no root before it is answered");
-        for folder in [false, true] {
-            let one = with_workload_folder(&sk, folder).unwrap();
-            assert!(one.ends_with(&workload_folder_section(folder)), "{}", one);
-            assert_eq!(satz_core::fmt::format(&one).unwrap(), one, "the section is in the canonical layout");
-            assert_eq!(with_workload_folder(&one, folder).unwrap(), one, "a second answer of the same form writes nothing");
-            let err = with_workload_folder(&one, !folder).unwrap_err();
-            assert!(err.contains("satz does not rewrite it"), "{}", err);
-            assert!(err.starts_with(if folder { "the organization" } else { "a workload folder" }), "{}", err);
-            assert!(err.contains(&format!("line {}", one.lines().position(|l| l.starts_with("export \"workload_folder\"")).unwrap() + 1)), "{}", err);
-        }
+        assert!(!sk.contains("export \"workload_folder\""), "the skeleton publishes no folder before it is answered");
+        let one = with_workload_folder(&sk).unwrap();
+        assert!(one.ends_with(&workload_folder_section()), "{}", one);
+        assert_eq!(satz_core::fmt::format(&one).unwrap(), one, "the section is in the canonical layout");
+        assert_eq!(with_workload_folder(&one).unwrap(), one, "a second answer writes nothing");
+        let org = format!("{}\nexport \"workload_folder\" = \"organizations/{{customer_organization_id}}\" description \"x\"\n", sk);
+        let err = with_workload_folder(&org).unwrap_err();
+        assert!(err.contains("publishes the organization as the workload folder"), "{}", err);
+        assert!(err.contains(&format!("line {}", org.lines().position(|l| l.starts_with("export \"workload_folder\"")).unwrap() + 1)), "{}", err);
         assert!(
-            workload_folder_section(true).contains("display_name = workload_folder_name"),
+            workload_folder_section().contains("display_name = workload_folder_name"),
             "the folder reads its name from the param, so a rename moves nothing here"
         );
     }

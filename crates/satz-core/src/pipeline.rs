@@ -213,7 +213,7 @@ fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, Pi
     }
 }
 
-/// Every `request` against the list it names, as the transpile sees it — contributions
+/// Every `entries` statement against the list it names, as the transpile sees it — contributions
 /// included: the list is declared and is a list, and every entry is an object that
 /// carries the key, uses the declared fields only, and names itself uniquely. One param
 /// has one list.
@@ -221,12 +221,12 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
     let mut out: Vec<ResolvedRequest> = Vec::new();
     for (file, r) in declared {
         if let Some(first) = out.iter().find(|x| x.param == r.param) {
-            return perr(file, r.line, format!("request {}: declared twice — here and {}:{}; one list has one list", r.param, first.file, first.line));
+            return perr(file, r.line, format!("entries {}: declared twice — here and {}:{}; one list has one list", r.param, first.file, first.line));
         }
         let entries = match env.get(&r.param) {
             Some(serde_yaml::Value::Sequence(s)) => s,
-            Some(other) => return perr(file, r.line, format!("request {}: `{}` is {} — a list is a list param", r.param, r.param, yaml_kind(other))),
-            None => return perr(file, r.line, format!("request {}: unknown param '{}' — the list names a list param a file of the estate declares", r.param, r.param)),
+            Some(other) => return perr(file, r.line, format!("entries {}: `{}` is {} — a list is a list param", r.param, r.param, yaml_kind(other))),
+            None => return perr(file, r.line, format!("entries {}: unknown param '{}' — the list names a list param a file of the estate declares", r.param, r.param)),
         };
         if let Err(msg) = check_request_entries(r, entries, &[]) {
             return perr(file, r.line, msg);
@@ -259,32 +259,38 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
     let mut seen: Vec<String> = Vec::new();
     for (n, e) in entries.iter().enumerate() {
         let serde_yaml::Value::Mapping(fields) = e else {
-            return Err(format!("request {}: entry {} is {} — an entry is an object with the fields {}", r.param, n + 1, yaml_kind(e), r.fields.join(", ")));
+            return Err(format!("entries {}: entry {} is {} — an entry is an object with the fields {}", r.param, n + 1, yaml_kind(e), r.fields.join(", ")));
         };
         let key = match fields.get(r.key.as_str()) {
             Some(serde_yaml::Value::String(s)) => s.clone(),
             Some(serde_yaml::Value::Number(v)) => v.to_string(),
-            Some(other) => return Err(format!("request {}: entry {} has `{}` = {} — the key is a string or a number", r.param, n + 1, r.key, yaml_text(other))),
-            None => return Err(format!("request {}: entry {} has no `{}`, the field that names an entry", r.param, n + 1, r.key)),
+            Some(other) => return Err(format!("entries {}: entry {} has `{}` = {} — the key is a string or a number", r.param, n + 1, r.key, yaml_text(other))),
+            None => return Err(format!("entries {}: entry {} has no `{}`, the field that names an entry", r.param, n + 1, r.key)),
         };
+        if let Some((_, from, to)) = RENAMED_FIELDS.iter().find(|(list, from, _)| *list == r.param && fields.contains_key(*from)) {
+            return Err(format!(
+                "entries {}: entry `{}` has `{}`, which was renamed to `{}` — rename the field in this entry: `{{ {} = \"{}\" {} = \"…\" … }}`",
+                r.param, key, from, to, r.key, key, to
+            ));
+        }
         if let Some(f) = fields.keys().filter_map(|k| k.as_str()).find(|k| !r.fields.iter().any(|f| f == k)) {
-            return Err(format!("request {}: entry `{}` has `{}`, which is no field of this request — its fields: {}", r.param, key, f, r.fields.join(", ")));
+            return Err(format!("entries {}: entry `{}` has `{}`, which is no field of this list — its fields: {}", r.param, key, f, r.fields.join(", ")));
         }
         for (f, pattern) in &r.patterns {
             let text = match fields.get(f.as_str()) {
                 None => continue,
                 Some(serde_yaml::Value::String(s)) => s.clone(),
                 Some(serde_yaml::Value::Number(v)) => v.to_string(),
-                Some(other) => return Err(format!("request {}: entry `{}` has `{}` = {} — a field with a pattern holds a string", r.param, key, f, yaml_text(other))),
+                Some(other) => return Err(format!("entries {}: entry `{}` has `{}` = {} — a field with a pattern holds a string", r.param, key, f, yaml_text(other))),
             };
             // the parser built the pattern once already, and refused one that is no regular expression
-            let re = regex::Regex::new(&satz::whole(pattern)).map_err(|e| format!("request {}: the pattern of `{}`: {}", r.param, f, e))?;
+            let re = regex::Regex::new(&satz::whole(pattern)).map_err(|e| format!("entries {}: the pattern of `{}`: {}", r.param, f, e))?;
             if !re.is_match(&text) {
-                return Err(format!("request {}: entry `{}` has `{}` = \"{}\", which the list's pattern `{}` does not match", r.param, key, f, text, pattern));
+                return Err(format!("entries {}: entry `{}` has `{}` = \"{}\", which the list's pattern `{}` does not match", r.param, key, f, text, pattern));
             }
         }
         if seen.contains(&key) {
-            return Err(format!("request {}: two entries are `{}` = \"{}\" — the key names one entry", r.param, r.key, key));
+            return Err(format!("entries {}: two entries are `{}` = \"{}\" — the key names one entry", r.param, r.key, key));
         }
         let taken = existing.iter().any(|x| {
             let same_key = match x.get(r.key.as_str()) {
@@ -295,7 +301,7 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
             same_key && x != e
         });
         if taken {
-            return Err(format!("request {}: `{}` = \"{}\" is taken — the estate's list holds another entry of that name", r.param, r.key, key));
+            return Err(format!("entries {}: `{}` = \"{}\" is taken — the estate's list holds another entry of that name", r.param, r.key, key));
         }
         seen.push(key);
     }
@@ -319,7 +325,7 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
         (!file.hcl_blocks.is_empty(), "an `hcl` block"),
         (!file.actions.is_empty(), "an `action`"),
         (!file.questions.is_empty() || !file.notices.is_empty() || !file.offers.is_empty(), "a `question`, `notice` or `offers`"),
-        (!file.suppressions.is_empty() || !file.privates.is_empty() || !file.requests.is_empty(), "a `suppress`, `private` or `request`"),
+        (!file.suppressions.is_empty() || !file.privates.is_empty() || !file.requests.is_empty(), "a `suppress`, `private` or `entries`"),
         (file.estate.is_some() && !file.is_pack, "an `estate` header"),
     ];
     for (found, what) in other {
@@ -538,10 +544,15 @@ fn each_field<'f>(name: &str, fields: &'f serde_yaml::Mapping) -> Result<Option<
     match fields.get(field) {
         Some(v) => Ok(Some(v)),
         None => Err(format!(
-            "`each.{}`: the entry has no field `{}` — it has {}",
+            "`each.{}`: the entry has no field `{}` — it has {}{}",
             field,
             field,
-            fields.keys().filter_map(|k| k.as_str()).map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ")
+            fields.keys().filter_map(|k| k.as_str()).map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", "),
+            RENAMED_FIELDS
+                .iter()
+                .find(|(_, from, to)| *to == field && fields.contains_key(*from))
+                .map(|(list, from, to)| format!(". `{}` of an entry of `{}` was renamed to `{}` — rename the field in the entry", from, list, to))
+                .unwrap_or_default()
         )),
     }
 }
@@ -710,6 +721,9 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
             continue; // the using document's binding wins (Default < Set)
         }
         let resolved = resolve_value(v, &env, file_name, *line)?;
+        if let Some(msg) = renamed_field_in(name, &resolved) {
+            return perr(file_name, *line, msg);
+        }
         env.insert(name.clone(), resolved);
     }
     // An input is a param the using document binds, resolved after the params it may
@@ -840,7 +854,7 @@ pub struct ResolvedInterface {
     pub line: usize,
 }
 
-/// A `request` point with the file that declares it.
+/// An `entries` statement with the file that declares it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedRequest {
     pub param: String,
@@ -1508,7 +1522,10 @@ fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a
             .outputs
             .iter()
             .find(|o| o.name == value)
-            .ok_or_else(|| format!("`${{interface.{}}}`: the interface folder `{}` has no value `{}` — it has {}", key, folder, value, values(f)));
+            .ok_or_else(|| {
+                let has = |n: &str| f.interface.outputs.iter().any(|o| o.name == n);
+                format!("`${{interface.{}}}`: the interface folder `{}` has no value `{}` — it has {}{}", key, folder, value, values(f), renamed_export_hint(value, &has))
+            });
     }
     let carriers: Vec<(&UsedInterfaceFile, &satz::OfferedOutput)> =
         files.iter().filter_map(|f| f.interface.outputs.iter().find(|o| o.name == key).map(|o| (f, o))).collect();
@@ -1516,7 +1533,8 @@ fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a
         let mut all: Vec<String> = files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| format!("`{}`", o.name))).collect();
         all.sort();
         all.dedup();
-        return Err(format!("`${{interface.{}}}`: no used interface folder has a value `{}` — they have {}", key, key, all.join(", ")));
+        let has = |n: &str| files.iter().any(|f| f.interface.outputs.iter().any(|o| o.name == n));
+        return Err(format!("`${{interface.{}}}`: no used interface folder has a value `{}` — they have {}{}", key, key, all.join(", "), renamed_export_hint(key, &has)));
     };
     if carriers.iter().any(|(_, o)| o.value != first.value) {
         return Err(format!(
@@ -1695,11 +1713,6 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
         "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
-        "deployer_project_folder",
-        "delegation_project_folder",
-        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
-    ),
-    (
         "deployer_folder_roles",
         "delegated_folders_roles",
         "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
@@ -1750,11 +1763,6 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
         "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
-        "folder_workload_project_folder",
-        "delegation_project_folder",
-        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
-    ),
-    (
         "folder_workload_roles",
         "delegated_folders_roles",
         "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
@@ -1794,11 +1802,80 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
         "delegated_projects_roles",
         "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
+    (
+        "svc_iac_users_group",
+        "estate_account_user_group",
+        "the param names the estate account user group, the group whose members may act as the estate account; its value, the group's name, stays as it is (`presets/CHANGELOG.md`, Breaking changes, v0.102.0)",
+    ),
+];
+
+/// Params a release removed, and why. Refused like a renamed param, for the same reason:
+/// a param no pack reads is not an error, so an estate left binding one would transpile
+/// and quietly lose the choice it made. An entry stays for one release line.
+pub(crate) const REMOVED_PARAMS: &[(&str, &str)] = &[
+    (
+        "delegation_project_folder",
+        "every delegation's infrastructure project is created in the infrastructure folder, `google_folder.infra_folder`, beside the organization's own; there is no choice left to make. Delete the line: a project that stood elsewhere moves into that folder at the next apply, in place (`presets/CHANGELOG.md`, Breaking changes, v0.102.0)",
+    ),
+    (
+        "deployer_project_folder",
+        "every delegation's infrastructure project is created in the infrastructure folder, `google_folder.infra_folder`; there is no choice left to make. Delete the line (`presets/CHANGELOG.md`, Breaking changes, v0.102.0)",
+    ),
+    (
+        "folder_workload_project_folder",
+        "every delegation's infrastructure project is created in the infrastructure folder, `google_folder.infra_folder`; there is no choice left to make. Delete the line (`presets/CHANGELOG.md`, Breaking changes, v0.102.0)",
+    ),
+];
+
+/// The fields of a list param's entries a release renamed: (list param, old field, new
+/// field). An entry that still carries the old field is refused naming the new one, ahead of
+/// the generic "no field of this list" refusal.
+pub(crate) const RENAMED_FIELDS: &[(&str, &str, &str)] = &[("delegations", "owner_group", "estate_account_user_group")];
+
+/// The refusal of a list param's binding whose entry still carries a field a release
+/// renamed, naming the entry and the new field — at the binding's line, before a pack's
+/// `each` would stop on the missing field inside the pack.
+fn renamed_field_in(list: &str, value: &serde_yaml::Value) -> Option<String> {
+    let serde_yaml::Value::Sequence(entries) = value else { return None };
+    RENAMED_FIELDS.iter().filter(|(l, _, _)| *l == list).find_map(|(_, from, to)| {
+        entries.iter().enumerate().find_map(|(n, e)| {
+            let serde_yaml::Value::Mapping(fields) = e else { return None };
+            fields.contains_key(*from).then(|| {
+                let which = match fields.get("name").and_then(|v| v.as_str()) {
+                    Some(name) => format!("entry `{}`", name),
+                    None => format!("entry {}", n + 1),
+                };
+                format!(
+                    "{}: {} has `{}`, which was renamed to `{}` — rename the field in every entry of `{}`",
+                    list, which, from, to, list
+                )
+            })
+        })
+    })
+}
+
+/// The exports a release renamed: (old name, new name). A read of the old name names the
+/// new one; a read of the new name from an interface folder that still carries the old one
+/// says the folder was copied before the rename.
+pub const RENAMED_EXPORTS: &[(&str, &str)] = &[
+    ("iac_account", "estate_account"),
+    ("account_group", "estate_account_user_group"),
+    ("deploy_project_id", "infrastructure_project_id"),
 ];
 
 /// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
 /// `.local` fork, a pack — it stops the transpile and names the replacement.
 pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<PipelineError> {
+    if let Some((_, why)) = REMOVED_PARAMS.iter().find(|(from, _)| *from == name) {
+        return Some(PipelineError {
+            file: file.to_string(),
+            line,
+            msg: format!(
+                "param `{}` was removed — {}. A param no pack reads is not an error, so leaving it would silently do nothing.",
+                name, why
+            ),
+        });
+    }
     RENAMED_PARAMS.iter().find(|(from, _, _)| *from == name).map(|(_, to, why)| PipelineError {
         file: file.to_string(),
         line,
@@ -1807,6 +1884,22 @@ pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<Pipel
             name, to, why
         ),
     })
+}
+
+/// What a read of `value` from an interface folder that has no such value is told beyond
+/// the values it has, when a release renamed it: the new name, or — the folder carrying
+/// the old name — that the folder is to be copied again.
+fn renamed_export_hint(value: &str, has: &dyn Fn(&str) -> bool) -> String {
+    if let Some((_, to)) = RENAMED_EXPORTS.iter().find(|(from, _)| *from == value) {
+        return format!(". `{}` was renamed to `{}` — read `{}`", value, to, to);
+    }
+    if let Some((from, _)) = RENAMED_EXPORTS.iter().find(|(_, to)| *to == value).filter(|(from, _)| has(from)) {
+        return format!(
+            ". The folder carries `{}`, the name of `{}` before it was renamed — it was copied from an older transpile of the organization's estate; copy it again",
+            from, value
+        );
+    }
+    String::new()
 }
 
 /// A pack the library MOVED, and where it lives now. `from` is either an exact
@@ -2989,7 +3082,7 @@ struct Walk<'a> {
     /// Exports collected from every file the walk visits, unresolved for the reason
     /// actions are.
     exports: Vec<(String, Option<String>, satz::ExportDecl)>,
-    /// `request` statements of the used files, after the `when` guard
+    /// `entries` statements of the used files, after the `when` guard
     requests: Vec<(String, satz::RequestDecl)>,
     /// `interface` blocks of every file the walk visits, for their `use interface` lines,
     /// an `each`'s one per entry, each with whether a pack's declaration makes it common.
@@ -3117,7 +3210,7 @@ impl Walk<'_> {
     /// A list's `defaults` written into the list it names: every entry that does
     /// not carry a defaulted field takes the default, resolved against the params as they
     /// stand. Done when the list is read, before the file's items are walked, so
-    /// an `each`, the request check, the interface and tfvars all see one list. A list the
+    /// an `each`, the request file's check, the interface and tfvars all see one list. A list the
     /// walk does not hold yet is left to `resolve_requests`, which names it.
     fn fill_defaults(&mut self, r: &satz::RequestDecl, file_name: &str) -> Result<(), PipelineError> {
         if r.defaults.is_empty() {
@@ -3178,6 +3271,9 @@ impl Walk<'_> {
                 continue;
             }
             let resolved = resolve_value(v, &self.genv, file_name, *line)?;
+            if let Some(msg) = renamed_field_in(name, &resolved) {
+                return perr(file_name, *line, msg);
+            }
             self.genv.insert(name.clone(), resolved);
         }
         self.note_inputs(file, file_name)
@@ -3208,7 +3304,7 @@ impl Walk<'_> {
         let names: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
         for r in &file.requests {
             if names.contains(&r.param.as_str()) {
-                return perr(file_name, r.line, format!("request {}: `{}` is an input — a list is a list param the estate owns, and an input is a variable the plan reads; make `{}` a param", r.param, r.param, r.param));
+                return perr(file_name, r.line, format!("entries {}: `{}` is an input — a list is a list param the estate owns, and an input is a variable the plan reads; make `{}` a param", r.param, r.param, r.param));
             }
         }
         for a in &file.actions {
@@ -4238,6 +4334,26 @@ mod tests {
         assert!(renamed_param("customer_shortname", "e.satz", 3).is_none(), "and so is every other param");
     }
 
+    /// The renames before 1.0 (ADR 0096): a param, a removed param, an entry field and an
+    /// export are each refused naming what holds now.
+    #[test]
+    fn the_names_renamed_before_1_0_are_refused_and_name_the_new_ones() {
+        let err = renamed_param("svc_iac_users_group", "e.satz", 3).expect("the old name is refused");
+        assert!(err.msg.contains("renamed to `estate_account_user_group`"), "{}", err.msg);
+        let err = renamed_param("delegation_project_folder", "e.satz", 4).expect("the removed param is refused");
+        assert!(err.msg.contains("was removed") && err.msg.contains("infrastructure folder"), "{}", err.msg);
+        assert_eq!(err.line, 4);
+        let list: serde_yaml::Value = serde_yaml::from_str("[{ name: shop, owner_group: a@example.com }]").unwrap();
+        let msg = renamed_field_in("delegations", &list).expect("the old field is refused");
+        assert!(msg.contains("entry `shop` has `owner_group`, which was renamed to `estate_account_user_group`"), "{}", msg);
+        assert!(renamed_field_in("delegated_folders", &list).is_none(), "the field is renamed in its own list only");
+        let none = |_: &str| false;
+        assert!(renamed_export_hint("iac_account", &none).contains("renamed to `estate_account`"));
+        let old = |n: &str| n == "deploy_project_id";
+        assert!(renamed_export_hint("infrastructure_project_id", &old).contains("copy it again"));
+        assert!(renamed_export_hint("state_bucket", &old).is_empty());
+    }
+
     #[test]
     fn the_names_of_the_packs_before_delegation_are_refused_and_name_the_delegation_ones() {
         // The packs were replaced twice: every param of either generation, and the lists a
@@ -4246,7 +4362,7 @@ mod tests {
             ("use_workload_deployer", "use_delegation"),
             ("workload_deployers", "delegations"),
             ("workload_deployer_folders", "delegated_folders"),
-            ("deployer_project_folder", "delegation_project_folder"),
+            ("deployer_project_folder", "infrastructure folder"),
             ("deployer_folder_roles", "delegated_folders_roles"),
             ("deployer_organization_roles", "delegation_organization_roles"),
             ("deployer_group_roles", "delegation_group_roles"),
@@ -4257,6 +4373,7 @@ mod tests {
             ("use_folder_workload", "use_delegation"),
             ("folder_workloads", "delegations"),
             ("folder_workload_folders", "delegated_folders"),
+            ("folder_workload_project_folder", "infrastructure folder"),
             ("folder_workload_roles", "delegated_folders_roles"),
             ("use_project_workload", "use_delegated_projects"),
             ("project_workload_projects", "delegated_projects"),
@@ -4915,7 +5032,7 @@ mod estate_channel_tests {
         refused("use \"p.satz\" when x\n", "`x` is an input — a gate decides");
         refused("export \"a\" = x\n", "export \"a\" reads the input `x`");
         refused("question x {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n", "question x: `x` is an input");
-        refused("request xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", "request xs: `xs` is an input");
+        refused("entries xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", "entries xs: `xs` is an input");
         refused("action \"a\" {\n  reason = \"r\"\n  run    = \"a.sh\"\n  args   = [\"{x}\"]\n}\n", "action \"a\" reads the input `x`");
         refused("suppress google_org_policy_policy \"{x}\"\n", "suppress google_org_policy_policy: reads the input `x`");
         refused("google_org_policy_policy {\n  a {\n    name        = \"n\"\n    \"import-id\" = x\n  }\n}\n", "`import-id` reads an input");
@@ -5924,7 +6041,7 @@ params {
   fallback_email = "ops@example.com"
   team_projects = [ { name = "base" } ]
 }
-request team_projects {
+entries team_projects {
   key      = "name"
   fields   = ["name", "apis", "email", "budget"]
   defaults = { apis = ["storage.googleapis.com"] email = fallback_email }
@@ -5980,7 +6097,7 @@ google_cloud_identity_group {
 params {
   subnets = [ { name = "base" cidr = "10.0.0.0/24" } ]
 }
-request subnets {
+entries subnets {
   key         = "name"
   fields      = ["name", "cidr", "region"]
   description = "A subnet"
@@ -5998,7 +6115,7 @@ request subnets {
         assert_eq!((fe.requests[0].param.as_str(), fe.requests[0].entries.len()), ("subnets", 2));
         let bad = team.replace("region = \"europe-west3\"", "zone = \"a\"");
         let err = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", &bad)]).must_fail("an unknown field");
-        assert!(err.msg.contains("entry `team` has `zone`, which is no field of this request"), "{}", err.msg);
+        assert!(err.msg.contains("entry `team` has `zone`, which is no field of this list"), "{}", err.msg);
         let twice = team.replace("name = \"team\"", "name = \"base\"");
         let err = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", &twice)]).must_fail("a key twice");
         assert!(err.msg.contains("two entries are `name` = \"base\""), "{}", err.msg);
@@ -6054,7 +6171,7 @@ request subnets {
     /// transpile would refuse it once the file is vendored.
     #[test]
     fn a_request_file_is_compiled_with_the_estate() {
-        const EXPANDING: &str = "pack net version \"1.0\"\nparams {\n  subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\ngoogle_storage_bucket {\n  each subnets by name {\n    name     = \"{each.name}-{each.cidr}\"\n    location = \"EU\"\n  }\n}\n";
+        const EXPANDING: &str = "pack net version \"1.0\"\nparams {\n  subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\nentries subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\ngoogle_storage_bucket {\n  each subnets by name {\n    name     = \"{each.name}-{each.cidr}\"\n    location = \"EU\"\n  }\n}\n";
         let src = format!("{}use \"net.satz\"\n", HEAD);
         let whole = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" } ]\n}\n";
         let short = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" } ]\n}\n";

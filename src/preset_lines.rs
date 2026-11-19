@@ -871,13 +871,13 @@ pub(crate) struct DelegatedBy {
     pub customer_shortname: Option<String>,
     /// the account the workload estates run as: a delegation's own interface carries it
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
-    /// the group whose members may act as that account
+    pub estate_account: Option<String>,
+    /// the estate account user group: the group whose members may act as that account
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_group: Option<String>,
+    pub estate_account_user_group: Option<String>,
     /// the delegation's infrastructure project, which the account's calls are billed to
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub deploy_project: Option<String>,
+    pub infrastructure_project: Option<String>,
     /// the delegated project, when the file is one's
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
@@ -899,9 +899,9 @@ fn delegated_by(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -
                 estate: file.estate.clone(),
                 organizations: file.organizations.clone(),
                 customer_shortname: text("customer_shortname"),
-                account: text("iac_account"),
-                account_group: text("account_group"),
-                deploy_project: text("deploy_project_id"),
+                estate_account: text("estate_account"),
+                estate_account_user_group: text("estate_account_user_group"),
+                infrastructure_project: text("infrastructure_project_id"),
                 project: text("project_id"),
                 folder: file.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER),
             })
@@ -999,8 +999,8 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
     });
     for d in &r.delegated_by {
         let mut said = vec![format!("the estate `{}`", d.estate)];
-        if let Some(a) = &d.account {
-            said.push(format!("account {}", a));
+        if let Some(a) = &d.estate_account {
+            said.push(format!("estate account {}", a));
         }
         if let Some(p) = &d.project {
             said.push(format!("project {}", p));

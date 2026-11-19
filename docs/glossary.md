@@ -144,4 +144,4 @@ These names stay as they are: `satz transpile`, `hcl/`, `hcl_dir`, `satz bootstr
 `workload_folder_name`, `infra_folder_name`, the project ids `<shortname>-infra-001` and
 `<shortname>-deploy-<name>`, the account ids `svc-iac-001` and `svc-deploy-<name>`,
 `deployment_mode`, the statement `pack`, the prefix `contributes_` of a request file, `satz get-pack`, `satz packs`,
-and the report fields `packs` and `pack`.
+the export `account_group_roles` of a delegation's interface, and the report fields `packs` and `pack`.

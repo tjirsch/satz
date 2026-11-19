@@ -771,7 +771,7 @@ pub(crate) struct AddEntryArgs {
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
     #[serde(default)]
     pub estate: Option<String>,
-    /// The list param, as the pack's `request` names it: `delegations`, `delegated_projects`, …
+    /// The list param, as the pack's `entries` statement names it: `delegations`, `delegated_projects`, …
     pub list: String,
     /// The entry's fields, each as text: `{"name": "rag", "delegation": "rag", "budgets": "true"}`;
     /// a list's values are separated by commas
@@ -1683,7 +1683,7 @@ impl SatzMcp {
     #[tool(
         name = "satz_add_entry",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::entries::EntryAdded>(),
-        description = "Add one entry to a list a pack declares with `request`, as `satz add-entry` does: a \
+        description = "Add one entry to a list a pack declares with `entries`, as `satz add-entry` does: a \
                        delegation, a delegated folder or project, a subnet, a budget. The entry is checked \
                        against the declaration — every field declared, each value matching its pattern, the \
                        key not yet in the list — and written into the estate's params; the edited estate is \

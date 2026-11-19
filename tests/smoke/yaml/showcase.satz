@@ -235,10 +235,10 @@ google_project {
   }
 }
 
-// --- `request`: what a project may add to a list, and each entry's shape — checked at
+// --- `entries`: what a project may add to a list, and each entry's shape — checked at
 //     every transpile, and by `satz check-request` on a project's file before it is used.
 //     `defaults` fills a field an entry leaves out, before anything reads the list.
-request event_topics {
+entries event_topics {
   key         = "name"
   fields      = ["name", "retention", "subscription"]
   patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" }
@@ -318,7 +318,6 @@ export "customer_domain"      = customer_domain description "The customer's prim
 export "default_region"       = default_region description "The region the estate builds in"
 export "infra_project_id"     = "${{google_project.infra.project_id}}" description "The infrastructure project"
 export "infra_folder"         = "${{google_folder.infra.name}}" description "The infrastructure folder, folders/<number>"
-export "workload_folder"      = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live: the organization"
 export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]

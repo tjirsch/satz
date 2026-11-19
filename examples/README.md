@@ -18,8 +18,9 @@ examples/
       satz/shop_dev.satz
 ```
 
-`acme/` is the organization every example below it belongs to: the estate `satz init
---workload-folder-name Workloads` writes, with `presets/estate-core.satz` in use. It
+`acme/` is the organization every example below it belongs to: the estate `satz init`
+writes, with `workload_folder_name` answered `Workloads` and `presets/estate-core.satz` in
+use. It
 publishes the core exports — `workload_folder`, `customer_domain`,
 `customer_shortname`, `default_region`, `organization_id`, `infra_project_id`,
 `iac_service_account`, `infra_folder` — as `interfaces/outgoing/common/core/`.

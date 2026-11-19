@@ -13,6 +13,83 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.102.0
+
+**The last names before 1.0: four names of delegated access, one bootstrap param and one
+statement are renamed, a delegation's infrastructure project always stands in the
+infrastructure folder, and every organization's estate has a workload folder** (ADR 0096). The names in an estate file now are the words of
+[the glossary](../docs/glossary.md).
+
+| before | now | where |
+|---|---|---|
+| `owner_group` in an entry of `delegations` | `estate_account_user_group` | the estate's `delegations`, a request file's `contributes_delegations`, `satz add-entry … delegations name=… estate_account_user_group=…` |
+| `svc_iac_users_group` | `estate_account_user_group` | the estate's `params`, and every `{svc_iac_users_group}` the estate file reads |
+| export `iac_account` of `delegation-<name>` | `estate_account` | a workload estate's `${{interface.delegation-<name>.iac_account}}` |
+| export `account_group` of `delegation-<name>` | `estate_account_user_group` | a workload estate's reads |
+| export `deploy_project_id` of `delegation-<name>` | `infrastructure_project_id` | a workload estate's reads |
+| `request <list param> { … }` | `entries <list param> { … }`, the same body | a pack of your own, a `.local.satz` fork |
+| `delegation_project_folder` | — removed: the project is created in `google_folder.infra_folder` | the estate's `params` |
+| `satz init --workload-folder-name <name>` | — removed: answer `workload_folder_name` in `satz interview` or satz-studio | scripts that call `satz init` |
+| `workload_folder_name = ""` and `export "workload_folder" = "organizations/{customer_organization_id}"` — the organization as the workload folder | a name, and the section that declares the folder: `google_folder { workload_folder { display_name = workload_folder_name } }` with `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | the estate's `params` and its workload folder section |
+| `delegated_projects_folder` unbound: the organization | unbound: the workload folder, `google_folder.workload_folder.name` | the estate's `params` |
+
+**What is refused:** each old name, by name, with the new one — the param and the field
+where they are bound, the statement at its line, a read of an old export with the export
+that replaced it (and a read of a new export from an interface folder copied before the
+rename with "copy it again"), and the removed flag by clap as an unknown argument. An
+empty `workload_folder_name` is refused at its line — `` `workload_folder_name` is
+required: answer it with the display name of the workload folder, the folder directly
+under the organization that holds the delegated resources of workloads (`Workloads`). … ``
+— and an export of the organization as `workload_folder` beside a name at the export's
+line.
+
+**How to find it:**
+`grep -n "owner_group\|svc_iac_users_group\|delegation_project_folder\|workload_folder\|^request " satz/*.satz packs/*.satz`
+in the organization's repository, and
+`grep -rn "iac_account\|account_group\|deploy_project_id" satz/` in each workload repository.
+
+**The edit, in this order:**
+
+1. `satz get-presets --force` in the organization's repository: the presets that wrote
+   `request` and the old names are replaced.
+2. In the estate file: rename `svc_iac_users_group` to `estate_account_user_group` — the
+   binding and every `{svc_iac_users_group}` the file reads; the value, the group's name,
+   stays — rename `owner_group` to `estate_account_user_group` in every entry of
+   `delegations`, and delete the line `delegation_project_folder = …`. An estate whose
+   workload folder is the organization — `workload_folder_name = ""`, or the line
+   `export "workload_folder" = "organizations/{customer_organization_id}"` — names a
+   folder: bind `workload_folder_name = "Workloads"` (or the name the customer wants) and
+   replace that export with
+   `google_folder { workload_folder { display_name = workload_folder_name } }` and
+   `export "workload_folder" = "${{google_folder.workload_folder.name}}"`. A folder the
+   customer already has by that name is imported with `satz adopt <estate> --execute --import`.
+3. In a pack or `.local.satz` fork of your own: `request` becomes `entries`.
+4. `satz transpile` the organization's estate, and copy each `interfaces/outgoing/delegation-<name>/`
+   to the workload repository that reads it, again.
+5. In each workload estate: `iac_account` becomes `estate_account`, `account_group`
+   becomes `estate_account_user_group`, `deploy_project_id` becomes
+   `infrastructure_project_id`.
+
+**What moves in the plan:**
+
+- A delegation's infrastructure project `<shortname>-deploy-<name>` whose estate left
+  `delegation_project_folder` empty or named another folder moves into the
+  infrastructure folder: `folder_id` changes on the `google_project`, which the Google
+  provider migrates in place — no project is recreated. An estate that bound
+  `"google_folder.infra_folder.name"` sees no change.
+- An estate whose workload folder was the organization: `google_folder.workload_folder` is
+  created (or imported), and the delegated projects of an unbound
+  `delegated_projects_folder`, which stood directly under the organization, move into it —
+  `folder_id` of a `google_project` changes in place; nothing is recreated. A delegated
+  folder or project whose parent the estate names stays where it is.
+- An estate that left `delegated_projects_folder` unbound, with a workload folder: its
+  delegated projects move from the organization into the workload folder, in place.
+- Nothing else: no resource address changes. The root module's outputs
+  `delegation_<name>__iac_account`, `…__account_group` and `…__deploy_project_id` are
+  renamed to `…__estate_account`, `…__estate_account_user_group` and
+  `…__infrastructure_project_id`, and the variable `svc-iac-users-group` to
+  `estate-account-user-group`.
+
 ### v0.101.0
 
 **Delegated access is one base preset and one preset per kind of target; `folder-workload`
@@ -1307,6 +1384,12 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegation` | 2.0 | 2026-11-19 | the entry field `owner_group` of `delegations` is `estate_account_user_group`; the exports `iac_account`, `account_group` and `deploy_project_id` are `estate_account`, `estate_account_user_group` and `infrastructure_project_id`; `delegation_project_folder` and its question are gone — every delegation's infrastructure project is created in `google_folder.infra_folder`; the statement is `entries` (ADR 0096; BREAKING, see Breaking changes) |
+| `delegated_folders` | 1.1 | 2026-11-19 | the list is declared with `entries` where it said `request`; nothing emitted changes (ADR 0096) |
+| `delegated_projects` | 2.0 | 2026-11-19 | `delegated_projects_folder` defaults to the workload folder, `google_folder.workload_folder.name`, where it was empty, the organization: a project of an estate that did not bind it moves into the workload folder, in place; another parent is still named by binding it. The list is declared with `entries` where it said `request` (ADR 0096; BREAKING, see Breaking changes) |
+| `estate_core` | 3.0 | 2026-11-19 | `svc_iac_users_group` is `estate_account_user_group`, with its question; the value is unchanged. `workload_folder_name` is required: it has no default and its question no empty answer, so every organization's estate declares a workload folder, and an estate that binds `""` is refused (ADR 0096; BREAKING, see Breaking changes) |
+| `organization_budget` | 2.2 | 2026-11-19 | the list `budgets` is declared with `entries` where it said `request`; nothing emitted changes (ADR 0096) |
+| `shared_network` | 1.1 | 2026-11-19 | the lists `shared_vpc_subnets` and `shared_firewall_rules` are declared with `entries` where they said `request`; nothing emitted changes (ADR 0096) |
 | `delegation` | 1.0 | 2026-11-19 | first version, the base of delegated access, from the account half of `folder_workload` and `project_workload`: one entry of `delegations` (`{ name owner_group apis billing_roles }`) is an infrastructure project, the account `svc-deploy-<name>`, its state bucket and the group that may act as it; the interface is `delegation-<name>`; what is delegated is `delegated_folders` and `delegated_projects`, each entry naming its delegation (ADR 0093; BREAKING, see Breaking changes) |
 | `delegated_folders` | 1.0 | 2026-11-19 | first version, the folder half of `folder_workload`: `delegated_folders` entries name their `delegation` where they named a `workload`; the folder's interface also publishes `delegated_folder_roles` (ADR 0093) |
 | `delegated_projects` | 1.0 | 2026-11-19 | first version, replacing `project_workload`: one list, `delegated_projects`, each entry naming the `delegation` whose account works in the project; a project has no account, state bucket or group of its own, and the team's calls are billed to the delegation's infrastructure project (ADR 0093) |

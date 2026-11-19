@@ -211,8 +211,8 @@ file, and CI transpiles it.
 ## An organization and the workload estates beside it
 
 `examples/` holds estates that show one use of satz each. `examples/acme/` is one
-organization — the estate `satz init --workload-folder-name Workloads` writes, with
-`presets/estate-core.satz` in use — and each subfolder of it is one example: a project
+organization — the estate `satz init` writes, with `workload_folder_name` answered
+`Workloads` and `presets/estate-core.satz` in use — and each subfolder of it is one example: a project
 that reads the organization through `interfaces/outgoing/common/` copied to its `interfaces/incoming/`.
 `examples/README.md` gives the commands and names the values to replace.
 

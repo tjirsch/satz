@@ -76,10 +76,12 @@ grep -qx 'yaml_dir = "satz"' tmp/init/config.toml && [ ! -e tmp/init/yaml ] \
   || fail "satz init must create satz/ and name it in config.toml:\n$(cat tmp/init/config.toml)"
 grep -qx 'interfaces_dir = "interfaces"' tmp/init/config.toml \
   || fail "satz init must name interfaces_dir in config.toml:\n$(cat tmp/init/config.toml)"
-# no --workload-folder-name: the organization is the workload folder, published, nothing created
-grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/init/satz/C0example.satz \
-  && ! grep -q 'google_folder.workload_folder' tmp/init/satz/C0example.satz \
-  || fail "satz init without a workload folder must export the organization and declare no folder"
+# the workload folder is an answer, not a flag: init leaves `workload_folder_name` open and
+# writes no section for it, and the removed flag is refused
+grep -q 'workload_folder_name\|export "workload_folder"\|google_folder.workload_folder' tmp/init/satz/C0example.satz \
+  && fail "satz init must leave the workload folder to the answer of workload_folder_name:\n$(grep -n workload_folder tmp/init/satz/C0example.satz)"
+"$satz" init --workload-folder-name Workloads > tmp/init-flag.txt 2>&1 && fail "satz init took the removed --workload-folder-name"
+grep -q -- "--workload-folder-name" tmp/init-flag.txt || fail "the refusal of --workload-folder-name does not name it:\n$(cat tmp/init-flag.txt)"
 # init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
 rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
@@ -351,7 +353,7 @@ grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind t
 
 step "delegation and delegated folders: one account per delegation, granted on the folders the pack creates for it and on nothing above them (ADR 0086, ADR 0093)"
 # two delegations, three folders: one delegation with two folders that share no root
-fw_lists='  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "rag" owner_group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
+fw_lists='  delegations = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }, { name = "rag" estate_account_user_group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
   delegated_folders = [{ name = "shop" delegation = "shop" display_name = "Shop" }, { name = "shop-data" delegation = "shop" parent = "folders/222222222222" }, { name = "rag-acme" delegation = "rag" }]'
 sed -e '/^  delegations  *= /d' -e '/^  delegated_folders  *= /d' -e "s|^  use_delegation  *= true|&\\
 $fw_lists|" "$ex/satz/C0example.satz" > tmp/fw-org.satz
@@ -376,7 +378,7 @@ grep -A1 '^output "delegated_apis"' "$fwi/delegation-rag/delegation-rag/satz/int
 grep -A1 '^output "delegated_billing_roles"' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a delegation without billing_roles does not publish the default"
 grep -A1 '^output "delegated_folder_roles"' "$fwi/shop/shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "a folder's interface does not publish the roles on it"
 grep -q '^output "delegated_folder_roles"' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" && fail "the delegation's own interface carries a target's roles"
-for o in deploy_project_id iac_account state_bucket; do
+for o in infrastructure_project_id estate_account state_bucket; do
   grep -q "^output \"$o\"" "$fwi/delegation-shop/delegation-shop/satz/interface.satz" || fail "the delegation's interface does not publish $o"
 done
 grep -A1 '^output "delegated_folder"' "$fwi/shop-data/shop-data/satz/interface.satz" | grep -q 'data.google_active_folder.shop_data.name' || fail "a folder's interface does not publish the folder:\n$(cat "$fwi/shop-data/shop-data/satz/interface.satz")"
@@ -391,14 +393,33 @@ grep -q 'google_service_account.deploy_ghost' tmp/fw-ghost.txt && grep -q 'deplo
 sed 's|presets/delegation.satz|presets/folder-workload.satz|' tmp/fw-org.satz > tmp/fw-oldpath.satz
 fw_run tmp/fw-oldpath.satz > tmp/fw-old.txt 2>&1 && fail "the old pack path transpiled"
 grep -q 'moved to "presets/delegation.satz"' tmp/fw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/fw-old.txt)"
-for pair in use_delegation:use_folder_workload delegations:folder_workloads delegated_folders:folder_workload_folders delegation_project_folder:folder_workload_project_folder; do
+for pair in use_delegation:use_folder_workload delegations:folder_workloads delegated_folders:folder_workload_folders; do
   new=${pair%%:*}; old=${pair##*:}
   sed "s|^  $new\( *\)= |  $old\1= |" tmp/fw-org.satz > tmp/fw-oldparam.satz
   grep -q "^  $old  *= " tmp/fw-oldparam.satz || fail "the estate with the old param $old was not written"
   fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "the old param $old transpiled"
   grep -q "param \`$old\` was renamed to \`$new\`" tmp/fw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/fw-old.txt)"
 done
-printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_folder_workloads = [\n    { name = "pay" owner_group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
+# the names renamed before 1.0 (ADR 0096): each is refused by name, naming the new one
+sed "s|^  estate_account_user_group\( *\)= |  svc_iac_users_group\1= |" tmp/fw-org.satz > tmp/fw-oldparam.satz
+grep -q '^  svc_iac_users_group  *= ' tmp/fw-oldparam.satz || fail "the estate with svc_iac_users_group was not written"
+fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "svc_iac_users_group transpiled"
+grep -q 'param `svc_iac_users_group` was renamed to `estate_account_user_group`' tmp/fw-old.txt || fail "the refusal of svc_iac_users_group does not name estate_account_user_group:\n$(cat tmp/fw-old.txt)"
+sed 's|^  use_delegation  *= true|&\
+  delegation_project_folder = "google_folder.infra_folder.name"|' tmp/fw-org.satz > tmp/fw-oldparam.satz
+fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "delegation_project_folder transpiled"
+grep -q 'param `delegation_project_folder` was removed' tmp/fw-old.txt && grep -q 'infrastructure folder' tmp/fw-old.txt || fail "the refusal of delegation_project_folder does not say where the projects are:\n$(cat tmp/fw-old.txt)"
+sed 's|^  workload_folder_name\( *\)= "Workloads"|  workload_folder_name\1= ""|' tmp/fw-org.satz > tmp/fw-noworkload.satz
+grep -q '^  workload_folder_name  *= ""' tmp/fw-noworkload.satz || fail "the estate with an empty workload_folder_name was not written"
+fw_run tmp/fw-noworkload.satz > tmp/fw-old.txt 2>&1 && fail "an empty workload_folder_name transpiled"
+grep -q '`workload_folder_name` is required' tmp/fw-old.txt || fail "the refusal of an empty workload_folder_name does not name the question:\n$(cat tmp/fw-old.txt)"
+sed 's|{ name = "shop" estate_account_user_group = |{ name = "shop" owner_group = |' tmp/fw-org.satz > tmp/fw-oldfield.satz
+grep -q 'owner_group' tmp/fw-oldfield.satz || fail "the estate with owner_group was not written"
+fw_run tmp/fw-oldfield.satz > tmp/fw-old.txt 2>&1 && fail "an entry with owner_group transpiled"
+grep -q 'has `owner_group`, which was renamed to `estate_account_user_group`' tmp/fw-old.txt || fail "the refusal of owner_group does not name estate_account_user_group:\n$(cat tmp/fw-old.txt)"
+grep -q 'infrastructure_project_id' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" && grep -q 'estate_account_user_group' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" || fail "the delegation's interface does not publish the new names:\n$(cat "$fwi/delegation-shop/delegation-shop/satz/interface.satz")"
+grep -A6 '^resource "google_project" "deploy_rag"' "$fwm" | grep -q 'folder_id *= google_folder.infra_folder.name' || fail "a delegation's infrastructure project is not in the infrastructure folder:\n$(grep -A6 '^resource "google_project" "deploy_rag"' "$fwm")"
+printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_folder_workloads = [\n    { name = "pay" estate_account_user_group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
 "$satz" --config "$ex" check-request "$PWD/tmp/fw-request.satz" "$PWD/tmp/fw-org.satz" > tmp/fw-request.txt 2>&1 && fail "a request for the old list was accepted"
 grep -q 'delegations' tmp/fw-request.txt || fail "the request's refusal does not name the lists that take requests:\n$(cat tmp/fw-request.txt)"
 # the example organization's own interfaces are what the steps after this one read
@@ -408,9 +429,9 @@ step "delegated projects: a project per entry, worked by its delegation's accoun
 python3 - "$ex/satz/C0example.satz" tmp/pw-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-old = '  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]\n'
+old = '  delegations               = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]\n'
 assert s.count(old) == 1
-s = s.replace(old, '  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "payments" owner_group = "payments-owners@example.com" }]\n  use_delegated_projects = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" }, { name = "shop-backend" delegation = "shop" }, { name = "shop-frontend" delegation = "shop" apis = ["run.googleapis.com", "serviceusage.googleapis.com"] }]\n')
+s = s.replace(old, '  delegations = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }, { name = "payments" estate_account_user_group = "payments-owners@example.com" }]\n  use_delegated_projects = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" }, { name = "shop-backend" delegation = "shop" }, { name = "shop-frontend" delegation = "shop" apis = ["run.googleapis.com", "serviceusage.googleapis.com"] }]\n')
 old = 'use "presets/delegated-folders.satz" when use_delegated_folders\n'
 assert s.count(old) == 1
 s = s.replace(old, old + 'use "presets/delegated-projects.satz" when use_delegated_projects\n')
@@ -433,12 +454,12 @@ grep -B6 'google_project.shop_frontend.project_id' "$pwm" | grep -q 'service = "
 pwi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_project_roles"' "$pwi/shop-backend/shop-backend/satz/interface.satz" | grep -q 'roles/resourcemanager.projectIamAdmin' || fail "a project's interface does not publish what was delegated on it"
 for p in shop-backend payments; do
-  grep -q '^output "iac_account"\|^output "state_bucket"' "$pwi/$p/$p/satz/interface.satz" && fail "the interface of the project $p publishes an account or a bucket it does not have"
+  grep -q '^output "estate_account"\|^output "state_bucket"' "$pwi/$p/$p/satz/interface.satz" && fail "the interface of the project $p publishes an account or a bucket it does not have"
 done
 for o in project_id project_number delegated_project_roles delegated_budgets; do
   grep -q "^output \"$o\"" "$pwi/payments/payments/satz/interface.satz" || fail "a project's interface does not publish $o"
 done
-for o in deploy_project_id iac_account state_bucket account_group delegated_apis delegated_billing_roles; do
+for o in infrastructure_project_id estate_account state_bucket estate_account_user_group delegated_apis delegated_billing_roles; do
   grep -q "^output \"$o\"" "$pwi/delegation-payments/delegation-payments/satz/interface.satz" || fail "the delegation's interface does not publish $o"
 done
 grep -q '^output "project_id"' "$pwi/delegation-shop/delegation-shop/satz/interface.satz" \
@@ -530,8 +551,8 @@ done
 step "add-entry: one entry added to a list a pack declares, checked against the declaration, the estate kept only when it transpiles (ADR 0093)"
 cp tmp/pw-org.satz tmp/ae-org.satz
 ae() { "$satz" --config "$ex" add-entry "$PWD/tmp/ae-org.satz" "$@"; }
-ae delegations name=billing owner_group=billing-team@example.com > tmp/ae.txt 2>&1 || fail "add-entry could not add a delegation:\n$(cat tmp/ae.txt)"
-grep -q 'added `billing` to `delegations`' tmp/ae.txt && grep -q '{ name = "billing" owner_group = "billing-team@example.com" }' tmp/ae-org.satz || fail "the delegation is not in the estate as an entry:\n$(cat tmp/ae.txt)\n$(grep -n delegations tmp/ae-org.satz)"
+ae delegations name=billing estate_account_user_group=billing-team@example.com > tmp/ae.txt 2>&1 || fail "add-entry could not add a delegation:\n$(cat tmp/ae.txt)"
+grep -q 'added `billing` to `delegations`' tmp/ae.txt && grep -q '{ name = "billing" estate_account_user_group = "billing-team@example.com" }' tmp/ae-org.satz || fail "the delegation is not in the estate as an entry:\n$(cat tmp/ae.txt)\n$(grep -n delegations tmp/ae-org.satz)"
 # fields in any order, a yes or no and a list as the declaration types them, written in its order
 ae delegated_projects budgets=false apis=run.googleapis.com,iam.googleapis.com delegation=billing name=billing-reports > tmp/ae.txt 2>&1 || fail "add-entry could not add a project:\n$(cat tmp/ae.txt)"
 grep -q '{ name = "billing-reports" delegation = "billing" apis = \["run.googleapis.com", "iam.googleapis.com"\] budgets = false }' tmp/ae-org.satz || fail "the project's entry is not written in the declaration's order with its kinds:\n$(grep -n delegated_projects tmp/ae-org.satz)"
@@ -540,7 +561,7 @@ grep -q '{ name = "billing-reports" delegation = "billing" apis = \["run.googlea
 python3 - tmp/ae-interfaces.json <<'PY2' || fail "the interfaces report does not carry the entries and the defaults of a list:\n$(cat tmp/ae-interfaces.json)"
 import json, sys
 r = json.load(open(sys.argv[1]))
-q = {x["param"]: x for x in r["requests"]}
+q = {x["param"]: x for x in r["list_params"]}
 p = q["delegated_projects"]
 assert p["entries"] == len(p["rows"]) == 4, p
 row = [x for x in p["rows"] if x["name"] == "billing-reports"][0]
@@ -557,9 +578,9 @@ refused() { # <what the refusal says> <args…>
   cmp -s tmp/ae-org.satz tmp/ae-before.satz || fail "a refused entry changed the estate: $*"
 }
 refused 'is no list a pack of this estate declares' no_such_list name=x
-refused '`labels` is no field of an entry of `delegations`' delegations name=x owner_group=x@example.com labels=y
-refused 'holds an entry `billing` already' delegations name=billing owner_group=other@example.com
-refused 'owner_group' delegations name=lake owner_group=not-an-address
+refused '`labels` is no field of an entry of `delegations`' delegations name=x estate_account_user_group=x@example.com labels=y
+refused 'holds an entry `billing` already' delegations name=billing estate_account_user_group=other@example.com
+refused 'estate_account_user_group' delegations name=lake estate_account_user_group=not-an-address
 refused 'is named by its `name`' delegated_projects delegation=billing
 refused 'google_service_account.deploy_ghost' delegated_projects name=orphan delegation=ghost
 
@@ -567,12 +588,12 @@ step "delegated budgets: the role on the project that asked, the budget pack in 
 python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-old = '  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]\n'
+old = '  delegations               = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]\n'
 assert s.count(old) == 1
 # the team's calls are billed to its delegation's infrastructure project: the two APIs a
 # budget with a notification channel calls are asked for there
 apis = '["cloudbilling.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "serviceusage.googleapis.com", "storage.googleapis.com", "billingbudgets.googleapis.com", "monitoring.googleapis.com"]'
-s = s.replace(old, '  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "payments" owner_group = "payments-owners@example.com" apis = ' + apis + ' }, { name = "plain" owner_group = "plain-owners@example.com" apis = ' + apis + ' }]\n  use_delegated_projects = true\n  use_delegated_budgets = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" budgets = true }, { name = "plain" delegation = "plain" }]\n')
+s = s.replace(old, '  delegations = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }, { name = "payments" estate_account_user_group = "payments-owners@example.com" apis = ' + apis + ' }, { name = "plain" estate_account_user_group = "plain-owners@example.com" apis = ' + apis + ' }]\n  use_delegated_projects = true\n  use_delegated_budgets = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" budgets = true }, { name = "plain" delegation = "plain" }]\n')
 old = 'use "presets/delegated-folders.satz" when use_delegated_folders\n'
 assert s.count(old) == 1
 s = s.replace(old, old + 'use "presets/delegated-projects.satz" when use_delegated_projects\nuse "presets/delegated-budget-role.satz" when use_delegated_budgets\n')
@@ -656,8 +677,8 @@ import json, sys
 by = {d["interface"]: d for d in json.load(open(sys.argv[1]))["delegated_by"]}
 base, folder = by["delegation-shop"], by["shop"]
 assert base["estate"] == "c0example" and base["organizations"] == ["organizations/123456789012"], base
-assert base["account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com" and base["deploy_project"] == "acme-deploy-shop", base
-assert base["account_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
+assert base["estate_account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com" and base["infrastructure_project"] == "acme-deploy-shop", base
+assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
 assert folder["folder"] is True and "account" not in folder, folder
 PY2
 "$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
@@ -729,7 +750,7 @@ step "delegation: an entry of each list, their interfaces out, and a workload es
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-s = s.replace("params {\n", 'params {\n  delegations = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n  delegated_projects = [{ name = "payments" delegation = "payments" }]\n', 1)
+s = s.replace("params {\n", 'params {\n  delegations = [{ name = "payments" estate_account_user_group = "payments-owners@example.com" }]\n  delegated_projects = [{ name = "payments" delegation = "payments" }]\n', 1)
 s += '\nuse "presets/delegation.satz"\nuse "presets/delegated-projects.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 PY2
@@ -744,13 +765,13 @@ assert names[("payments", "project_number")]["how"] == "lookup"
 assert names[(None, "folders")]["how"] == "map"
 assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments", "delegation-payments"}, r["interfaces"]
 assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
-q = [x for x in r["requests"] if x["param"] == "event_topics"]
-assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention", "subscription"] and q[0]["entries"] == 2, r["requests"]
+q = [x for x in r["list_params"] if x["param"] == "event_topics"]
+assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention", "subscription"] and q[0]["entries"] == 2, r["list_params"]
 PY
 # a project's request file, checked offline against the estate's lists
 "$satz" --config . check-request "$root/tests/smoke/requests/ok.satz" "$PWD/tmp/with-project.satz" > tmp/check-request.txt 2>&1 || fail "a fitting request file was refused:\n$(cat tmp/check-request.txt)"
 "$satz" --config . check-request "$root/tests/smoke/requests/bad.satz" "$PWD/tmp/with-project.satz" > tmp/check-request-bad.txt 2>&1 && fail "a request file with an undeclared field passed"
-grep -q 'has `labels`, which is no field of this request' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
+grep -q 'has `labels`, which is no field of this list' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
 grep -q '## What you may request' interfaces/outgoing/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/outgoing/common/core/README.md)"
 "$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not transpile:\n$(cat tmp/with-project.err)"
 pi=interfaces/outgoing/payments/payments/satz/interface.satz
@@ -759,7 +780,7 @@ for o in project_id project_number audit_bucket_name; do
   grep -q "^output \"$o\"" "$pi" || fail "the interface lacks $o:\n$(cat $pi)"
 done
 di=interfaces/outgoing/delegation-payments/delegation-payments/satz/interface.satz
-for o in deploy_project_id iac_account state_bucket; do
+for o in infrastructure_project_id estate_account state_bucket; do
   grep -q "^output \"$o\"" "$di" || fail "the delegation's interface lacks $o:\n$(cat $di)"
 done
 [ -d interfaces/outgoing/common/payments ] && fail "the interface an each writes reached the library"
@@ -960,12 +981,12 @@ step "interview: a skeleton, piped answers, derived defaults, the gate, and the 
 # eighteen. Piped input: accept the opening offer, type the values nobody can default,
 # then Enter for each name that became an offer once its inputs landed.
 rm -rf tmp/iv && mkdir -p tmp/iv
-printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' '' \
+printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 Workloads '' '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 9 default(s)' tmp/iv/run.txt || fail "a scaffold-only file offers nine defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
-# accepting `workload_folder_name = ""` writes the section that publishes the organization
-grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/iv/new.satz \
+grep -q 'accepted 8 default(s)' tmp/iv/run.txt || fail "a scaffold-only file offers eight defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
+# answering `workload_folder_name` writes the section that declares and publishes the folder
+grep -q '^export "workload_folder" = "${{google_folder.workload_folder.name}}"' tmp/iv/new.satz \
   || fail "answering the workload folder must write its export:\n$(tail -5 tmp/iv/new.satz)"
 # every pack is commented out, and estate-core is the only `use` that is not
 [ "$(grep -c '^use \"presets' tmp/iv/new.satz)" = 1 ] \
@@ -2682,7 +2703,7 @@ rm -f tmp/iv/agent.satz
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"smoke.satz"}}}'
   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"create\":true}}}"
-  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"customer_id\":\"C0example\",\"customer_organization_id\":\"123456789012\",\"customer_domain\":\"example.com\",\"customer_shortname\":\"acme\",\"customer_longname\":\"Acme\",\"first_admin\":\"first.admin\",\"billing_account_infra\":\"012345-6789AB-CDEF01\"},\"accept_defaults\":true}}}"
+  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"customer_id\":\"C0example\",\"customer_organization_id\":\"123456789012\",\"customer_domain\":\"example.com\",\"customer_shortname\":\"acme\",\"customer_longname\":\"Acme\",\"first_admin\":\"first.admin\",\"workload_folder_name\":\"Workloads\",\"billing_account_infra\":\"012345-6789AB-CDEF01\"},\"accept_defaults\":true}}}"
   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"satz_interview\",\"arguments\":{\"estate\":\"$PWD/tmp/iv/agent.satz\",\"answers\":{\"nobody\":\"x\"}}}}"
 } > tmp/mcp-iv-in.jsonl
 python3 tmp/mcp-drive.py "$satz" mcp --root . --allow read,write < tmp/mcp-iv-in.jsonl > tmp/mcp-iv.jsonl 2>/dev/null || true
@@ -2697,10 +2718,10 @@ for l in open("tmp/mcp-iv.jsonl"):
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
 # `create` over MCP writes the same SCAFFOLD-ONLY file the CLI does: the estate's own eighteen,
-# and every pack commented out under its phase. Nine of the eighteen need a typed value
+# and every pack commented out under its phase. Ten of the eighteen need a typed value
 # until their inputs land; the map's choices are not asked at all, because the map is not
 # in yet.
-assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (18, 9), a["summary"]
+assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (18, 10), a["summary"]
 assert len(a["questions"]) == 18 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
 assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "no pack choice is asked on a scaffold-only file"
 assert "security_model" not in {q["subject"] for q in a["questions"]}, "the map is commented out, so its choices are not asked"
@@ -2709,7 +2730,7 @@ assert by["infra_project_name"]["blocking"] is True, "a name derived from an una
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
 assert "bootstrap" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
-# 7 answers, then every remaining default: the estate's own eighteen questions
+# 8 answers, then every remaining default: the estate's own eighteen questions
 assert b["written"] == 18 and b["summary"]["complete"] is True, b["summary"]
 assert "security_model" not in str(b), "a scaffold-only file has no map, so no choice is answered here"
 assert b["rename_to"] == "C0example.satz", b
@@ -2718,7 +2739,7 @@ r = msgs[5]["result"]
 assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
 PYEOF
 grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a scaffold-only file has no map, so no choice is bound in it"
-grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/iv/agent.satz \
+grep -q '^export "workload_folder" = "${{google_folder.workload_folder.name}}"' tmp/iv/agent.satz \
   || fail "satz_interview must write the workload folder's section as the CLI interview does"
 # A SECOND ROUND, once the map is in: an agent answers the exclusive choice, and the tool
 # writes it as two booleans AND uncomments that model's pack line. Same code as the CLI —

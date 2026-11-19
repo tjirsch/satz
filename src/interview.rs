@@ -241,22 +241,29 @@ pub(crate) fn answer(
             ));
         }
     }
+    if is_workload_folder(row) && value.as_str().is_none_or(|n| n.trim().is_empty()) {
+        return Err(crate::template::WORKLOAD_FOLDER_REQUIRED.to_string());
+    }
     let out = bind(src, &row.subject, value)?;
-    let out = workload_folder(&out, row, value)?;
+    let out = workload_folder(&out, row)?;
     pack_lines(&out, &row.subject, value, graph)
 }
 
+/// Whether the question is estate-core's `workload_folder_name`.
+fn is_workload_folder(row: &QuestionRow) -> bool {
+    row.subject == crate::template::WORKLOAD_FOLDER_NAME && row.pack == "estate_core"
+}
+
 /// The bootstrap scaffold's one answer-shaped section: answering estate-core's
-/// `workload_folder_name` writes the section that publishes `workload_folder` — the
-/// organization for "", the folder for a name — as `satz init` does from its flag, so an
-/// estate an interview started ends where an init estate does. A section of the other
-/// form is refused by [`crate::template::with_workload_folder`], never rewritten.
-fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
-    match value.as_str() {
-        Some(name) if row.subject == crate::template::WORKLOAD_FOLDER_NAME && row.pack == "estate_core" => {
-            crate::template::with_workload_folder(src, !name.trim().is_empty())
-        }
-        _ => Ok(src.to_string()),
+/// `workload_folder_name` — a name; an empty answer is refused before this — writes the
+/// section that declares the folder and publishes it as `workload_folder`. An estate that
+/// publishes the organization instead is refused by [`crate::template::with_workload_folder`],
+/// never rewritten.
+fn workload_folder(src: &str, row: &QuestionRow) -> Result<String, String> {
+    if is_workload_folder(row) {
+        crate::template::with_workload_folder(src)
+    } else {
+        Ok(src.to_string())
     }
 }
 
@@ -936,22 +943,20 @@ google_folder {
         assert!(present(&choice(false)).contains("  0) none\n"), "{}", present(&choice(false)));
     }
 
-    /// Answering estate-core's `workload_folder_name` writes the section that publishes
-    /// the workload folder, as `satz init` does; the same subject from another pack writes
-    /// nothing.
+    /// Answering estate-core's `workload_folder_name` writes the section that declares and
+    /// publishes the workload folder; an empty answer is refused naming the question; the
+    /// same subject from another pack writes nothing.
     #[test]
     fn answering_the_workload_folder_writes_its_section() {
         let src = crate::template::skeleton("x", None);
         let row = |pack: &str| QuestionRow { subject: "workload_folder_name".into(), kind: "param", pack: pack.into(), ..Default::default() };
         let s = |v: &str| serde_yaml::Value::String(v.into());
-        let org = answer(&src, &row("estate_core"), &s(""), None).unwrap();
-        assert!(org.contains("workload_folder_name = \"\""), "{}", org);
-        assert!(org.contains("export \"workload_folder\" = \"organizations/{customer_organization_id}\""), "{}", org);
-        assert!(!org.contains("google_folder.workload_folder"), "{}", org);
+        let err = answer(&src, &row("estate_core"), &s(""), None).unwrap_err();
+        assert!(err.contains("`workload_folder_name` is required"), "{}", err);
         let folder = answer(&src, &row("estate_core"), &s("Workloads"), None).unwrap();
+        assert!(folder.contains("workload_folder_name = \"Workloads\""), "{}", folder);
         assert!(folder.contains("export \"workload_folder\" = \"${{google_folder.workload_folder.name}}\""), "{}", folder);
-        let err = answer(&folder, &row("estate_core"), &s(""), None).unwrap_err();
-        assert!(err.contains("publishes the workload folder as the folder"), "{}", err);
+        assert_eq!(answer(&folder, &row("estate_core"), &s("Workloads"), None).unwrap(), folder, "a second answer writes the section once");
         let other = answer(&src, &row("someone_else"), &s("Workloads"), None).unwrap();
         assert!(!other.contains("export \"workload_folder\""), "{}", other);
     }

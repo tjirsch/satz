@@ -97,7 +97,8 @@ what is missing, and the second diagram below is the round that adds it.
 - **Which delegated resources**, by the table above: folders, projects, or both.
 - **Where the folders or projects go.** A folder is created under the workload folder
   unless the entry names another parent. A delegation's folders need no common root.
-  Every delegated project is created in one folder, `delegated_projects_folder`.
+  Every delegated project is created in one folder, `delegated_projects_folder`: the
+  workload folder unless the estate names another.
 - **Which group.** The base grants that group the right to act as the account, and to
   read the delegation's infrastructure project. Membership stays in the directory.
 - **Whether the extra APIs and billing roles are justified.** They are the only things
@@ -124,10 +125,10 @@ satz interview C0example.satz
 ```
 
 `add-preset` binds the switch and makes the pack's `use` line active. It refuses while a
-pack it needs is off, and names that pack. The switches open two questions, which
-`satz interview` asks: `delegation_project_folder`, the folder the infrastructure
-projects are created in, and `delegated_projects_folder`, the folder the delegated
-projects are created in.
+pack it needs is off, and names that pack. The infrastructure projects are created in the
+infrastructure folder. The projects switch opens one question, which `satz interview`
+asks: `delegated_projects_folder`, the folder the delegated projects are created in, the
+workload folder unless another is named.
 
 Then the entries. `satz add-entry <estate> <list> <field>=<value>…` adds one entry to a
 list: it checks the fields and their patterns against the pack's declaration, refuses a
@@ -138,13 +139,13 @@ edits the file instead. Pick the case.
 **A team with folders.** The delegation `shop` and one folder:
 
 ```bash
-satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com
+satz add-entry C0example.satz delegations name=shop estate_account_user_group=gcp-shop-admins@example.com
 satz add-entry C0example.satz delegated_folders name=shop delegation=shop display_name=Shop
 ```
 
 ```
 params {
-  delegations       = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
+  delegations       = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]
   delegated_folders = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
 }
 ```
@@ -156,13 +157,13 @@ declares.
 **A team with one project.** The delegation `payments` and the project `payments`:
 
 ```bash
-satz add-entry C0example.satz delegations name=payments owner_group=payments-owners@example.com
+satz add-entry C0example.satz delegations name=payments estate_account_user_group=payments-owners@example.com
 satz add-entry C0example.satz delegated_projects name=payments delegation=payments
 ```
 
 ```
 params {
-  delegations        = [{ name = "payments" owner_group = "payments-owners@example.com" }]
+  delegations        = [{ name = "payments" estate_account_user_group = "payments-owners@example.com" }]
   delegated_projects = [{ name = "payments" delegation = "payments" }]
 }
 ```
@@ -172,14 +173,14 @@ project, each naming the same delegation — here the delegation `data` with the
 `data-lake` and `data-mart`:
 
 ```bash
-satz add-entry C0example.satz delegations name=data owner_group=data-owners@example.com
+satz add-entry C0example.satz delegations name=data estate_account_user_group=data-owners@example.com
 satz add-entry C0example.satz delegated_projects name=data-lake delegation=data
 satz add-entry C0example.satz delegated_projects name=data-mart delegation=data
 ```
 
 ```
 params {
-  delegations        = [{ name = "data" owner_group = "data-owners@example.com" }]
+  delegations        = [{ name = "data" estate_account_user_group = "data-owners@example.com" }]
   delegated_projects = [
     { name = "data-lake" delegation = "data" },
     { name = "data-mart" delegation = "data" },
@@ -197,7 +198,7 @@ separated by commas, and a list that is stated is stated whole — the six stand
 and the additions:
 
 ```bash
-satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com \
+satz add-entry C0example.satz delegations name=shop estate_account_user_group=gcp-shop-admins@example.com \
   apis=cloudbilling.googleapis.com,cloudresourcemanager.googleapis.com,iam.googleapis.com,iamcredentials.googleapis.com,serviceusage.googleapis.com,storage.googleapis.com,pubsub.googleapis.com \
   billing_roles=roles/billing.user,roles/billing.costsManager
 ```
@@ -206,7 +207,7 @@ satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@
   delegations = [
     {
       name        = "shop"
-      owner_group = "gcp-shop-admins@example.com"
+      estate_account_user_group = "gcp-shop-admins@example.com"
       apis = [
         "cloudbilling.googleapis.com",
         "cloudresourcemanager.googleapis.com",
@@ -550,7 +551,7 @@ request to the organization's repository; merging it is the decision of step 2.
 pack shop_request version "1.0"
 
 params {
-  contributes_delegations       = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
+  contributes_delegations       = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]
   contributes_delegated_folders = [{ name = "shop" delegation = "shop" }]
 }
 ```

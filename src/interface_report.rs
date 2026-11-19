@@ -17,8 +17,9 @@ pub(crate) struct InterfacesReport {
     /// every declared interface; `core` is not one — the core exports are the ones with
     /// no `interface`
     pub interfaces: Vec<InterfaceRow>,
-    /// what a team may add to a list param, and the shape of an entry
-    pub requests: Vec<RequestRow>,
+    /// every list param an `entries` statement declares: what a team may add to it, and
+    /// the shape of an entry
+    pub list_params: Vec<RequestRow>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -136,7 +137,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             line: r.line,
         })
         .collect();
-    InterfacesReport { estate: estate.to_string(), exports, interfaces, requests }
+    InterfacesReport { estate: estate.to_string(), exports, interfaces, list_params: requests }
 }
 
 /// The README section every interface of the estate carries: what a project may ask the
@@ -187,13 +188,13 @@ pub(crate) fn render_text(r: &InterfacesReport) -> String {
         s
     };
     let mut s = format!("estate {}\n", r.estate);
-    for q in &r.requests {
+    for q in &r.list_params {
         let fields = q.fields.iter().map(|f| match q.patterns.get(f) {
             Some(re) => format!("{} ~ {}", f, re),
             None => f.clone(),
         });
         s.push_str(&format!(
-            "request {} (key `{}`, fields {}) — {} entr{}  {}:{}\n",
+            "entries {} (key `{}`, fields {}) — {} entr{}  {}:{}\n",
             q.param,
             q.key,
             fields.collect::<Vec<_>>().join(", "),

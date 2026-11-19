@@ -40,7 +40,6 @@ satz init \
   --billing-account-infra 012345-6789AB-CDEF01 \
   --iac-user admin@example.com \
   --default-region europe-west3 \
-  --workload-folder-name Workloads \
   --interview
 ```
 
@@ -48,8 +47,10 @@ A value you leave out is derived from the sign-in where it can be — the domain
 first admin from the identity, the organization and the directory id from
 `organizations:search`, the billing account when exactly one is open. `--interview`
 fetches the preset library before the file is written, so the estate carries the pack
-menu, and then asks the bootstrap questions neither the flags nor the sign-in answer: here one,
-the customer's full name, `customer_longname` — answer `Acme Corp.`. It ends with every
+menu, and then asks the bootstrap questions neither the flags nor the sign-in answer: here two,
+the customer's full name, `customer_longname` — answer `Acme Corp.` — and the workload folder,
+`workload_folder_name` — answer `Workloads`, the folder directly under the organization
+that holds the workloads' folders. It ends with every
 question answered and names the next command.
 
 It writes:

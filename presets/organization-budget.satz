@@ -28,7 +28,7 @@
 // budgets/<id>"` (`gcloud billing budgets list --billing-account=<account>`); `satz adopt`
 // does not resolve budgets. An empty `import_id` creates the budget.
 
-pack organization_budget version "2.1"
+pack organization_budget version "2.2"
 
 params {
   // The organization budget's amount per calendar month, in whole units of the billing
@@ -103,7 +103,7 @@ question budget_default_recipients_off {
 
 // ---- what a project may ask for ---------------------------------------------------
 
-request budgets {
+entries budgets {
   key         = "name"
   fields      = ["name", "amount", "projects", "folders", "email", "import_id"]
   patterns    = { name = "[a-z][a-z0-9-]*" amount = "[0-9]+" email = "([^@: ]+@[^@: ]+)?" }

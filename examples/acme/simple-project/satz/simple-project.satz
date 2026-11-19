@@ -33,7 +33,7 @@ inputs {
 
 params {
   // The workload's identity, as the organization's delegation pack created it for
-  // `shop` and published it in the interface `delegation-shop` (`deploy_project_id`, `iac_account`,
+  // `shop` and published it in the interface `delegation-shop` (`infrastructure_project_id`, `estate_account`,
   // `state_bucket`): the project the plan is billed to and the state lives in, the account
   // the plan runs as, the state bucket. Example values: replace them with your workload's.
   infra_project_name = "acme-deploy-shop"

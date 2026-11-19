@@ -94,7 +94,7 @@ packs are switched on, and each list gets one entry:
 ```bash
 satz add-preset C0example.satz use_delegation
 satz add-preset C0example.satz use_delegated_folders
-satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com
+satz add-entry C0example.satz delegations name=shop estate_account_user_group=gcp-shop-admins@example.com
 satz add-entry C0example.satz delegated_folders name=shop delegation=shop display_name=Shop
 satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
@@ -106,16 +106,14 @@ when the estate transpiles. In `C0example.satz` the four commands leave:
 
 ```
 params {
-  use_delegation            = true
-  use_delegated_folders     = true
-  delegation_project_folder = "google_folder.infra_folder.name"
-  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
-  delegated_folders         = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
+  use_delegation        = true
+  use_delegated_folders = true
+  delegations           = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]
+  delegated_folders     = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
 }
 ```
 
-`delegation_project_folder` is a question, which `satz interview` asks when it is not
-bound. The apply creates, for the delegation `shop`:
+The apply creates, for the delegation `shop`:
 
 | what | the delegation's |
 |---|---|
@@ -338,7 +336,7 @@ and its delegated project is an entry of
 
 ```bash
 satz add-preset C0example.satz use_delegated_projects
-satz add-entry C0example.satz delegations name=payments owner_group=payments-owners@example.com
+satz add-entry C0example.satz delegations name=payments estate_account_user_group=payments-owners@example.com
 satz add-entry C0example.satz delegated_projects name=payments delegation=payments
 satz transpile C0example.satz --plan
 satz transpile C0example.satz --apply
@@ -351,8 +349,8 @@ params {
   use_delegated_projects    = true
   delegated_projects_folder = "google_folder.workload_folder.name"
   delegations               = [
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
-    { name = "payments" owner_group = "payments-owners@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
+    { name = "payments" estate_account_user_group = "payments-owners@example.com" },
   ]
   delegated_projects        = [{ name = "payments" delegation = "payments" }]
 }
@@ -364,7 +362,7 @@ Google project `acme-payments-001` under `Workloads`. The project holds no accou
 bucket. The account holds the project's access control and its services on that project
 and nowhere else; the members of `payments-owners@example.com` read the infrastructure
 project and may become the account. `interfaces/outgoing/delegation-payments/` publishes
-`deploy_project_id`, `iac_account`, `state_bucket`, and what was delegated beside the
+`infrastructure_project_id`, `estate_account`, `state_bucket`, and what was delegated beside the
 delegated project: `delegated_billing_roles` and `delegated_apis`. `interfaces/outgoing/payments/`
 publishes `project_id`, `project_number`, `delegated_project_roles` and
 `delegated_budgets`.
@@ -404,7 +402,7 @@ and projects, and one estate reads them all. The organization gives the delegati
 two projects, `data-lake` and `data-mart`:
 
 ```bash
-satz add-entry C0example.satz delegations name=data owner_group=data-owners@example.com
+satz add-entry C0example.satz delegations name=data estate_account_user_group=data-owners@example.com
 satz add-entry C0example.satz delegated_projects name=data-lake delegation=data
 satz add-entry C0example.satz delegated_projects name=data-mart delegation=data
 ```
@@ -412,9 +410,9 @@ satz add-entry C0example.satz delegated_projects name=data-mart delegation=data
 ```
 params {
   delegations        = [
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
-    { name = "payments" owner_group = "payments-owners@example.com" },
-    { name = "data" owner_group = "data-owners@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
+    { name = "payments" estate_account_user_group = "payments-owners@example.com" },
+    { name = "data" estate_account_user_group = "data-owners@example.com" },
   ]
   delegated_projects = [
     { name = "payments" delegation = "payments" },

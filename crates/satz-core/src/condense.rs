@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn a_literal_is_referenced_only_between_boundaries_and_the_longest_wins() {
         let table = [
-            sub("svc-iac-001-users", "svc_iac_users_group"),
+            sub("svc-iac-001-users", "estate_account_user_group"),
             sub("acme-infra-001", "infra_project_name"),
             sub("europe-west3-a", "default_zone"),
             sub("europe-west3", "default_region"),
@@ -350,7 +350,7 @@ mod tests {
         assert!(print(&top).contains("v = \"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\""), "{}", print(&top));
         let mut top = doc("google_x:\n  y:\n    v: 'group:svc-iac-001-users@example.com'\n");
         condense(&mut top, &shaping(None, &table));
-        assert!(print(&top).contains("v = \"group:{svc_iac_users_group}@{customer_domain}\""), "the longest literal wins:\n{}", print(&top));
+        assert!(print(&top).contains("v = \"group:{estate_account_user_group}@{customer_domain}\""), "the longest literal wins:\n{}", print(&top));
         let mut top = doc("google_x:\n  y:\n    v: acme-log-001\n    w: acmecorp-log\n    z: europe-west3-a\n");
         condense(&mut top, &shaping(None, &table));
         let out = print(&top);

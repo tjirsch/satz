@@ -1254,7 +1254,7 @@ fn render(
         }
     }
     if !file.requests.is_empty() {
-        md.push_str("## Requests\n\n");
+        md.push_str("## List params\n\n");
         md.push_str("What a project may add to this pack's lists, through `contributes_<param>` in a file the estate uses after a reviewed pull request; `satz check-request` checks such a file.\n\n");
         md.push_str("| list | key | fields | description |\n|---|---|---|---|\n");
         for r in &file.requests {

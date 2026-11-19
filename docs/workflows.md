@@ -527,13 +527,13 @@ them and is complete; one the interview wrote is complete when it says so.
 | `customer_longname` | `""` | The full legal name of the customer entity. |
 | `customer_shortname` | `""` | A unique slug for the customer. Names that must be globally unique derive from it. |
 | `svc_iac_account` | `"svc-iac-001"` | The primary estate account. |
-| `svc_iac_users_group` | `"svc-iac-users"` | The estate account user group. |
+| `estate_account_user_group` | `"svc-iac-users"` | The estate account user group. |
 | `billing_account_infra` | `""` | The billing account id (e.g. `012345-6789AB-CDEF01`). |
 | `deployment_engine` | `"tofu"` | The IaC tool: `tofu` or `terraform`. |
 | `deployment_mode` | `"local"` | `local` for the bootstrap (the signed-in person); `cloud` after it (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
 | `default_zone` | `"europe-west3-a"` | Default zone for zonal resources. |
-| `workload_folder_name` | `""` (from `--workload-folder-name`) | The folder where the customer's and the projects' folders live; `""` is the organization, and nothing is created for it. |
+| `workload_folder_name` | unbound: answered in `satz interview` or satz-studio | Required: the display name of the workload folder, directly under the organization, which holds the delegated resources of workloads. An empty answer is refused. |
 | `compliance_frameworks` | `["cis-gcp-5.0"]` | The frameworks this customer is HELD TO, as catalog ids from `presets/catalogs/` (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`) — a contract, an auditor, a regulator. Not what the estate claims, which comes from its packs. A value naming no catalog is refused by the transpile. |
 
 ### Tear the estate down
@@ -764,7 +764,7 @@ platform states and what the sweep implies: the sign-in gives `customer_id`,
 `customer_domain`, `first_admin` and a single open billing account; the service
 account granted organizationAdmin at the organization gives `svc_iac_account` and
 `infra_project_name`, and that project its folder, its versioned bucket and its
-billing account; the members give `svc_iac_users_group`; the regional resources give
+billing account; the members give `estate_account_user_group`; the regional resources give
 `default_region`; the leading token of the project and bucket names gives
 `customer_shortname`, unless `--customer-shortname` says. A value a rule chose carries
 `// inferred:` with the rule and its evidence; a value nothing states is left out and
@@ -843,11 +843,12 @@ An export outside every `interface` block is a core export, and every interface 
 it. An estate that uses `presets/estate-core.satz` publishes the core exports without
 writing any: `organization_id`, `customer_domain`, `customer_shortname`,
 `default_region`, `infra_project_id` and `iac_service_account`. An estate `satz init`
-writes also exports `infra_folder` and `workload_folder`.
+writes also exports `infra_folder`, and `workload_folder` once `workload_folder_name` is
+answered.
 
-**`workload_folder`** is the parent every workload estate's folder takes: `organizations/<id>`, or
-`folders/<number>` of the folder `satz init --workload-folder-name <name>` declares
-directly under the organization. A workload estate creates its folders under it:
+**`workload_folder`** is the parent every workload estate's folder takes: `folders/<number>`
+of the folder the answer `workload_folder_name = "<name>"` declares directly under the
+organization. A workload estate creates its folders under it:
 
 ```hcl
 resource "google_folder" "payments" {
@@ -856,21 +857,14 @@ resource "google_folder" "payments" {
 }
 ```
 
-`init` writes the section that publishes it, in the form its flag names, and `satz
-interview` writes it when `workload_folder_name` is answered. The folder block stands at
-the top level, so its parent is the organization; to put the workload folder inside
-another folder — a top-level folder named after the organization — move the
+`satz interview` and satz-studio write the section that declares and publishes it when
+`workload_folder_name` is answered; `init` leaves it open. The folder block stands at the
+top level, so its parent is the organization; to put the workload folder inside another
+folder — a top-level folder named after the organization — move the
 `workload_folder { … }` block into that folder's block, and the interface's lookup
-follows the parents. An estate without the section does not publish `workload_folder`
-and adds it by hand — for the organization, with `workload_folder_name = ""`, the one
-line
-
-```
-export "workload_folder" = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live"
-```
-
-and for a folder, with `workload_folder_name` bound to its display name, the folder
-itself and its lookup:
+follows the parents. An estate without the section adds it by hand, with
+`workload_folder_name` bound to the folder's display name — the folder itself and its
+lookup:
 
 ```
 google_folder {
@@ -879,12 +873,11 @@ google_folder {
   }
 }
 
-export "workload_folder" = "${{google_folder.workload_folder.name}}" description "Where the customer's and the projects' folders live"
+export "workload_folder" = "${{google_folder.workload_folder.name}}" description "The workload folder, directly under the organization, that holds the delegated resources of workloads: folders/<number>"
 ```
 
-The transpile refuses a name and a section that disagree, at the line to edit: a name with
-no `export "workload_folder"` or with the organization's, and an empty name with a
-folder's.
+The transpile refuses, at the line to edit, a `workload_folder_name` bound `""`, a name
+with no `export "workload_folder"`, and a name beside an export of the organization.
 
 Google refuses a second folder of one name under one parent, so a folder the customer
 already has is imported first: `satz adopt <estate> --execute --import` finds it by its
@@ -1064,19 +1057,18 @@ it names the delegation whose estate account works in it — one entry of `deleg
 ```
 params {
   delegations = [
-    { name = "payments" owner_group = "payments-owners@example.com" },
+    { name = "payments" estate_account_user_group = "payments-owners@example.com" },
   ]
   delegated_projects = [
     { name = "payments" delegation = "payments" },
   ]
-  delegated_projects_folder = "google_folder.workload_folder.name"
 }
 
 use "presets/delegation.satz" when use_delegation
 use "presets/delegated-projects.satz" when use_delegated_projects
 ```
 
-`satz add-entry <estate> delegations name=payments owner_group=payments-owners@example.com`
+`satz add-entry <estate> delegations name=payments estate_account_user_group=payments-owners@example.com`
 and `satz add-entry <estate> delegated_projects name=payments delegation=payments` write
 the two entries: each is checked against the pack's declaration and kept only when the
 estate transpiles.
@@ -1087,14 +1079,14 @@ Per entry of `delegations` the base declares the delegation's infrastructure pro
 reads that project and may act as the estate account), and publishes the interface `delegation-payments`.
 Per entry of `delegated_projects` the preset declares the Google project
 `{customer_shortname}-payments-001` under `delegated_projects_folder` — the workload
-folder here; empty is the organization — with no account and no bucket in it, the grants
+folder unless the estate names another — with no account and no bucket in it, the grants
 (the delegation's estate account takes the project's IAM and its services, so its
 workload estate grants its own account the rest, on the project), and the project's interface, written once per
 entry. A second entry that names the same delegation, `{ name = "shop-backend" delegation
 = "shop" }`, is a second project for the same account: one account works in several
 projects, and one estate reads them all, each by the name of its interface folder. The account's calls are billed to the delegation's infrastructure project, so an
 API a call needs is in `apis` of the delegation's entry. The transpile refuses
-an entry whose `owner_group` is not an address `<name>@<domain>` or whose `name` is not
+an entry whose `estate_account_user_group` is not an address `<name>@<domain>` or whose `name` is not
 lowercase letters, digits and `-` starting with a letter, naming the entry and the value,
 and an entry of `delegated_projects` that names a delegation no entry of `delegations`
 declares:
@@ -1110,13 +1102,13 @@ each delegated_projects by name {
 }
 ```
 
-The interface `delegation-payments` carries the estate account: `deploy_project_id`,
-`iac_account`, `state_bucket`, the estate account user group, and `delegated_billing_roles` and
+The interface `delegation-payments` carries the estate account: `infrastructure_project_id`,
+`estate_account`, `state_bucket`, the estate account user group, and `delegated_billing_roles` and
 `delegated_apis`.
 
 An entry is the estate's own, or the workload estate's request: `contributes_delegated_projects = [ … ]` in
 a small pack of the workload estate's, checked with `satz check-request` and vendored into the
-estate by pull request ([language §6.17](language.md#request--what-a-workload-estate-may-add-to-a-list-param)). The pull request
+estate by pull request ([language §6.17](language.md#entries--what-one-entry-of-a-list-param-looks-like)). The pull request
 is the request's review; the apply creates the project; `satz transpile` writes
 `interfaces/outgoing/delegation-payments/` and `interfaces/outgoing/payments/`. Two
 entries of one name are refused.
@@ -1154,8 +1146,8 @@ already, and writes `config.toml` and `satz/payments.satz` from the interface fi
 sign-in is needed. Exactly one of the folders is a delegation's own, because an estate
 runs as one estate account;
  every other is a delegated folder or project, any number of them.
-`--name` names the estate, which otherwise takes the delegation's name. It reads `deploy_project_id`,
-`iac_account`, `state_bucket` and the core export `default_region` (an organization's estate
+`--name` names the estate, which otherwise takes the delegation's name. It reads `infrastructure_project_id`,
+`estate_account`, `state_bucket` and the core export `default_region` (an organization's estate
 without `estate-core.satz` publishes none and is refused), and writes `default_region`,
 `default_zone` and `deployment_engine` beside these: `infra_project_name` is the
 delegation's infrastructure project, `infra_bucket_name` its state bucket,
@@ -1319,7 +1311,7 @@ a list param through a `contributes_<param>` param — vendored into the organiz
 pull request, as the next section says.
 
 **What a workload estate may ask for is declared.** A list param that takes requests
-carries a `request` declaration — the field that names an entry and the fields an entry
+carries an `entries` statement — the field that names an entry and the fields an entry
 may carry — and every interface's `README.md` lists them under *What you may request*. The
 workload's team writes
 its entries as a small pack:
