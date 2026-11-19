@@ -473,8 +473,9 @@ A note `presets/pack-graph.json is not here` is about the organization's preset 
 which a workload repository does not hold. It asks nothing of the team.
 
 **Workload packs.** What a team builds can come as a pack: `satz packs --format text --out -`
-lists the ones the satz repository holds and says what each needs — a delegated folder or
-a delegated project — and `satz get-pack <name>` fetches one. `project-budget` is such a
+lists the ones its pack sources hold (the satz repository, and each one `config.toml`
+names) and says what each needs — a delegated folder or a delegated project — and `satz
+get-pack <name>` fetches one. `project-budget` is such a
 pack: with `budgets = true` on the project's entry it creates a budget for the delegated
 project, after two questions (the amount, the currency) and an address to tell.
 

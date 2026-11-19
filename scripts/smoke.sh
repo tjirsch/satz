@@ -682,7 +682,8 @@ assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and ba
 assert folder["folder"] is True and "account" not in folder, folder
 PY2
 "$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
-"$satz" --config tmp/bud/team packs --from "$root/packs" --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
+"$satz" --config tmp/bud/team pack-source add repo --dir "$root/packs" > /dev/null 2>&1 || fail "pack-source add failed on the workload estate"
+"$satz" --config tmp/bud/team packs --source repo --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
 grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
 # the same estate in the project that was not: told what to ask for, and how
 bud_estate tmp/bud/plain plain
@@ -1688,69 +1689,123 @@ grep -q 'acme-logs-eu' tmp/prq/presets/logs.local.satz && fail "the fork carries
   || fail "a second merge-presets needs attention:\n$(cat tmp/prq-again.txt)"
 grep -q 'forked logs\|estate edit' tmp/prq-again.txt && fail "a second merge-presets edited the estate again:\n$(cat tmp/prq-again.txt)"
 
-step "workload packs: get-pack records an origin, update-pack writes a pack that is as fetched and never one that was edited or is the repository's own"
-rm -rf tmp/wp && mkdir -p tmp/wp/est tmp/wp/up/sub
-printf 'include_dirs = [".", "satz"]\n' > tmp/wp/est/config.toml
+step "get-presets reads the preset library [preset_library] names instead of satz's"
+rm -rf tmp/lib && mkdir -p tmp/lib/est tmp/lib/library/presets
+printf 'presets_dir = "presets"\n\n[preset_library]\ndir = "../library"\n' > tmp/lib/est/config.toml
+printf '// A pack of the replacement library.\npack mine version "1.0"\n' > tmp/lib/library/presets/mine.satz
+printf '# the library\n' > tmp/lib/library/presets/README.md
+"$satz" --config tmp/lib/est/config.toml get-presets > tmp/lib-get.txt 2>&1 || fail "get-presets from [preset_library] failed:\n$(cat tmp/lib-get.txt)"
+cmp -s tmp/lib/library/presets/mine.satz tmp/lib/est/presets/mine.satz && [ -f tmp/lib/est/presets/README.md ] || fail "get-presets did not install the library's files:\n$(cat tmp/lib-get.txt)"
+rm tmp/lib/library/presets/mine.satz
+if "$satz" --config tmp/lib/est/config.toml get-presets > tmp/lib-empty.txt 2>&1; then fail "get-presets took a library without a pack"; fi
+grep -q '\[preset_library\] dir = "../library"' tmp/lib-empty.txt || fail "the refusal must name the table:\n$(cat tmp/lib-empty.txt)"
+
+step "workload packs: a folder is a named pack source, get-pack records it, update-pack follows the record and writes a pack that is as fetched and never one that was edited or is the repository's own"
+rm -rf tmp/wp && mkdir -p tmp/wp/est tmp/wp/up/sub tmp/wp/other
+printf '# the estate'"'"'s settings\ninclude_dirs = [".", "satz"]\n' > tmp/wp/est/config.toml
 wp_pack() { printf '// A demo pack.\npack %s version "%s"\n' "$1" "$2"; }
 wp() { "$satz" --config tmp/wp/est/config.toml "$@"; }
 wp_pack demo 1.0 > tmp/wp/up/demo.satz
 wp_pack nested 0.3 > tmp/wp/up/sub/nested.satz
-wp packs --from tmp/wp/up --format json --out tmp/wp/list0.json > /dev/null 2>&1 || fail "satz packs failed on an empty packs_dir"
-wp get-pack demo --from tmp/wp/up > tmp/wp/get.txt 2>&1 || fail "get-pack failed:\n$(cat tmp/wp/get.txt)"
+# the sources: added to config.toml, which keeps what it held; listed with the built-in one
+if wp pack-source add up --dir ../nowhere > tmp/wp/src-bad.txt 2>&1; then fail "pack-source add took a folder that is not there"; fi
+wp pack-source add up --dir ../up > tmp/wp/src-add.txt 2>&1 || fail "pack-source add failed:\n$(cat tmp/wp/src-add.txt)"
+wp pack-source add other --dir ../other > /dev/null 2>&1 || fail "pack-source add of a second folder failed"
+if wp pack-source add up --dir ../other > tmp/wp/src-twice.txt 2>&1; then fail "pack-source add took a name twice"; fi
+grep -q "^# the estate's settings$" tmp/wp/est/config.toml && grep -q '^include_dirs = \[".", "satz"\]$' tmp/wp/est/config.toml || fail "pack-source add lost what config.toml held:\n$(cat tmp/wp/est/config.toml)"
+wp pack-source list --format json > tmp/wp/sources.json 2> tmp/wp/sources.err || fail "pack-source list failed:\n$(cat tmp/wp/sources.err)"
+python3 - <<'PYEOF' || fail "pack-source list did not list the sources:\n$(cat tmp/wp/sources.json)"
+import json
+rows = json.load(open("tmp/wp/sources.json"))["sources"]
+assert [r["name"] for r in rows] == ["satz", "up", "other"], rows
+assert rows[0]["builtin"] and rows[0]["github"] and rows[0]["path"] == "packs", rows[0]
+assert rows[1] == {"name": "up", "builtin": False, "github": None, "ref": None, "path": None, "dir": "../up"}, rows[1]
+PYEOF
+wp packs --source up --format json --out tmp/wp/list0.json > /dev/null 2>&1 || fail "satz packs --source failed on an empty packs_dir"
+wp get-pack demo --source up > tmp/wp/get.txt 2>&1 || fail "get-pack --source failed:\n$(cat tmp/wp/get.txt)"
 cmp -s tmp/wp/up/demo.satz tmp/wp/est/packs/demo.satz || fail "get-pack did not install the pack:\n$(cat tmp/wp/get.txt)"
 grep -q 'use "packs/demo.satz"' tmp/wp/get.txt || fail "get-pack did not print the use line:\n$(cat tmp/wp/get.txt)"
-grep -q '^source = "dir"$' tmp/wp/est/packs/origin.toml || fail "the origin record names no source:\n$(cat tmp/wp/est/packs/origin.toml)"
-if wp get-pack demo --from tmp/wp/up > tmp/wp/again.txt 2>&1; then fail "a second get-pack overwrote a pack that is there"; fi
+grep -q '^source = "up"$' tmp/wp/est/packs/origin.toml && grep -q '^dir = "../up"$' tmp/wp/est/packs/origin.toml || fail "the origin record names no source and folder:\n$(cat tmp/wp/est/packs/origin.toml)"
+if wp get-pack demo --source up > tmp/wp/again.txt 2>&1; then fail "a second get-pack overwrote a pack that is there"; fi
 grep -q 'update-pack demo' tmp/wp/again.txt || fail "the refusal must name update-pack:\n$(cat tmp/wp/again.txt)"
-# behind: reported and not written with --report-only, written without it
+if wp get-pack demo --source nowhere > tmp/wp/unknown.txt 2>&1; then fail "get-pack read a source config.toml does not name"; fi
+grep -q 'no pack source `nowhere`' tmp/wp/unknown.txt || fail "the refusal must name the source:\n$(cat tmp/wp/unknown.txt)"
+# behind: reported and not written with --report-only, written without it — read from the recorded source
 wp_pack demo 1.1 > tmp/wp/up/demo.satz
-wp update-pack demo --from tmp/wp/up --report-only > tmp/wp/report.txt 2>&1 || fail "update-pack --report-only failed:\n$(cat tmp/wp/report.txt)"
-grep -q '1.0 → 1.1  behind' tmp/wp/report.txt || fail "the pack is not reported behind:\n$(cat tmp/wp/report.txt)"
+wp update-pack demo --report-only > tmp/wp/report.txt 2>&1 || fail "update-pack --report-only failed:\n$(cat tmp/wp/report.txt)"
+grep -q '1.0 → 1.1  from up  behind' tmp/wp/report.txt || fail "the pack is not reported behind:\n$(cat tmp/wp/report.txt)"
 grep -q 'version "1.0"' tmp/wp/est/packs/demo.satz || fail "--report-only wrote the pack"
-wp update-pack demo --from tmp/wp/up > tmp/wp/update.txt 2>&1 || fail "update-pack failed:\n$(cat tmp/wp/update.txt)"
+wp update-pack demo > tmp/wp/update.txt 2>&1 || fail "update-pack failed:\n$(cat tmp/wp/update.txt)"
 cmp -s tmp/wp/up/demo.satz tmp/wp/est/packs/demo.satz || fail "update-pack did not write the pack:\n$(cat tmp/wp/update.txt)"
 grep -q '^version = "1.1"$' tmp/wp/est/packs/origin.toml || fail "the origin record did not follow the update"
 # edited: left byte-identical, exit 1, the difference printed; --take-upstream overwrites
 printf '// mine\n' >> tmp/wp/est/packs/demo.satz
 cp tmp/wp/est/packs/demo.satz tmp/wp/edited.satz
 wp_pack demo 1.2 > tmp/wp/up/demo.satz
-if wp update-pack demo --from tmp/wp/up > tmp/wp/edited.txt 2>&1; then fail "update-pack exited 0 on an edited pack:\n$(cat tmp/wp/edited.txt)"; fi
+if wp update-pack demo > tmp/wp/edited.txt 2>&1; then fail "update-pack exited 0 on an edited pack:\n$(cat tmp/wp/edited.txt)"; fi
 cmp -s tmp/wp/edited.satz tmp/wp/est/packs/demo.satz || fail "update-pack wrote a pack that was edited"
 grep -q 'edited — left as it is' tmp/wp/edited.txt || fail "the edited pack is not reported:\n$(cat tmp/wp/edited.txt)"
 grep -q '^    -// mine$' tmp/wp/edited.txt || fail "the difference is not printed:\n$(cat tmp/wp/edited.txt)"
-wp update-pack demo --from tmp/wp/up --take-upstream > tmp/wp/take.txt 2>&1 || fail "update-pack --take-upstream failed:\n$(cat tmp/wp/take.txt)"
+wp update-pack demo --take-upstream > tmp/wp/take.txt 2>&1 || fail "update-pack --take-upstream failed:\n$(cat tmp/wp/take.txt)"
 cmp -s tmp/wp/up/demo.satz tmp/wp/est/packs/demo.satz || fail "--take-upstream did not write the source's file"
 # the repository's own pack: no row, never written — also when the source gains one of its id
 wp_pack own 9.0 > tmp/wp/est/packs/own.satz
 wp_pack own 1.0 > tmp/wp/up/own.satz
-wp update-pack --all --from tmp/wp/up > tmp/wp/all.txt 2>&1 || fail "update-pack --all failed:\n$(cat tmp/wp/all.txt)"
+wp update-pack --all > tmp/wp/all.txt 2>&1 || fail "update-pack --all failed:\n$(cat tmp/wp/all.txt)"
 grep -q '^own' tmp/wp/all.txt && fail "update-pack --all looked at a pack without a row:\n$(cat tmp/wp/all.txt)"
-if wp update-pack own --from tmp/wp/up > tmp/wp/own.txt 2>&1; then fail "update-pack wrote the repository's own pack"; fi
-if wp get-pack own --from tmp/wp/up >> tmp/wp/own.txt 2>&1; then fail "get-pack overwrote the repository's own pack"; fi
+if wp update-pack own > tmp/wp/own.txt 2>&1; then fail "update-pack wrote the repository's own pack"; fi
+if wp get-pack own --source up >> tmp/wp/own.txt 2>&1; then fail "get-pack overwrote the repository's own pack"; fi
 grep -q 'version "9.0"' tmp/wp/est/packs/own.satz || fail "the repository's own pack was written:\n$(cat tmp/wp/own.txt)"
-wp get-pack --all --from tmp/wp/up > tmp/wp/getall.txt 2>&1 || fail "get-pack --all failed:\n$(cat tmp/wp/getall.txt)"
+wp get-pack --all --source up > tmp/wp/getall.txt 2>&1 || fail "get-pack --all failed:\n$(cat tmp/wp/getall.txt)"
 [ -f tmp/wp/est/packs/sub/nested.satz ] || fail "get-pack --all did not fetch the nested pack:\n$(cat tmp/wp/getall.txt)"
-wp packs --from tmp/wp/up --format json --out tmp/wp/list.json > /dev/null 2>&1 || fail "satz packs failed"
+wp packs --source up --format json --out tmp/wp/list.json > /dev/null 2>&1 || fail "satz packs failed"
 python3 - <<'PYEOF' || fail "satz packs did not report the states"
 import json
 before = {p["id"]: p["state"] for p in json.load(open("tmp/wp/list0.json"))["packs"]}
 assert before == {"demo": "available", "sub/nested": "available"}, before
-after = {p["id"]: p for p in json.load(open("tmp/wp/list.json"))["packs"]}
+report = json.load(open("tmp/wp/list.json"))
+assert [s["name"] for s in report["sources"]] == ["up"] and report["sources"][0]["location"] == "../up", report["sources"]
+after = {p["id"]: p for p in report["packs"]}
 assert {i: p["state"] for i, p in after.items()} == {"demo": "current", "own": "own", "sub/nested": "current"}, after
 assert after["sub/nested"]["use_line"] == 'use "packs/sub/nested.satz"', after["sub/nested"]
-assert after["own"]["source"] is None and after["demo"]["source"] == "dir", after
+assert after["own"]["source"] is None and after["demo"]["source"] == "up", after
 PYEOF
+# --source on update-pack: the packs of another source are not checked
+wp update-pack --all --source other > tmp/wp/only.txt 2>&1 || fail "update-pack --source failed:\n$(cat tmp/wp/only.txt)"
+grep -q '^demo .*from up  not checked' tmp/wp/only.txt || fail "a pack of another source was checked:\n$(cat tmp/wp/only.txt)"
+# a source an origin record names is not removed; detach, then it is
+if wp pack-source remove up > tmp/wp/src-rm.txt 2>&1; then fail "pack-source remove dropped a source the origin record names"; fi
+grep -q 'detach-pack' tmp/wp/src-rm.txt || fail "the refusal must name detach-pack:\n$(cat tmp/wp/src-rm.txt)"
 # detach: the row goes, the file stays, and no update looks at it again
 wp detach-pack demo > tmp/wp/detach.txt 2>&1 || fail "detach-pack failed:\n$(cat tmp/wp/detach.txt)"
 [ -f tmp/wp/est/packs/demo.satz ] || fail "detach-pack removed the file"
-wp update-pack --all --from tmp/wp/up > tmp/wp/after-detach.txt 2>&1 || fail "update-pack --all failed after a detach:\n$(cat tmp/wp/after-detach.txt)"
+wp update-pack --all > tmp/wp/after-detach.txt 2>&1 || fail "update-pack --all failed after a detach:\n$(cat tmp/wp/after-detach.txt)"
 grep -q '^demo' tmp/wp/after-detach.txt && fail "a detached pack is still updated:\n$(cat tmp/wp/after-detach.txt)"
-# a row whose kind of source this run does not read, and a record that does not parse
-if wp update-pack sub/nested > tmp/wp/kind.txt 2>&1; then fail "update-pack read the satz repository for a pack fetched from a folder"; fi
-grep -q 'pass the folder with `--from <dir>`' tmp/wp/kind.txt || fail "the refusal must name --from:\n$(cat tmp/wp/kind.txt)"
+# the record of an earlier release, a source config.toml does not name, and a record that does not parse
+cp tmp/wp/est/packs/origin.toml tmp/wp/origin.good
+sed 's/^source = "up"$/source = "dir"/' tmp/wp/origin.good > tmp/wp/est/packs/origin.toml
+if wp update-pack --all > tmp/wp/old.txt 2>&1; then fail "a row of the old form was accepted"; fi
+grep -q 'satz pack-source add <name> --dir <folder>' tmp/wp/old.txt || fail "the refusal must name the edit:\n$(cat tmp/wp/old.txt)"
+sed 's/^source = "up"$/source = "gone"/' tmp/wp/origin.good > tmp/wp/est/packs/origin.toml
+if wp update-pack --all > tmp/wp/gone.txt 2>&1; then fail "a row whose source config.toml does not name was accepted"; fi
+grep -q '`gone`, which config.toml does not name' tmp/wp/gone.txt || fail "the refusal must name the source:\n$(cat tmp/wp/gone.txt)"
+# a GitHub row records its repository: one config.toml names another for the source is refused before anything is read
+cp tmp/wp/est/config.toml tmp/wp/config.good
+printf '\n[[pack_source]]\nname = "remote"\ngithub = "acme/packs"\n' >> tmp/wp/est/config.toml
+printf '[[pack]]\nid = "sub/nested"\nsource = "remote"\ngithub = "acme/old-packs"\ncommit = "0123456789abcdef0123456789abcdef01234567"\nversion = "0.3"\nsha256 = "x"\n' > tmp/wp/est/packs/origin.toml
+if wp update-pack --all > tmp/wp/repo.txt 2>&1; then fail "a row whose repository config.toml no longer names was accepted"; fi
+grep -q 'fetched from github.com/acme/old-packs/packs as `remote`, and config.toml names github.com/acme/packs/packs' tmp/wp/repo.txt && grep -q 'write github = "acme/packs" and no `path`' tmp/wp/repo.txt || fail "the refusal must name both repositories and the edit:\n$(cat tmp/wp/repo.txt)"
+cp tmp/wp/config.good tmp/wp/est/config.toml
 printf 'nonsense = [\n' > tmp/wp/est/packs/origin.toml
-if wp update-pack --all --from tmp/wp/up > tmp/wp/corrupt.txt 2>&1; then fail "a record that does not parse was accepted"; fi
+if wp update-pack --all > tmp/wp/corrupt.txt 2>&1; then fail "a record that does not parse was accepted"; fi
 grep -q 'origin.toml: not a valid origin record' tmp/wp/corrupt.txt || fail "the refusal must name the record:\n$(cat tmp/wp/corrupt.txt)"
+rm tmp/wp/est/packs/origin.toml
+wp pack-source remove up > /dev/null 2>&1 && wp pack-source remove other > /dev/null 2>&1 || fail "pack-source remove failed"
+grep -q 'pack_source' tmp/wp/est/config.toml && fail "pack-source remove left a table:\n$(cat tmp/wp/est/config.toml)"
+# a broken source in config.toml stops every command, by what is wrong
+printf '[[pack_source]]\nname = "x"\ngithub = "acme/packs"\ndir = "up"\n' >> tmp/wp/est/config.toml
+if wp packs --source up --format text --out - > tmp/wp/broken.txt 2>&1; then fail "a source with both github and dir was accepted"; fi
+grep -q 'names both `github` and `dir`' tmp/wp/broken.txt || fail "the refusal must say what is wrong:\n$(cat tmp/wp/broken.txt)"
 
 step "the repository's workload packs clear the bar (satz review-pack)"
 for pack in "$root"/packs/*.satz; do
@@ -2425,7 +2480,8 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
                       "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_preset", "satz_fmt",
                       "satz_presets", "satz_add_preset", "satz_add_entry", "satz_remove_preset", "satz_check_consumer",
-                      "satz_packs", "satz_get_pack", "satz_update_pack", "satz_detach_pack", "satz_review_pack"}, sorted(tools)
+                      "satz_packs", "satz_get_pack", "satz_update_pack", "satz_detach_pack", "satz_review_pack",
+                      "satz_pack_sources"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -3018,13 +3074,17 @@ assert all(e["kind"] in ("pack", "note") for e in merged["events"]), [e["kind"] 
 PYEOF
 [ -s tmp/gp/presets/cis/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
 
-step "satz mcp: the workload-pack tools fetch, update, list, detach and review inside the root"
+step "satz mcp: the workload-pack tools list the sources, fetch, update, list, detach and review inside the root"
 rm -rf tmp/wpm && mkdir -p tmp/wpm/yaml tmp/wpm/up
 cat > tmp/wpm/config.toml <<'WPMEOF'
 yaml_dir = "yaml"
 hcl_dir = "hcl"
 include_dirs = [".", "yaml"]
 tf_tool = "tofu"
+
+[[pack_source]]
+name = "up"
+dir = "up"
 WPMEOF
 cp -R "$root/tests/schemas" tmp/wpm/schemas
 printf '%s\n' 'estate wpm' '' 'params {' '  customer_organization_id = "123456789012"' '}' '' 'terraform {' '  backend {' '    local { path = "terraform.tfstate" }' '  }' '}' > tmp/wpm/yaml/wpm.satz
@@ -3033,14 +3093,15 @@ cp "$root/packs/workload-project.satz" tmp/wpm/up/workload-project.satz
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"satz_open","arguments":{"config":".","estate":"wpm.satz"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_packs","arguments":{"from":"up"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","from":"up"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","from":"up"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_update_pack","arguments":{"all":true,"from":"up","report_only":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_packs","arguments":{"source":"up"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","source":"up"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","source":"up"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_update_pack","arguments":{"all":true,"report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"satz_review_pack","arguments":{"pack":"packs/workload-project.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"satz_detach_pack","arguments":{"id":"workload-project"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"satz_packs","arguments":{"from":"up"}}}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"x","from":"../outside"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"satz_packs","arguments":{"source":"up"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"x","source":"nowhere"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"satz_pack_sources","arguments":{}}}'
 } > tmp/mcp-wpm-in.jsonl
 (cd tmp/wpm && python3 ../mcp-drive.py "$satz" mcp --root . --allow read,write < ../mcp-wpm-in.jsonl > ../mcp-wpm.jsonl 2>/dev/null) || true
 python3 - <<'PYEOF' || fail "the workload-pack tools did not behave"
@@ -3069,10 +3130,13 @@ upd = ok(6)
 assert [(p["id"], p["action"]) for p in upd["packs"]] == [("workload-project", "current")] and upd["attention"] is False, upd
 review = ok(7)
 assert not [f for f in review["findings"] if f["severity"] == "error"], review["findings"]
-assert ok(8) == {"id": "workload-project", "source": "dir"}, ok(8)
+assert got["source"] == "up" and got["location"] == "up" and got["commit"] is None, got
+assert [s["name"] for s in upd["sources"]] == ["up"] and upd["packs"][0]["source"] == "up", upd
+assert ok(8) == {"id": "workload-project", "source": "up"}, ok(8)
 assert [(p["id"], p["state"]) for p in ok(9)["packs"]] == [("workload-project", "own")], ok(9)
 assert not os.path.exists("tmp/wpm/packs/origin.toml"), "a record without rows is no file"
-refused(10)  # a folder outside the server's root
+assert "no pack source `nowhere`" in refused(10), refused(10)
+assert [(s["name"], s["builtin"], s["dir"]) for s in ok(11)["sources"]] == [("satz", True, None), ("up", False, "up")], ok(11)
 PYEOF
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"

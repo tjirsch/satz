@@ -1,6 +1,6 @@
 # 0083 — A workload pack is fetched one at a time, and its origin is recorded
 
-- **Status:** accepted
+- **Status:** accepted; where a pack comes from and what its row records of it are superseded by [ADR 0097](0097-pack-sources-live-in-config-toml.md) — named pack sources in `config.toml`, `--source <name>` where `--from <dir>` stood, and a row that names its source with the repository and commit or the folder it was read from
 - **Date:** 2026-11-11
 
 ## Context

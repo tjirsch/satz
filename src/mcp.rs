@@ -184,6 +184,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("get-pack", Parity::Tools(&["satz_get_pack"])),
     ("update-pack", Parity::Tools(&["satz_update_pack"])),
     ("detach-pack", Parity::Tools(&["satz_detach_pack"])),
+    ("pack-source", Parity::Tools(&["satz_pack_sources"])),
     ("review-pack", Parity::Tools(&["satz_review_pack"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
     ("merge-presets", Parity::Tools(&["satz_merge_presets"])),
@@ -710,9 +711,9 @@ pub(crate) struct ReviewPackArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct PacksArgs {
-    /// A folder of packs under the server's root to read instead of the satz repository
+    /// Read only this pack source — `satz`, or a name `satz_pack_sources` lists — instead of every one
     #[serde(default)]
-    pub from: Option<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -723,9 +724,10 @@ pub(crate) struct GetPackArgs {
     /// Every pack the source holds that `packs_dir` does not
     #[serde(default)]
     pub all: bool,
-    /// A folder of packs under the server's root to take it from instead of the satz repository
+    /// The pack source to fetch from — a name `satz_pack_sources` lists; `satz`, the satz
+    /// repository's `packs/`, when omitted
     #[serde(default)]
-    pub from: Option<String>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -736,9 +738,10 @@ pub(crate) struct UpdatePackArgs {
     /// Every pack with a recorded origin
     #[serde(default)]
     pub all: bool,
-    /// A folder of packs under the server's root to read instead of the satz repository
+    /// Only the packs fetched from this pack source; without it each pack is read from the
+    /// source its row in origin.toml names
     #[serde(default)]
-    pub from: Option<String>,
+    pub source: Option<String>,
     /// Report what would happen and write nothing
     #[serde(default)]
     pub report_only: bool,
@@ -1175,15 +1178,26 @@ impl SatzMcp {
             })
     }
 
-    /// The open estate with its `packs_dir` held inside the server's root, and where a
-    /// workload-pack tool reads packs from: `from`, a folder under the root, or the
-    /// satz repository.
-    fn pack_source(&self, from: Option<&str>) -> Result<(Open, crate::workload_packs::Source), CallToolResult> {
+    /// The open estate with its `packs_dir` and every folder pack source of its config
+    /// held inside the server's root: a workload-pack tool reads and writes nothing
+    /// outside it.
+    fn packs_estate(&self) -> Result<Open, CallToolResult> {
         let (open, _estate) = self.target(None)?;
         self.confine(PathBuf::from(&open.runtime.packs_dir))?;
-        let from = from.map(|f| self.file(f)).transpose()?;
-        let source = crate::workload_packs::Source::new(from).map_err(refused)?;
-        Ok((open, source))
+        for def in crate::pack_sources::defs(&open.runtime).map_err(refused)? {
+            if let crate::pack_sources::Location::Dir(written) = &def.location {
+                self.confine(crate::pack_sources::folder(&open.runtime, written))?;
+            }
+        }
+        Ok(open)
+    }
+
+    /// A `[preset_library] dir = …` of the open estate held inside the server's root.
+    fn library_confined(&self, open: &Open) -> Result<(), CallToolResult> {
+        if let crate::pack_sources::Library::Dir(written) = crate::pack_sources::library(&open.runtime).map_err(refused)? {
+            self.confine(crate::pack_sources::folder(&open.runtime, &written))?;
+        }
+        Ok(())
     }
 
     /// Any other path argument that must exist — a Prowler export, a pack, a library
@@ -1927,9 +1941,10 @@ impl SatzMcp {
         description = "The workload packs of the open estate's packs_dir, as `satz packs` lists them: each with its \
                        `state` — `own` (no recorded origin: the repository's own, which no tool writes), `current`, \
                        `behind`, `edited` (changed here since it was fetched), `gone` (the source holds it no longer), \
-                       `not-checked` (fetched from another kind of source than this call reads) — its version, the \
-                       source's version and the `use` line that reads it; and every pack the source holds that \
-                       packs_dir does not, as `available`. Reads the satz repository's `packs/` tree, or `from`.",
+                       `not-checked` (fetched from another source than `source` names) — its `source`, its version, the \
+                       source's version and the `use` line that reads it; and every pack a source holds that \
+                       packs_dir does not, as `available`, one row per source. Reads every pack source \
+                       `satz_pack_sources` lists, or the one `source` names.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn workload_packs(
@@ -1940,11 +1955,11 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Read, SERVES) {
             return Ok(Err(r));
         }
-        let (open, source) = match self.pack_source(args.from.as_deref()) {
+        let open = match self.packs_estate() {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::workload_packs::list(&open.runtime, &source).await {
+        match crate::workload_packs::list(&open.runtime, args.source.as_deref()).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
         }
@@ -1953,8 +1968,9 @@ impl SatzMcp {
     #[tool(
         name = "satz_get_pack",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::GetReport>(),
-        description = "Fetch one workload pack into the open estate's packs_dir, as `satz get-pack` does, and record \
-                       where it came from in packs_dir/origin.toml, so `satz_update_pack` keeps it current. Refused \
+        description = "Fetch one workload pack into the open estate's packs_dir from the pack source `source` names \
+                       (`satz` when omitted), as `satz get-pack` does, and record the source and its repository and commit or its folder \
+                       in packs_dir/origin.toml, so `satz_update_pack` keeps it current. Refused \
                        when packs_dir already holds a pack of that id — one fetched before is updated, one without \
                        a recorded origin is the repository's own. `all` fetches every pack the source holds that \
                        packs_dir lacks. Each installed pack carries the `use_line` an estate reads it with. Needs \
@@ -1969,7 +1985,7 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
-        let (open, source) = match self.pack_source(args.from.as_deref()) {
+        let open = match self.packs_estate() {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
@@ -1977,7 +1993,7 @@ impl SatzMcp {
             Ok(w) => w,
             Err(e) => return Ok(Err(refused(e))),
         };
-        match crate::workload_packs::get(&open.runtime, &source, &which).await {
+        match crate::workload_packs::get(&open.runtime, args.source.as_deref(), &which).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("get-pack: {}", e)))),
         }
@@ -1986,8 +2002,9 @@ impl SatzMcp {
     #[tool(
         name = "satz_update_pack",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::UpdateReport>(),
-        description = "Bring one fetched workload pack up to date with its source, as `satz update-pack` does; `all` \
-                       covers every pack with a recorded origin. Per pack, `action`: `current`; `updated` (unchanged \
+        description = "Bring one fetched workload pack up to date with the pack source its row names, as `satz \
+                       update-pack` does; `all` covers every pack with a recorded origin, `source` only those of one \
+                       source. Per pack, `action`: `current`; `updated` (unchanged \
                        since it was fetched, overwritten with the source's file); `would-update` (`report_only`); \
                        `edited` (changed here: left as it is, with the `diff` against the source's file and what to \
                        do in `note`); `took-upstream` (`take_upstream`: an edited pack overwritten); `gone`; \
@@ -2004,7 +2021,7 @@ impl SatzMcp {
         if let Err(r) = self.permits(group, SERVES) {
             return Ok(Err(r));
         }
-        let (open, source) = match self.pack_source(args.from.as_deref()) {
+        let open = match self.packs_estate() {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
@@ -2012,7 +2029,7 @@ impl SatzMcp {
             Ok(w) => w,
             Err(e) => return Ok(Err(refused(e))),
         };
-        match crate::workload_packs::update(&open.runtime, &source, &which, args.report_only, args.take_upstream).await {
+        match crate::workload_packs::update(&open.runtime, args.source.as_deref(), &which, args.report_only, args.take_upstream).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("update-pack: {}", e)))),
         }
@@ -2034,13 +2051,38 @@ impl SatzMcp {
         if let Err(r) = self.permits(Group::Write, SERVES) {
             return Ok(Err(r));
         }
-        let (open, _) = match self.pack_source(None) {
+        let open = match self.packs_estate() {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
         match crate::workload_packs::detach(&open.runtime, &args.id) {
             Ok(detached) => Ok(Ok(Json(detached))),
             Err(e) => Ok(Err(refused(format!("detach-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_pack_sources",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::pack_sources::SourcesReport>(),
+        description = "The pack sources of the open estate, as `satz pack-source list` lists them: `satz`, the satz \
+                       repository's `packs/` (`builtin`), then each `[[pack_source]]` of its config.toml — a GitHub \
+                       repository (`github`, `ref`, `path`) or a folder (`dir`, as config.toml writes it). The \
+                       `source` of the pack tools takes these names. Adding and removing a source is \
+                       `satz pack-source add|remove`, which a human runs. Offline, reads only.",
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn pack_sources(&self) -> Result<Result<Json<crate::pack_sources::SourcesReport>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("pack-source");
+        if let Err(r) = self.permits(Group::Read, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, _estate) = match self.target(None) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::pack_sources::list(&open.runtime) {
+            Ok(report) => Ok(Ok(Json(report))),
+            Err(e) => Ok(Err(refused(format!("pack-source list: {}", e)))),
         }
     }
 
@@ -2104,14 +2146,10 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::presets::check_presets_report(
-            &estate,
-            &open.runtime.presets_dir,
-            &open.runtime.include_dirs,
-            None,
-        )
-        .await
-        {
+        if let Err(r) = self.library_confined(&open) {
+            return Ok(Err(r));
+        }
+        match crate::presets::check_presets_report(&estate, &open.runtime, None).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("check-presets: {}", e)))),
         }
@@ -2446,6 +2484,11 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
+        if pristine.is_none() {
+            if let Err(r) = self.library_confined(&open) {
+                return Ok(Err(r));
+            }
+        }
         match crate::presets::run_merge_presets(
             &open.runtime.presets_dir,
             pristine,
@@ -2490,6 +2533,11 @@ impl SatzMcp {
             Ok(p) => p,
             Err(r) => return Ok(Err(r)),
         };
+        if pristine.is_none() {
+            if let Err(r) = self.library_confined(&open) {
+                return Ok(Err(r));
+            }
+        }
         match crate::presets::get_presets(&open.runtime.presets_dir, &open.runtime, args.force, pristine).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("get-presets: {}", e)))),

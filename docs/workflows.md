@@ -27,7 +27,8 @@ live, and `satz adopt` resolves the ids of what exists so the plan reads no chan
 rather than replace. Once it does, the infrastructure is changed through the estate
 from then on; nothing is recreated on the way.
 
-**[Workload packs](#workload-packs).** The packs a workload estate takes one at a time:
+**[Workload packs](#workload-packs).** The packs a workload estate takes one at a time
+from a pack source — the satz repository, or a repository or folder `config.toml` names:
 `get-pack` fetches one into `packs_dir` and records where it came from, `update-pack` brings
 a fetched pack up to date and leaves an edited one as it is, and a pack the repository
 wrote itself is written by no command.
@@ -1577,38 +1578,105 @@ another), and that folder holds two kinds:
 | with a row in `packs_dir/origin.toml` | fetched from a source | `satz update-pack` |
 | without a row | the repository's own | no command |
 
-`origin.toml` is the origin record: one row per fetched pack, with its id, the source it
-came from (`github:<owner>/<repo>`, or `dir` for a folder), the version it stated and the
-SHA-256 of the file as fetched. It is committed with the estate. The row decides whose a
-pack is; its name does not, so a pack the repository wrote stays its own when the source
-gains a pack of the same id.
+`origin.toml` is the origin record: one row per fetched pack, with its id, the name of the
+pack source it came from, for a GitHub source the repository (`github`), the folder of it
+where that is not `packs` (`path`) and the commit the file was read at, for a folder source
+the folder as `config.toml` writes it (`dir`), the version it stated and the SHA-256 of the
+file as fetched. It is committed with the estate. The row decides whose a pack is; its name
+does not, so a pack the repository wrote stays its own when a source gains a pack of the
+same id.
 
-A pack's **id** is its path under the source's `packs/` tree without `.satz`:
+```toml
+[[pack]]
+id = "project-budget"
+source = "satz"
+github = "tjirsch/satz"
+commit = "0123456789abcdef0123456789abcdef01234567"
+version = "1.0"
+sha256 = "…"
+
+[[pack]]
+id = "data/warehouse"
+source = "shared"
+dir = "../shared-packs"
+version = "2.1"
+sha256 = "…"
+```
+
+A row names a source by its name, and `config.toml` says where that source is, so every
+clone of the repository follows the row to the same place. A row whose source
+`config.toml` does not name is refused with the command that adds it; so is a row whose
+repository, folder of the repository or folder differs from what `config.toml` now names
+for its source, with the edit to the row, and a row of the form
+`source = "github:…"` or `source = "dir"`, which names no repository or folder, with the edit
+that turns it into a row of the form above.
+
+A pack's **id** is its path under its source's folder without `.satz`:
 `packs/workload-project.satz` is `workload-project`.
 
-### The source
+### The pack sources
 
-The source is the `packs/` tree of the satz repository on `main`, or a folder: `--from
-<dir>` on every command that reads one. Fetching one pack from the repository is one
-download and no API request; `satz packs` and `get-pack --all` list the tree with one API
-request. A folder is how a team shares packs of its own: a checkout of the repository that
-holds them, named with `--from`.
+A **pack source** is a GitHub repository or a folder, with a name. The satz repository's
+`packs/` on `main` is the source `satz`, which every estate has without listing it. Every
+other source is a `[[pack_source]]` table of the estate's `config.toml`:
 
-A row records the kind of source, never a folder's path. `update-pack` without `--from`
-reads the satz repository and looks at the rows that came from it; with `--from` it reads
-the folder and looks at the rows recorded as `dir`. A row of the other kind is reported as
-not checked.
+```toml
+[[pack_source]]
+name   = "official"
+github = "acme/satz-packs"    # owner/repository; its packs are under packs/
+# ref  = "v2"                 # a branch or tag; the repository's default branch without it
+# path = "catalog/packs"      # the folder that holds the packs, instead of packs/
+
+[[pack_source]]
+name = "shared"
+dir  = "../shared-packs"      # a folder, relative to config.toml
+```
+
+A name is a lowercase letter followed by lowercase letters, digits and `-`, used once, and
+not `satz`. A table names exactly one of `github` and `dir`; `ref` and `path` stand only
+beside `github`. Every command refuses a `config.toml` that breaks one of these rules,
+naming the table and what is wrong.
+
+```bash
+satz pack-source add official --github acme/satz-packs [--ref v2] [--path catalog/packs]
+satz pack-source add shared --dir ../shared-packs
+satz pack-source list [--format text|json]
+satz pack-source remove shared
+```
+
+`add` writes the table and `remove` deletes it; the rest of `config.toml`, its comments
+included, stays as it is. `add --dir` is refused for a folder that is not there; `add
+--github` contacts nobody. `remove` is refused while a row of `origin.toml` names the
+source — `detach-pack` those packs first.
+
+A GitHub source is read at the commit its branch or tag points at when the command runs:
+one API request for the commit, one for the listing that `satz packs` and `get-pack --all`
+need. A repository `config.toml` names is read with the GitHub sign-in of the machine — the
+token `gh auth token` prints, or `GITHUB_TOKEN` where `gh` is not signed in — so a private
+repository works for everyone signed in to an account that can read it. A private
+repository that answers without a sign-in is refused with `gh auth login`. satz writes the
+token nowhere. The satz repository is read without it: a file comes from
+raw.githubusercontent.com and costs no API request.
 
 ### The commands
 
 ```bash
-satz packs --format text --out -          # what is here, what the source holds, and what each needs
-satz get-pack workload-project            # fetch one pack, record its origin
-satz update-pack workload-project         # bring it up to date
+satz packs --format text --out -          # what is here, what every source holds, and what each needs
+satz packs --source shared --format json --out -
+satz get-pack workload-project            # fetch one pack from satz, record its origin
+satz get-pack data/warehouse --source shared
+satz update-pack workload-project         # bring it up to date from the source its row names
 satz update-pack --all --report-only      # what an update of every fetched pack would do
 satz detach-pack workload-project         # keep it as the repository's own
 satz review-pack packs/my-pack.satz --format text --out -
 ```
+
+`satz packs` reads every pack source — `satz` first, then the ones `config.toml` lists — or
+the one `--source` names, and lists each pack of `packs_dir` with its state and source, and
+each pack a source holds that `packs_dir` does not, once per source that holds it.
+`get-pack` reads `satz` unless `--source` names another. `update-pack` reads, for each
+pack, the source its row names; with `--source` it reads only that one, and a pack of
+another source is reported as not checked.
 
 `get-pack` writes `packs_dir/<id>.satz` and the row, and prints the `use` line that reaches
 the file. It is refused when `packs_dir` already holds a pack of that id, and when
@@ -1665,6 +1733,21 @@ Two more facts:
   Filenames carry only the *framework* version (`CIS-GCP-Foundation-**4.0**`).
 - **Upstream is the `presets/` tree on the repo's `main` branch**, fetched over the
   GitHub API. Not a release tag — a push to `main` publishes a preset immediately.
+- **One library replaces it, where `config.toml` names one.** A `[preset_library]` table
+  is read by all three commands instead of the satz repository, and the two are not mixed:
+
+  ```toml
+  [preset_library]
+  github = "acme/satz-presets"   # owner/repository; the library is its presets/
+  # ref  = "v3"                  # a branch or tag; the repository's default branch without it
+  # dir  = "../satz-presets"     # instead of github: a folder, relative to config.toml; the library is its presets/
+  ```
+
+  A repository is read with the machine's GitHub sign-in, as a pack source is (see
+  [The pack sources](#the-pack-sources)), so it may be private. The library is compared and
+  merged as satz's is: by each pack's in-file version and its `pack-graph.json`.
+  `--pristine-dir` still overrides it for one run. A table that names both or neither of
+  `github` and `dir` is refused.
 
 ### The three commands
 
@@ -1951,8 +2034,9 @@ Three ways around it:
   to 5,000/hour. It is sent only to the API, never to the download host.
 - **Wait.** The message says for how long, read from the reset the API reports.
 
-One invocation costs **one** API request: the whole preset subtree arrives in a single
-tree response, and the files themselves come from a host that is not rate-limited.
+One invocation costs **two** API requests: the commit `main` points at, and the whole
+preset subtree in a single tree response; the files themselves come from a host that is
+not rate-limited.
 
 A 403 that is *not* the quota — a private repo, a bad token — reports as a plain
 status instead, because waiting an hour would not fix it.

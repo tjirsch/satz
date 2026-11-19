@@ -50,6 +50,7 @@ mod doc_packs;
 mod pack_graph;
 mod preset_lines;
 mod workload_packs;
+mod pack_sources;
 mod notices;
 mod org_write;
 mod github;
@@ -146,7 +147,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
-    ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "review-pack"]),
+    ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "pack-source", "review-pack"]),
     (
         "Policies",
         &[
@@ -496,7 +497,8 @@ pub(crate) enum Commands {
     /// Fetch the upstream preset library into presets_dir: installs what is missing and refreshes what the estate does not use
     ///
     /// Packs the estate DOES use are refused (they create resources — use
-    /// `merge-presets`), unless --force.
+    /// `merge-presets`), unless --force. The library is the satz repository's
+    /// `presets/`, or the one `[preset_library]` in config.toml names.
     GetPresets {
         /// Overwrite presets the estate uses as well
         ///
@@ -860,12 +862,14 @@ pub(crate) enum Commands {
     /// Every workload pack in `packs_dir` with its state — the repository's own, current, behind, edited, gone from the source — and every pack the source holds that `packs_dir` does not
     ///
     /// A workload pack is one `.satz` file an estate `use`s. `packs_dir/origin.toml`
-    /// records the ones `get-pack` fetched; a pack without a row is the repository's
-    /// own. Reads the source: the `packs/` tree of the satz repository, or `--from`.
+    /// records the ones `get-pack` fetched and the pack source of each; a pack without a
+    /// row is the repository's own. Reads every pack source — `satz`, the satz
+    /// repository's `packs/`, and each `[[pack_source]]` of config.toml — or the one
+    /// `--source` names.
     Packs {
-        /// Read the packs of this folder instead of the satz repository's
-        #[arg(long, value_name = "DIR")]
-        from: Option<PathBuf>,
+        /// Read only this pack source: `satz`, or a name `satz pack-source list` lists
+        #[arg(long, value_name = "NAME")]
+        source: Option<String>,
         /// Output format — json is the report an agent reads
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
@@ -878,32 +882,34 @@ pub(crate) enum Commands {
     /// Refused when `packs_dir` already holds a pack of that id. `--all` fetches every
     /// pack the source holds that `packs_dir` lacks.
     GetPack {
-        /// The pack's id: its path under `packs/` without `.satz`
+        /// The pack's id: its path under the source's folder without `.satz`
         id: Option<String>,
         /// Every pack the source holds that `packs_dir` does not
         #[arg(long)]
         all: bool,
-        /// Take the pack from this folder instead of the satz repository
-        #[arg(long, value_name = "DIR")]
-        from: Option<PathBuf>,
+        /// The pack source to fetch from: a name `satz pack-source list` lists; `satz`, the
+        /// satz repository's `packs/`, without it
+        #[arg(long, value_name = "NAME")]
+        source: Option<String>,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
     /// Bring one fetched workload pack up to date with its source: a pack unchanged since it was fetched is overwritten, a pack edited here is left as it is and reported with its difference
     ///
+    /// Each pack is read from the pack source its row in `packs_dir/origin.toml` names.
     /// A pack without a recorded origin is the repository's own and is never
     /// written. `--all` covers every recorded pack. Exits 1 when a pack is edited
     /// or gone from the source.
     UpdatePack {
-        /// The pack's id: its path under `packs/` without `.satz`
+        /// The pack's id: its path under the source's folder without `.satz`
         id: Option<String>,
         /// Every pack with a recorded origin
         #[arg(long)]
         all: bool,
-        /// Read this folder instead of the satz repository — for the packs fetched from a folder
-        #[arg(long, value_name = "DIR")]
-        from: Option<PathBuf>,
+        /// Only the packs fetched from this pack source; the others are reported as not checked
+        #[arg(long, value_name = "NAME")]
+        source: Option<String>,
         /// Print what would happen without writing anything
         #[arg(long)]
         report_only: bool,
@@ -913,6 +919,16 @@ pub(crate) enum Commands {
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
+    },
+    /// The pack sources workload packs are fetched from: `satz`, the satz repository's `packs/`, and the `[[pack_source]]` tables of config.toml
+    ///
+    /// A pack source is a GitHub repository — read with this machine's GitHub sign-in,
+    /// `gh auth login`, when it is private — or a folder. Its name is what
+    /// `packs_dir/origin.toml` records, so a fetched pack is followed by every clone of
+    /// the repository.
+    PackSource {
+        #[command(subcommand)]
+        sub: PackSourceSub,
     },
     /// Forget where a fetched workload pack came from: its file stays, and it is the repository's own pack from here on
     DetachPack {
@@ -1120,6 +1136,38 @@ pub(crate) enum Commands {
         /// (auto-enabled on macOS when no shell is specified)
         #[arg(long)]
         install: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackSourceSub {
+    /// Add a pack source to config.toml: a GitHub repository or a folder
+    Add {
+        /// Its name: a lowercase letter, then lowercase letters, digits and `-`
+        name: String,
+        /// A GitHub repository, `owner/repository`
+        #[arg(long, value_name = "OWNER/REPOSITORY", required_unless_present = "dir", conflicts_with = "dir")]
+        github: Option<String>,
+        /// The branch or tag to read; the repository's default branch without it
+        #[arg(long = "ref", value_name = "REF", requires = "github")]
+        git_ref: Option<String>,
+        /// The folder of the repository that holds the packs; `packs` without it
+        #[arg(long, value_name = "PATH", requires = "github")]
+        path: Option<String>,
+        /// A folder holding packs, relative to config.toml
+        #[arg(long, value_name = "FOLDER")]
+        dir: Option<String>,
+    },
+    /// Every pack source, the built-in `satz` first
+    List {
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Remove a pack source from config.toml; refused while `packs_dir/origin.toml` names it
+    Remove {
+        /// The source's name
+        name: String,
     },
 }
 
@@ -2347,10 +2395,9 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Packs { from, format, out } => {
+        Commands::Packs { source, format, out } => {
             let out = crate::out::target(out, format)?;
-            let source = crate::workload_packs::Source::new(from)?;
-            let report = crate::workload_packs::list(&runtime_config, &source).await?;
+            let report = crate::workload_packs::list(&runtime_config, source.as_deref()).await?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
                 _ => crate::workload_packs::render_list(&report),
@@ -2358,20 +2405,18 @@ Thumbs.db
             write_report(&out, text.as_bytes(), &format!("{} pack(s)", report.packs.len()))?;
             Ok(())
         }
-        Commands::GetPack { id, all, from, format } => {
+        Commands::GetPack { id, all, source, format } => {
             let which = crate::workload_packs::Which::new(id, all, "get-pack")?;
-            let source = crate::workload_packs::Source::new(from)?;
-            let report = crate::workload_packs::get(&runtime_config, &source, &which).await?;
+            let report = crate::workload_packs::get(&runtime_config, source.as_deref(), &which).await?;
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 _ => print!("{}", crate::workload_packs::render_get(&report)),
             }
             Ok(())
         }
-        Commands::UpdatePack { id, all, from, report_only, take_upstream, format } => {
+        Commands::UpdatePack { id, all, source, report_only, take_upstream, format } => {
             let which = crate::workload_packs::Which::new(id, all, "update-pack")?;
-            let source = crate::workload_packs::Source::new(from)?;
-            let report = crate::workload_packs::update(&runtime_config, &source, &which, report_only, take_upstream).await?;
+            let report = crate::workload_packs::update(&runtime_config, source.as_deref(), &which, report_only, take_upstream).await?;
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 _ => print!("{}", crate::workload_packs::render_update(&report)),
@@ -2381,6 +2426,27 @@ Thumbs.db
             }
             Ok(())
         }
+        Commands::PackSource { sub } => match sub {
+            PackSourceSub::Add { name, github, git_ref, path, dir } => {
+                let entry = crate::pack_sources::PackSourceEntry { name, github, git_ref, path, dir };
+                let def = crate::pack_sources::add(&config_file_path, &runtime_config, entry)?;
+                println!("added the pack source `{}`: {}\n  {}", def.name, def.describe(), config_file_path.display());
+                Ok(())
+            }
+            PackSourceSub::List { format } => {
+                let report = crate::pack_sources::list(&runtime_config)?;
+                match format {
+                    OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                    _ => print!("{}", crate::pack_sources::render_list(&report)),
+                }
+                Ok(())
+            }
+            PackSourceSub::Remove { name } => {
+                crate::pack_sources::remove(&config_file_path, &runtime_config, &name)?;
+                println!("removed the pack source `{name}`\n  {}", config_file_path.display());
+                Ok(())
+            }
+        },
         Commands::DetachPack { id, format } => {
             let detached = crate::workload_packs::detach(&runtime_config, &id)?;
             match format {
@@ -2401,12 +2467,7 @@ Thumbs.db
         Commands::CheckPresets { input, pristine_dir, format, out } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            let report = crate::presets::check_presets_report(
-                &input_path,
-                &runtime_config.presets_dir,
-                &runtime_config.include_dirs,
-                pristine_dir,
-            )
+            let report = crate::presets::check_presets_report(&input_path, &runtime_config, pristine_dir)
             .await?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
@@ -6403,6 +6464,7 @@ mod command_groups {
         ("get-pack", Identity::NoGoogleApi),
         ("update-pack", Identity::NoGoogleApi),
         ("detach-pack", Identity::NoGoogleApi),
+        ("pack-source", Identity::NoGoogleApi),
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),

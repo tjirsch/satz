@@ -19,40 +19,52 @@ use std::path::{Path, PathBuf};
 
 type BoxErr = Box<dyn std::error::Error>;
 
-/// The pristine upstream copy to compare against: an explicit `--pristine-dir`,
-/// or one download per process.
+/// The pristine upstream copy to compare against: an explicit `--pristine-dir`, the
+/// folder `[preset_library]` names, or one download per library and process.
 ///
-/// All three preset commands come through here, and the download happens ONCE:
-/// the fetch is cached for the life of the process, so a second caller inside
-/// one run costs no API quota. That quota is 60 requests/hour unauthenticated
-/// and shared with `self-update`, which is why every request is worth counting.
+/// All three preset commands come through here, and a download happens ONCE per
+/// library: the fetch is cached for the life of the process, so a second caller inside
+/// one run costs no API quota. That quota is 60 requests/hour unauthenticated and
+/// shared with `self-update`, which is why every request is worth counting.
 ///
 /// A source that holds no pack is an error, never an empty comparison: against
 /// nothing, every command would report "nothing to do" and exit 0.
-async fn pristine_source(pristine_dir: Option<PathBuf>) -> Result<PathBuf, BoxErr> {
+async fn pristine_source(pristine_dir: Option<PathBuf>, runtime: &crate::settings::ToolConfig) -> Result<PathBuf, BoxErr> {
     if let Some(dir) = pristine_dir {
         if !holds_a_pack(&dir) {
             return Err(format!("--pristine-dir {}: holds no .satz pack — pass the presets/ directory of a satz checkout", dir.display()).into());
         }
         return Ok(dir);
     }
-    if let Some(cached) = DOWNLOADED.get() {
+    let repo = match crate::pack_sources::library(runtime)? {
+        crate::pack_sources::Library::Satz => crate::github::Repo::satz(),
+        crate::pack_sources::Library::Github { repo, git_ref } => crate::github::Repo::configured(&repo, git_ref.as_deref()),
+        crate::pack_sources::Library::Dir(written) => {
+            let dir = crate::pack_sources::folder(runtime, &written).join("presets");
+            if !holds_a_pack(&dir) {
+                return Err(format!("[preset_library] dir = \"{written}\": {} holds no .satz pack — the library is the presets/ folder of the folder config.toml names", dir.display()).into());
+            }
+            return Ok(dir);
+        }
+    };
+    let key = format!("{}@{}", repo.name, repo.git_ref.as_deref().unwrap_or("HEAD"));
+    if let Some(cached) = DOWNLOADED.lock().expect("the download cache lock is never poisoned").get(&key) {
         return Ok(cached.clone());
     }
-    let tmp = std::env::temp_dir().join(format!("satz-pristine-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("satz-pristine-{}-{}", std::process::id(), key.replace(['/', '@'], "-")));
     let _ = std::fs::remove_dir_all(&tmp);
-    let n = crate::github::download_presets(&tmp).await?;
+    let n = crate::github::download_presets(&repo, &tmp).await?;
     if !holds_a_pack(&tmp) {
         return Err(format!(
-            "fetched {n} upstream file(s) from {} and not one .satz pack — nothing to compare against{}",
-            crate::github::REPO,
+            "fetched {n} upstream file(s) from github.com/{} and not one .satz pack — nothing to compare against{}",
+            repo.name,
             crate::github::PRISTINE_HINT
         )
         .into());
     }
     // stderr: `satz_check_presets` reaches this, and over MCP stdout is the protocol
     eprintln!("Fetched {n} upstream preset file(s).");
-    let _ = DOWNLOADED.set(tmp.clone());
+    DOWNLOADED.lock().expect("the download cache lock is never poisoned").insert(key, tmp.clone());
     Ok(tmp)
 }
 
@@ -73,7 +85,8 @@ fn holds_a_pack(dir: &Path) -> bool {
     false
 }
 
-static DOWNLOADED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// One download per library, by `<owner>/<repository>@<ref>`.
+static DOWNLOADED: std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 #[cfg(test)]
 mod pristine_source_tests {
@@ -85,10 +98,34 @@ mod pristine_source_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         std::fs::write(dir.join("docs/README.md"), "no packs here").unwrap();
-        let err = pristine_source(Some(dir.clone())).await.unwrap_err().to_string();
+        let config = crate::settings::parse_tool_config(&dir.join("config.toml")).unwrap();
+        let err = pristine_source(Some(dir.clone()), &config).await.unwrap_err().to_string();
         assert!(err.contains("holds no .satz pack"), "{err}");
         std::fs::write(dir.join("x.satz"), "pack x version \"1.0\"\n").unwrap();
-        assert_eq!(pristine_source(Some(dir.clone())).await.unwrap(), dir);
+        assert_eq!(pristine_source(Some(dir.clone()), &config).await.unwrap(), dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[preset_library] dir = …` is read instead of satz's library: the `presets/` of
+    /// that folder, relative to config.toml, and `--pristine-dir` still wins for one run.
+    #[tokio::test]
+    async fn a_preset_library_folder_replaces_satzs() {
+        let dir = std::env::temp_dir().join(format!("satz-library-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("estate")).unwrap();
+        std::fs::create_dir_all(dir.join("lib/presets")).unwrap();
+        std::fs::write(dir.join("estate/config.toml"), "[preset_library]\ndir = \"../lib\"\n").unwrap();
+        let load = || {
+            let c = crate::settings::parse_tool_config(&dir.join("estate/config.toml")).unwrap();
+            crate::settings::resolved_config(&c, &dir.join("estate"))
+        };
+        let err = pristine_source(None, &load()).await.unwrap_err().to_string();
+        assert!(err.contains("[preset_library] dir = \"../lib\"") && err.contains("holds no .satz pack"), "{err}");
+        std::fs::write(dir.join("lib/presets/x.satz"), "pack x version \"1.0\"\n").unwrap();
+        assert_eq!(pristine_source(None, &load()).await.unwrap(), dir.join("estate/../lib/presets"));
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        std::fs::write(dir.join("other/y.satz"), "pack y version \"1.0\"\n").unwrap();
+        assert_eq!(pristine_source(Some(dir.join("other")), &load()).await.unwrap(), dir.join("other"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -515,10 +552,11 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
 /// terminal, `--format json` and (later) an MCP tool.
 pub(crate) async fn check_presets_report(
     input: &Path,
-    presets_dir: &str,
-    include_dirs: &[String],
+    runtime: &crate::settings::ToolConfig,
     pristine_dir: Option<PathBuf>,
 ) -> Result<CheckPresetsReport, BoxErr> {
+    let presets_dir = runtime.presets_dir.as_str();
+    let include_dirs = runtime.include_dirs.as_slice();
     let local_base = PathBuf::from(presets_dir);
     if !local_base.is_dir() {
         return Err(format!(
@@ -529,7 +567,7 @@ pub(crate) async fn check_presets_report(
     }
 
     // Pristine copy: an explicit directory, or one download for the process.
-    let pristine_base = pristine_source(pristine_dir).await?;
+    let pristine_base = pristine_source(pristine_dir, runtime).await?;
 
     // Which packs does the estate actually use? Its `use` graph.
     let included = used_preset_files(input, presets_dir, include_dirs)?;
@@ -713,7 +751,7 @@ pub(crate) async fn get_presets(
     // `--pristine-dir` is the same escape its two siblings already had, and the
     // only way to work while the unauthenticated GitHub quota (60/hour, shared
     // with `self-update`) is exhausted.
-    let tmp = pristine_source(pristine_dir).await?;
+    let tmp = pristine_source(pristine_dir, runtime_config).await?;
 
     // Which pack stems does the estate actually use? No estate (a fresh repo) =
     // nothing to protect, which is exactly the bootstrap case.
@@ -1144,7 +1182,7 @@ pub(crate) async fn run_merge_presets(
     // transpiled output — running both would make that proof meaningless (or,
     // worse, roll a good repoint back). One run, one kind of operation.
     let adopting = !adopt.is_empty();
-    let pristine = pristine_source(pristine_dir).await?;
+    let pristine = pristine_source(pristine_dir, runtime_config).await?;
     // The pack lines come from the graph that arrived with these packs.
     let graph = crate::pack_graph::read(&pristine)?;
     if graph.is_none() && !report_only {
