@@ -160,8 +160,8 @@ the account. It was prose in the hand-over folder's README.
   interfaces` reports, per list, its entries and the defaults of its fields.
 - **`satz init --from <folder>…`** writes a team's estate from the hand-over folders it
   is given: each is copied to `interfaces/incoming/`, unless it stands there already;
-  exactly one must be a delegation's own, and at most one other is the place the estate
-  works in; the estate runs as the delegation's account and keeps its state under its own
+  exactly one must be a delegation's own, the others are the places the estate works
+  in; the estate runs as the delegation's account and keeps its state under its own
   name in the delegation's bucket. `--project` and `--interface`
   are gone.
 - **`satz presets`** reports `delegated_by`, per used interface file: the central
@@ -178,11 +178,8 @@ the account. It was prose in the hand-over folder's README.
 - A delegation and one of its targets may share a name — a project `payments` of the
   delegation `payments`. Two targets may not: a folder and a project of one name would
   be one interface.
-- **An estate works in one place.** Every target publishes its values under the same
-  names (`project_id`, `delegated_budgets`, …), so two targets cannot be read by one
-  estate. An account that works in three projects is rolled out by three estates, which
-  share the account and the state bucket. Reading several targets from one estate needs
-  values that are named by their interface, which the language does not have.
+- An estate reads the values of several places by the name of each interface folder
+  ([ADR 0094](0094-a-value-is-read-by-the-name-of-its-interface-folder.md)).
 - `add-entry` adds; it does not change or remove an entry. Those stay edits of the file.
 - A hand-over folder is still copied by hand or by `init --from`; nothing checks that a
   copy is still what the organisation publishes.

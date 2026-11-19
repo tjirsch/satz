@@ -65,8 +65,9 @@ satz --config examples/acme/simple-project transpile simple-project.satz
 `hcl/`, `interfaces/outgoing/` and `interfaces/incoming/` are written by these commands and are not tracked.
 Step 2 is repeated after every change of the organisation's estate. `shop-dev` reaches
 the template through its `include_dirs` and needs its own `interfaces/incoming/` copy. What the
-compile writes for a project estate — `interface.tf`, the `local.interface.<export>`
-references, the variables of the inputs — is [language
+compile writes for an estate that reads interface folders — `interface.tf`, the
+`local.interface.<value>` and `local.interface.<folder>__<value>` references, the
+variables of the inputs — is [language
 §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)
 and [§6.3](../docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds);
 the two tutorials walk the same files step by step ([an organisation from

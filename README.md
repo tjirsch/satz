@@ -186,11 +186,11 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--from <folder>…` with `--name <estate name>` (a team's estate, from the hand-over folders the central estate wrote for a delegation), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
+| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--from <folder>…` with `--name <estate name>` (a workload estate, from the interface folders the organisation's estate wrote for a delegation and for each folder and project its account works in), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked before it is vendored into the estate: request points only, each entry shaped (its fields, and each value its field's pattern matches), no key the list holds for another entry, and the estate compiled with the file in place |
 | `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields, patterns, defaults and entries; the json form is what satz-studio reads |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. An estate that `use`s an interface file reads a value by the name of its interface folder, `"${{interface.<folder>.<value>}}"`, and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
@@ -305,16 +305,24 @@ satz init \
 - If customer details are provided, generates the Day-0 estate `satz/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
 
-**A team's estate** (`--from <folder>… [--name <estate name>]`): the estate of a team a
-central estate delegated access to, written from the hand-over folders that estate wrote
-under its `interfaces/outgoing/` — the delegation's own, `delegation-<name>`
-(`presets/delegation.satz`), and those of what its account works in
+**A workload estate** (`--from <folder>… [--name <estate name>]`): the estate of a
+workload built with delegated access, written from the interface folders the
+organisation's estate wrote under its `interfaces/outgoing/` — the delegation's own,
+`delegation-<name>` (`presets/delegation.satz`), and one per place its account works in
 (`presets/delegated-folders.satz`, `presets/delegated-projects.satz`). Exactly one of the
-folders is a delegation's own. Each is copied into `interfaces/incoming/` of the current
-directory, unless it stands there already. The estate is named by `--name`, or after the
-delegation; it runs in cloud mode as the delegation's account, keeps its state under
-`<estate name>/state` in the delegation's bucket, and `use`s the interface files so its
-resources read the central estate as `${{interface.<export>}}`. The region is the core
+folders is a delegation's own, because an estate runs as one account; the places are any
+number of delegated folders and projects. Each folder is copied into
+`interfaces/incoming/` of the current directory, unless it stands there already. The
+estate is named by `--name`, or after the delegation; it runs in cloud mode as the
+delegation's account, keeps its state under `<estate name>/state` in the delegation's
+bucket, and `use`s the interface files. Its resources read a value by the name of its
+interface folder, `${{interface.<folder>.<value>}}`, and the estate ends with the read for
+each place as a comment: `project = "${{interface.data-lake.project_id}}"` for a delegated
+project, `folder_id = "${{interface.shop.delegated_folder}}"` for a delegated folder. A
+value every folder carries with the same content — the organisation's region, its domain —
+is also read as `${{interface.<value>}}`
+([language §6.17](docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+The region is the core
 export `default_region` (from `estate-core.satz`; a central estate without it is refused).
 Nothing is derived from the credentials; the interfaces answered it all
 ([Delegating a project, and a project on satz](docs/workflows.md#delegating-a-project-and-a-project-on-satz)).
@@ -408,9 +416,9 @@ The entry is bound in the estate, added with `satz add-entry`, or requested by t
 and vendored into the estate by pull request; the pull request is the request's review.
 `delegated_projects_folder` is the parent, the organisation when it is empty. `satz
 transpile` then writes `interfaces/outgoing/delegation-payments/` and
-`interfaces/outgoing/payments/`, and the team's own estate is `satz init --from
+`interfaces/outgoing/payments/`, and the workload estate is `satz init --from
 <central>/interfaces/outgoing/delegation-payments <central>/interfaces/outgoing/payments`
-in its directory. An
+in its directory; it reads the project as `${{interface.payments.project_id}}`. An
 interface declared in two files is one interface, so the estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — and a workload that brings its own Google project gets an
@@ -627,7 +635,11 @@ target, which carries what it holds there: `delegated_folder_roles` on a folder
 - an API on the infrastructure project is enabled when it was delegated; one on a project
   the estate declares is its own `project_service` entry, as above;
 - the reads are not asked for: `import`, `adopt` and `report-compliance` over an
-  organisation are not a workload's.
+  organisation are not a workload's;
+- an estate that works in several places is not judged place by place: a role counts as
+  delegated when it was delegated on every place of its kind the estate uses — on every
+  delegated folder, on every delegated project — and budgets count as delegated when every
+  interface folder that speaks of budgets says yes.
 
 What is not delegated is reported as what to ask the organisation's estate for — a role in
 `delegated_folders_roles`, a role in the delegation's `billing_roles`, an API in the `apis` of
@@ -2465,7 +2477,7 @@ the emitter renders the folded IR as `main.tf`, `providers.tf`, `variables.tf`,
 interface under `interfaces/outgoing/`, a relocatable module and an interface file a project estate
 `use`s (`src/interface.rs`): a value known at compile time is a literal, one only the
 cloud knows is a `data` source keyed by what satz writes (`presets/interface-lookups.yaml`).
-A project estate's `${{interface.<export>}}` is replaced before emission, and its
+An estate's `${{interface.<folder>.<value>}}` is replaced before emission, and its
 resources are held to the interface file's attach points (`src/consumer.rs`).
 `src/interface_report.rs` is the `satz interfaces` report, `src/interface_changes.rs` writes
 `CHANGES.md` from the previous interface file, and `src/project.rs` is `init --from`.

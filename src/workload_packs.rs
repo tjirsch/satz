@@ -620,9 +620,11 @@ pub(crate) fn interface_reads(text: &str) -> std::collections::BTreeSet<String> 
         let mut rest = line;
         while let Some(i) = rest.find(OPEN) {
             rest = &rest[i + OPEN.len()..];
-            let name: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_').collect();
-            if !name.is_empty() && rest[name.len()..].starts_with("}}") {
-                out.insert(name);
+            // `<value>` or `<folder>.<value>`: the value is what a need is read from
+            let key: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.')).collect();
+            let name = key.rsplit('.').next().unwrap_or_default();
+            if !name.is_empty() && rest[key.len()..].starts_with("}}") {
+                out.insert(name.to_string());
             }
         }
     }

@@ -33,7 +33,7 @@ inputs {
 
 params {
   // The workload's identity, as the organisation's delegation pack created it for
-  // `shop` and published it in the interface `delegation-shop` (`project_id`, `iac_account`,
+  // `shop` and published it in the interface `delegation-shop` (`deploy_project_id`, `iac_account`,
   // `state_bucket`): the project the plan is billed to and the state lives in, the account
   // the plan runs as, the state bucket. Example values: replace them with your workload's.
   infra_project_name = "acme-deploy-shop"
@@ -63,8 +63,11 @@ providers {
   }
 }
 
-// The organisation's values, read from two interface files as `${{interface.<export>}}`:
-// the workload's identity with what was delegated to it, and the folder it works in.
+// The organisation's values, read from two interface folders: the workload's identity with
+// what was delegated to it (`delegation-shop`), and the folder it works in (`shop`). A value
+// is read by the name of its interface folder, `${{interface.<folder>.<value>}}`. One the
+// organisation says once, such as `customer_shortname` or `default_region`, is the same in
+// every folder and is also read without the folder's name, `${{interface.<value>}}`.
 use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop/shop/satz/interface.satz"
 
@@ -72,7 +75,7 @@ google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.delegated_folder}}"
+    folder_id       = "${{interface.shop.delegated_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     // The grants below are calls to this API, billed to the project itself.

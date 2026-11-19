@@ -378,7 +378,7 @@ pub(super) fn used_file_fits(
     if let Some(i) = &file.interface_file {
         if pos != Position::File {
             return refuse(format!(
-                "use \"{}\" {}: it is the interface file of `{}`, which is used at the top level of a file, without `as` — its values are read as `${{{{interface.<export>}}}}` wherever they are needed",
+                "use \"{}\" {}: it is the interface file of `{}`, which is used at the top level of a file, without `as` — its values are read as `${{{{interface.<folder>.<value>}}}}` wherever they are needed",
                 use_path, stands, i.name
             ));
         }

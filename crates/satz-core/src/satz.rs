@@ -526,7 +526,7 @@ pub struct InterfaceUse {
 /// A generated interface file, `interfaces/outgoing/<project>/<name>/satz/interface.satz`: the
 /// header `interface "<name>"` alone on its line, then data only — what the central estate
 /// publishes to a project written in Satz. satz writes it on every transpile of the central
-/// estate; a project `use`s it and names a value `${{interface.<export>}}`.
+/// estate; a workload estate `use`s it and reads a value as `${{interface.<folder>.<value>}}`.
 ///
 /// ```text
 /// interface "archive"
@@ -571,7 +571,7 @@ pub struct InterfaceFile {
     pub line: usize,
 }
 
-/// One value of an interface file. `value` is what `${{interface.<name>}}` stands for in a
+/// One value of an interface file. `value` is what `${{interface.<folder>.<value>}}` stands for in a
 /// project: a literal, or text over `${data.<type>.<label>.<attr>}` of the file's lookups.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfferedOutput {

@@ -2282,11 +2282,15 @@ interface "archive" {
   it.
 - **The export's name** is the output's name: lowercase letters, digits and `_`,
   starting with a letter, and no `__`. A project written in HCL reads it as
-  `module.satz.<name>`, one written in Satz as `"${{interface.<name>}}"`. An interface's
+  `module.satz.<name>`, one written in Satz as `"${{interface.<folder>.<name>}}"`, by the
+  name of the interface folder it took (below). An interface's
   export may not take a core export's name: every interface carries both, and the
   compile refuses it naming both files.
 - **The value** is a param, a literal, a list of them, or a string that carries
-  `${{type.label.attribute}}` references to resources the estate emits. An object is
+  `${{type.label.attribute}}` references to resources the estate emits. An estate that
+  reads an interface folder may pass on a value it read: `export "lake_project" =
+  "${{interface.data-lake.project_id}}"` publishes the value itself, and a read that is
+  refused in a resource is refused here, at the export's line. An object is
   refused. A reference names something the estate emits, or the compile refuses it at
   the export's line, listing the labels of that type that are emitted; `${{…}}` that is
   not a `type.label.attribute` of a `google_*` resource is refused.
@@ -2452,7 +2456,7 @@ managed "google_project.archive" {
 ```
 
 `central` names the central estate and the organisations it manages. Each `output` is one
-value: `value` is what `${{interface.<name>}}` stands for — a literal, or text over a
+value: `value` is what a read of it stands for — a literal, or text over a
 lookup's address — with the attach points and the central resources it names. Each
 `lookup` is a `data` block a value reads, with the resource it reads back and the read
 permission it needs. Each `managed` is a resource the central estate declares that a
@@ -2467,7 +2471,7 @@ addresses and nothing of their values. satz writes the file through its formatte
 anything else is refused at its line. It is no estate: `satz transpile` of it is refused,
 and so is a copy of it in the preset library (`satz doc-presets`, `satz preset-graph`).
 
-**`${{interface.<export>}}` — a project estate reads the values.**
+**`${{interface.<folder>.<value>}}` — an estate reads the values of an interface folder.**
 
 ```
 use "interfaces/incoming/archive/archive/satz/interface.satz"
@@ -2483,7 +2487,7 @@ google_project {
 
 google_project_iam_member {
   archive_readers {
-    project = "${{interface.archive_project_id}}"
+    project = "${{interface.archive.archive_project_id}}"
     role    = "roles/viewer"
     member  = "group:gcp-auditors@example.com"
   }
@@ -2494,8 +2498,45 @@ google_project_iam_member {
 copied to `interfaces/incoming/archive/`.)
 
 - The file is `use`d at the top level of a file, without `as`; `when` gates it like a
-  pack line. Used anywhere else it is refused. Its exports are then reachable under the
+  pack line. Used anywhere else it is refused. Its values are then reachable under the
   root `interface.`.
+- **A value is read by the name of its interface folder:**
+  `${{interface.<folder>.<value>}}`. `<folder>` is the interface's name — the name after
+  `interface` in the first line of the folder's `satz/interface.satz`, which is also the
+  folder's name under `interfaces/incoming/`: `${{interface.payments.project_id}}`,
+  `${{interface.delegation-payments.iac_account}}`. This is the form to write, also in
+  an estate that uses one folder. Two used interface files of one interface name are
+  refused, naming both files: the name is how a value is told apart.
+- **The short form `${{interface.<value>}}`** reads a value every used interface folder
+  that carries it agrees on — what the organisation says once, such as `default_region`,
+  `customer_domain` or `infra_folder` above, which every folder carries with the same
+  content. When two used folders carry a value of that name and the two differ, the short
+  form is refused: the message names the folders and the two reads to choose from.
+- **One estate reads any number of folders.** An estate that runs as the account of the
+  delegation `data` and works in the delegated projects `data-lake` and `data-mart` names
+  each project by its folder:
+
+  ```
+  use "interfaces/incoming/delegation-data/delegation-data/satz/interface.satz"
+  use "interfaces/incoming/data-lake/data-lake/satz/interface.satz"
+  use "interfaces/incoming/data-mart/data-mart/satz/interface.satz"
+
+  google_storage_bucket {
+    raw {
+      project  = "${{interface.data-lake.project_id}}"
+      name     = "${{interface.customer_shortname}}-data-lake-raw"
+      location = "${{interface.default_region}}"
+    }
+  }
+
+  google_project_service "mart_bigquery" {
+    project = "${{interface.data-mart.project_id}}"
+    service = "bigquery.googleapis.com"
+  }
+  ```
+
+  `${{interface.project_id}}` is refused here: `data-lake` and `data-mart` each have a
+  `project_id`, and they differ.
 - A static value is its literal: a whole-value `"${{interface.regions}}"` is the list
   itself, and one inside a longer string is its text. A looked-up value is the data
   source's address, `${data.google_active_folder.infra.name}`. These are the values the
@@ -2509,7 +2550,11 @@ copied to `interfaces/incoming/archive/`.)
   with the resource each reads back and the permission it needs in a comment above it
   (the same data sources the HCL module reads). `main.tf` reads the local: `folder_id =
   local.interface.infra_folder` for a whole value, `project_id =
-  "${local.interface.customer_shortname}-shop"` inside text. It carries no value of the
+  "${local.interface.customer_shortname}-shop"` inside text. A value read by its folder's
+  name is the local `<folder>__<value>`, the folder's `-` written as `_`:
+  `${{interface.data-lake.project_id}}` is `local.interface.data_lake__project_id`. Two
+  reads that would be written as one local — two folders whose names differ only in `-`
+  and `_` — are refused, asking for one folder to be renamed. It carries no value of the
   central estate, so an `interface.tf` written for another organisation re-targets it.
   A Cloud Identity group is the exception: its address derives from its body, so a group
   writes the literal.
@@ -2522,14 +2567,15 @@ copied to `interfaces/incoming/archive/`.)
   would be a cycle there. For the same reason a looked-up value is refused at the block —
   bind it as a param, or read it in a resource. The `terraform` block writes the value
   itself, because a backend takes no named value.
-- Refused, each at the resource that writes it: an export no used file carries (listing
-  those that are), a reference with no interface file used, a reference that is not
-  `interface.<export>`, a list or a map inside a longer string, and a reference in a
-  resource's label, which is a Terraform resource name. A
-  `${{interface.<export>}}` inside an `hcl { }` block is refused at the block: the
-  passthrough is emitted verbatim, and nothing in it is replaced. One export name from
-  two used files is one value when both carry the same, and an error naming both files
-  when they differ; a lookup two files read differently is refused the same way.
+- Refused, each at the resource that writes it: a folder the estate does not use (listing
+  the folders it uses), a value the named folder does not have (listing the ones it has),
+  a short form no used folder carries (listing every value they have), a short form two
+  folders carry differently (above), a reference with no interface file used, a reference
+  that is neither `interface.<value>` nor `interface.<folder>.<value>`, a list or a map
+  inside a longer string, and a reference in a resource's label, which is a Terraform
+  resource name. A `${{interface.…}}` inside an `hcl { }` block is refused at the block:
+  the passthrough is emitted verbatim, and nothing in it is replaced. A lookup two used
+  files read differently is refused, naming both files.
 - **The project's compile holds its own resources to the interface**, with the rules
   `satz check-consumer` holds a project's HCL to, from the interface file's data: an
   attachment resource onto a central resource that no attach point allows, an
@@ -2937,7 +2983,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | one interface per entry of a list param | `each delegated_projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
 | let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
-| read a central estate's value in a project estate | `use "interfaces/incoming/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
+| read a value of an interface folder | `use "interfaces/incoming/payments/payments/satz/interface.satz"` and `project = "${{interface.payments.project_id}}"` |
 | comment | `#`, `//`, `/* … */` |
 
 ### Commands that consume this language
@@ -2960,7 +3006,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `check-presets <estate>.satz --format text\|json --out f` | Satz | drift of packs vs upstream |
 | `fmt <paths…> [--check] [--stdin]` | Satz | rewrite Satz files in the canonical layout (§12.3); `--check` names the files that are not, `--stdin` formats one file from stdin to stdout |
 | `lsp` | Satz | the language server on stdio, started by the editor: diagnostics, completion, hover, go-to-definition, formatting |
-| `init [flags] [--interview]` / `init --from <folder>… [--name <n>]` | Satz | write a new estate from the day-0 values, or a team's estate from the hand-over folders of a delegation (§6.17) |
+| `init [flags] [--interview]` / `init --from <folder>… [--name <n>]` | Satz | write a new estate from the day-0 values, or a workload estate from the interface folders of a delegation and the places it works in (§6.17) |
 | `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and request point the estate publishes (§6.17) |
 | `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, and the estate's compile with the file in place, before the pull request that vendors it |
 | `check-consumer <dir> [<estate>.satz]` | HCL | a project's HCL against the interface it reads: attach points, authoritative grants, duplicates |

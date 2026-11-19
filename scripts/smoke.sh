@@ -256,10 +256,10 @@ mkdir -p project/interfaces/incoming && cp -R "$si" project/interfaces/incoming/
 pm=project/hcl/main.tf
 pi=project/hcl/interface.tf
 # what the compile judges is in interface.tf, what main.tf reads is the local
-grep -q 'archive_project_id = "corp-archive-001"' "$pi" || fail "a static value is not its literal in interface.tf:\n$(cat $pi)"
+grep -q 'archive__archive_project_id = "corp-archive-001"' "$pi" || fail "a static value is not its literal in interface.tf:\n$(cat $pi)"
 grep -q 'infra_folder = data.google_active_folder.infra.name' "$pi" || fail "a looked-up value is not its data address in interface.tf:\n$(cat $pi)"
 [ "$(grep -c '^data "google_active_folder" "infra"' "$pi")" = 1 ] || fail "the lookup is not one data block in interface.tf:\n$(cat $pi)"
-grep -q 'project = local.interface.archive_project_id' "$pm" || fail "a static value is not read as the local:\n$(cat $pm)"
+grep -q 'project = local.interface.archive__archive_project_id' "$pm" || fail "a static value is not read as the local:\n$(cat $pm)"
 grep -q 'folder_id = local.interface.infra_folder' "$pm" || fail "a looked-up value is not read as the local:\n$(cat $pm)"
 grep -q 'parent = local.interface.infra_folder' "$pm" || fail "a folder's looked-up parent is not read as the local:\n$(cat $pm)"
 grep -q '"central" = local.interface.customer_domain' "$pm" || fail "a whole value inside a map is not the bare local:\n$(cat $pm)"
@@ -328,7 +328,7 @@ done
 [ "$examples" -gt 0 ] || fail "examples/acme/ holds no example"
 # the workload's estate reads its folder and its identity from the two interfaces of the pack
 grep -q 'delegated_folder = data.google_active_folder.shop.name' "$ex/simple-project/hcl/interface.tf" || fail "the example does not read its workload's folder:\n$(cat "$ex/simple-project/hcl/interface.tf")"
-grep -q 'folder_id = local.interface.delegated_folder' "$ex/simple-project/hcl/main.tf" || fail "the example's project is not created in the workload's folder"
+grep -q 'folder_id = local.interface.shop__delegated_folder' "$ex/simple-project/hcl/main.tf" || fail "the example's project is not created in the workload's folder"
 # the template: inputs as variables in the HCL team's form, bound values in the Satz team's,
 # one main.tf for both
 pt="$ex/simple-project"; sd="$ex/shop-dev"
@@ -789,6 +789,45 @@ grep -q 'impersonate_service_account = "svc-deploy-payments@corp-deploy-payments
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the team's estate's root module does not validate"
 fi
+
+step "named reads: one workload estate over two delegated projects, each read by the name of its interface folder"
+python3 - tmp/with-project.satz tmp/with-two.satz <<'PY2'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+o = 'delegated_projects = [{ name = "payments" delegation = "payments" }]'
+assert o in s
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace(o, 'delegated_projects = [{ name = "payments" delegation = "payments" }, { name = "ledger" delegation = "payments" }]'))
+PY2
+"$satz" --config . transpile tmp/with-two.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-two.err || fail "the estate with two delegated projects does not compile:\n$(cat tmp/with-two.err)"
+rm -rf tmp/two && mkdir -p tmp/two && seed_schemas tmp/two
+(cd tmp/two && "$satz" init --from "$out/delegation-payments" "$out/payments" "$out/ledger" > ../init-two.txt 2>&1) || fail "init refused an estate over two delegated projects:\n$(cat tmp/init-two.txt)"
+two=tmp/two/satz/payments.satz
+grep -q 'project   = "${{interface.ledger.project_id}}"' "$two" && grep -q 'project   = "${{interface.payments.project_id}}"' "$two" || fail "the estate does not say how each project is read:\n$(cat $two)"
+cat >> "$two" <<'SATZ'
+
+google_project_service "payments_storage" {
+  project = "${{interface.payments.project_id}}"
+  service = "storage.googleapis.com"
+}
+
+google_project_service "ledger_storage" {
+  project = "${{interface.ledger.project_id}}"
+  service = "storage.googleapis.com"
+}
+
+export "ledger_project" = "${{interface.ledger.project_id}}" description "The ledger's project, passed on"
+SATZ
+"$satz" --config tmp/two/config.toml transpile payments.satz > tmp/two-transpile.txt 2>&1 || fail "the estate over two projects does not transpile:\n$(cat tmp/two-transpile.txt)"
+grep -q 'local.interface.payments__project_id' tmp/two/hcl/main.tf && grep -q 'local.interface.ledger__project_id' tmp/two/hcl/main.tf || fail "the two projects are not read by their folder's name:\n$(cat tmp/two/hcl/main.tf)"
+grep -q 'ledger__project_id *= *"corp-ledger-001"' tmp/two/hcl/interface.tf || fail "interface.tf does not hold the ledger's project:\n$(cat tmp/two/hcl/interface.tf)"
+grep -q '"corp-ledger-001"' tmp/two/interfaces/outgoing/common/core/satz/interface.satz || fail "the value read was not passed on:\n$(find tmp/two/interfaces/outgoing -name interface.satz | head)"
+if command -v tofu >/dev/null 2>&1; then
+  (cd tmp/two/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate over two projects does not validate"
+fi
+# by its bare name the project is two different ones
+sed -i.bak 's/project = "${{interface.ledger.project_id}}"/project = "${{interface.project_id}}"/' "$two"
+"$satz" --config tmp/two/config.toml transpile payments.satz --check > tmp/two-bare.txt 2>&1 && fail "a bare read of a value two folders carry differently compiled"
+grep -q 'they differ' tmp/two-bare.txt && grep -q 'interface.ledger.project_id' tmp/two-bare.txt || fail "the refusal does not name the two reads:\n$(cat tmp/two-bare.txt)"
 
 # an estate that exports nothing keeps neither file from an earlier run
 cp yaml/showcase.satz tmp/no-exports.satz
