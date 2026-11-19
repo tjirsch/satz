@@ -33,8 +33,9 @@
 // WHAT THE TEAM'S ESTATE READS. The interface `<name>`, taken beside the delegation's own:
 // `project_id` (an attach point for `google_project_iam_member`), `project_number`,
 // `delegated_project_roles` and `delegated_budgets`, which `satz` judges the estate's
-// needs against. A project's name is an interface's name: no folder of
-// `presets/delegated-folders.satz` may carry the same.
+// needs against. One estate reads one project's interface: an account that works in two
+// projects is rolled out by two estates that run as the same account. A project's name is
+// an interface's name: no folder of `presets/delegated-folders.satz` may carry the same.
 //
 // MORE IN AN INTERFACE. An interface declared in two files is one interface, so the estate
 // adds to a project's interface by writing a block of the same name in its own file:

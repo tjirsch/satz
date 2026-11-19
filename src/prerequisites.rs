@@ -643,7 +643,7 @@ pub(crate) fn granted(manifest: &Manifest, service_account: &str) -> Granted {
 /// (`presets/delegation.satz`, `presets/delegated-folders.satz` and
 /// `presets/delegated-projects.satz`, ADR 0087, 0093).
 pub(crate) const DELEGATED_FOLDER_ROLES: &str = "delegated_folder_roles";
-/// The folder itself: the roles on a workload's folders count for an estate that reads one.
+/// The folder itself: the roles on a delegation's folders count for an estate that reads one.
 pub(crate) const DELEGATED_FOLDER: &str = "delegated_folder";
 pub(crate) const DELEGATED_PROJECT_ROLES: &str = "delegated_project_roles";
 /// The role whose holder sets a project's IAM, and so grants its own account there.
@@ -687,7 +687,7 @@ const BUDGET_PERMISSION: &str = "billing.budgets.create";
 /// `delegated_project_roles`; `None` for an organisation's estate, and for an estate whose
 /// interfaces say nothing of what was delegated.
 ///
-/// The roles on a workload's folders count only for an estate that reads a folder's
+/// The roles on a delegation's folders count only for an estate that reads a folder's
 /// interface (`delegated_folder`): an account that was given no folder, or an estate that
 /// works in a project the organisation's estate created, creates no project of its own.
 pub(crate) fn delegation(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Option<Delegation> {
@@ -744,7 +744,7 @@ pub(crate) fn written_before_delegated(files: &[satz_core::pipeline::UsedInterfa
 
 /// The needs of a workload's estate that nothing delegated meets.
 ///
-/// A need on a folder or a project is met by a role delegated on the workload's folders,
+/// A need on a folder or a project is met by a role delegated on the delegated folders,
 /// which everything the estate creates stands under, or by one the estate grants its own
 /// account on a node it declares or on the project it was given. A need on a project is
 /// met as well by a role delegated on that project, and when the account may create
@@ -803,7 +803,7 @@ pub(crate) fn describe_not_delegated(needs: &[Need], delegation: &Delegation) ->
             } else if delegation.folder_roles.is_empty() {
                 "outside the project"
             } else {
-                "on the workload's folders"
+                "on the delegated folders"
             };
             format!("{} {} — for {}", n.roles.join(" or "), at, n.reason.join(", "))
         })
@@ -1706,7 +1706,7 @@ mod tests {
         let why: BTreeSet<&str> = miss.iter().flat_map(|n| n.reason.iter().map(String::as_str)).collect();
         assert_eq!(why, BTreeSet::from(["google_folder_iam_member", "google_org_policy_policy"]), "{:?}", miss);
         let lines = describe_not_delegated(&miss, &d);
-        assert!(lines.iter().all(|l| l.contains("on the workload's folders") && !l.contains("at the organization")), "{:?}", lines);
+        assert!(lines.iter().all(|l| l.contains("on the delegated folders") && !l.contains("at the organization")), "{:?}", lines);
 
         // without the right to create projects the account owns none: a need in a project
         // is met by what the estate grants its own account there, and by nothing else

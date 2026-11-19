@@ -283,8 +283,8 @@ pub(crate) enum Commands {
         #[arg(long)]
         workload_folder_name: Option<String>,
         /// Write a TEAM's estate instead, from the hand-over folders a central estate wrote
-        /// for a delegation: one or more folders of its `interfaces/outgoing/` — the
-        /// delegation's own, `delegation-<name>`, and those of what its account works in
+        /// for a delegation: the delegation's own folder of its `interfaces/outgoing/`,
+        /// `delegation-<name>`, and that of the one folder or project this estate works in
         /// (`presets/delegation.satz`, `presets/delegated-folders.satz`,
         /// `presets/delegated-projects.satz`). Each is copied to `interfaces/incoming/`
         /// here, unless it is already there, and the estate runs as the delegation's account

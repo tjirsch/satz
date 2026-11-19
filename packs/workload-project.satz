@@ -5,8 +5,8 @@
 //
 // A workload pack: an estate beside the organisation takes it with
 // `satz get-pack workload-project`, binds the params below and applies as its own
-// account — a workload's identity (`presets/folder-workload.satz` in the organisation's
-// estate), which may create projects in the folders it was given.
+// account — a delegation's (`presets/delegation.satz` in the organisation's estate), which
+// may create projects in the folders it was given (`presets/delegated-folders.satz`).
 //
 // THE PROJECT. `workload_project_id` under `workload_project_parent`, linked to
 // `workload_billing_account`, with `workload_project_services` enabled and protected

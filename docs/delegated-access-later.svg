@@ -24,7 +24,7 @@
   <circle cx="60" cy="270" r="11" fill="#1B2430"/>
   <text x="60" y="274" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A3</text>
   <text x="80" y="274" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">edit the entry, plan, apply</text>
-  <text x="80" y="293" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">apis, billing_roles or a folder entry of the workload</text>
+  <text x="80" y="293" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">apis or billing_roles of the delegation, or one more entry</text>
   <rect x="40" y="336" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
   <circle cx="60" cy="356" r="11" fill="#0F766E"/>
   <text x="60" y="360" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A4</text>

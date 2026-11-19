@@ -1049,49 +1049,69 @@ names a project's values `<project>__<export>`, with `-` written `_`
 
 ### Delegating a project, and a project on satz
 
-A project is one entry of `project_workload_projects` in `presets/project-workload.satz`:
+A project is one entry of `delegated_projects` in `presets/delegated-projects.satz`, and
+it names the delegation whose account works in it — one entry of `delegations` in
+`presets/delegation.satz`:
 
 ```
 params {
-  project_workload_projects = [
+  delegations = [
     { name = "payments" owner_group = "payments-owners@example.com" },
   ]
-  project_workload_folder = "google_folder.workload_folder.name"
+  delegated_projects = [
+    { name = "payments" delegation = "payments" },
+  ]
+  delegated_projects_folder = "google_folder.workload_folder.name"
 }
 
-use "presets/project-workload.satz" when use_project_workload
+use "presets/delegation.satz" when use_delegation
+use "presets/delegated-projects.satz" when use_delegated_projects
 ```
 
-Per entry the pack declares the project's Google project `{customer_shortname}-payments-001`
-under `project_workload_folder` — the workload folder here; empty is the organisation —
-with its own service account (`svc-iac-payments`) and its state bucket inside it, the grants
-(the account takes the project's IAM and its services and the bucket, so its estate grants
-its own account the rest, on the project; the owner group reads the project and may
-become the account), and the project's interface, written once per entry. An entry of
-`project_workload_shared_projects`, `{ name = "shop-backend" workload = "shop" }`, is a
-project without an account: the account of the workload `shop` of
-`presets/folder-workload.satz` gets the same roles on it, and one account works in several
-projects. The compile refuses
+`satz add-entry <estate> delegations name=payments owner_group=payments-owners@example.com`
+and `satz add-entry <estate> delegated_projects name=payments delegation=payments` write
+the two entries: each is checked against the pack's declaration and kept only when the
+estate compiles.
+
+Per entry of `delegations` the base declares the delegation's infrastructure project
+`{customer_shortname}-deploy-payments`, inside it the service account
+`svc-deploy-payments` and the state bucket, and the grants (the owner group reads that
+project and may become the account), and publishes the interface `delegation-payments`.
+Per entry of `delegated_projects` the target declares the Google project
+`{customer_shortname}-payments-001` under `delegated_projects_folder` — the workload
+folder here; empty is the organisation — with no account and no bucket in it, the grants
+(the delegation's account takes the project's IAM and its services, so its estate grants
+its own account the rest, on the project), and the project's interface, written once per
+entry. A second entry that names the same delegation, `{ name = "shop-backend" delegation
+= "shop" }`, is a second project for the same account: one account works in several
+projects. The team's calls are billed to the delegation's infrastructure project, so an
+API a call needs is in `apis` of the delegation's entry. The compile refuses
 an entry whose `owner_group` is not an address `<name>@<domain>` or whose `name` is not
-lowercase letters, digits and `-` starting with a letter, naming the entry and the value:
+lowercase letters, digits and `-` starting with a letter, naming the entry and the value,
+and an entry of `delegated_projects` that names a delegation no entry of `delegations`
+declares:
 
 ```
-each project_workload_projects by name {
+each delegated_projects by name {
   interface "{each.name}" {
-    export "project_id"     = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
-    export "project_number" = "${{google_project.{each.name}.number}}" description "Its number, looked up"
-    export "iac_account"    = "${{google_service_account.{each.name}_iac.email}}" description "The IaC service account the project's estate runs as"
-    export "state_bucket"   = "${{google_storage_bucket.{each.name}_state.name}}" description "The bucket the project's estate keeps its state in"
-    // … and `delegated_project_roles`, `delegated_apis`: what the account was given
+    export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "delegated_project_roles" = delegated_projects_roles description "The roles the delegation's account holds on the project"
+    export "delegated_budgets"       = each.budgets description "Whether the account may manage budgets for this project"
   }
 }
 ```
 
-The entry is the estate's own, or the project's request: `contributes_project_workload_projects = [ … ]` in
+The interface `delegation-payments` carries the identity: `deploy_project_id`,
+`iac_account`, `state_bucket`, the group, and `delegated_billing_roles` and
+`delegated_apis`.
+
+An entry is the estate's own, or the project's request: `contributes_delegated_projects = [ … ]` in
 a small pack of the project's, checked with `satz check-request` and vendored into the
 estate by pull request ([language §6.17](language.md#request--what-a-project-may-add-to-a-list)). The pull request
 is the request's review; the apply creates the project; `satz transpile` writes
-`interfaces/outgoing/payments/`. Two entries of one name are refused.
+`interfaces/outgoing/delegation-payments/` and `interfaces/outgoing/payments/`. Two
+entries of one name are refused.
 
 A project's natural set is often what stands under its folder:
 `export "team_projects" = all google_project under google_folder.team_a` publishes that
@@ -1113,48 +1133,53 @@ interface "payments" {
 A workload, in HCL or in Satz, that brings its own Google project gets an interface
 written by hand, `interface "billing" { … }`, and no entry.
 
-**A project on satz** starts from that interface. In its own directory:
+**A project on satz** starts from the two hand-over folders. In its own directory:
 
 ```bash
-satz init --project payments --interface <the estate>/interfaces/outgoing/payments/payments/satz/interface.satz
+satz init --from <the estate>/interfaces/outgoing/delegation-payments <the estate>/interfaces/outgoing/payments
 satz transpile payments.satz
 ```
 
-`init --project` writes `config.toml` and `satz/payments.satz` from the interface file and
-nothing else — no credential is read. It reads `project_id`, `iac_account`, `state_bucket`
-and the core export `default_region` (a central estate without `estate-core.satz` publishes
-none and is refused), and writes `default_region`, `default_zone` and `deployment_engine`
-beside these: `infra_project_name` is the project's Google project,
-`infra_bucket_name` its state bucket, `svc_iac_account` its account, `deployment_mode =
-"cloud"`, the `gcs` backend on the bucket, the providers, and the `use` of the interface
-file. The estate compiles as the project's own IaC service account, and the project's
+`init --from` copies each folder into `interfaces/incoming/`, unless it stands there
+already, and writes `config.toml` and `satz/payments.satz` from the interface files — no
+credential is read. Exactly one of the folders is a delegation's own; `--name` names the
+estate, which otherwise takes the delegation's name. It reads `deploy_project_id`,
+`iac_account`, `state_bucket` and the core export `default_region` (a central estate
+without `estate-core.satz` publishes none and is refused), and writes `default_region`,
+`default_zone` and `deployment_engine` beside these: `infra_project_name` is the
+delegation's infrastructure project, `infra_bucket_name` its state bucket,
+`svc_iac_account` its account, `deployment_mode = "cloud"`, the `gcs` backend on the
+bucket under `<name>/state`, the providers, and the `use` of each interface file. The
+estate compiles as the delegation's account, and the project's
 resources read the central estate as `${{interface.<export>}}` — `project =
 "${{interface.project_id}}"` on each — and are held to the interface's rules at every
 compile. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
-it, after a change of the central estate, says what to do about it.
+it, after a change of the central estate, says what to do about it. After such a change
+the project copies the folders into `interfaces/incoming/` again.
 
 ### Delegated access: a folder for a team
 
 A workload that rolls out Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an account of its own, never as the
-organisation's IaC account. `presets/folder-workload.satz` creates it per entry of
-`folder_workloads`: the workload's infrastructure Google project, inside it the account
+organisation's IaC account. `presets/delegation.satz` creates it per entry of
+`delegations`: the delegation's infrastructure Google project, inside it the account
 `svc-deploy-<name>` and the bucket its states live in. Each entry of
-`folder_workload_folders` is a folder the pack creates for one workload, under the workload
+`delegated_folders` in `presets/delegated-folders.satz` is a folder the pack creates for
+one delegation, under the workload
 folder or the parent the entry names, and the account's roles are granted on that folder
 alone: folder and project creation and deletion, the IAM of its projects, API enablement.
 It holds no access control on a folder, so it cannot widen its own rights, and one account
 may work in several folders that share no root. Beside that it is billing user on the
 billing account, so a new project can be linked, and holds `roles/browser` on the
-organisation, which is what the interface's lookups need. The workload's group may become
-the account and nothing else. The role sets are params; a workload's APIs and billing roles
+organisation, which is what the interface's lookups need. The delegation's group may become
+the account and nothing else. The role sets are params; a delegation's APIs and billing roles
 are fields of its entry.
 
-The workload's pipeline impersonates the account and keeps its state in the workload's
+The workload's pipeline impersonates the account and keeps its state in the delegation's
 bucket. It reads the organisation through the two interface folders it took — its identity
-with what was delegated to it, and its folder — and never the organisation's state: a
-looked-up value asks the Google API for the live resource with the workload's own
-credentials ([the pack](../presets/README.md#folder-workloadsatz)).
+with what was delegated to it, `delegation-<name>`, and its folder — and never the
+organisation's state: a looked-up value asks the Google API for the live resource with the
+workload's own credentials ([the packs](../presets/README.md#delegationsatz)).
 
 ### Static values and lookups
 

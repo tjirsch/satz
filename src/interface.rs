@@ -1305,9 +1305,10 @@ impl Interface {
         let mut steps: Vec<String> = Vec::new();
         if account.is_some() {
             steps.push(
-                "In your repository run `satz init --from <this folder> <the folder of each folder or project you were given>`. It copies \
-                 them into `interfaces/incoming/`, where satz never writes again, and writes your estate: it runs as the account above, \
-                 bills its calls to the project above and keeps its state in the bucket above."
+"In your repository run `satz init --from <this folder> <the folder of the folder or project the estate works in>`. It \
+                 copies them into `interfaces/incoming/`, where satz never writes again, and writes your estate: it runs as the account \
+                 above, bills its calls to the project above and keeps its state in the bucket above. An estate works in one place: \
+                 for a second folder or project run it again with that folder and a `--name` of its own."
                     .to_string(),
             );
         } else {

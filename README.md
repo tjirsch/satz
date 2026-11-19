@@ -186,17 +186,18 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--project <name>` with `--interface <path>` (a project estate, from the interface the central estate published), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
+| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--workload-folder-name`, `--from <folder>…` with `--name <estate name>` (a team's estate, from the hand-over folders the central estate wrote for a delegation), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a project's request file — a pack of `contributes_<param>` entries for the estate's `request` points — checked before it is vendored into the estate: request points only, each entry shaped (its fields, and each value its field's pattern matches), no key the list holds for another entry, and the estate compiled with the file in place |
-| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields, patterns and entries; the json form is what satz-studio reads |
+| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a project reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every request point with its key, fields, patterns, defaults and entries; the json form is what satz-studio reads |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the permission pre-flight), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (compile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the compile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that emitted it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per project, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. A project estate that `use`s an interface file reads its values as `"${{interface.<export>}}"` and is held to its attach points ([projects beside the estate](docs/workflows.md#projects-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's service account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
-| `packs <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
+| `presets <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — what the estate works in (the organisation, a delegated folder, a delegated project) and, for an estate that reads hand-over folders, who delegated (`delegated_by`: the central estate, the account, the place); then every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack deploys, what it needs and what needs it, the notices it carries with their severity and their state, and the compile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `add-preset <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-preset <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate deploys nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is compiled and restored when it does not compile |
+| `add-entry <INPUT> <LIST> <FIELD=VALUE>…` | `--format` (`text`\|`json`) — adds one entry to a list a pack declares with `request` — a delegation, a delegated folder or project, a subnet: `satz add-entry C0example.satz delegated_projects name=shop-backend delegation=shop budgets=true`. `<LIST>` is the list param as the `request` names it; each field is `<field>=<value>`, a list's values separated by commas. Refused, naming the field, when a field is not declared, a value does not match its field's pattern, or the key is already in the list; a field left out takes the declaration's default. The entry is written into the estate's params; the edited estate is compiled and restored when it does not compile. It adds only: changing or removing an entry is an edit of the file. `satz interfaces` lists the lists |
 
 **HCL**
 
@@ -304,13 +305,18 @@ satz init \
 - If customer details are provided, generates the Day-0 estate `satz/<customer-id>.satz` (params, providers, the IaC group and service account, the management folder/project/state bucket — the labels `bootstrap` imports by name).
 - Fetches the latest provider schemas for the configured providers.
 
-**A project estate** (`--project <name> --interface <path>`): the estate of one project of a
-central estate, written from the interface file `presets/project-workload.satz` published for it —
-`project_id`, `iac_account`, `state_bucket`, and the core export `default_region` (from
-`estate-core.satz`; a central estate without it is refused). It runs in cloud mode as the
-project's own IaC service account, keeps its state in the project's bucket, and `use`s the
-interface file so its resources read the central estate as `${{interface.<export>}}`.
-Nothing is derived from the credentials; the interface answered it all
+**A team's estate** (`--from <folder>… [--name <estate name>]`): the estate of a team a
+central estate delegated access to, written from the hand-over folders that estate wrote
+under its `interfaces/outgoing/` — the delegation's own, `delegation-<name>`
+(`presets/delegation.satz`), and those of what its account works in
+(`presets/delegated-folders.satz`, `presets/delegated-projects.satz`). Exactly one of the
+folders is a delegation's own. Each is copied into `interfaces/incoming/` of the current
+directory, unless it stands there already. The estate is named by `--name`, or after the
+delegation; it runs in cloud mode as the delegation's account, keeps its state under
+`<estate name>/state` in the delegation's bucket, and `use`s the interface files so its
+resources read the central estate as `${{interface.<export>}}`. The region is the core
+export `default_region` (from `estate-core.satz`; a central estate without it is refused).
+Nothing is derived from the credentials; the interfaces answered it all
 ([Delegating a project, and a project on satz](docs/workflows.md#delegating-a-project-and-a-project-on-satz)).
 
 **Without the flags:** `satz interview satz/<name>.satz --create` writes an estate that
@@ -318,71 +324,93 @@ asks for the same day-0 values one at a time and offers the derived ones as defa
 an agent does the same over MCP with `satz_interview`. Either way `bootstrap` refuses until
 every question is answered — [satz interview](docs/interview.md).
 
-### Delegated access (`presets/folder-workload.satz`, `presets/project-workload.satz`)
+### Delegated access (`presets/delegation.satz` and its targets)
 
 **Delegated access** gives a team access to a part of the organisation's resources — a
 folder, a project — with scoped permissions: an account of its own that holds roles there
 and nowhere else, and cannot widen them.
 
 A team that works beside the organisation — in its own repository, with its own state and
-pipeline — runs as an account of its own, never as the organisation's. Two packs of the
-library hand that account out, and the choice between them is who creates the Google
-projects:
+pipeline — runs as an account of its own, never as the organisation's. Three packs of the
+library hand that out: one is the base, the identity every delegation has, and one per kind
+of target says where the account works. Each target entry names its delegation, and one
+account works in any number of targets of either kind:
 
-| pack | for a team that | the organisation creates | the account holds |
+| pack | one entry is | the organisation creates | the account holds |
 |---|---|---|---|
-| [`folder-workload`](presets/README.md#folder-workloadsatz) | rolls out its own projects | the account, its state bucket, and the folders it works in | project and folder creation, project access and APIs **on its own folders only**; no access control on any folder |
-| [`project-workload`](presets/README.md#project-workloadsatz) | works in a project it is given | the project, with its own account and state bucket — or for a `folder-workload` account that already exists | access and APIs **on that project only** |
+| [`delegation`](presets/README.md#delegationsatz) | a delegation: the identity of a team | the infrastructure project `<shortname>-deploy-<name>`, the account `svc-deploy-<name>`, its state bucket `<shortname>-deploy-<name>-state`, and the grant that lets the entry's group act as the account | `roles/billing.user` on the billing account and `roles/browser` on the organisation, unless the entry says more |
+| [`delegated-folders`](presets/README.md#delegated-folderssatz) | a folder, for a team that rolls out its own projects | the folder | project and folder creation, project access and APIs **on its own folders only**; no access control on any folder |
+| [`delegated-projects`](presets/README.md#delegated-projectssatz) | a Google project, for a team that works in a project it is given | the project, with no account, state bucket or group of its own | access and APIs **on that project only** |
 
 ```
 params {
-  use_folder_workload     = true
-  folder_workloads        = [{ name = "shop" group = "gcp-shop-admins@example.com" }]
-  folder_workload_folders = [{ name = "shop" workload = "shop" }]
+  use_delegation        = true
+  use_delegated_folders = true
+  delegations           = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
+  delegated_folders     = [{ name = "shop-frontend" delegation = "shop" }]
 }
 
-use "presets/folder-workload.satz" when use_folder_workload
+use "presets/delegation.satz" when use_delegation
+use "presets/delegated-folders.satz" when use_delegated_folders
 ```
 
-An entry of either pack may say `budgets = true`: the account then manages budgets for its
-own project or folder, with nothing on the billing account
+An entry is bound in the estate, added with `satz add-entry`, or requested by the team in a
+file of its own:
+
+```bash
+satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com
+satz add-entry C0example.satz delegated_projects name=shop-backend delegation=shop budgets=true
+```
+
+The team's calls are billed to the delegation's infrastructure project: an API a call needs
+is asked for in the delegation's `apis`.
+
+An entry of either target pack may say `budgets = true`: the account then manages budgets
+for that project or folder, with nothing on the billing account
 ([`delegated-budget-role`](presets/README.md#delegated-budget-rolesatz)); the workload pack
 `packs/project-budget.satz` is the budget itself.
 
-Each pack publishes what it delegated in the interface the team's estate reads, and the
-compile judges that estate against it ([What an estate must
+Each pack publishes what it delegated in an interface the team's estate reads —
+`delegation-<name>` for the base, `<name>` for each target — and the compile judges that
+estate against them ([What an estate must
 declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [projects beside
-the organisation](docs/tutorial-projects.md) says which pack is for whom and walks both;
+the organisation](docs/tutorial-projects.md) says which target is for whom and walks both;
 [delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organisation
 team and the workload team follow, by side; the next section is the project pack in short.
 
-### Delegating a project (`presets/project-workload.satz`)
+### Delegating a project (`presets/delegated-projects.satz`)
 
-A project is an entry of the list param `project_workload_projects` of
-`presets/project-workload.satz`, `{ name owner_group }`. Per entry the pack declares the
-project's Google project, its own service account, its state bucket, the grants, and the
+A project is an entry of the list param `delegated_projects` of
+`presets/delegated-projects.satz`, `{ name delegation }`. Per entry the pack declares the
+project's Google project, the grants of the delegation's account on it, and the
 `interface "<name>"` that publishes them — `project_id` (an attach point for
-`google_project_iam_member`), `project_number`, `iac_account`, `state_bucket`, and what was
-delegated to the account. A second list, `project_workload_shared_projects`
-(`{ name workload }`), is a project with no account of its own: the account of a workload of
-`presets/folder-workload.satz` works in it, so one account serves several projects
-([the pack](presets/README.md#project-workloadsatz)).
+`google_project_iam_member`), `project_number`, and what was delegated to the account on
+the project. The project has no account of its own: the account, its state bucket and the
+group that may act as it are those of the delegation the entry names, an entry of
+`delegations` in `presets/delegation.satz`, so one account serves several projects
+([the pack](presets/README.md#delegated-projectssatz)).
 
 ```
 params {
-  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]
-  project_workload_folder = "google_folder.workload_folder.name"
+  use_delegation            = true
+  use_delegated_projects    = true
+  delegations               = [{ name = "payments" owner_group = "payments-owners@example.com" }]
+  delegated_projects        = [{ name = "payments" delegation = "payments" }]
+  delegated_projects_folder = "google_folder.workload_folder.name"
 }
 
-use "presets/project-workload.satz" when use_project_workload
+use "presets/delegation.satz" when use_delegation
+use "presets/delegated-projects.satz" when use_delegated_projects
 ```
 
-The entry is bound in the estate, or requested by the project as `contributes_project_workload_projects`
-in a file of its own, checked with `satz check-request` and vendored into the estate by
-pull request; the pull request is the request's review. `project_workload_folder` is
-the parent, the organisation when it is empty. `satz transpile` then writes
-`interfaces/outgoing/payments/`, and the project's own estate is `satz init --project payments
---interface interfaces/outgoing/payments/payments/satz/interface.satz` in its directory. An
+The entry is bound in the estate, added with `satz add-entry`, or requested by the team as
+`contributes_delegated_projects` in a file of its own, checked with `satz check-request`
+and vendored into the estate by pull request; the pull request is the request's review.
+`delegated_projects_folder` is the parent, the organisation when it is empty. `satz
+transpile` then writes `interfaces/outgoing/delegation-payments/` and
+`interfaces/outgoing/payments/`, and the team's own estate is `satz init --from
+<central>/interfaces/outgoing/delegation-payments <central>/interfaces/outgoing/payments`
+in its directory. An
 interface declared in two files is one interface, so the estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — and a workload that brings its own Google project gets an
@@ -581,16 +609,17 @@ A project declared outside the estate file (in a pack, which the next `merge-pre
 would overwrite) is named with the APIs to add to it by hand, and nothing is written.
 
 **A workload's estate is judged against what was delegated to it.** An estate that runs as
-an account the organisation's estate created with `presets/folder-workload.satz` reads the
-interface `workload-<name>`, which carries what that account holds: `delegated_folder_roles`
-on each of its folders, `delegated_billing_roles` on the billing account, and
-`delegated_apis` on its infrastructure project, the project its providers bill to. For
-such an estate:
+an account the organisation's estate created with `presets/delegation.satz` reads the
+interface `delegation-<name>`, which carries what that account holds beside its targets —
+`delegated_billing_roles` on the billing account, and `delegated_apis` on its
+infrastructure project, the project its providers bill to — and the interface of each
+target, which carries what it holds there: `delegated_folder_roles` on a folder
+(`presets/delegated-folders.satz`), `delegated_project_roles` on a project
+(`presets/delegated-projects.satz`). For such an estate:
 
 - a need on a folder or a project is met by a delegated folder role, or by a role the
   estate grants its own account on a folder or a project; a need on a project is met as
-  well by a role delegated on that project (`delegated_project_roles`, from
-  `presets/project-workload.satz`), and when `roles/resourcemanager.projectCreator` was
+  well by a role delegated on that project (`delegated_project_roles`), and when `roles/resourcemanager.projectCreator` was
   delegated on a folder, because a project's creator is its owner. The folder roles count
   for an estate that reads a folder's interface: an account without a folder creates no
   project;
@@ -601,8 +630,8 @@ such an estate:
   organisation are not a workload's.
 
 What is not delegated is reported as what to ask the organisation's estate for — a role in
-`folder_workload_roles`, a role in the workload's `billing_roles`, an API in the `apis` of
-the entry that created the project the calls are billed to — and nothing at the
+`delegated_folders_roles`, a role in the delegation's `billing_roles`, an API in the `apis` of
+the delegation, whose infrastructure project the calls are billed to — and nothing at the
 organization is ever proposed: the account could not apply such a grant. A role the
 account lacks on a project it was given is the one thing it closes itself, with a
 `google_project_iam_member` on the interface's `project_id` in its own estate; the finding
@@ -2439,7 +2468,7 @@ cloud knows is a `data` source keyed by what satz writes (`presets/interface-loo
 A project estate's `${{interface.<export>}}` is replaced before emission, and its
 resources are held to the interface file's attach points (`src/consumer.rs`).
 `src/interface_report.rs` is the `satz interfaces` report, `src/interface_changes.rs` writes
-`CHANGES.md` from the previous interface file, and `src/project.rs` is `init --project`.
+`CHANGES.md` from the previous interface file, and `src/project.rs` is `init --from`.
 - **Context Awareness**: a nested resource inherits its parent's identifier (`project`, `folder_id`, `org_id`) from the enclosing block. A project that writes one says its own parent — a reference to a folder the estate declares, or an id — and an empty value says nothing, so the enclosing block decides.
 - **Intrinsic scopes**: groups, org grants and billing grants hoist to their real scope wherever they are written.
 

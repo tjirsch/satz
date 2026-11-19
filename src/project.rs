@@ -57,8 +57,10 @@ pub(crate) fn default_name(files: &[(String, InterfaceFile)]) -> Option<String> 
 /// interface with the path the estate `use`s. Exactly one of them is a delegation's own —
 /// the identity: the estate runs as its account, in its infrastructure project, with its
 /// state in its bucket under the estate's name, so several estates of one delegation share
-/// the bucket. The others are what that account works in. Refused when no interface, or
-/// more than one, carries an identity, or when none carries the region.
+/// the bucket. At most one other is the place that account works in: an estate works in
+/// one folder or one project, because every target publishes its values under the same
+/// names. Refused when no interface, or more than one, carries an identity, when more
+/// than one is a place, or when none carries the region.
 pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<String, String> {
     valid_name(name)?;
     let listed = || files.iter().map(|(_, f)| format!("`{}`", f.name)).collect::<Vec<_>>().join(", ");
@@ -84,6 +86,15 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
             ));
         }
     };
+    let targets: Vec<&InterfaceFile> = files.iter().map(|(_, f)| f).filter(|f| !is_base(f)).collect();
+    if targets.len() > 1 {
+        return Err(format!(
+            "{} of the interfaces {} are places to work in ({}): an estate works in one — every one publishes its values under the same names, so two cannot be read together. Run `satz init --from` once per place, each with the delegation's own folder and its own `--name`; the estates share the account and the state bucket",
+            targets.len(),
+            listed(),
+            targets.iter().map(|f| format!("`{}`", f.name)).collect::<Vec<_>>().join(", ")
+        ));
+    }
     let read = |export: &str| static_output(base, export).expect("a base carries the three exports");
     let region = files.iter().find_map(|(_, f)| static_output(f, REGION)).ok_or_else(|| {
         format!(
@@ -328,6 +339,10 @@ mod tests {
         let other = taken("delegation-payments");
         let two = super::estate("x", &[(base.0.clone(), base.2.clone()), (other.0.clone(), other.2.clone())]).unwrap_err();
         assert!(two.contains("an estate runs as one account"), "{}", two);
+        // two places are one too many for one estate
+        let second = taken("data-mart");
+        let places = super::estate("data", &[(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone()), (second.0.clone(), second.2.clone())]).unwrap_err();
+        assert!(places.contains("an estate works in one") && places.contains("`data-lake`, `data-mart`") && places.contains("--name"), "{}", places);
         let no_region_text = base.1.replace("output \"default_region\"", "output \"region_gone\"");
         let no_region = satz_core::satz::parse(&no_region_text).unwrap().interface_file.unwrap();
         assert!(super::estate("data", &[(base.0.clone(), no_region)]).unwrap_err().contains("estate-core"));

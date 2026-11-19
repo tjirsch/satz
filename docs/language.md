@@ -2570,7 +2570,7 @@ included, so an entry a project requests is an interface too.
 An interface an `each` writes is one project's own, in a pack too — one entry is one
 project — unless its block says `common`. One of the same name in another file is the same
 interface, and their exports merge: that is how an estate adds to the interfaces a pack
-writes. The library's `presets/project-workload.satz` writes one per project it delegates access to.
+writes. The library's `presets/delegated-projects.satz` writes one per project it delegates access to.
 
 Refused: what the resource `each` refuses about the list and its entries (§6.4), anything
 but `interface` blocks inside it, an `each` with none, a name that reads no field of the
@@ -2612,7 +2612,7 @@ the pattern does not match is refused naming the entry, the field, the value and
 pattern:
 
 ```
-request project_workload_projects: entry `payments` has `owner_group` = "payments-owners", which the request point's pattern `[^@: ]+@[^@: ]+` does not match
+request delegations: entry `payments` has `owner_group` = "payments-owners", which the request point's pattern `[^@: ]+@[^@: ]+` does not match
 ```
  `satz check-request <file> [<estate>]` holds a project's file to it offline,
 before the file is vendored: the file holds a `pack` header and `params {
@@ -2934,7 +2934,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | publish every Google project under one folder | `export "team" = all google_project under google_folder.team_a` |
 | keep a pack's resource out of every export | `private google_storage_bucket.logs` |
 | one resource per entry of a list param | `google_pubsub_topic { each event_topics by name { name = "{each.name}" } }` |
-| one interface per entry of a list param | `each project_workload_projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
+| one interface per entry of a list param | `each delegated_projects by name { interface "{each.name}" { export "project_id" = "${{google_project.{each.name}.project_id}}" } }` |
 | let a project add entries to a list | `request event_topics { key = "name" fields = ["name", "retention"] }` |
 | put an interface into the library every project carries | `interface "network" common { export "vpc" = "${{google_compute_network.shared.self_link}}" }` |
 | read a central estate's value in a project estate | `use "interfaces/incoming/payments/payments/satz/interface.satz"` and `folder_id = "${{interface.folder}}"` |
@@ -2949,9 +2949,10 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `report-compliance [<framework>] <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). With no framework it reports each one the estate's `compliance_frameworks` names, one section per framework in the one file, and `--format json` answers `{frameworks, reports}`. `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
-| `packs <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |
+| `presets <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it deploys, what it needs and what needs it, and the compile's pack findings; a `use` the graph does not know is `unmanaged` |
 | `add-preset <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is compiled and restored when it does not compile |
 | `remove-preset <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
+| `add-entry <estate>.satz <list> <field>=<value>… [--format text\|json]` | Satz | adds one entry to a list a pack declares with `request` (§6.18): every field declared, each value matching its field's pattern, the key not yet in the list; a list's values are comma-separated. The edited estate is compiled and restored when it does not compile |
 | `update-prerequisites [<estate>.satz] [--report-only] [--format text\|json]` | Satz | what the estate's resource types oblige it to declare: the roles the IaC service account needs against what it grants, and the APIs each billed project must enable against what it declares there. Writes both into the estate; `--report-only` lists them instead |
 | `whoami [<estate>.satz]` | — | the credential satz runs as and, with an estate, what that estate runs as — its service account, impersonated by the credential, in cloud mode; the credential itself in local mode — with the live checks that decide whether the next call works |
 | `prowler <estate>.satz [--format text\|json]` | Evidence | prints the Prowler invocation this estate needs — scope, the frameworks its claims name, the OCSF output path — and never runs it |
@@ -2959,7 +2960,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `check-presets <estate>.satz --format text\|json --out f` | Satz | drift of packs vs upstream |
 | `fmt <paths…> [--check] [--stdin]` | Satz | rewrite Satz files in the canonical layout (§12.3); `--check` names the files that are not, `--stdin` formats one file from stdin to stdout |
 | `lsp` | Satz | the language server on stdio, started by the editor: diagnostics, completion, hover, go-to-definition, formatting |
-| `init [flags] [--interview]` / `init --project <n> --interface <file>` | Satz | write a new estate from the day-0 values, or a project's estate from its interface file (§6.17) |
+| `init [flags] [--interview]` / `init --from <folder>… [--name <n>]` | Satz | write a new estate from the day-0 values, or a team's estate from the hand-over folders of a delegation (§6.17) |
 | `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and request point the estate publishes (§6.17) |
 | `check-request <file> [<estate>.satz]` | Satz | a project's request file against the estate's `request` points, and the estate's compile with the file in place, before the pull request that vendors it |
 | `check-consumer <dir> [<estate>.satz]` | HCL | a project's HCL against the interface it reads: attach points, authoritative grants, duplicates |

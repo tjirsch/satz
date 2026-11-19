@@ -507,7 +507,7 @@ google_storage_bucket {
 SATZ
 "$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate does not transpile:\n$(cat tmp/pw-estate.txt)"
 grep -q 'roles/storage.admin on the project — to grant in this estate — for google_storage_bucket' tmp/pw-estate.txt || fail "a role the account lacks on its project is not its own to grant:\n$(cat tmp/pw-estate.txt)"
-grep -q 'at the organization\|on the workload'"'"'s folders —' tmp/pw-estate.txt && fail "a project's estate is asked for a role at the organization or on a folder it does not have:\n$(cat tmp/pw-estate.txt)"
+grep -q 'at the organization\|on the delegated folders —' tmp/pw-estate.txt && fail "a project's estate is asked for a role at the organization or on a folder it does not have:\n$(cat tmp/pw-estate.txt)"
 printf '\ngoogle_project_iam_member {\n  project = "${{interface.project_id}}"\n  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [\n    "roles/storage.admin",\n  ]\n}\n' >> tmp/pw/estate/satz/backend.satz
 "$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate with its own grant does not transpile:\n$(cat tmp/pw-estate.txt)"
 grep -q 'prerequisites' tmp/pw-estate.txt && fail "the estate's own grant on its project does not close the need:\n$(cat tmp/pw-estate.txt)"
@@ -650,6 +650,16 @@ if command -v tofu >/dev/null 2>&1; then
 fi
 "$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated project' || fail "the presets report does not say the estate works in a delegated project"
 "$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated folder' || fail "the presets report does not say the example works in a delegated folder"
+"$satz" --config "$pt" presets simple-project.satz --format json --out tmp/pt-presets.json >/dev/null 2>&1 || fail "the presets report of the example team's estate failed"
+python3 - tmp/pt-presets.json <<'PY2' || fail "the presets report does not say who delegated:\n$(cat tmp/pt-presets.json)"
+import json, sys
+by = {d["interface"]: d for d in json.load(open(sys.argv[1]))["delegated_by"]}
+base, folder = by["delegation-shop"], by["shop"]
+assert base["estate"] == "c0example" and base["organizations"] == ["organizations/123456789012"], base
+assert base["account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com" and base["deploy_project"] == "acme-deploy-shop", base
+assert base["account_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
+assert folder["folder"] is True and "account" not in folder, folder
+PY2
 "$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organisation' || fail "the presets report does not say the organisation's estate works in the organisation"
 "$satz" --config tmp/bud/team packs --from "$root/packs" --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the team's estate:\n$(cat tmp/bud-packs.txt)"
 grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
