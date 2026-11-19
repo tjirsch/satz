@@ -61,7 +61,7 @@ const ORDER: [&str; 16] = [
     "infra_project_name",
     "infra_bucket_name",
     "svc_iac_account",
-    "svc_iac_users_group",
+    "estate_account_user_group",
     "deployment_engine",
     "deployment_mode",
     "default_region",
@@ -81,7 +81,7 @@ const REFERENCED: [&str; 12] = [
     "infra_project_name",
     "infra_bucket_name",
     "svc_iac_account",
-    "svc_iac_users_group",
+    "estate_account_user_group",
     "default_region",
     "default_zone",
 ];
@@ -380,11 +380,11 @@ impl Vocabulary {
                     (name == wanted).then_some(rest.to_string())
                 });
                 match group {
-                    Some(email) => inferred(&mut v, "svc_iac_users_group", &wanted, format!("the group {} among the members", email)),
-                    None => v.not_derivable.push(("svc_iac_users_group", format!("no group named {} among the members", wanted))),
+                    Some(email) => inferred(&mut v, "estate_account_user_group", &wanted, format!("the group {} among the members", email)),
+                    None => v.not_derivable.push(("estate_account_user_group", format!("no group named {} among the members", wanted))),
                 }
             }
-            None => v.not_derivable.push(("svc_iac_users_group", "follows from the estate account".into())),
+            None => v.not_derivable.push(("estate_account_user_group", "follows from the estate account".into())),
         }
 
         derived(&mut v, "deployment_engine", "tofu");
@@ -569,7 +569,7 @@ project:
         assert_eq!(binding(&v, "infra_folder_name").value, "Infrastructure");
         assert_eq!(binding(&v, "infra_bucket_name").value, "acme-infra-001-state");
         assert_eq!(binding(&v, "billing_account_infra").value, "01AA-BB-CC");
-        assert_eq!(binding(&v, "svc_iac_users_group").value, "svc-iac-001-users");
+        assert_eq!(binding(&v, "estate_account_user_group").value, "svc-iac-001-users");
         assert_eq!(binding(&v, "customer_shortname").value, "acme", "3 of 5 names lead with it");
         assert_eq!(binding(&v, "customer_domain").value, "example.com");
         assert!(matches!(&binding(&v, "customer_domain").class, Class::Inferred(r) if r.contains("3 of 3")), "{:?}", v.bindings);
@@ -611,7 +611,7 @@ project:
         let v = Vocabulary::infer(&config, None, None, None);
         let (_, how) = v.not_derivable.iter().find(|(n, _)| *n == "svc_iac_account").unwrap();
         assert!(how.contains("2 service accounts") && how.contains("svc-other"), "{}", how);
-        for name in ["infra_project_name", "infra_folder_name", "infra_bucket_name", "svc_iac_users_group"] {
+        for name in ["infra_project_name", "infra_folder_name", "infra_bucket_name", "estate_account_user_group"] {
             assert!(v.bindings.iter().all(|b| b.name != name), "{} must not be guessed", name);
         }
         assert!(v.bindings.iter().all(|b| b.name != "billing_account_infra"), "no infrastructure project, no sign-in: not bound");

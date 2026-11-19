@@ -47,8 +47,8 @@
   "private" @context
   resource: (identifier) @name) @item
 
-(request
-  "request" @context
+(entries
+  "entries" @context
   param: (identifier) @name) @item
 
 (interface

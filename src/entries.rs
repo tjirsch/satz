@@ -1,4 +1,4 @@
-//! `satz add-entry`: one entry added to a list a pack declares with `request`. The
+//! `satz add-entry`: one entry added to a list a pack declares with `entries`. The
 //! declaration says what an entry is — its key, its fields, a pattern per field, the value a
 //! field takes when left out — and that is all this writer knows: it adds a delegation, a
 //! delegated project, a subnet or a budget alike, and a pack that declares a new kind of
@@ -83,7 +83,7 @@ pub(crate) fn appended(list: &str, entry: &str) -> Result<String, String> {
 }
 
 /// Add one entry to `list` in the estate. Refused, with nothing written: a list no pack of
-/// the estate declares with `request`, a field the declaration does not list, a value its
+/// the estate declares with `entries`, a field the declaration does not list, a value its
 /// pattern does not match, an entry without its key, a key the list already holds, and an
 /// estate that does not transpile with the entry in it.
 pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, list: &str, pairs: &[(String, String)]) -> Result<EntryAdded, String> {
@@ -91,7 +91,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, list: 
     let request = compiled.requests.iter().find(|r| r.param == list).ok_or_else(|| {
         let known: Vec<String> = compiled.requests.iter().map(|r| format!("`{}`", r.param)).collect();
         format!(
-            "`{}` is no list a pack of this estate declares with `request` — {}",
+            "`{}` is no list a pack of this estate declares with `entries` — {}",
             list,
             if known.is_empty() { "it declares none: switch on the pack that takes the entry first".to_string() } else { format!("it declares {}", known.join(", ")) }
         )

@@ -196,34 +196,30 @@ time:
 infrastructure folder's `folders/<number>`, which the interface looks up, and
 `workload_folder`.
 
-**The workload folder** is where the customer's and the projects' folders live, the parent
-every project's folder takes. `workload_folder_name` names it, like `infra_folder_name`
-names the infrastructure folder, and it may be empty: `""`, the default, is the
-organization itself, and nothing is created for it. Its question says so
-(`empty = "…"`, [language §6.14](../docs/language.md#614-question--what-to-ask-and-what-the-answer-costs)),
-so `""` is an answer the interview offers and the gate counts. The export is written
-into the estate, not by this pack, because its two forms are different statements:
+**The workload folder** is the folder directly under the organization that holds the
+delegated resources of workloads, the parent every delegated folder and delegated project
+takes. `workload_folder_name` names it, like `infra_folder_name` names the infrastructure
+folder, and every organization's estate has one: the question has no default and no empty
+answer, so it blocks until a name is typed. The folder and its export are written into
+the estate, not by this pack:
+`google_folder { workload_folder { display_name = workload_folder_name } }` and
+`export "workload_folder" = "${{google_folder.workload_folder.name}}"`, its
+`folders/<number>` looked up by the interface.
 
-| `workload_folder_name` | what the estate carries | `workload_folder` |
-|---|---|---|
-| `""` | `export "workload_folder" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at transpile time |
-| a name | `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | `folders/<number>`, looked up by the interface |
-
-`satz init` writes the section from `--workload-folder-name` (the folder) or without it
-(the organization); `satz interview` and `satz_interview` write it when the question is
-answered. The folder block stands at the top level, so its parent is the organization;
+`satz interview`, `satz_interview` and satz-studio write the section when the question is
+answered; `satz init` leaves it open. The folder block stands at the top level, so its parent is the organization;
 to put the workload folder inside another folder — a top-level folder named after the
 organization — move the `workload_folder { … }` block into that folder's block, and the
-interface's lookup follows the parents. An answer or a re-run of `init` whose form
-differs from the section the estate already carries is refused, not rewritten: the
-projects' folders sit under it. The transpile refuses a name and a section that disagree, at
-the line to edit: a name with no `export "workload_folder"` or with the organization's,
-and an empty name with a folder's. An empty name with no section transpiles and publishes
-no `workload_folder`.
+interface's lookup follows the parents. An answer to an estate that publishes the
+organization as `workload_folder` is refused, not rewritten: the delegated resources sit
+under it. The transpile refuses, at the line to edit, a `workload_folder_name` bound
+`""`, a name with no `export "workload_folder"`, and a name beside an export of the
+organization. An estate that neither binds the name nor publishes the folder has the
+question open, which the gate before `bootstrap` and an apply names.
 
 ```
 error    workload-folder  satz/acme.satz:33  workload_folder_name
-    `workload_folder_name = "Workloads"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"`, or bind `workload_folder_name = ""` for the organization
+    `workload_folder_name = "Workloads"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"`
 ```
 
 Google refuses a second folder of one name under one parent, so a folder the customer
@@ -234,11 +230,8 @@ Two kinds of param, and the interview treats them differently:
 
 | kind | params | in the report |
 |---|---|---|
-| **no possible default** | `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `customer_longname`, `first_admin`, `billing_account_infra` | `blocking: true` — a value has to be typed |
-| **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, `compliance_frameworks` | `default` offered — accepting it is an answer, recorded by writing it |
-
-`workload_folder_name` is of neither kind: its default `""` is a real answer — the
-organization — because its question declares what an empty answer means.
+| **no possible default** | `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `customer_longname`, `first_admin`, `billing_account_infra`, `workload_folder_name` | `blocking: true` — a value has to be typed |
+| **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `estate_account_user_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, `compliance_frameworks` | `default` offered — accepting it is an answer, recorded by writing it |
 
 `compliance_frameworks` is the one param here that is neither derived nor a
 convention: it is what the customer ANSWERS TO — a contract, an auditor, a regulator —
@@ -1282,15 +1275,15 @@ What is delegated is another pack's — folders
 the delegation whose account works there. A team then never runs as the organization's IaC
 account.
 
-**Use** — the delegations' infrastructure projects land in the folder
-`delegation_project_folder` names, so the line stands at the top level:
+**Use** — the delegations' infrastructure projects land in the infrastructure folder,
+`google_folder.infra_folder`, beside the organization's own, so the line stands at the top
+level:
 
 ```
 params {
-  use_delegation            = true
-  delegation_project_folder = "google_folder.infra_folder.name"
+  use_delegation = true
   delegations = [
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
   ]
 }
 
@@ -1301,7 +1294,7 @@ use "presets/delegation.satz" when use_delegation
 the team:
 
 ```
-satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com
+satz add-entry C0example.satz delegations name=shop estate_account_user_group=gcp-shop-admins@example.com
 ```
 
 `add-entry` checks the entry against the list below — every field declared, each
@@ -1316,17 +1309,17 @@ pack requests_shop version "1.0"
 
 params {
   contributes_delegations = [
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
   ]
 }
 ```
 
 | list | key | fields |
 |---|---|---|
-| `delegations` | `name` | `name` (the delegation's name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that may become the account, `<name>@<domain>`), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
+| `delegations` | `name` | `name` (the delegation's name — lowercase letters, digits and `-`, starting with a letter), `estate_account_user_group` (the address of the group that may act as the account, `<name>@<domain>`), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
 
 The list's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
-`owner_group` that is not `<name>@<domain>` — `gcp-shop-admins`, or
+`estate_account_user_group` that is not `<name>@<domain>` — `gcp-shop-admins`, or
 `group:gcp-shop-admins@example.com` — are refused at transpile, by `satz add-entry` and by
 `satz check-request`, naming the entry and the value. `apis` and `billing_roles` are lists,
 and an entry that states one states it whole: a delegation that manages budgets on the
@@ -1337,7 +1330,7 @@ billing account repeats the six APIs and adds `billingbudgets.googleapis.com`, a
 
 | resource | what |
 |---|---|
-| `google_project.deploy_shop` | `{customer_shortname}-deploy-shop` under `delegation_project_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
+| `google_project.deploy_shop` | `{customer_shortname}-deploy-shop` in the infrastructure folder, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
 | `google_service_account.deploy_shop` | `svc-deploy-shop`, the account the workload's pipelines impersonate |
 | `google_storage_bucket.deploy_shop_state` | `{customer_shortname}-deploy-shop-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
 | the account's grants | the entry's `billing_roles` on the billing account, `delegation_organization_roles` on the organization |
@@ -1359,8 +1352,8 @@ lookup. Everything else the account holds, it holds on a delegated resource.
 
 | export | what |
 |---|---|
-| `deploy_project_id`, `iac_account`, `state_bucket` | the delegation's infrastructure project, the account the workload estates run as, the bucket their states live in |
-| `account_group`, `account_group_roles` | the group whose members may act as the account, and what it holds on it |
+| `infrastructure_project_id`, `estate_account`, `state_bucket` | the delegation's infrastructure project, the account the workload estates run as, the bucket their states live in |
+| `estate_account_user_group`, `account_group_roles` | the group whose members may act as the account, and what it holds on it |
 | `billing_account` | the billing account a project the team creates is linked to, and a budget is created on |
 | `delegated_billing_roles`, `delegated_apis` | what was delegated to the account beside its delegated resources: its roles on the billing account, and the APIs of its infrastructure project |
 
@@ -1387,9 +1380,8 @@ an estate must declare](../README.md#what-an-estate-must-declare-update-prerequi
 | Param | Default | Meaning |
 |---|---|---|
 | `delegations` | `[]` | the delegations, bound in the estate, added with `satz add-entry` or filled by requests |
-| `delegation_project_folder` | `""` | the folder the delegations' infrastructure projects are created in, asked; empty is the organization, the infrastructure folder is `"google_folder.infra_folder.name"` |
 | `delegation_organization_roles` | `["roles/browser"]` | what an account holds on the organization |
-| `delegation_group_roles` | tokenCreator, serviceAccountUser | what a delegation's group holds on the account |
+| `delegation_group_roles` | tokenCreator, serviceAccountUser | what a delegation's estate account user group holds on the account |
 
 Nothing in the pack bills while idle.
 
@@ -1408,7 +1400,7 @@ params {
   use_delegation        = true
   use_delegated_folders = true
   delegations = [
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
   ]
   delegated_folders = [
     { name = "shop-frontend" delegation = "shop" },
@@ -1486,16 +1478,16 @@ delegation its entry names — an entry of `delegations` in
 [`delegation.satz`](#delegationsatz) — which creates no project itself.
 
 **Use** — beside the base; the projects land in the folder `delegated_projects_folder`
-names, so the lines stand at the top level:
+names, the workload folder unless the estate binds another, so the lines stand at the top
+level:
 
 ```
 params {
-  use_delegation            = true
-  use_delegated_projects    = true
-  delegated_projects_folder = "google_folder.workload_folder.name"
+  use_delegation         = true
+  use_delegated_projects = true
   delegations = [
-    { name = "payments" owner_group = "payments-owners@example.com" },
-    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
+    { name = "payments" estate_account_user_group = "payments-owners@example.com" },
+    { name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" },
   ]
   delegated_projects = [
     { name = "payments" delegation = "payments" },
@@ -1585,7 +1577,7 @@ interface "network" }` — since an interface declared in two files is one.
 | Param | Default | Meaning |
 |---|---|---|
 | `delegated_projects` | `[]` | the projects, each with the delegation whose account works in it |
-| `delegated_projects_folder` | `""` | the folder the projects are created in, asked; empty is the organization, the workload folder is `"google_folder.workload_folder.name"` |
+| `delegated_projects_folder` | `"google_folder.workload_folder.name"` | the folder the projects are created in, asked: the workload folder, another folder the estate declares by reference, or an existing one by its id |
 | `delegated_projects_roles` | projectIamAdmin, serviceUsageAdmin | what an account holds on each of its projects |
 
 Nothing in the pack bills while idle.
@@ -1709,7 +1701,7 @@ security's as much as the provider's.** It decides how a project changes it:
   ignore_changes = [status[0].resources] }` on it).
 - **Central-only:** the pack keeps the resource whole and takes the projects' entries as a
   list param, which a project's contribution fills (`contributes_<param>`, ADR 0051) and a
-  `request` point beside the list declares — what a project may add, checked by `satz
+  `entries` statement beside the list declares — what a project may add, checked by `satz
   check-request`; the change is a pull request on the estate, reviewed like a rule change in a global firewall
   or a route in a network hub. Global firewall policy rules (the provider could attach
   them one by one as `google_compute_firewall_policy_rule`, and security keeps them

@@ -44,7 +44,7 @@ const EXAMPLE_PARAMS: &[(&str, &str)] = &[
     ("infra_project_name", "acme-infra-001"),
     ("infra_bucket_name", "acme-infra-001-state"),
     ("svc_iac_account", "svc-iac-001"),
-    ("svc_iac_users_group", "svc-iac-users"),
+    ("estate_account_user_group", "svc-iac-users"),
     ("deployment_engine", "tofu"),
     ("deployment_mode", "local"),
     ("default_region", "europe-west3"),
@@ -95,8 +95,9 @@ pub(crate) fn synthetic_estate(pack: &Path, interface: Option<&Path>) -> String 
          // the documented example values; the pack's own questions are answered with the\n\
          // defaults it declares.\n\nestate review\n\nparams {\n",
     );
+    let width = EXAMPLE_PARAMS.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
     for (k, v) in EXAMPLE_PARAMS {
-        s.push_str(&format!("  {:<24} = \"{}\"\n", k, v));
+        s.push_str(&format!("  {:<width$} = \"{}\"\n", k, v));
     }
     s.push_str("}\n\n");
     // the emitter writes providers for a real estate, so the estate it is given has
@@ -725,7 +726,7 @@ mod tests {
     #[test]
     fn the_synthetic_estate_binds_the_documented_examples_and_uses_the_pack() {
         let e = synthetic_estate(Path::new("/tmp/x/my-pack.satz"), None);
-        assert!(e.contains("customer_organization_id = \"123456789012\""), "{}", e);
+        assert!(e.contains("customer_organization_id  = \"123456789012\""), "{}", e);
         assert!(e.contains("use \"/tmp/x/my-pack.satz\""), "{}", e);
         // it is a Satz file satz composes whole, so it must be in the canonical layout
         assert!(satz_core::fmt::is_formatted(&e).unwrap(), "{}", e);

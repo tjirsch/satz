@@ -13,7 +13,7 @@
 // once a grant of `roles/compute.networkUser` on it exists, at the attach point
 // `shared_subnets`.
 
-pack shared_network version "1.0"
+pack shared_network version "1.1"
 
 params {
   network_host_project_id     = "{customer_shortname}-net-host-001"
@@ -52,13 +52,13 @@ question network_host_project_folder {
 
 // ---- what a project may ask for ---------------------------------------------------
 
-request shared_vpc_subnets {
+entries shared_vpc_subnets {
   key         = "name"
   fields      = ["name", "cidr", "region"]
   description = "A subnet of the shared VPC in the host project: its name, its primary range and its region"
 }
 
-request shared_firewall_rules {
+entries shared_firewall_rules {
   key         = "name"
   fields      = ["name", "priority", "direction", "action", "description", "match"]
   description = "A rule of the shared VPC's network firewall policy: priority, INGRESS or EGRESS, allow or deny, and its match block"

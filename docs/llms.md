@@ -337,8 +337,8 @@ delegated folders and projects. A read stands in a resource body, in `terraform`
 `CHANGES.md` beside an interface's README says what the last transpile changed for it.
 
 `each <list param> by <field> { … }` inside a resource type map writes one labeled body per
-entry of the list; `request <list param> { key fields description }` declares what a workload estate
-may add to that list, and a workload estate's request file — a pack of `contributes_<param>` entries
+entry of the list; `entries <list param> { key fields patterns defaults description }` declares what one entry
+of that list looks like, and so what a workload estate may add to it, and a workload estate's request file — a pack of `contributes_<param>` entries
 — is checked by `satz check-request` and vendored into the estate by pull request.
 
 `each <list> by <field> as "{each.<field>}_<what>" { … }` labels each body with the string,
@@ -354,7 +354,7 @@ account, state bucket and estate account user group — and
  one entry per delegated resource that names it: `delegated_folders`
 (`presets/delegated-folders.satz`) or `delegated_projects`
 (`presets/delegated-projects.satz`). `satz_add_entry` adds an entry to any list a pack
-declares with `request` — `{ list, fields }`, checked against the declaration — or a
+declares with `entries` — `{ list, fields }`, checked against the declaration — or a
 reviewed pull request does; a request file is checked in the workload repository's pipeline.
 
 
@@ -470,8 +470,8 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | `"${{interface.x}}"`: the interface folders `a`, `b` each have a `x` and they differ, kind `interface-use` | two used folders carry the value with different content; name the folder, `"${{interface.a.x}}"` or `"${{interface.b.x}}"` — the message writes both |
 | `"${{interface.f.x}}"`: no used interface folder is named `f`, or the folder `f` has no value `x`, kind `interface-use` | the folder's name is the interface's name, the folder under `interfaces/incoming/`; the message lists the folders the estate uses, or the values the folder has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
-| `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the list does not declare; the message lists its fields |
-| `request <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `owner_group` of `projects` is an address `<name>@<domain>`; write the value in that form |
+| `entries <param>: entry … has <field>, which is no field of this list` | a request file carries a field the list does not declare; the message lists its fields |
+| `entries <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `estate_account_user_group` of `delegations` is an address `<name>@<domain>`; write the value in that form |
 | `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules

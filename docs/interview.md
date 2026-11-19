@@ -95,14 +95,16 @@ An interview follows the estate file's order, and the skeleton is written so tha
 order is a path:
 
 1. **`presets/estate-core.satz`** — the params `init` writes,
-   each with its question. Seven have no possible default and block until typed; the
-   rest offer one, the two derived names once the short name is in.
-   `workload_folder_name` offers `""`, the organization — its question declares what
-   an empty answer means (`empty`), so Enter and `--accept-defaults` take it. Answering
-   it also writes the section that publishes `workload_folder`, as `init` does; an
-   answer whose form differs from the section the estate already carries is refused,
-   because the projects' folders sit under it. The pack writes
-   nothing. An estate `init` wrote with its flags has every one of them answered;
+   each with its question. Eight have no possible default and block until typed — the
+   workload folder's name, `workload_folder_name`, among them: every organization's
+   estate has a workload folder, and an empty answer is refused naming the question; the
+   rest offer one, the two derived names once the short name is in. Answering
+   `workload_folder_name` also writes the section that declares the folder and publishes
+   it as `workload_folder` — `init` leaves it open; an estate that publishes the
+   organization as `workload_folder` is refused, not rewritten, because the delegated
+   resources sit under it. The pack writes
+   nothing. An estate `init` wrote with its flags has every one of them answered but
+   `workload_folder_name`;
    `init --interview` switches the pack on and asks the rest, and an estate written
    without `--interview` carries the line commented out — `satz interview` offers to
    switch it on, because the pack also declares the core exports every interface

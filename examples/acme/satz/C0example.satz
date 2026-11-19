@@ -1,5 +1,5 @@
-// The organization every example under examples/acme/ reads: the estate `satz init
-// --workload-folder-name Workloads` writes for Customer A of docs/examples.md, with
+// The organization every example under examples/acme/ reads: the estate `satz init` writes
+// for Customer A of docs/examples.md, with `workload_folder_name` answered `Workloads` and
 // `presets/estate-core.satz` switched on. Every id and name in `params` is an example
 // value — replace each with your organization's before anything is applied.
 //
@@ -22,7 +22,7 @@ params {
   customer_longname         = "Acme Corp."
   customer_shortname        = "acme"
   svc_iac_account           = "svc-iac-001"
-  svc_iac_users_group       = "svc-iac-users"
+  estate_account_user_group = "svc-iac-users"
   billing_account_infra     = "012345-6789AB-CDEF01"
   deployment_engine         = "tofu"
   deployment_mode           = "local" // switched by `satz migrate`
@@ -44,8 +44,7 @@ params {
   // `presets/delegated-folders.satz`.
   use_delegation            = true
   use_delegated_folders     = true
-  delegation_project_folder = "google_folder.infra_folder.name"
-  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
+  delegations               = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }]
   delegated_folders         = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
 }
 
@@ -85,7 +84,7 @@ providers {
 
 google_cloud_identity_group {
   svc_iac_users {
-    id           = "{svc_iac_users_group}@{customer_domain}"
+    id           = "{estate_account_user_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
     description  = "Service account users allowed to impersonate the estate account"
     owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
@@ -115,7 +114,7 @@ google_organization_iam_member {
     "roles/iam.serviceAccountAdmin",
     "roles/storage.admin",
   ]
-  "group:{svc_iac_users_group}@{customer_domain}" = [
+  "group:{estate_account_user_group}@{customer_domain}" = [
     "roles/serviceusage.serviceUsageConsumer",
   ]
 }
@@ -124,7 +123,7 @@ google_organization_iam_member {
 // every service account in the organization.
 google_service_account_iam_member {
   service_account_id = "${{google_service_account.provisioner.name}}"
-  "group:{svc_iac_users_group}@{customer_domain}" = [
+  "group:{estate_account_user_group}@{customer_domain}" = [
     "roles/iam.serviceAccountTokenCreator",
     "roles/iam.serviceAccountUser",
   ]

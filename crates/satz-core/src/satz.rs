@@ -18,7 +18,7 @@
 //!              | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
 //!              | statement                one of `STATEMENT_KEYWORDS`: claim, question,
 //!                                         action, offers, notice, export, interface,
-//!                                         suppress, private, request, hcl
+//!                                         suppress, private, entries, hcl
 //!              | "each" IDENT "by" IDENT "{" { interface } "}"   one interface per entry
 //!              | block
 //! param       := IDENT "=" value
@@ -413,7 +413,7 @@ pub struct ExportDecl {
     pub line: usize,
 }
 
-/// `request <list param> { key = "<field>" fields = [ … ] patterns = { <field> = "<regex>" }
+/// `entries <list param> { key = "<field>" fields = [ … ] patterns = { <field> = "<regex>" }
 /// description = "…" }`: what a team may add to a list param through a contribution
 /// (ADR 0051), and the shape of each entry — a field `patterns` names holds a value the
 /// whole of which the regular expression matches (ADR 0075). Checked against every entry
@@ -430,7 +430,7 @@ pub struct RequestDecl {
     pub patterns: Vec<(String, String)>,
     /// per field, the value an entry that does not carry the field takes, as written —
     /// resolved against the params when the list is read, so every reader of
-    /// the list (an `each`, the request check, the interface, tfvars) sees it filled in
+    /// the list (an `each`, the request file's check, the interface, tfvars) sees it filled in
     pub defaults: Vec<(String, Value, usize)>,
     pub description: Option<String>,
     pub line: usize,
@@ -659,7 +659,7 @@ pub struct File {
     pub suppressions: Vec<Suppression>,
     /// `private <type>.<label>` statements, in source order
     pub privates: Vec<PrivateDecl>,
-    /// `request <list param> { … }` statements, in source order
+    /// `entries <list param> { … }` statements, in source order
     pub requests: Vec<RequestDecl>,
     pub hcl_blocks: Vec<HclBlock>,
     pub actions: Vec<ActionDecl>,
@@ -1828,9 +1828,9 @@ impl P {
     fn request_stmt(&mut self, line: usize) -> Result<RequestDecl, SatzError> {
         let param = match self.next() {
             Some(Tok::Ident(p)) if !p.contains('.') => p,
-            other => return err(line, format!("request: expected the list param a project adds to, found {:?}", other)),
+            other => return err(line, format!("entries: expected the list param a project adds to, found {:?}", other)),
         };
-        self.expect(Tok::LBrace, "'{' after the requested list param")?;
+        self.expect(Tok::LBrace, "'{' after the list param")?;
         let body = self.entries()?;
         let (mut key, mut fields, mut description) = (None, None, None);
         let mut patterns: Vec<(String, String)> = Vec::new();
@@ -1838,17 +1838,17 @@ impl P {
         for e in body {
             match e {
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "key" => {
-                    key = Some(lit_str(&parts, l, "request: key")?);
+                    key = Some(lit_str(&parts, l, "entries: key")?);
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), line: l } if k == "description" => {
-                    description = Some(lit_str(&parts, l, "request: description")?);
+                    description = Some(lit_str(&parts, l, "entries: description")?);
                 }
                 Entry::Attr { key: Key::Ident(k), value: Value::List(items), line: l } if k == "fields" => {
                     let mut out = Vec::new();
                     for it in items {
                         match it {
-                            Value::Str(parts) => out.push(lit_str(&parts, l, "request: a field")?),
-                            other => return err(l, format!("request {}: fields lists field names as strings, found {:?}", param, other)),
+                            Value::Str(parts) => out.push(lit_str(&parts, l, "entries: a field")?),
+                            other => return err(l, format!("entries {}: fields lists field names as strings, found {:?}", param, other)),
                         }
                     }
                     fields = Some(out);
@@ -1857,16 +1857,16 @@ impl P {
                     for p in entries {
                         match p {
                             Entry::Attr { key: Key::Ident(f), value: Value::Str(parts), line: pl } => {
-                                let re = lit_str(&parts, pl, &format!("request {}: the pattern of `{}`", param, f))?;
+                                let re = lit_str(&parts, pl, &format!("entries {}: the pattern of `{}`", param, f))?;
                                 if let Err(e) = regex::Regex::new(&whole(&re)) {
-                                    return err(pl, format!("request {}: the pattern of `{}` is no regular expression — {}", param, f, e));
+                                    return err(pl, format!("entries {}: the pattern of `{}` is no regular expression — {}", param, f, e));
                                 }
                                 if patterns.iter().any(|(g, _)| *g == f) {
-                                    return err(pl, format!("request {}: the pattern of `{}` is written twice", param, f));
+                                    return err(pl, format!("entries {}: the pattern of `{}` is written twice", param, f));
                                 }
                                 patterns.push((f, re));
                             }
-                            other => return err(l, format!("request {}: patterns maps a field to a regular expression, `<field> = \"<regex>\"`, found {:?}", param, other)),
+                            other => return err(l, format!("entries {}: patterns maps a field to a regular expression, `<field> = \"<regex>\"`, found {:?}", param, other)),
                         }
                     }
                 }
@@ -1875,11 +1875,11 @@ impl P {
                         match d {
                             Entry::Attr { key: Key::Ident(f), value, line: dl } => {
                                 if defaults.iter().any(|(g, _, _)| *g == f) {
-                                    return err(dl, format!("request {}: the default of `{}` is written twice", param, f));
+                                    return err(dl, format!("entries {}: the default of `{}` is written twice", param, f));
                                 }
                                 defaults.push((f, value, dl));
                             }
-                            other => return err(l, format!("request {}: defaults maps a field to the value an entry without it takes, `<field> = <value>`, found {:?}", param, other)),
+                            other => return err(l, format!("entries {}: defaults maps a field to the value an entry without it takes, `<field> = <value>`, found {:?}", param, other)),
                         }
                     }
                 }
@@ -1887,29 +1887,29 @@ impl P {
                     return err(
                         line,
                         format!(
-                            "request {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …], patterns = {{ <field> = \"<regex>\" }}, defaults = {{ <field> = <value> }} and description = \"…\"",
+                            "entries {}: unexpected entry {:?} — the keys are key = \"<field>\", fields = [\"<field>\", …], patterns = {{ <field> = \"<regex>\" }}, defaults = {{ <field> = <value> }} and description = \"…\"",
                             param, other
                         ),
                     )
                 }
             }
         }
-        let key = key.ok_or_else(|| SatzError { line, msg: format!("request {}: `key` names the field that names an entry", param) })?;
-        let fields = fields.ok_or_else(|| SatzError { line, msg: format!("request {}: `fields` lists every field an entry may carry", param) })?;
+        let key = key.ok_or_else(|| SatzError { line, msg: format!("entries {}: `key` names the field that names an entry", param) })?;
+        let fields = fields.ok_or_else(|| SatzError { line, msg: format!("entries {}: `fields` lists every field an entry may carry", param) })?;
         if !fields.contains(&key) {
-            return err(line, format!("request {}: the key `{}` is not among the fields [{}]", param, key, fields.join(", ")));
+            return err(line, format!("entries {}: the key `{}` is not among the fields [{}]", param, key, fields.join(", ")));
         }
         if let Some(d) = fields.iter().enumerate().find_map(|(i, f)| fields[..i].contains(f).then_some(f)) {
-            return err(line, format!("request {}: the field `{}` is named twice", param, d));
+            return err(line, format!("entries {}: the field `{}` is named twice", param, d));
         }
         if let Some((f, _)) = patterns.iter().find(|(f, _)| !fields.contains(f)) {
-            return err(line, format!("request {}: the pattern of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
+            return err(line, format!("entries {}: the pattern of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
         }
         if let Some((f, _, dl)) = defaults.iter().find(|(f, _, _)| !fields.contains(f)) {
-            return err(*dl, format!("request {}: the default of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
+            return err(*dl, format!("entries {}: the default of `{}` is no field's — the fields: {}", param, f, fields.join(", ")));
         }
         if let Some((_, _, dl)) = defaults.iter().find(|(f, _, _)| *f == key) {
-            return err(*dl, format!("request {}: the key `{}` has no default — it names the entry, so every entry carries it", param, key));
+            return err(*dl, format!("entries {}: the key `{}` has no default — it names the entry, so every entry carries it", param, key));
         }
         Ok(RequestDecl { param, key, fields, patterns, defaults, description, line })
     }
@@ -2377,7 +2377,11 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "estate", "export", "hcl", "inputs", "interface", "notice", "offers", "pack", "params", "private", "question", "request", "suppress", "use"];
+    &["action", "claim", "entries", "estate", "export", "hcl", "inputs", "interface", "notice", "offers", "pack", "params", "private", "question", "suppress", "use"];
+
+/// A statement renamed before 1.0, and its name now: refused by name wherever it stands at
+/// the top of a file.
+const RENAMED_STATEMENT: (&str, &str) = ("request", "entries");
 
 /// The comment lines directly above `line` (1-based), markers stripped and joined with a
 /// space — an input's description. `None` when the line above is no comment.
@@ -2655,13 +2659,24 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                 }
                 file.privates.push(PrivateDecl { address, line });
             }
-            Some(Tok::Ident(id)) if id == "request" => {
+            Some(Tok::Ident(id)) if id == "entries" => {
                 p.next();
                 let r = p.request_stmt(line)?;
                 if let Some(first) = file.requests.iter().find(|x| x.param == r.param) {
-                    return err(line, format!("request {}: declared twice in this file (line {} and line {})", r.param, first.line, line));
+                    return err(line, format!("entries {}: declared twice in this file (line {} and line {})", r.param, first.line, line));
                 }
                 file.requests.push(r);
+            }
+            // The statement's name before 1.0. Refused by name rather than read as a
+            // resource map called `request`, which would fail far from the cause.
+            Some(Tok::Ident(id)) if id.as_str() == RENAMED_STATEMENT.0 && matches!(p.toks.get(p.i + 1), Some((Tok::Ident(_), _))) => {
+                return err(
+                    line,
+                    format!(
+                        "`{}` was renamed to `{}` — the statement that declares what one entry of a list param looks like is `{} <list param> {{ … }}`, with the same body. Change the word on this line; `satz get-presets --force` refreshes the presets that still write it",
+                        RENAMED_STATEMENT.0, RENAMED_STATEMENT.1, RENAMED_STATEMENT.1
+                    ),
+                );
             }
             Some(Tok::Ident(id)) if id == "suppress" => {
                 p.next();
@@ -2895,7 +2910,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
         (!file.claims.is_empty(), "a `claim`"),
         (!file.suppressions.is_empty(), "a `suppress`"),
         (!file.privates.is_empty(), "a `private`"),
-        (!file.requests.is_empty(), "a `request`"),
+        (!file.requests.is_empty(), "an `entries`"),
         (!file.hcl_blocks.is_empty(), "an `hcl` block"),
         (!file.actions.is_empty(), "an `action`"),
         (!file.questions.is_empty(), "a `question`"),
@@ -4208,7 +4223,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "offers" => "pack estate_map\noffers \"presets/a.satz\" {\n  when = use_a\n}\n".into(),
         "suppress" => "estate e\nsuppress google_x \"y\"\n".into(),
         "private" => "estate e\nprivate google_x.y\n".into(),
-        "request" => "pack p version \"1.0\"\nparams { xs = [] }\nrequest xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n".into(),
+        "entries" => "pack p version \"1.0\"\nparams { xs = [] }\nentries xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n".into(),
         "export" => "estate e\nexport \"a\" = \"1\"\n".into(),
         "interface" => "estate e\ninterface \"team-a\" {\n  export \"a\" = \"1\"\n}\n".into(),
         other => panic!("no probe for the statement `{}` — add one", other),
@@ -4478,15 +4493,15 @@ mod review_2026_08_29_tests {
     }
 
     #[test]
-    fn request_defaults_parse_and_name_a_field_that_is_not_the_key() {
-        let f = parse("pack p\nparams {\n  xs = []\n}\nrequest xs {\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n  defaults = { apis = [\"a\"] }\n}\n").unwrap();
+    fn entries_defaults_parse_and_name_a_field_that_is_not_the_key() {
+        let f = parse("pack p\nparams {\n  xs = []\n}\nentries xs {\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n  defaults = { apis = [\"a\"] }\n}\n").unwrap();
         assert_eq!(f.requests[0].defaults.len(), 1);
         assert_eq!(f.requests[0].defaults[0].0, "apis");
         for (body, msg) in [
             ("  defaults = { size = 1 }\n", "the default of `size` is no field's"),
             ("  defaults = { name = \"x\" }\n", "the key `name` has no default"),
         ] {
-            let src = format!("pack p\nparams {{\n  xs = []\n}}\nrequest xs {{\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n{}}}\n", body);
+            let src = format!("pack p\nparams {{\n  xs = []\n}}\nentries xs {{\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n{}}}\n", body);
             let e = parse(&src).unwrap_err();
             assert!(e.msg.contains(msg), "{}", e.msg);
         }
@@ -4565,8 +4580,8 @@ mod review_2026_08_29_tests {
     }
 
     #[test]
-    fn a_request_names_its_list_its_key_and_its_fields() {
-        let f = parse("pack p version \"1.0\"\nparams { subnets = [] }\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\n").unwrap();
+    fn an_entries_statement_names_its_list_its_key_and_its_fields() {
+        let f = parse("pack p version \"1.0\"\nparams { subnets = [] }\nentries subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\n").unwrap();
         assert_eq!(
             f.requests,
             [RequestDecl { param: "subnets".into(), key: "name".into(), fields: vec!["name".into(), "cidr".into()], patterns: vec![], defaults: vec![], description: Some("A subnet".into()), line: 3 }]
@@ -4575,21 +4590,29 @@ mod review_2026_08_29_tests {
             let e = parse(src).unwrap_err();
             assert!(e.msg.contains(needle), "wanted `{}` in: {}", needle, e.msg);
         };
-        refused("pack p\nrequest s {\n  fields = [\"a\"]\n}\n", "`key` names the field");
-        refused("pack p\nrequest s {\n  key = \"a\"\n}\n", "`fields` lists every field");
-        refused("pack p\nrequest s {\n  key = \"b\"\n  fields = [\"a\"]\n}\n", "the key `b` is not among the fields");
-        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"a\"]\n}\n", "named twice");
+        refused("pack p\nentries s {\n  fields = [\"a\"]\n}\n", "`key` names the field");
+        refused("pack p\nentries s {\n  key = \"a\"\n}\n", "`fields` lists every field");
+        refused("pack p\nentries s {\n  key = \"b\"\n  fields = [\"a\"]\n}\n", "the key `b` is not among the fields");
+        refused("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\", \"a\"]\n}\n", "named twice");
         // a pattern per field: a regular expression, of a declared field, once
-        let f = parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n  patterns = { b = \"[^@]+@[^@]+\" }\n}\n").unwrap();
+        let f = parse("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n  patterns = { b = \"[^@]+@[^@]+\" }\n}\n").unwrap();
         assert_eq!(f.requests[0].patterns, [("b".to_string(), "[^@]+@[^@]+".to_string())]);
-        let without = parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap();
+        let without = parse("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap();
         assert_ne!(canonical_parts(&f), canonical_parts(&without), "a pattern is part of the pack's canonical form");
-        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { c = \"x\" }\n}\n", "the pattern of `c` is no field's");
-        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"(\" }\n}\n", "is no regular expression");
-        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"x\" a = \"y\" }\n}\n", "");
-        refused("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n  size = 3\n}\n", "unexpected entry");
-        let a = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n}\n").unwrap());
-        let b = canonical_parts(&parse("pack p\nrequest s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap());
+        refused("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { c = \"x\" }\n}\n", "the pattern of `c` is no field's");
+        refused("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"(\" }\n}\n", "is no regular expression");
+        refused("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\"]\n  patterns = { a = \"x\" a = \"y\" }\n}\n", "");
+        refused("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\"]\n  size = 3\n}\n", "unexpected entry");
+        let a = canonical_parts(&parse("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\"]\n}\n").unwrap());
+        let b = canonical_parts(&parse("pack p\nentries s {\n  key = \"a\"\n  fields = [\"a\", \"b\"]\n}\n").unwrap());
         assert_ne!(a, b);
+    }
+
+    /// The statement's name before 1.0 is refused by name, at its line, naming `entries`.
+    #[test]
+    fn the_request_statement_is_refused_and_names_entries() {
+        let e = parse("pack p\nparams { s = [] }\nrequest s {\n  key = \"a\"\n  fields = [\"a\"]\n}\n").unwrap_err();
+        assert_eq!(e.line, 3, "{}", e.msg);
+        assert!(e.msg.contains("`request` was renamed to `entries`") && e.msg.contains("entries <list param>"), "{}", e.msg);
     }
 }

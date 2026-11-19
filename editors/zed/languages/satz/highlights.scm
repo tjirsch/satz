@@ -26,7 +26,7 @@
   "export" "description" "attach" "all" "under"
   "each" "by" "not"
   "interface" "common"
-  "suppress" "role" "private" "request"
+  "suppress" "role" "private" "entries"
   "hcl" "trust"
 ] @keyword
 (coverage) @keyword
@@ -53,7 +53,7 @@
 (all_resources under: (identifier) @variable)
 (suppress type: (identifier) @type)
 (private resource: (identifier) @variable)
-(request param: (identifier) @variable)
+(entries param: (identifier) @variable)
 (each list: (identifier) @variable)
 (each key: (identifier) @property)
 

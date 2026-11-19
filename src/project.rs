@@ -9,8 +9,8 @@
 use satz_core::satz::InterfaceFile;
 
 /// The exports `presets/delegation.satz` publishes for a delegation and `init --from` reads.
-const DEPLOY_PROJECT: &str = "deploy_project_id";
-const IAC_ACCOUNT: &str = "iac_account";
+const INFRASTRUCTURE_PROJECT: &str = "infrastructure_project_id";
+const ESTATE_ACCOUNT: &str = "estate_account";
 const STATE_BUCKET: &str = "state_bucket";
 const REGION: &str = "default_region";
 
@@ -43,7 +43,7 @@ fn static_output(file: &InterfaceFile, name: &str) -> Option<String> {
 
 /// Whether the interface carries a delegation's account: the three exports of the base.
 fn is_base(file: &InterfaceFile) -> bool {
-    [DEPLOY_PROJECT, IAC_ACCOUNT, STATE_BUCKET].iter().all(|e| static_output(file, e).is_some())
+    [INFRASTRUCTURE_PROJECT, ESTATE_ACCOUNT, STATE_BUCKET].iter().all(|e| static_output(file, e).is_some())
 }
 
 /// The name an estate written from these interfaces takes when none is given: the
@@ -67,13 +67,27 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
     let base = match bases.as_slice() {
         [one] => *one,
         [] => {
+            // a folder copied before the exports were renamed carries the old names
+            let stale: Vec<String> = files
+                .iter()
+                .filter(|(_, f)| satz_core::pipeline::RENAMED_EXPORTS.iter().any(|(old, _)| static_output(f, old).is_some()))
+                .map(|(_, f)| format!("`{}`", f.name))
+                .collect();
             return Err(format!(
-                "none of the interfaces {} carries a delegation's account — the static exports `{}`, `{}` and `{}`, which an entry of `delegations` in `presets/delegation.satz` publishes as the interface `{}<name>`: take that folder too",
+                "none of the interfaces {} carries a delegation's account — the static exports `{}`, `{}` and `{}`, which an entry of `delegations` in `presets/delegation.satz` publishes as the interface `{}<name>`: take that folder too{}",
                 listed(),
-                DEPLOY_PROJECT,
-                IAC_ACCOUNT,
+                INFRASTRUCTURE_PROJECT,
+                ESTATE_ACCOUNT,
                 STATE_BUCKET,
-                BASE_PREFIX
+                BASE_PREFIX,
+                if stale.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        ". {} carries the names before the rename (`iac_account`, `deploy_project_id`) — it was copied from an older transpile of the organization's estate; copy it again",
+                        stale.join(", ")
+                    )
+                }
             ));
         }
         many => {
@@ -93,7 +107,7 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
             REGION
         )
     })?;
-    let account = read(IAC_ACCOUNT);
+    let account = read(ESTATE_ACCOUNT);
     let account_id = account.split('@').next().unwrap_or(&account).to_string();
     let uses: String = files.iter().map(|(path, _)| format!("use \"{}\"\n", path)).collect();
     let reads: String = files
@@ -163,7 +177,7 @@ providers {
         .replace("@LABEL@", &label(name))
         .replace("@BASE@", &base.name)
         .replace("@CENTRAL@", &base.estate)
-        .replace("@PROJECT@", &read(DEPLOY_PROJECT))
+        .replace("@PROJECT@", &read(INFRASTRUCTURE_PROJECT))
         .replace("@BUCKET@", &read(STATE_BUCKET))
         .replace("@ACCOUNT@", &account_id)
         .replace("@REGION@", &region)
@@ -176,20 +190,18 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// The estate `satz init` writes for the example organization, with the delegation
-    /// packs and the entries given.
-    fn central(tag: &str, folder: Option<&str>, delegations: &str, projects: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("satz-project-{}-{}-{}", std::process::id(), tag, folder.is_some()));
+    /// The estate `satz init` writes for the example organization, with its workload folder
+    /// answered, the delegation packs, the entries given and `extra` params.
+    fn central(tag: &str, delegations: &str, projects: &str, extra: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("satz-project-{}-{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("C0example.satz");
-        let mut args = crate::template::tests::args("first.admin", "example.com");
-        args.workload_folder_name = folder.map(str::to_string);
+        let args = crate::template::tests::args("first.admin", "example.com");
         crate::template::generate_template(&args, None, &path).unwrap();
-        let src = std::fs::read_to_string(&path).unwrap();
+        let src = crate::template::tests::answered_workload_folder(&std::fs::read_to_string(&path).unwrap(), "Workloads");
         let _ = std::fs::remove_dir_all(&dir);
-        let parent = if folder.is_some() { "  delegated_projects_folder = \"google_folder.workload_folder.name\"\n" } else { "" };
-        let src = src.replacen("params {\n", &format!("params {{\n  delegations = [{}]\n  delegated_projects = [{}]\n{}", delegations, projects, parent), 1);
+        let src = src.replacen("params {\n", &format!("params {{\n  delegations = [{}]\n  delegated_projects = [{}]\n{}", delegations, projects, extra), 1);
         format!("{}\nuse \"presets/delegation.satz\"\nuse \"presets/delegated-projects.satz\"\n", src)
     }
 
@@ -215,7 +227,7 @@ mod tests {
         (out.manifest, i)
     }
 
-    const DELEGATIONS: &str = "{ name = \"payments\" owner_group = \"payments-owners@example.com\" }, { name = \"data\" owner_group = \"lake-owners@example.com\" }";
+    const DELEGATIONS: &str = "{ name = \"payments\" estate_account_user_group = \"payments-owners@example.com\" }, { name = \"data\" estate_account_user_group = \"lake-owners@example.com\" }";
     const PROJECTS: &str = "{ name = \"payments\" delegation = \"payments\" }, { name = \"data-lake\" delegation = \"data\" }, { name = \"data-mart\" delegation = \"data\" }";
 
     /// An estate account user group that is no address, and a name that is no interface name, are
@@ -225,35 +237,39 @@ mod tests {
         let reg = crate::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
         for (entry, says) in [
-            ("{ name = \"payments\" owner_group = \"payments-owners\" }", "entry `payments` has `owner_group` = \"payments-owners\""),
-            ("{ name = \"payments\" owner_group = \"group:payments-owners@example.com\" }", "entry `payments` has `owner_group` = \"group:payments-owners@example.com\""),
-            ("{ name = \"payments\" owner_group = \"payments-owners@example.com \" }", "entry `payments` has `owner_group`"),
-            ("{ name = \"Payments\" owner_group = \"payments-owners@example.com\" }", "entry `Payments`"),
+            ("{ name = \"payments\" estate_account_user_group = \"payments-owners\" }", "entry `payments` has `estate_account_user_group` = \"payments-owners\""),
+            ("{ name = \"payments\" estate_account_user_group = \"group:payments-owners@example.com\" }", "entry `payments` has `estate_account_user_group` = \"group:payments-owners@example.com\""),
+            ("{ name = \"payments\" estate_account_user_group = \"payments-owners@example.com \" }", "entry `payments` has `estate_account_user_group`"),
+            ("{ name = \"Payments\" estate_account_user_group = \"payments-owners@example.com\" }", "entry `Payments`"),
         ] {
-            let src = central(&format!("bad-{}", says.len()), None, entry, "");
+            let src = central(&format!("bad-{}", says.len()), entry, "", "");
             let e = satz_core::pipeline::compile_estate("e.satz", &src, &resolver, &presets).err().unwrap_or_else(|| panic!("{} transpiled", entry));
             assert!(e.msg.contains(says), "{}: {}", entry, e.msg);
         }
     }
 
     /// A delegation is an identity with its own interface; a delegated project is a
-    /// Google project under the organization or the workload folder with the delegation's
+    /// Google project in the workload folder, or another parent the estate names, with the delegation's
     /// account on it, and its own interface. One account works in several projects, and a
     /// project may carry its delegation's name.
     #[test]
     fn a_delegation_is_an_identity_and_each_project_names_the_one_that_works_in_it() {
-        for folder in [None, Some("Workloads")] {
-            let (manifest, i) = compile(&central("pack", folder, DELEGATIONS, PROJECTS), &presets);
+        // the projects stand in the workload folder unless the estate names another parent
+        for (tag, extra, parent) in [
+            ("pack", "", "google_folder.workload_folder.name"),
+            ("pack-other", "  delegated_projects_folder = \"google_folder.infra_folder.name\"\n", "google_folder.infra_folder.name"),
+        ] {
+            let (manifest, i) = compile(&central(tag, DELEGATIONS, PROJECTS, extra), &presets);
             let address = |a: &str| manifest.resources.values().find(|r| r.address() == a).unwrap_or_else(|| panic!("no {}", a));
             // the delegation's project and the delegated project of the same name stand apart
             address("google_project.deploy_payments");
             let project = address("google_project.data_lake");
-            match folder {
-                None => assert_eq!(project.attrs.get("org_id").map(String::as_str), Some("123456789012"), "{:?}", project.attrs),
-                Some(_) => assert_eq!(project.refs.get("folder_id").map(String::as_str), Some("google_folder.workload_folder.name"), "{:?}", project.refs),
-            }
+            assert_eq!(project.refs.get("folder_id").map(String::as_str), Some(parent), "{:?}", project.refs);
+            // a delegation's infrastructure project stands in the infrastructure folder
+            let deploy = address("google_project.deploy_payments");
+            assert_eq!(deploy.refs.get("folder_id").map(String::as_str), Some("google_folder.infra_folder.name"), "{:?}", deploy.refs);
             for (name, exports) in [
-                ("delegation-payments", vec![("deploy_project_id", true), ("iac_account", true), ("state_bucket", true), ("account_group", true)]),
+                ("delegation-payments", vec![("infrastructure_project_id", true), ("estate_account", true), ("state_bucket", true), ("estate_account_user_group", true)]),
                 ("payments", vec![("project_id", true), ("project_number", false)]),
                 ("data-lake", vec![("project_id", true), ("project_number", false)]),
             ] {
@@ -263,10 +279,10 @@ mod tests {
                     assert!(outputs.contains(&want), "{}: {:?} — {:?}", name, want, outputs);
                 }
             }
-            assert!(!i.module_outputs("payments").iter().any(|o| o.name == "iac_account"), "a project carries an account of its own");
+            assert!(!i.module_outputs("payments").iter().any(|o| o.name == "estate_account"), "a project carries an account of its own");
             assert_eq!(i.module_outputs("payments").into_iter().find(|o| o.name == "project_id").unwrap().attach, ["google_project_iam_member"]);
             assert_eq!(
-                i.module_outputs("delegation-data").into_iter().find(|o| o.name == "iac_account").unwrap().static_text().as_deref(),
+                i.module_outputs("delegation-data").into_iter().find(|o| o.name == "estate_account").unwrap().static_text().as_deref(),
                 Some("svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com")
             );
             // the one account of `data` holds the project roles on both of its projects
@@ -280,7 +296,7 @@ mod tests {
             assert!(manifest.resources.values().any(|r| r.tf_type == "google_service_account_iam_member" && r.attrs.get("member").map(String::as_str) == Some("group:lake-owners@example.com")));
         }
         // no entry, no project and no interface
-        let (manifest, i) = compile(&central("none", None, "", ""), &presets);
+        let (manifest, i) = compile(&central("none", "", "", ""), &presets);
         assert!(!manifest.resources.values().any(|r| r.tf_type == "google_project" && r.address().contains("deploy_")));
         assert!(i.projects().is_empty(), "{:?}", i.projects());
     }
@@ -291,7 +307,7 @@ mod tests {
     fn the_teams_estate_runs_as_the_delegations_account_and_reads_every_interface() {
         // the interfaces the organization's estate published, as the files a team takes; the
         // region is estate-core's export, which the estate `init` writes switches on later
-        let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", None, DELEGATIONS, PROJECTS));
+        let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", DELEGATIONS, PROJECTS, ""));
         let (manifest, i) = compile(&src, &presets);
         let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
         let taken = |name: &str| {
@@ -302,6 +318,11 @@ mod tests {
         let (base, project) = (taken("delegation-data"), taken("data-lake"));
         let files = vec![(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone())];
         assert_eq!(default_name(&files).as_deref(), Some("data"));
+        // a folder copied before the exports were renamed is named, with what to do
+        let stale_text = base.1.replace("output \"estate_account\"", "output \"iac_account\"").replace("output \"infrastructure_project_id\"", "output \"deploy_project_id\"");
+        let stale = satz_core::satz::parse(&stale_text).unwrap().interface_file.unwrap();
+        let err = estate("data-lake", &[(base.0.clone(), stale), (project.0.clone(), project.2.clone())]).unwrap_err();
+        assert!(err.contains("`delegation-data` carries the names before the rename") && err.contains("copy it again"), "{}", err);
         let estate = estate("data-lake", &files).unwrap();
         assert_eq!(satz_core::fmt::format(&estate).unwrap(), estate, "the estate is not in the canonical layout");
         for want in [

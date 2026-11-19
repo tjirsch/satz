@@ -93,6 +93,7 @@ pub(super) enum Used {
 pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("action", "joins the estate's actions", Used::Absorbed),
     ("claim", "goes to the compliance plane", Used::Absorbed),
+    ("entries", "declares what one entry of a list param looks like, and so what a project may add to it", Used::Absorbed),
     ("estate", "names the file", Used::Header),
     ("export", "joins the estate's interface, the outputs customer HCL reads", Used::Absorbed),
     ("hcl", "passes through to main.tf beside the resources", Used::Absorbed),
@@ -104,7 +105,6 @@ pub(super) const STATEMENTS: &[(&str, &str, Used)] = &[
     ("params", "goes to the estate's parameter namespace", Used::Absorbed),
     ("private", "keeps a resource out of every export", Used::EstateOnly),
     ("question", "goes to the interview", Used::Absorbed),
-    ("request", "declares what a project may add to a list param", Used::Absorbed),
     ("suppress", "removes a resource from the estate's fold", Used::EstateOnly),
     ("use", "pulls in another file", Used::Entry),
 ];
@@ -120,6 +120,7 @@ pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usiz
     let found: [(&'static str, Option<Option<usize>>); 16] = [
         ("action", file.actions.first().map(|a| Some(a.line))),
         ("claim", file.claims.first().map(|c| Some(c.line))),
+        ("entries", file.requests.first().map(|r| Some(r.line))),
         ("estate", header(false)),
         ("export", file.exports.first().map(|x| Some(x.line))),
         ("hcl", file.hcl_blocks.first().map(|h| Some(h.line))),
@@ -131,7 +132,6 @@ pub(super) fn statements_in(file: &satz::File) -> Vec<(&'static str, Option<usiz
         ("params", file.params.first().map(|(_, _, line)| Some(*line))),
         ("question", file.questions.first().map(|q| Some(q.line))),
         ("private", file.privates.first().map(|s| Some(s.line))),
-        ("request", file.requests.first().map(|r| Some(r.line))),
         ("suppress", file.suppressions.first().map(|s| Some(s.line))),
         (
             "use",

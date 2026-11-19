@@ -35,12 +35,12 @@ default-region = "europe-west3"
 default-zone = "europe-west3-a"
 deployment-engine = "tofu"
 deployment-mode = "local"
+estate-account-user-group = "svc-iac-users"
 first-admin = "admin"
 infra-bucket-name = "acme-infra-001-state"
 infra-folder-name = "Infrastructure"
 infra-project-name = "acme-infra-001"
 svc-iac-account = "svc-iac-001"
-svc-iac-users-group = "svc-iac-users"
 workload-folder-name = ""
 ---imports---
 

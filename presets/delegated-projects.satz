@@ -24,8 +24,8 @@
 // (`presets/delegated-budget-role.satz`).
 //
 // THE PROJECT. Billed to the infrastructure billing account and created in
-// `delegated_projects_folder`: empty is the organization; the workload folder `satz init
-// --workload-folder-name` writes is `google_folder.workload_folder.name`. Its `apis` are
+// `delegated_projects_folder`: the workload folder, `google_folder.workload_folder.name`,
+// unless the estate names another folder it declares or one that already exists. Its `apis` are
 // the five below unless the entry states its own list, whole. The team's CALLS are billed
 // to the delegation's infrastructure project, not to this one: an API a call needs is
 // asked for in the delegation's entry.
@@ -43,17 +43,17 @@
 //
 // NO CLAIM. A delegated project is a workload's, not a control: this pack witnesses nothing.
 
-pack delegated_projects version "1.0"
+pack delegated_projects version "2.0"
 
 params {
   // One entry per project, `{ name delegation apis budgets }`: the name, the delegation
-  // whose account works in it, the APIs enabled on it (the defaults of the request below
+  // whose account works in it, the APIs enabled on it (the defaults of the `entries` statement below
   // when left out), and whether the account may manage a budget for it.
   delegated_projects        = []
-  // The folder the projects are created in. Empty is the organization. A folder the
+  // The folder the projects are created in: the workload folder. Another folder the
   // estate declares is named by reference, `google_folder.<label>.name`; one that already
   // exists by its id.
-  delegated_projects_folder = ""
+  delegated_projects_folder = "google_folder.workload_folder.name"
   // What an account holds on each of its projects: its IAM and its services.
   delegated_projects_roles = [
     "roles/resourcemanager.projectIamAdmin",
@@ -64,7 +64,7 @@ params {
 // ---- what a customer decides, asked -------------------------------------------------
 
 question delegated_projects_folder {
-  prompt   = "The folder the delegated projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization"
+  prompt   = "The folder the delegated projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, or an existing one by its numeric id"
   why      = "It decides the policies and the grants every project inherits. Changing it afterwards moves every live project between parents."
   reversal = edit
   blast    = low
@@ -72,7 +72,7 @@ question delegated_projects_folder {
 
 // ---- what a team may ask for ----------------------------------------------------------
 
-request delegated_projects {
+entries delegated_projects {
   key      = "name"
   fields   = ["name", "delegation", "apis", "budgets"]
   patterns = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" }

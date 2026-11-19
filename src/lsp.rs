@@ -811,7 +811,7 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("each", "one interface per entry of a list param: `each LIST by FIELD { interface \"{each.FIELD}\" { … } }`; inside a resource type map, one labelled body per entry"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("private", "keep one resource out of every export and every `all` map: `private TYPE.LABEL`"),
-    ("request", "a pack only — what a project may add to a list param, checked by `satz check-request`: `request PARAM { key fields description }`"),
+    ("entries", "a pack only — what one entry of a list param looks like, and so what a project may add to it, checked by `satz check-request`: `entries PARAM { key fields patterns defaults description }`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
     ("terraform", "the backend block, written as providers.tf"),
     ("providers", "the provider blocks, written as providers.tf"),
@@ -833,10 +833,12 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "request",
+        "entries",
         &[
             ("key", "the field whose value labels an entry, unique across the list"),
             ("fields", "the closed list of fields an entry may carry"),
+            ("patterns", "per field, the regular expression its whole value matches: `{ FIELD = \"…\" }`"),
+            ("defaults", "per field, the value an entry without it takes: `{ FIELD = VALUE }`"),
             ("description", "what an entry is, for the interface README"),
         ],
     ),

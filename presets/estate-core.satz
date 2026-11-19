@@ -9,10 +9,10 @@
 // default is offered where one exists and a value is required where none is
 // possible.
 //
-// Two kinds of param, and the interview treats them differently. Seven have NO
+// Two kinds of param, and the interview treats them differently. Eight have NO
 // POSSIBLE DEFAULT — the directory customer id, the organization id, the domain,
-// the short name, the display name, the first admin, the billing account: the
-// pack cannot know the answer, so these block until a value is typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
+// the short name, the display name, the first admin, the billing account, the workload
+// folder's name: the pack cannot know the answer, so these block until a value is typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
 // names built from the short name, the folder name, the service account names,
 // the region — and accepting one is an answer, recorded by writing it. A derived
 // default is offered only once what it derives from is answered.
@@ -26,16 +26,15 @@
 // them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
 // everything transpiles to exactly what `satz init` would have written.
 //
-// `workload_folder_name` is the folder where the customer's and the projects' folders live,
-// named like `infra_folder_name`. It may be empty — the default — which is the
-// organization itself, and nothing is created for it; its question says so (`empty`), so
-// "" is an answer the interview offers and the gate counts. Its export, `workload_folder`,
-// is not here: it is the organization, a static value, or a folder the estate declares,
-// whose number is looked up, so the estate carries that section — `satz init` writes it
-// from `--workload-folder-name`, an interview when the question is answered. The folder's
-// parent is where its block stands in the estate, like any folder's.
+// `workload_folder_name` is the display name of the workload folder, the folder directly
+// under the organization that holds the delegated resources of workloads, named like
+// `infra_folder_name`. Every organization's estate has one: the question has no default,
+// and an empty answer is refused. The folder and its export, `workload_folder`, whose
+// number is looked up, are not here: the estate carries that section — the answer to the
+// question writes it, in `satz interview` or satz-studio. The folder's parent is where its
+// block stands in the estate, like any folder's.
 
-pack estate_core version "2.4"
+pack estate_core version "3.0"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
@@ -46,20 +45,18 @@ params {
   first_admin              = ""
   billing_account_infra    = ""
   customer_longname        = ""
+  workload_folder_name     = ""
 
   // ---- derived from the answers above -------------------------------------
-  infra_folder_name   = "Infrastructure"
-  infra_project_name  = "{customer_shortname}-infra-001"
-  infra_bucket_name   = "{customer_shortname}-infra-001-state"
-  svc_iac_account     = "svc-iac-001"
-  svc_iac_users_group = "svc-iac-users"
-  deployment_engine   = "tofu"
-  deployment_mode     = "local"
-  default_region      = "europe-west3"
-  default_zone        = "{default_region}-a"
-
-  // ---- where the customer's and the projects' folders live: "" is the organization
-  workload_folder_name = ""
+  infra_folder_name         = "Infrastructure"
+  infra_project_name        = "{customer_shortname}-infra-001"
+  infra_bucket_name         = "{customer_shortname}-infra-001-state"
+  svc_iac_account           = "svc-iac-001"
+  estate_account_user_group = "svc-iac-users"
+  deployment_engine         = "tofu"
+  deployment_mode           = "local"
+  default_region            = "europe-west3"
+  default_zone              = "{default_region}-a"
 
   // ---- what the customer answers to, which no pack can know -----------------
   compliance_frameworks = ["cis-gcp-5.0"]
@@ -121,11 +118,10 @@ question infra_folder_name {
 }
 
 question workload_folder_name {
-  prompt   = "Display name of the folder that holds the customer's and the projects' folders"
-  why      = "Every project's folder takes it as its parent, through the core export `workload_folder`. Empty is the organization itself, and nothing is created. A name declares the folder directly under the organization; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the projects created under it."
-  reversal = state_surgery
+  prompt   = "Display name of the workload folder: the folder directly under the organization that holds the delegated resources of workloads"
+  why      = "Every delegated folder and delegated project takes it as its parent, through the core export `workload_folder`. The name declares the folder directly under the organization; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Renaming it later renames the folder in place."
+  reversal = edit
   blast    = high
-  empty    = "the organization itself; no folder is created"
 }
 
 question infra_project_name {
@@ -149,7 +145,7 @@ question svc_iac_account {
   blast    = high
 }
 
-question svc_iac_users_group {
+question estate_account_user_group {
   prompt   = "The estate account user group, whose members may impersonate the estate account"
   why      = "Membership of this group is what lets a human operate the estate. Renaming it moves every member."
   reversal = recreate
