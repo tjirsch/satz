@@ -252,7 +252,7 @@ fi
 
 step "project: a Satz estate takes interfaces/outgoing/archive/ whole and reads the showcase's values as \${{interface.<export>}}"
 mkdir -p project/interfaces/incoming && cp -R "$si" project/interfaces/incoming/archive
-"$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project.txt)"
+"$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the team's estate does not transpile:\n$(cat tmp/project.txt)"
 pm=project/hcl/main.tf
 pi=project/hcl/interface.tf
 # what the compile judges is in interface.tf, what main.tf reads is the local
@@ -349,113 +349,121 @@ cmp -s <(sed 1d "$pt/hcl/main.tf") <(sed 1d "$sd/hcl/main.tf") || fail "the thin
 "$satz" --config "$pt" transpile simple-project.satz --input stage=test --print-variables --check > tmp/template-input.txt 2>&1 || fail "--input refused the template's input:\n$(cat tmp/template-input.txt)"
 grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind the template's input:\n$(cat tmp/template-input.txt)"
 
-step "folder-workload: one account per workload, granted on the folders the pack creates for it and on nothing above them (ADR 0086)"
-# two workloads, three folders: one workload with two folders that share no root
-fw_lists='  folder_workloads = [{ name = "shop" group = "gcp-shop-admins@example.com" }, { name = "rag" group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
-  folder_workload_folders = [{ name = "shop" workload = "shop" display_name = "Shop" }, { name = "shop-data" workload = "shop" parent = "folders/222222222222" }, { name = "rag-acme" workload = "rag" }]'
-sed -e '/^  folder_workloads  *= /d' -e '/^  folder_workload_folders  *= /d' -e "s|^  use_folder_workload  *= true|&\\
+step "delegation and delegated folders: one account per delegation, granted on the folders the pack creates for it and on nothing above them (ADR 0086, ADR 0093)"
+# two delegations, three folders: one delegation with two folders that share no root
+fw_lists='  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "rag" owner_group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
+  delegated_folders = [{ name = "shop" delegation = "shop" display_name = "Shop" }, { name = "shop-data" delegation = "shop" parent = "folders/222222222222" }, { name = "rag-acme" delegation = "rag" }]'
+sed -e '/^  delegations  *= /d' -e '/^  delegated_folders  *= /d' -e "s|^  use_delegation  *= true|&\\
 $fw_lists|" "$ex/satz/C0example.satz" > tmp/fw-org.satz
-grep -q 'name = "rag-acme"' tmp/fw-org.satz || fail "the folder-workload estate was not written from the example organisation"
+grep -q 'name = "rag-acme"' tmp/fw-org.satz || fail "the delegated-folders estate was not written from the example organisation"
 mkdir -p tmp/fw
 fw_run() { "$satz" --config "$ex" transpile "$PWD/$1" --output "$PWD/tmp/fw/hcl" --check; }
-"$satz" --config "$ex" transpile "$PWD/tmp/fw-org.satz" --output "$PWD/tmp/fw/hcl" > tmp/fw.txt 2>&1 || fail "the folder-workload estate does not transpile:\n$(cat tmp/fw.txt)"
+"$satz" --config "$ex" transpile "$PWD/tmp/fw-org.satz" --output "$PWD/tmp/fw/hcl" > tmp/fw.txt 2>&1 || fail "the delegated-folders estate does not transpile:\n$(cat tmp/fw.txt)"
 fwm=tmp/fw/hcl/main.tf
 for f in shop shop_data rag_acme; do
   grep -q "^resource \"google_folder\" \"$f\"" "$fwm" || fail "the pack did not create the folder $f"
-  [ "$(grep -c "folder = \"\${google_folder.$f.name}\"" "$fwm")" = 6 ] || fail "the folder $f does not carry the six roles of folder_workload_roles:\n$(grep -B3 "google_folder.$f.name" "$fwm")"
+  [ "$(grep -c "folder = \"\${google_folder.$f.name}\"" "$fwm")" = 6 ] || fail "the folder $f does not carry the six roles of delegated_folders_roles:\n$(grep -B3 "google_folder.$f.name" "$fwm")"
 done
 grep -A3 '^resource "google_folder" "shop_data"' "$fwm" | grep -q 'parent *= "folders/222222222222"' || fail "a folder entry's parent that is an id is not written as it is"
 grep -A3 '^resource "google_folder" "shop"' "$fwm" | grep -q 'display_name *= "Shop"' || fail "a folder entry's display_name is not the folder's"
 grep -A3 '^resource "google_folder" "rag_acme"' "$fwm" | grep -q 'display_name *= "rag-acme"' || fail "a folder entry without display_name is not shown under its name"
-[ "$(grep -c '^resource "google_folder_iam_member"' "$fwm")" = 18 ] || fail "a folder grant stands on something other than the three workload folders:\n$(grep -A4 '^resource "google_folder_iam_member"' "$fwm" | grep 'folder *=' | sort | uniq -c)"
-grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a workload's account holds a role that sets folder IAM, policies or tags"
-grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a workload's own billing_roles did not reach the billing account"
-grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one workload's billing role reached another workload"
+[ "$(grep -c '^resource "google_folder_iam_member"' "$fwm")" = 18 ] || fail "a folder grant stands on something other than the three delegated folders:\n$(grep -A4 '^resource "google_folder_iam_member"' "$fwm" | grep 'folder *=' | sort | uniq -c)"
+grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a delegation's account holds a role that sets folder IAM, policies or tags"
+grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a delegation's own billing_roles did not reach the billing account"
+grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one delegation's billing role reached another"
 fwi="$ex/interfaces/outgoing"
-grep -A1 '^output "delegated_apis"' "$fwi/workload-rag/workload-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the workload's interface does not publish its APIs:\n$(cat "$fwi/workload-rag/workload-rag/satz/interface.satz")"
-grep -A1 '^output "delegated_billing_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a workload without billing_roles does not publish the default"
-grep -A1 '^output "delegated_folder_roles"' "$fwi/workload-shop/workload-shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "the workload's interface does not publish its folder roles"
+grep -A1 '^output "delegated_apis"' "$fwi/delegation-rag/delegation-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the delegation's interface does not publish its APIs:\n$(cat "$fwi/delegation-rag/delegation-rag/satz/interface.satz")"
+grep -A1 '^output "delegated_billing_roles"' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a delegation without billing_roles does not publish the default"
+grep -A1 '^output "delegated_folder_roles"' "$fwi/shop/shop/satz/interface.satz" | grep -q 'roles/resourcemanager.projectCreator' || fail "a folder's interface does not publish the roles on it"
+grep -q '^output "delegated_folder_roles"' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" && fail "the delegation's own interface carries a target's roles"
 for o in deploy_project_id iac_account state_bucket; do
-  grep -q "^output \"$o\"" "$fwi/workload-shop/workload-shop/satz/interface.satz" || fail "the workload's interface does not publish $o"
+  grep -q "^output \"$o\"" "$fwi/delegation-shop/delegation-shop/satz/interface.satz" || fail "the delegation's interface does not publish $o"
 done
 grep -A1 '^output "delegated_folder"' "$fwi/shop-data/shop-data/satz/interface.satz" | grep -q 'data.google_active_folder.shop_data.name' || fail "a folder's interface does not publish the folder:\n$(cat "$fwi/shop-data/shop-data/satz/interface.satz")"
 if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/fw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the folder-workload estate does not validate"
+  (cd tmp/fw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the delegated-folders estate does not validate"
 fi
-# a folder entry that names a workload nobody declared is refused at the compile
-sed 's|{ name = "rag-acme" workload = "rag" }|{ name = "rag-acme" workload = "ghost" }|' tmp/fw-org.satz > tmp/fw-ghost.satz
-fw_run tmp/fw-ghost.satz > tmp/fw-ghost.txt 2>&1 && fail "a folder for a workload nobody declared compiled"
+# a folder entry that names a delegation nobody declared is refused at the compile
+sed 's|{ name = "rag-acme" delegation = "rag" }|{ name = "rag-acme" delegation = "ghost" }|' tmp/fw-org.satz > tmp/fw-ghost.satz
+fw_run tmp/fw-ghost.satz > tmp/fw-ghost.txt 2>&1 && fail "a folder for a delegation nobody declared compiled"
 grep -q 'google_service_account.deploy_ghost' tmp/fw-ghost.txt && grep -q 'deploy_rag, deploy_shop' tmp/fw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/fw-ghost.txt)"
-# the pack this one replaced: its path, its params and its request lists are refused by name
-sed 's|presets/folder-workload.satz|presets/workload-deployer.satz|' tmp/fw-org.satz > tmp/fw-oldpath.satz
+# the pack these replaced: its path, its params and its request lists are refused by name
+sed 's|presets/delegation.satz|presets/folder-workload.satz|' tmp/fw-org.satz > tmp/fw-oldpath.satz
 fw_run tmp/fw-oldpath.satz > tmp/fw-old.txt 2>&1 && fail "the old pack path compiled"
-grep -q 'moved to "presets/folder-workload.satz"' tmp/fw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/fw-old.txt)"
-for pair in use_folder_workload:use_workload_deployer folder_workloads:workload_deployers folder_workload_folders:workload_deployer_folders folder_workload_project_folder:deployer_project_folder; do
+grep -q 'moved to "presets/delegation.satz"' tmp/fw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/fw-old.txt)"
+for pair in use_delegation:use_folder_workload delegations:folder_workloads delegated_folders:folder_workload_folders delegation_project_folder:folder_workload_project_folder; do
   new=${pair%%:*}; old=${pair##*:}
   sed "s|^  $new\( *\)= |  $old\1= |" tmp/fw-org.satz > tmp/fw-oldparam.satz
   grep -q "^  $old  *= " tmp/fw-oldparam.satz || fail "the estate with the old param $old was not written"
   fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "the old param $old compiled"
   grep -q "param \`$old\` was renamed to \`$new\`" tmp/fw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/fw-old.txt)"
 done
-printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_workload_deployers = [\n    { name = "pay" group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
+printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_folder_workloads = [\n    { name = "pay" owner_group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
 "$satz" --config "$ex" check-request "$PWD/tmp/fw-request.satz" "$PWD/tmp/fw-org.satz" > tmp/fw-request.txt 2>&1 && fail "a request for the old list was accepted"
-grep -q 'folder_workloads' tmp/fw-request.txt || fail "the request's refusal does not name the lists that take requests:\n$(cat tmp/fw-request.txt)"
+grep -q 'delegations' tmp/fw-request.txt || fail "the request's refusal does not name the lists that take requests:\n$(cat tmp/fw-request.txt)"
 # the example organisation's own interfaces are what the steps after this one read
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the folder-workload step"
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the delegated-folders step"
 
-step "project-workload: a project with its own account, and two projects one workload's account works in (ADR 0088)"
+step "delegated projects: a project per entry, worked by its delegation's account — one account in one project, another in two (ADR 0093)"
 python3 - "$ex/satz/C0example.satz" tmp/pw-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-old = "  use_folder_workload            = true\n"
+old = '  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]\n'
 assert s.count(old) == 1
-s = s.replace(old, old + '  use_project_workload = true\n  project_workload_folder = "google_folder.workload_folder.name"\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n  project_workload_shared_projects = [{ name = "shop-backend" workload = "shop" }, { name = "shop-frontend" workload = "shop" apis = ["run.googleapis.com", "serviceusage.googleapis.com"] }]\n')
-old = 'use "presets/folder-workload.satz" when use_folder_workload\n'
+s = s.replace(old, '  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "payments" owner_group = "payments-owners@example.com" }]\n  use_delegated_projects = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" }, { name = "shop-backend" delegation = "shop" }, { name = "shop-frontend" delegation = "shop" apis = ["run.googleapis.com", "serviceusage.googleapis.com"] }]\n')
+old = 'use "presets/delegated-folders.satz" when use_delegated_folders\n'
 assert s.count(old) == 1
-s = s.replace(old, old + 'use "presets/project-workload.satz" when use_project_workload\n')
+s = s.replace(old, old + 'use "presets/delegated-projects.satz" when use_delegated_projects\n')
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 PY2
 mkdir -p tmp/pw
-"$satz" --config "$ex" transpile "$PWD/tmp/pw-org.satz" --output "$PWD/tmp/pw/hcl" > tmp/pw.txt 2>&1 || fail "the project-workload estate does not transpile:\n$(cat tmp/pw.txt)"
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-org.satz" --output "$PWD/tmp/pw/hcl" > tmp/pw.txt 2>&1 || fail "the delegated-projects estate does not transpile:\n$(cat tmp/pw.txt)"
 pwm=tmp/pw/hcl/main.tf
 for p in payments shop_backend shop_frontend; do
   grep -q "^resource \"google_project\" \"$p\"" "$pwm" || fail "the pack did not create the project $p"
 done
-grep -q '^resource "google_service_account" "payments_iac"' "$pwm" || fail "a project with its own account has none"
-grep -q '^resource "google_service_account" "shop_backend_iac"\|^resource "google_storage_bucket" "shop_backend_state"' "$pwm" && fail "a project a workload's account works in got an account or a state bucket of its own"
-for p in shop_backend shop_frontend; do
-  [ "$(grep -A4 '^resource "google_project_iam_member"' "$pwm" | grep -A2 'google_service_account.deploy_shop.email' | grep -c "project = \"\${google_project.$p.project_id}\"")" = 2 ] \
-    || fail "the workload's account does not hold the two project roles on $p:\n$(grep -B3 -A3 'deploy_shop.email' "$pwm")"
+grep -q '^resource "google_project" "deploy_payments"' "$pwm" && grep -q '^resource "google_service_account" "deploy_payments"' "$pwm" || fail "the delegation payments has no infrastructure project or no account beside the delegated project of the same name"
+grep -q '^resource "google_service_account" "payments_iac"\|^resource "google_storage_bucket" "payments_state"\|^resource "google_service_account" "shop_backend_iac"' "$pwm" && fail "a delegated project got an account or a state bucket of its own"
+for pair in payments:deploy_payments shop_backend:deploy_shop shop_frontend:deploy_shop; do
+  p=${pair%%:*}; acc=${pair##*:}
+  [ "$(grep -A4 '^resource "google_project_iam_member"' "$pwm" | grep -A2 "google_service_account.$acc.email" | grep -c "project = \"\${google_project.$p.project_id}\"")" = 2 ] \
+    || fail "the delegation's account $acc does not hold the two project roles on $p:\n$(grep -B3 -A3 "$acc.email" "$pwm")"
 done
-grep -B6 'google_project.shop_frontend.project_id' "$pwm" | grep -q 'service = "run.googleapis.com"' || fail "a shared project's own apis did not reach it"
+grep -B6 'google_project.shop_frontend.project_id' "$pwm" | grep -q 'service = "run.googleapis.com"' || fail "a project's own apis did not reach it"
 pwi="$ex/interfaces/outgoing"
-grep -A1 '^output "delegated_project_roles"' "$pwi/shop-backend/shop-backend/satz/interface.satz" | grep -q 'roles/resourcemanager.projectIamAdmin' || fail "a shared project's interface does not publish what was delegated on it"
-grep -q '^output "iac_account"' "$pwi/shop-backend/shop-backend/satz/interface.satz" && fail "a shared project's interface publishes an account it does not have"
-for o in project_id project_number iac_account state_bucket delegated_project_roles delegated_apis; do
-  grep -q "^output \"$o\"" "$pwi/payments/payments/satz/interface.satz" || fail "the interface of a project with its own account does not publish $o"
+grep -A1 '^output "delegated_project_roles"' "$pwi/shop-backend/shop-backend/satz/interface.satz" | grep -q 'roles/resourcemanager.projectIamAdmin' || fail "a project's interface does not publish what was delegated on it"
+for p in shop-backend payments; do
+  grep -q '^output "iac_account"\|^output "state_bucket"' "$pwi/$p/$p/satz/interface.satz" && fail "the interface of the project $p publishes an account or a bucket it does not have"
 done
-grep -q '^output "deploy_project_id"' "$pwi/workload-shop/workload-shop/satz/interface.satz" && ! grep -q '^output "project_id"' "$pwi/workload-shop/workload-shop/satz/interface.satz" \
-  || fail "the workload's interface still names its infrastructure project project_id, which a project's interface names too"
+for o in project_id project_number delegated_project_roles delegated_budgets; do
+  grep -q "^output \"$o\"" "$pwi/payments/payments/satz/interface.satz" || fail "a project's interface does not publish $o"
+done
+for o in deploy_project_id iac_account state_bucket account_group delegated_apis delegated_billing_roles; do
+  grep -q "^output \"$o\"" "$pwi/delegation-payments/delegation-payments/satz/interface.satz" || fail "the delegation's interface does not publish $o"
+done
+grep -q '^output "project_id"' "$pwi/delegation-shop/delegation-shop/satz/interface.satz" \
+  && fail "the delegation's interface names its infrastructure project project_id, which a project's interface names too"
 if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project-workload estate does not validate"
+  (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the delegated-projects estate does not validate"
 fi
 # the folder that is handed over says what it hands over and what to do with it
-hr="$pwi/workload-shop/workload-shop/README.md"
+hr="$pwi/delegation-shop/delegation-shop/README.md"
 grep -q '^## Delegated access: what you were given' "$hr" && grep -q 'the members of `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
-  && grep -q 'use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"' "$hr" && grep -q 'no role that sets a folder'"'"'s access' "$hr" \
-  || fail "the README of a workload's interface does not say who may act as the account and what to do:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$hr")"
-grep -q 'the project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'the members of `payments-owners@example.com`' "$pwi/payments/payments/README.md" \
-  || fail "the README of a project with its own account does not say what was handed over:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
-grep -q 'the folder to build in' "$pwi/shop/shop/README.md" || fail "the README of a workload's folder does not say it is the folder to build in"
+  && grep -q 'satz init --from' "$hr" \
+  || fail "the README of a delegation's interface does not say who may act as the account and what to do:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$hr")"
+grep -q 'the project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'use "interfaces/incoming/payments/payments/satz/interface.satz"' "$pwi/payments/payments/README.md" \
+  && grep -q 'the members of `payments-owners@example.com`' "$pwi/delegation-payments/delegation-payments/README.md" \
+  || fail "the READMEs of a project and of its delegation do not say what was handed over:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
+grep -q 'the folder to build in' "$pwi/shop/shop/README.md" && grep -q 'no role that sets a folder'"'"'s access' "$pwi/shop/shop/README.md" || fail "the README of a delegated folder does not say it is the folder to build in, or what the account holds on it"
 grep -q 'Delegated access: what you were given' "$pwi/common/core/README.md" && fail "the library's README speaks of a hand-over"
-# a shared project for a workload nobody declared is refused at the compile
-sed 's|{ name = "shop-backend" workload = "shop" }|{ name = "shop-backend" workload = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
-"$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a workload nobody declared compiled"
+# a project for a delegation nobody declared is refused at the compile
+sed 's|{ name = "shop-backend" delegation = "shop" }|{ name = "shop-backend" delegation = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a delegation nobody declared compiled"
 grep -q 'google_service_account.deploy_ghost' tmp/pw-ghost.txt && grep -q 'deploy_shop' tmp/pw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/pw-ghost.txt)"
-# the estate that works in shop-backend as the workload's account: it reads two interfaces, and
+# the estate that works in shop-backend as the delegation's account: it reads two interfaces, and
 # what its bucket needs on the project is its own to grant
 rm -rf tmp/pw/estate && mkdir -p tmp/pw/estate/satz tmp/pw/estate/interfaces/incoming
-cp -R "$pwi/workload-shop" "$pwi/shop-backend" tmp/pw/estate/interfaces/incoming/
+cp -R "$pwi/delegation-shop" "$pwi/shop-backend" tmp/pw/estate/interfaces/incoming/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/pw/estate/config.toml
 cat > tmp/pw/estate/satz/backend.satz <<'SATZ'
 estate shop_backend
@@ -486,7 +494,7 @@ providers {
   }
 }
 
-use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop-backend/shop-backend/satz/interface.satz"
 
 google_storage_bucket {
@@ -497,19 +505,19 @@ google_storage_bucket {
   }
 }
 SATZ
-"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the shared project's estate does not transpile:\n$(cat tmp/pw-estate.txt)"
+"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate does not transpile:\n$(cat tmp/pw-estate.txt)"
 grep -q 'roles/storage.admin on the project — to grant in this estate — for google_storage_bucket' tmp/pw-estate.txt || fail "a role the account lacks on its project is not its own to grant:\n$(cat tmp/pw-estate.txt)"
 grep -q 'at the organization\|on the workload'"'"'s folders —' tmp/pw-estate.txt && fail "a project's estate is asked for a role at the organization or on a folder it does not have:\n$(cat tmp/pw-estate.txt)"
 printf '\ngoogle_project_iam_member {\n  project = "${{interface.project_id}}"\n  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [\n    "roles/storage.admin",\n  ]\n}\n' >> tmp/pw/estate/satz/backend.satz
-"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the shared project's estate with its own grant does not transpile:\n$(cat tmp/pw-estate.txt)"
+"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate with its own grant does not transpile:\n$(cat tmp/pw-estate.txt)"
 grep -q 'prerequisites' tmp/pw-estate.txt && fail "the estate's own grant on its project does not close the need:\n$(cat tmp/pw-estate.txt)"
 "$satz" --config tmp/pw/estate update-prerequisites backend.satz --report-only > tmp/pw-report.txt 2>&1 || fail "the report of a project's estate with nothing missing is an error:\n$(cat tmp/pw-report.txt)"
-grep -q 'delegates 0 role(s) on its folders, 2 on its project' tmp/pw-report.txt || fail "the folder roles of a workload count for an estate that works in no folder:\n$(cat tmp/pw-report.txt)"
+grep -q 'delegates 0 role(s) on its folders, 2 on its project' tmp/pw-report.txt || fail "folder roles count for an estate that works in no folder:\n$(cat tmp/pw-report.txt)"
 # the pack this one replaced: its path and its params are refused by name
-sed 's|presets/project-workload.satz|presets/project-onboarding.satz|' tmp/pw-org.satz > tmp/pw-old.satz
+sed 's|presets/delegated-projects.satz|presets/project-workload.satz|' tmp/pw-org.satz > tmp/pw-old.satz
 "$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old project pack path compiled"
-grep -q 'moved to "presets/project-workload.satz"' tmp/pw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/pw-old.txt)"
-for pair in use_project_workload:use_project_onboarding project_workload_projects:projects project_workload_folder:project_onboarding_folder; do
+grep -q 'moved to "presets/delegated-projects.satz"' tmp/pw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/pw-old.txt)"
+for pair in use_delegated_projects:use_project_workload delegated_projects:project_workload_projects delegated_projects_folder:project_workload_folder; do
   new=${pair%%:*}; old=${pair##*:}
   sed "s|^  $new\( *\)= |  $old\1= |" tmp/pw-org.satz > tmp/pw-old.satz
   grep -q "^  $old  *= " tmp/pw-old.satz || fail "the estate with the old param $old was not written"
@@ -517,18 +525,21 @@ for pair in use_project_workload:use_project_onboarding project_workload_project
   grep -q "param \`$old\` was renamed to \`$new\`" tmp/pw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/pw-old.txt)"
 done
 # the example organisation's own interfaces are what the steps after this one read
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the project-workload step"
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the delegated-projects step"
 
-step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0091)"
+step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0091, ADR 0093)"
 python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-old = "  use_folder_workload            = true\n"
+old = '  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]\n'
 assert s.count(old) == 1
-s = s.replace(old, old + '  use_project_workload = true\n  use_delegated_budgets = true\n  project_workload_folder = "google_folder.workload_folder.name"\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" budgets = true }, { name = "plain" owner_group = "plain-owners@example.com" }]\n')
-old = 'use "presets/folder-workload.satz" when use_folder_workload\n'
+# the team's calls are billed to its delegation's infrastructure project: the two APIs a
+# budget with a notification channel calls are asked for there
+apis = '["cloudbilling.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "serviceusage.googleapis.com", "storage.googleapis.com", "billingbudgets.googleapis.com", "monitoring.googleapis.com"]'
+s = s.replace(old, '  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }, { name = "payments" owner_group = "payments-owners@example.com" apis = ' + apis + ' }, { name = "plain" owner_group = "plain-owners@example.com" apis = ' + apis + ' }]\n  use_delegated_projects = true\n  use_delegated_budgets = true\n  delegated_projects_folder = "google_folder.workload_folder.name"\n  delegated_projects = [{ name = "payments" delegation = "payments" budgets = true }, { name = "plain" delegation = "plain" }]\n')
+old = 'use "presets/delegated-folders.satz" when use_delegated_folders\n'
 assert s.count(old) == 1
-s = s.replace(old, old + 'use "presets/project-workload.satz" when use_project_workload\nuse "presets/delegated-budget-role.satz" when use_delegated_budgets\n')
+s = s.replace(old, old + 'use "presets/delegated-projects.satz" when use_delegated_projects\nuse "presets/delegated-budget-role.satz" when use_delegated_budgets\n')
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 PY2
 mkdir -p tmp/bud
@@ -550,17 +561,17 @@ sed 's|use_delegated_budgets = true|use_delegated_budgets = false|' tmp/bud-org.
 "$satz" --config "$ex" transpile "$PWD/tmp/bud-off.satz" --output "$PWD/tmp/bud/hcl" --check > tmp/bud-off.txt 2>&1 && fail "an entry asked for budgets while the role is not declared, and compiled"
 grep -q 'google_organization_iam_custom_role.delegated_budgets' tmp/bud-off.txt || fail "the refusal does not name the missing role:\n$(cat tmp/bud-off.txt)"
 # the team's estate in the project that was delegated budgets: the budget pack, nothing missing
-bud_estate() { # <dir> <interface name>
+bud_estate() { # <dir> <name of the delegation and of its project>
   rm -rf "$1" && mkdir -p "$1/satz" "$1/interfaces/incoming" "$1/packs"
-  cp -R "$bi/$2" "$1/interfaces/incoming/" && cp "$root/packs/project-budget.satz" "$1/packs/"
+  cp -R "$bi/$2" "$bi/delegation-$2" "$1/interfaces/incoming/" && cp "$root/packs/project-budget.satz" "$1/packs/"
   { grep -v '^presets_dir\|^interfaces_dir' "$pt/config.toml" | sed "s#\.\./\.\./\.\./#$root/#g"; echo 'packs_dir = "packs"'; } > "$1/config.toml"
   cat > "$1/satz/team.satz" <<SATZ
 estate team
 
 params {
-  infra_project_name = "acme-$2-001"
-  infra_bucket_name  = "acme-$2-001-state"
-  svc_iac_account    = "svc-iac-$2"
+  infra_project_name = "acme-deploy-$2"
+  infra_bucket_name  = "acme-deploy-$2-state"
+  svc_iac_account    = "svc-deploy-$2"
   deployment_engine  = "tofu"
   deployment_mode    = "cloud"
   budget_amount      = "300"
@@ -568,6 +579,7 @@ params {
   budget_email       = "$2-team@example.com"
 }
 
+use "interfaces/incoming/delegation-$2/delegation-$2/satz/interface.satz"
 use "interfaces/incoming/$2/$2/satz/interface.satz"
 use "packs/project-budget.satz"
 
@@ -612,7 +624,7 @@ grep -q '`budgets = true` on the entry of this project or folder' tmp/bud-plain.
 # an API the organisation already switched on, declared again by the team
 printf '\ngoogle_project_service {\n  again {\n    project = infra_project_name\n    service = "storage.googleapis.com"\n  }\n}\n' >> tmp/bud/team/satz/team.satz
 "$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not compile at level warn:\n$(cat tmp/bud-twice.txt)"
-grep -q '1 API(s) are switched on twice on acme-payments-001' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
+grep -q '1 API(s) are switched on twice on acme-deploy-payments' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the budgets step"
 
@@ -621,14 +633,14 @@ step "a workload's estate is judged against what was delegated to its account, a
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
 grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organisation binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
 "$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload's estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
-grep -q "a workload's account: the interface \`workload-shop\` delegates 6 role(s) on its folders, 0 on its project, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q '^not delegated: none' tmp/wl-report.txt \
+grep -q "delegates 6 role(s) on its folders, 0 on its project, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q 'delegation-shop' tmp/wl-report.txt && grep -q '^not delegated: none' tmp/wl-report.txt \
   || fail "the report does not say what was delegated:\n$(cat tmp/wl-report.txt)"
 # the published values say `delegated_…` (ADR 0089): nothing the example writes carries an old
 # name, and an interface copied before the rename is refused where it is used, not read
 grep -rq 'delivered_' "$ex/interfaces/outgoing" && fail "an interface the example organisation writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces/outgoing")"
 rm -rf tmp/oldif && mkdir -p tmp/oldif/interfaces && cp -R "$pt/satz" tmp/oldif/ && cp -R "$pt/interfaces/incoming" tmp/oldif/interfaces/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/oldif/config.toml
-oldif=tmp/oldif/interfaces/incoming/workload-shop/workload-shop/satz/interface.satz
+oldif=tmp/oldif/interfaces/incoming/shop/shop/satz/interface.satz
 sed 's/"delegated_folder_roles"/"delivered_folder_roles"/' "$oldif" > tmp/oldif.satz && cp tmp/oldif.satz "$oldif"
 grep -q '"delivered_folder_roles"' "$oldif" || fail "the interface with the old name was not written"
 "$satz" --config tmp/oldif transpile simple-project.satz --check > tmp/oldif.txt 2>&1 && fail "an interface that still exports delivered_folder_roles was read"
@@ -639,7 +651,7 @@ grep -q 'exports `delivered_folder_roles`: it was written by satz before v0.98.0
 "$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate with a need that was not delegated does not compile at level warn:\n$(cat tmp/wl.txt)"; }
 grep -q "not enabled on acme-deploy-shop, the project its calls are billed to" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated API is not asked for:\n$(cat tmp/wl.txt)"; }
-grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the workload'"'"'s entry in `folder_workloads`' tmp/wl.txt \
+grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the delegation'"'"'s entry in `delegations`' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated billing role is not asked for:\n$(cat tmp/wl.txt)"; }
 grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
 # the write: nothing is written for what was not delegated, the file stays as it is, and the command fails
@@ -667,12 +679,12 @@ grep -q '^showcase_retention = "600s"' tmp/input.txt || fail "--input did not bi
 "$satz" --config . transpile yaml/showcase.satz --input nope=1 --check > tmp/input-bad.txt 2>&1 && fail "--input bound a name no file declares as an input"
 grep -q 'no file of the estate declares `nope` in an `inputs` block' tmp/input-bad.txt && grep -q '`showcase_retention`' tmp/input-bad.txt || fail "the refusal does not list the inputs:\n$(cat tmp/input-bad.txt)"
 
-step "project-workload: an entry of the pack's list, its interface out, and a project estate written from it"
+step "delegation: an entry of each list, their interfaces out, and a team's estate written from the folders it takes (init --from)"
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-s = s.replace("params {\n", 'params {\n  project_workload_projects = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n', 1)
-s += '\nuse "presets/project-workload.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
+s = s.replace("params {\n", 'params {\n  delegations = [{ name = "payments" owner_group = "payments-owners@example.com" }]\n  delegated_projects = [{ name = "payments" delegation = "payments" }]\n', 1)
+s += '\nuse "presets/delegation.satz"\nuse "presets/delegated-projects.satz"\n\n// the estate adds to the interface the pack writes\ninterface "payments" {\n  use interface "audit"\n}\n'
 open(sys.argv[2], "w", encoding="utf-8").write(s)
 PY2
 # the report satz-studio reads: every export with its interface, and every interface
@@ -684,7 +696,7 @@ names = {(e.get("interface"), e["name"]): e for e in r["exports"]}
 assert names[("payments", "project_id")]["attach"] == ["google_project_iam_member"], names[("payments", "project_id")]
 assert names[("payments", "project_number")]["how"] == "lookup"
 assert names[(None, "folders")]["how"] == "map"
-assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments"}, r["interfaces"]
+assert {i["name"] for i in r["interfaces"]} >= {"audit", "archive", "payments", "delegation-payments"}, r["interfaces"]
 assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
 q = [x for x in r["requests"] if x["param"] == "event_topics"]
 assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention", "subscription"] and q[0]["entries"] == 2, r["requests"]
@@ -697,23 +709,39 @@ grep -q '## What you may request' interfaces/outgoing/common/core/README.md || f
 "$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
 pi=interfaces/outgoing/payments/payments/satz/interface.satz
 [ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces/outgoing)"
-for o in project_id project_number iac_account state_bucket audit_bucket_name; do
+for o in project_id project_number audit_bucket_name; do
   grep -q "^output \"$o\"" "$pi" || fail "the interface lacks $o:\n$(cat $pi)"
+done
+di=interfaces/outgoing/delegation-payments/delegation-payments/satz/interface.satz
+for o in deploy_project_id iac_account state_bucket; do
+  grep -q "^output \"$o\"" "$di" || fail "the delegation's interface lacks $o:\n$(cat $di)"
 done
 [ -d interfaces/outgoing/common/payments ] && fail "the interface an each writes reached the library"
 for t in orders billing; do
   grep -q '^output "topic"' "interfaces/outgoing/$t-events/$t-events/satz/interface.satz" || fail "the showcase's each wrote no interface $t-events:\n$(ls interfaces/outgoing)"
 done
 grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not emitted"
-pia="$PWD/$pi"
+out="$PWD/interfaces/outgoing"
 rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
-(cd tmp/payments && "$satz" init --project payments --interface "$pia" > ../init-project.txt 2>&1) || fail "init could not write the project estate:\n$(cat tmp/init-project.txt)"
-"$satz" fmt --check tmp/payments/satz/payments.satz || fail "the project estate init wrote is not in the canonical layout"
-grep -q 'deployment_mode    = "cloud"' tmp/payments/satz/payments.satz || fail "the project estate does not run in cloud mode:\n$(cat tmp/payments/satz/payments.satz)"
-"$satz" --config tmp/payments/config.toml transpile payments.satz > tmp/project-transpile.txt 2>&1 || fail "the project estate does not transpile:\n$(cat tmp/project-transpile.txt)"
-grep -q 'impersonate_service_account = "svc-iac-payments@corp-payments-001.iam.gserviceaccount.com"' tmp/payments/hcl/providers.tf || fail "the project estate does not run as its own account:\n$(cat tmp/payments/hcl/providers.tf)"
+# a target alone carries no identity, and nothing is written for it
+(cd tmp/payments && "$satz" init --from "$out/payments" > ../init-alone.txt 2>&1) && fail "init wrote an estate from a folder that carries no account"
+grep -q "none of the folders is a delegation's own" tmp/init-alone.txt || fail "the refusal does not say which folder is missing:\n$(cat tmp/init-alone.txt)"
+rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
+(cd tmp/payments && "$satz" init --from "$out/delegation-payments" "$out/payments" > ../init-project.txt 2>&1) || fail "init could not write the team's estate:\n$(cat tmp/init-project.txt)"
+for f in delegation-payments payments; do
+  [ -f "tmp/payments/interfaces/incoming/$f/$f/satz/interface.satz" ] && [ -f "tmp/payments/interfaces/incoming/$f/core/satz/interface.satz" ] || fail "init did not take the folder $f whole into interfaces/incoming/:\n$(find tmp/payments/interfaces 2>/dev/null)"
+  grep -q "^use \"interfaces/incoming/$f/$f/satz/interface.satz\"" tmp/payments/satz/payments.satz || fail "the estate does not use the interface $f:\n$(cat tmp/payments/satz/payments.satz)"
+done
+grep -q 'prefix = "payments/state"' tmp/payments/satz/payments.satz || fail "the estate's state does not stand under its own name in the delegation's bucket"
+# taken again from where it already stands: nothing is copied, the estate is refused without --force
+(cd tmp/payments && "$satz" init --from interfaces/incoming/delegation-payments interfaces/incoming/payments > ../init-again.txt 2>&1) && fail "init rewrote an estate that exists"
+grep -q 'exists — `--force` rewrites it' tmp/init-again.txt && ! grep -q '^Took ' tmp/init-again.txt || fail "a folder already in interfaces/incoming/ was copied, or the refusal is another:\n$(cat tmp/init-again.txt)"
+"$satz" fmt --check tmp/payments/satz/payments.satz || fail "the estate init wrote is not in the canonical layout"
+grep -q 'deployment_mode    = "cloud"' tmp/payments/satz/payments.satz || fail "the team's estate does not run in cloud mode:\n$(cat tmp/payments/satz/payments.satz)"
+"$satz" --config tmp/payments/config.toml transpile payments.satz > tmp/project-transpile.txt 2>&1 || fail "the team's estate does not transpile:\n$(cat tmp/project-transpile.txt)"
+grep -q 'impersonate_service_account = "svc-deploy-payments@corp-deploy-payments.iam.gserviceaccount.com"' tmp/payments/hcl/providers.tf || fail "the team's estate does not run as its delegation's account:\n$(cat tmp/payments/hcl/providers.tf)"
 if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project estate's root module does not validate"
+  (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the team's estate's root module does not validate"
 fi
 
 # an estate that exports nothing keeps neither file from an earlier run
