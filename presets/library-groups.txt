@@ -55,8 +55,9 @@ essential-contacts-organization.satz
 shared-network.satz
 
 [Projects and interfaces]
-project-workload.satz
-folder-workload.satz
+delegation.satz
+delegated-folders.satz
+delegated-projects.satz
 delegated-budget-role.satz
 interface-notice.satz
 

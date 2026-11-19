@@ -15,8 +15,8 @@
 //
 // The plan runs as the workload's own account, in the workload's own project, with the
 // state in the workload's own bucket, and creates under the workload's own folder — what
-// `presets/folder-workload.satz` creates for the workload `shop` in the organisation's
-// estate and publishes as the interfaces `workload-shop` and `shop`. The groups are not declared here: they exist in the
+// `presets/delegation.satz` and `presets/delegated-folders.satz` create for the delegation `shop` in the organisation's
+// estate and publishes as the interfaces `delegation-shop` and `shop`. The groups are not declared here: they exist in the
 // customer's directory — synced from Microsoft Entra ID — before the apply, which fails on
 // a group that does not.
 
@@ -32,8 +32,8 @@ inputs {
 }
 
 params {
-  // The workload's identity, as the organisation's folder-workload pack created it for
-  // `shop` and published it in the interface `workload-shop` (`project_id`, `iac_account`,
+  // The workload's identity, as the organisation's delegation pack created it for
+  // `shop` and published it in the interface `delegation-shop` (`project_id`, `iac_account`,
   // `state_bucket`): the project the plan is billed to and the state lives in, the account
   // the plan runs as, the state bucket. Example values: replace them with your workload's.
   infra_project_name = "acme-deploy-shop"
@@ -65,7 +65,7 @@ providers {
 
 // The organisation's values, read from two interface files as `${{interface.<export>}}`:
 // the workload's identity with what was delegated to it, and the folder it works in.
-use "interfaces/incoming/workload-shop/workload-shop/satz/interface.satz"
+use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop/shop/satz/interface.satz"
 
 google_project {

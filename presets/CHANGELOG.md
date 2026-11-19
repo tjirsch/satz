@@ -13,6 +13,47 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.101.0
+
+**Delegated access is one base preset and one preset per kind of target; `folder-workload`
+and `project-workload` are gone.** The base, `presets/delegation.satz`, is the identity:
+an infrastructure project, the account, its state bucket, the group that may act as it.
+What is delegated is its own preset — `presets/delegated-folders.satz`,
+`presets/delegated-projects.satz` — and each of its entries names the delegation whose
+account works there. A project no longer has an account of its own.
+
+| before | now |
+|---|---|
+| `use "presets/folder-workload.satz" when use_folder_workload` | `use "presets/delegation.satz" when use_delegation` and `use "presets/delegated-folders.satz" when use_delegated_folders` |
+| `use "presets/project-workload.satz" when use_project_workload` | `use "presets/delegation.satz" when use_delegation` and `use "presets/delegated-projects.satz" when use_delegated_projects` |
+| `folder_workloads = [{ name group … }]` | `delegations = [{ name owner_group … }]` |
+| `folder_workload_folders = [{ name workload … }]` | `delegated_folders = [{ name delegation … }]` |
+| `project_workload_projects = [{ name owner_group apis budgets }]` | `delegations = [{ name owner_group }]` and `delegated_projects = [{ name delegation apis budgets }]` |
+| `project_workload_shared_projects = [{ name workload … }]` | `delegated_projects = [{ name delegation … }]` |
+| `folder_workload_project_folder`, `folder_workload_organization_roles`, `folder_workload_group_roles` | `delegation_project_folder`, `delegation_organization_roles`, `delegation_group_roles` |
+| `folder_workload_roles` | `delegated_folders_roles` |
+| `project_workload_folder`, `project_workload_roles` | `delegated_projects_folder`, `delegated_projects_roles` |
+| interface `workload-<name>` | interface `delegation-<name>` |
+
+**What is refused:** a `use` of either old path and every old param, each by name with
+its replacement.
+
+**How to find it:** `grep -n "folder_workload\|project_workload\|folder-workload\|project-workload" <estate>.satz`.
+
+**What moves in the plan:**
+
+- A workload of `folder_workloads` and its folders: nothing — the project, the account,
+  the bucket and the folders keep their names and addresses.
+- A project of `project_workload_projects`: its account `svc-iac-<name>` and its state
+  bucket, which stood inside the project, are destroyed; the delegation's account
+  `svc-deploy-<name>` and bucket are created in its infrastructure project
+  `<shortname>-deploy-<name>`. Move the state first, or apply before any team's estate
+  holds state. No estate known to hold state is in this case.
+- A team's estate: its copy of the hand-over folders is taken again — the base's folder
+  is `delegation-<name>` — and its `infra_project_name`, `infra_bucket_name` and
+  `svc_iac_account` name the delegation's project, bucket and account; `satz init --from`
+  writes them.
+
 ### v0.100.0
 
 **`interfaces/` has two halves, and the folders an older satz wrote directly into it are
@@ -1266,19 +1307,14 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegation` | 1.0 | 2026-11-19 | first version, the base of delegated access, from the account half of `folder_workload` and `project_workload`: one entry of `delegations` (`{ name owner_group apis billing_roles }`) is an infrastructure project, the account `svc-deploy-<name>`, its state bucket and the group that may act as it; the interface is `delegation-<name>`; what is delegated is `delegated_folders` and `delegated_projects`, each entry naming its delegation (ADR 0093; BREAKING, see Breaking changes) |
+| `delegated_folders` | 1.0 | 2026-11-19 | first version, the folder half of `folder_workload`: `delegated_folders` entries name their `delegation` where they named a `workload`; the folder's interface also publishes `delegated_folder_roles` (ADR 0093) |
+| `delegated_projects` | 1.0 | 2026-11-19 | first version, replacing `project_workload`: one list, `delegated_projects`, each entry naming the `delegation` whose account works in the project; a project has no account, state bucket or group of its own, and the team's calls are billed to the delegation's infrastructure project (ADR 0093) |
+| `estate_map` | 5.0 | 2026-11-19 | offers `delegation` on `use_delegation`, and `delegated-folders` and `delegated-projects` on `use_delegated_folders` and `use_delegated_projects`, both asked once `use_delegation` is answered yes; `use_folder_workload` and `use_project_workload` are gone and refused by name (ADR 0093) |
 | `delegated_budget_role` | 1.0 | 2026-11-12 | first version: the organisation's custom role for budgets on a delegated scope — `billing.resourcebudgets.read`, `billing.resourcebudgets.write`, `billing.resourceCosts.get`, nothing on the billing account — which the two access packs grant to the entries that say `budgets = true` |
-| `project_workload` | 2.1 | 2026-11-12 | a project entry of either list takes `budgets` (`false` when left out): `true` grants the account the organisation's budget role on that project alone; the interface publishes `delegated_budgets`, and `billing_account` for a project with its own account |
-| `folder_workload` | 2.1 | 2026-11-12 | a folder entry takes `budgets` (`false` when left out): `true` grants the workload's account the organisation's budget role on that folder, and so on the projects in it; the folder's interface publishes `delegated_budgets` |
 | `estate_map` | 4.2 | 2026-11-12 | offers `delegated-budget-role` on `use_delegated_budgets`, off by default, with its question; nothing already on changes |
-| `folder_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…` where they said `delivered_…`: `delegated_folder`, `delegated_folder_roles`, `delegated_billing_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
-| `project_workload` | 2.0 | 2026-11-12 | the published values say `delegated_…`: `delegated_project_roles`, `delegated_apis`; the header calls the mechanism delegated access. Nothing the pack deploys changes |
 | `estate_map` | 4.1 | 2026-11-12 | the two questions and the network pack's phase say "delegate access" where they said "give" and "onboarded"; no choice, default or gate changes |
-| `folder_workload` | 1.2 | 2026-11-12 | the interface `workload-<name>` also publishes `account_group` and `account_group_roles` — who may act as the account — and `billing_account`, which a new project is linked to: the interface's README tells the team what it was handed and what to do with it |
-| `project_workload` | 1.1 | 2026-11-12 | the interface of a project with its own account also publishes `account_group` and `account_group_roles` |
-| `project_workload` | 1.0 | 2026-11-12 | first version, replacing `project_onboarding`: `project_workload_projects` is the old `projects` list, a project with its own account and state bucket, unchanged in what it deploys; new, `project_workload_shared_projects` (`{ name workload }`) is a project with no account of its own, on which the account of a workload of `folder-workload.satz` gets `project_workload_roles` — one account for several projects, the grant written by reference so an undeclared workload is refused; every entry takes `apis`; the interfaces publish `delivered_project_roles`, and `delivered_apis` for a project with its own account |
-| `folder_workload` | 1.1 | 2026-11-12 | the interface `workload-<name>` publishes the infrastructure project as `deploy_project_id`, where it said `project_id`: an estate that also reads a project's interface (`project-workload.satz`) reads `project_id` there |
 | `estate_map` | 4.0 | 2026-11-12 | offers `project-workload` on `use_project_workload` in place of `project-onboarding` on `use_project_onboarding`; the old gate is refused and names the new one |
-| `folder_workload` | 1.0 | 2026-11-11 | first version, replacing `workload_deployer`: one identity per entry of `folder_workloads` (`{ name group apis billing_roles }` — infrastructure project, account, state bucket, the entry's APIs and billing roles) and one folder per entry of `folder_workload_folders` (`{ name workload display_name parent }`), created by the pack, with `folder_workload_roles` for the workload's account on that folder alone and no role that sets a folder's IAM; publishes the interfaces `workload-<name>` (identity and what was delivered) and `<folder>` (`delivered_folder`) |
 | `estate_map` | 3.0 | 2026-11-11 | offers `folder-workload` on `use_folder_workload` in place of `workload-deployer` on `use_workload_deployer`; the old gate is refused and names the new one |
 | `s1_security_groups` | 1.4 | 2026-11-12 | the project admins' roles are the list param `gcp_project_admins_roles`, default the same list with `roles/owner` — the plan does not move (`variables.tf` gains the variable). An estate that binds it to `roles/writer`, `roles/resourcemanager.projectIamAdmin`, `roles/iam.serviceAccountAdmin`, `roles/resourcemanager.projectDeleter` and `roles/billing.projectManager` plus the rest of the list holds the same reach over every project with a role Privileged Access Manager can grant; two destroys and four creates then (ADR 0090) |
 | `s2_security_groups` | 1.4 | 2026-11-12 | the same list param `gcp_project_admins_roles`, default S2's list (S1's without the two network roles), the same binding to move off `roles/owner` (ADR 0090) |
