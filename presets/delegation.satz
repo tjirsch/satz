@@ -135,7 +135,7 @@ google_project {
     }
     // The group may become its account — that account only.
     google_service_account_iam_member {
-      service_account_id   = "${{google_service_account.deploy_{each.name}.name}}"
+      service_account_id         = "${{google_service_account.deploy_{each.name}.name}}"
       "group:{each.owner_group}" = delegation_group_roles
     }
   }

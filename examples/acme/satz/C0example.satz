@@ -12,41 +12,41 @@
 estate c0example
 
 params {
-  infra_folder_name              = "Infrastructure"
-  infra_project_name             = "acme-infra-001"
-  infra_bucket_name              = "acme-infra-state"
-  customer_id                    = "C0example"
-  customer_organization_id       = "123456789012"
-  customer_domain                = "example.com"
-  first_admin                    = "admin"
-  customer_longname              = "Acme Corp."
-  customer_shortname             = "acme"
-  svc_iac_account                = "svc-iac-001"
-  svc_iac_users_group            = "svc-iac-users"
-  billing_account_infra          = "012345-6789AB-CDEF01"
-  deployment_engine              = "tofu"
-  deployment_mode                = "local" // switched by `satz migrate`
-  default_region                 = "europe-west3"
-  default_zone                   = "europe-west3-a"
+  infra_folder_name         = "Infrastructure"
+  infra_project_name        = "acme-infra-001"
+  infra_bucket_name         = "acme-infra-state"
+  customer_id               = "C0example"
+  customer_organization_id  = "123456789012"
+  customer_domain           = "example.com"
+  first_admin               = "admin"
+  customer_longname         = "Acme Corp."
+  customer_shortname        = "acme"
+  svc_iac_account           = "svc-iac-001"
+  svc_iac_users_group       = "svc-iac-users"
+  billing_account_infra     = "012345-6789AB-CDEF01"
+  deployment_engine         = "tofu"
+  deployment_mode           = "local" // switched by `satz migrate`
+  default_region            = "europe-west3"
+  default_zone              = "europe-west3-a"
   // The compliance frameworks this customer is held to, as catalog ids from
   // `presets/catalogs/`. Not what this estate claims — that comes from its packs.
-  compliance_frameworks          = ["cis-gcp-5.0"]
+  compliance_frameworks     = ["cis-gcp-5.0"]
   // The folder the audit archive's project is created in, read by
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
   // the folder: unbound, that pack creates its project under the organisation.
-  logsink_project_folder         = "google_folder.infra_folder.name"
+  logsink_project_folder    = "google_folder.infra_folder.name"
   // Where the customer's and the projects' folders live: "" is the organisation, a name one
   // folder directly under it. The section at the end of this file publishes it as
   // `workload_folder`; the compile refuses a name and a section that disagree.
-  workload_folder_name           = "Workloads"
+  workload_folder_name      = "Workloads"
   // The delegation the examples under this folder work with: its own account and state
   // bucket from `presets/delegation.satz`, and the folder that account works in from
   // `presets/delegated-folders.satz`.
-  use_delegation                 = true
-  use_delegated_folders          = true
-  delegation_project_folder      = "google_folder.infra_folder.name"
-  delegations                    = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
-  delegated_folders              = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
+  use_delegation            = true
+  use_delegated_folders     = true
+  delegation_project_folder = "google_folder.infra_folder.name"
+  delegations               = [{ name = "shop" owner_group = "gcp-shop-admins@example.com" }]
+  delegated_folders         = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
 }
 
 // The day-0 params with their questions, and the core exports every interface carries.

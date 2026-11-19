@@ -1659,7 +1659,7 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
     (
         "deployer_billing_roles",
         "delegations",
-        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+        "the roles a delegation's account holds on the billing account are `billing_roles` of its entry in `delegations` (`presets/delegation.satz`), `roles/billing.user` unless the entry says more (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "use_project_onboarding",
@@ -4191,48 +4191,56 @@ mod tests {
     }
 
     #[test]
-    fn the_workload_deployer_names_are_refused_and_name_the_folder_workload_ones() {
-        // The pack was replaced: its path, its params and the lists a team's request file
-        // adds to are each refused with the name that took their place.
+    fn the_names_of_the_packs_before_delegation_are_refused_and_name_the_delegation_ones() {
+        // The packs were replaced twice: every param of either generation, and the lists a
+        // team's request file adds to, are each refused with the name that holds today.
         for (from, to) in [
-            ("use_workload_deployer", "use_folder_workload"),
-            ("workload_deployers", "folder_workloads"),
-            ("workload_deployer_folders", "folder_workload_folders"),
-            ("deployer_project_folder", "folder_workload_project_folder"),
-            ("deployer_folder_roles", "folder_workload_roles"),
-            ("deployer_organization_roles", "folder_workload_organization_roles"),
-            ("deployer_group_roles", "folder_workload_group_roles"),
+            ("use_workload_deployer", "use_delegation"),
+            ("workload_deployers", "delegations"),
+            ("workload_deployer_folders", "delegated_folders"),
+            ("deployer_project_folder", "delegation_project_folder"),
+            ("deployer_folder_roles", "delegated_folders_roles"),
+            ("deployer_organization_roles", "delegation_organization_roles"),
+            ("deployer_group_roles", "delegation_group_roles"),
             ("deployer_billing_roles", "billing_roles"),
-            // the project pack, renamed in v0.97.0: left on `projects`, an estate would
-            // compile with no project and the next apply would destroy them all
-            ("use_project_onboarding", "use_project_workload"),
-            ("projects", "project_workload_projects"),
-            ("project_onboarding_folder", "project_workload_folder"),
+            ("use_project_onboarding", "use_delegated_projects"),
+            ("projects", "delegated_projects"),
+            ("project_onboarding_folder", "delegated_projects_folder"),
+            ("use_folder_workload", "use_delegation"),
+            ("folder_workloads", "delegations"),
+            ("folder_workload_folders", "delegated_folders"),
+            ("folder_workload_roles", "delegated_folders_roles"),
+            ("use_project_workload", "use_delegated_projects"),
+            ("project_workload_projects", "delegated_projects"),
+            ("project_workload_shared_projects", "delegated_projects"),
+            ("project_workload_roles", "delegated_projects_roles"),
         ] {
             let err = renamed_param(from, "e.satz", 3).unwrap_or_else(|| panic!("`{}` must be refused", from));
             assert!(err.msg.contains(to), "`{}`: the error names `{}` — got {}", from, to, err.msg);
         }
         let load = |p: &str| match p {
-            "requests/pay.satz" => Ok("pack pay_request version \"1\"\nparams {\n  contributes_workload_deployers = [\n    { name = \"pay\" },\n  ]\n}\n".to_string()),
+            "requests/pay.satz" => Ok("pack pay_request version \"1\"\nparams {\n  contributes_folder_workloads = [\n    { name = \"pay\" },\n  ]\n}\n".to_string()),
             other => Err(format!("no load: {}", other)),
         };
-        for path in ["presets/workload-deployer.satz", "presets/workload-deployer.local.satz"] {
+        for (path, now) in [
+            ("presets/workload-deployer.satz", "presets/delegation.satz"),
+            ("presets/folder-workload.satz", "presets/delegation.satz"),
+            ("presets/folder-workload.local.satz", "presets/delegation.local.satz"),
+            ("presets/project-onboarding.satz", "presets/delegated-projects.satz"),
+            ("presets/project-workload.satz", "presets/delegated-projects.satz"),
+        ] {
             let estate = format!("estate t\n\nuse \"{}\"\n", path);
             let Err(err) = compile_estate("t.satz", &estate, &Table, &load) else {
                 panic!("{}: the old path must be refused", path);
             };
-            assert!(err.msg.contains(&path.replace("workload-deployer", "folder-workload")), "{}", err.msg);
+            assert!(err.msg.contains(now), "{}: {}", path, err.msg);
         }
-        let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"presets/project-onboarding.satz\"\n", &Table, &load) else {
-            panic!("the old project pack's path must be refused");
-        };
-        assert!(err.msg.contains("presets/project-workload.satz"), "{}", err.msg);
         // a vendored request file that still adds to the old list: silent before, because a
         // contribution to a list no pack declares is how a pack that is off is skipped
         let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"requests/pay.satz\"\n", &Table, &load) else {
             panic!("a contribution to a renamed list must be refused");
         };
-        assert!(err.msg.contains("contributes_folder_workloads"), "{}", err.msg);
+        assert!(err.msg.contains("contributes_delegations"), "{}", err.msg);
         assert_eq!((err.file.as_str(), err.line), ("requests/pay.satz", 3), "{}", err.msg);
     }
 

@@ -640,7 +640,8 @@ pub(crate) fn granted(manifest: &Manifest, service_account: &str) -> Granted {
 }
 
 /// The exports an interface carries what was delegated in, by name
-/// (`presets/folder-workload.satz` and `presets/project-workload.satz`, ADR 0087, 0088).
+/// (`presets/delegation.satz`, `presets/delegated-folders.satz` and
+/// `presets/delegated-projects.satz`, ADR 0087, 0093).
 pub(crate) const DELEGATED_FOLDER_ROLES: &str = "delegated_folder_roles";
 /// The folder itself: the roles on a workload's folders count for an estate that reads one.
 pub(crate) const DELEGATED_FOLDER: &str = "delegated_folder";
@@ -659,7 +660,7 @@ pub(crate) const PROJECT_CREATOR: &str = "roles/resourcemanager.projectCreator";
 /// not in it is the organisation's estate's to add.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Delegation {
-    /// the interfaces that carry it, `workload-<name>` and a project's, comma-separated
+    /// the interfaces that carry it, `delegation-<name>` and those of its targets, comma-separated
     pub interface: String,
     /// the account's roles on the folder the estate works in; empty for an estate that
     /// reads no folder's interface
@@ -1653,10 +1654,10 @@ mod tests {
 
     fn delegated(folder: &[&str], billing: &[&str], apis: &[&str]) -> Delegation {
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
-        Delegation { interface: "workload-shop".to_string(), folder_roles: set(folder), project_roles: BTreeSet::new(), billing_roles: set(billing), apis: set(apis), budgets: false }
+        Delegation { interface: "delegation-shop".to_string(), folder_roles: set(folder), project_roles: BTreeSet::new(), billing_roles: set(billing), apis: set(apis), budgets: false }
     }
 
-    /// What `presets/folder-workload.satz` grants by default.
+    /// What `presets/delegated-folders.satz` grants by default.
     const FOLDER_ROLES: &[&str] = &[
         "roles/resourcemanager.folderCreator",
         "roles/resourcemanager.folderEditor",
@@ -1766,7 +1767,7 @@ mod tests {
         // an interface that says nothing of a delegation: a project's estate, judged as before
         assert_eq!(delegation(std::slice::from_ref(&folder)), None);
         let workload = file(
-            "workload-shop",
+            "delegation-shop",
             vec![
                 (DELEGATED_FOLDER_ROLES, list(&["roles/resourcemanager.projectCreator"])),
                 (DELEGATED_BILLING_ROLES, list(&["roles/billing.user"])),
@@ -1779,7 +1780,7 @@ mod tests {
 
     #[test]
     fn a_project_estate_is_judged_against_what_was_delegated_on_its_project() {
-        // what `presets/project-workload.satz` grants: the project's IAM and its services
+        // what `presets/delegated-projects.satz` grants: the project's IAM and its services
         let mut d = delegated(&[], &[], &[]);
         d.project_roles = ["roles/resourcemanager.projectIamAdmin", "roles/serviceusage.serviceUsageAdmin"].iter().map(|s| s.to_string()).collect();
         let tf = "resource \"google_project_service\" \"s\" {\n  service = \"run.googleapis.com\"\n}\n\
@@ -1821,13 +1822,13 @@ mod tests {
             },
         };
         let list = |v: &[&str]| serde_yaml::Value::Sequence(v.iter().map(|s| serde_yaml::Value::from(*s)).collect());
-        let workload = || file("workload-shop", vec![(DELEGATED_FOLDER_ROLES, list(&[PROJECT_CREATOR])), (DELEGATED_APIS, list(&["iam.googleapis.com"]))]);
+        let workload = || file("delegation-shop", vec![(DELEGATED_FOLDER_ROLES, list(&[PROJECT_CREATOR])), (DELEGATED_APIS, list(&["iam.googleapis.com"]))]);
         let project = file("shop-backend", vec![(DELEGATED_PROJECT_ROLES, list(&[PROJECT_IAM_ADMIN]))]);
         let folder = file("shop", vec![(DELEGATED_FOLDER, serde_yaml::Value::from("${data.google_active_folder.shop.name}"))]);
         // a workload's account in a project the organisation's estate created: no folder
         let d = delegation(&[workload(), project]).expect("a workload's estate");
         assert!(d.folder_roles.is_empty() && d.project_roles.contains(PROJECT_IAM_ADMIN) && d.apis.contains("iam.googleapis.com"), "{:?}", d);
-        assert_eq!(d.interface, "workload-shop`, `shop-backend");
+        assert_eq!(d.interface, "delegation-shop`, `shop-backend");
         // the same account in its folder
         let d = delegation(&[workload(), folder]).expect("a workload's estate");
         assert!(d.folder_roles.contains(PROJECT_CREATOR) && d.project_roles.is_empty(), "{:?}", d);
@@ -1858,11 +1859,11 @@ mod tests {
                 line: 1,
             },
         };
-        let old = file("workload-shop", "delivered_folder_roles");
+        let old = file("delegation-shop", "delivered_folder_roles");
         let new = file("shop", DELEGATED_FOLDER);
         assert_eq!(
             written_before_delegated(&[new.clone(), old.clone()]),
-            [("interfaces/incoming/workload-shop/workload-shop/satz/interface.satz".to_string(), 7, "delivered_folder_roles".to_string())]
+            [("interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz".to_string(), 7, "delivered_folder_roles".to_string())]
         );
         assert!(written_before_delegated(&[new]).is_empty());
         // read as it is, the old file would say nothing of a delegation

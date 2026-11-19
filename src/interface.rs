@@ -1215,8 +1215,9 @@ impl Interface {
     /// content hash of every other file in it. `folder` is `common` or a project.
     /// What an interface hands to a team that works beside the estate, said to that team:
     /// the account, who may act as it, what it holds, and what to do next. Written when the
-    /// interface carries what a workload pack publishes (`presets/folder-workload.satz`,
-    /// `presets/project-workload.satz`), by the names those exports have; `None` for every
+    /// interface carries what a delegation pack publishes (`presets/delegation.satz`,
+    /// `presets/delegated-folders.satz`, `presets/delegated-projects.satz`), by the names
+    /// those exports have; `None` for every
     /// other interface. The folder is what changes hands, so the instructions travel in it.
     fn handover(&self, module: &str, outputs: &[&Output]) -> Option<String> {
         let own = |name: &str| outputs.iter().find(|o| o.interface.is_some() && o.name == name);
@@ -1302,28 +1303,20 @@ impl Interface {
         }
         s.push_str("\n### What to do with it\n\n");
         let mut steps: Vec<String> = Vec::new();
-        steps.push(format!(
-            "Take this folder whole into `interfaces/incoming/` of your repository{} — satz never writes there.",
-            if account.is_some() && (folder_roles.is_some()) {
-                ", with the folder of each place the estate's owners gave you beside it"
-            } else if account.is_none() {
-                ", beside the folder that carries your account"
-            } else {
-                ""
-            }
-        ));
-        if let Some(a) = &account {
-            let (id, project) = a.split_once('@').map(|(i, d)| (i, d.split('.').next().unwrap_or_default())).unwrap_or((a.as_str(), ""));
-            steps.push(format!(
-                "In your estate's `params {{ }}` bind `svc_iac_account = \"{}\"`, `infra_project_name = \"{}\"`{} and `deployment_mode = \"cloud\"`, and `use \"interfaces/incoming/{}/{}/satz/interface.satz\"`.",
-                id,
-                project,
-                text("state_bucket").map(|b| format!(", `infra_bucket_name = \"{}\"`", b)).unwrap_or_default(),
-                module,
-                module
-            ));
+        if account.is_some() {
+            steps.push(
+                "In your repository run `satz init --from <this folder> <the folder of each folder or project you were given>`. It copies \
+                 them into `interfaces/incoming/`, where satz never writes again, and writes your estate: it runs as the account above, \
+                 bills its calls to the project above and keeps its state in the bucket above."
+                    .to_string(),
+            );
         } else {
-            steps.push(format!("In your estate, `use \"interfaces/incoming/{}/{}/satz/interface.satz\"` beside the line of your account's interface.", module, module));
+            steps.push(format!(
+                "Take this folder together with the one that carries your account, `delegation-<name>`: `satz init --from` both writes your \
+                 estate. For an estate that exists, copy this folder into its `interfaces/incoming/` and add \
+                 `use \"interfaces/incoming/{}/{}/satz/interface.satz\"` beside the line of your account's interface.",
+                module, module
+            ));
         }
         steps.push(
             "Compile: `satz transpile <estate> --check`. satz judges the estate against what this table says was granted. A line that names \

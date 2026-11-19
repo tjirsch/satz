@@ -3704,7 +3704,7 @@ struct Reads {
 }
 
 /// Where a workload's account gets what it lacks: the lists of the pack that created it.
-const ASK_THE_ORGANISATION: &str = "`presets/folder-workload.satz` or `presets/project-workload.satz` in the organisation's estate";
+const ASK_THE_ORGANISATION: &str = "`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz` in the organisation's estate";
 
 /// The API half of [`prerequisite_findings`].
 fn api_findings(
@@ -3752,8 +3752,7 @@ fn api_findings(
             format!(
                 "{} API(s) this estate's resources need are not enabled on {}, the project its calls are \
                  billed to. That project is the organisation's estate's: ask for each to be added to the \
-                 `apis` of the entry that created it — the workload's in `folder_workloads`, or the \
-                 project's in `project_workload_projects` ({}); the interface `{}` says what is \
+                 `apis` of the delegation's entry in `delegations` ({}); the interface `{}` says what is \
                  delegated:\n  {}",
                 not_delegated.len(),
                 billing.default_project().unwrap_or_default(),
@@ -3859,8 +3858,8 @@ fn prerequisite_role_findings(
                          what the interface `{}` says and can grant itself nothing above its own projects: \
                          a role on a project it was given it grants itself in this estate \
                          (`google_project_iam_member` on the interface's `project_id`); ask for a role on \
-                         the workload's folders to be added to `folder_workload_roles`, and for one on the \
-                         billing account to `billing_roles` of the workload's entry in `folder_workloads` \
+                         the delegated folders to be added to `delegated_folders_roles`, and for one on the \
+                         billing account to `billing_roles` of the delegation's entry in `delegations` \
                          ({}):\n  {}",
                         sa,
                         d.interface,
@@ -7815,7 +7814,7 @@ mod prerequisite_findings_speak {
         };
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
         let delegation = crate::prerequisites::Delegation {
-            interface: "workload-shop".to_string(),
+            interface: "delegation-shop".to_string(),
             folder_roles: set(&["roles/resourcemanager.projectCreator"]),
             project_roles: Default::default(),
             budgets: false,

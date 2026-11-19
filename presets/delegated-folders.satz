@@ -40,7 +40,7 @@ params {
   // name, the delegation whose account works in it, the name it is shown under (the
   // entry's name when left out), its parent (the workload folder when left out), and
   // whether the account may manage budgets for the projects in it.
-  delegated_folders       = []
+  delegated_folders = []
   // What an account holds on each of its folders: folders and Google projects under it,
   // the IAM of its projects, and the APIs it enables on them. No role here carries
   // `resourcemanager.folders.setIamPolicy`.

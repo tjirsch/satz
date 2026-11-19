@@ -1525,7 +1525,7 @@ pub(crate) async fn run_merge_presets(
                     events.push(MergeEvent::Prerequisites {
                         wrote: Vec::new(),
                         missing: report.request.clone(),
-                        refused: Some("not delegated to this workload's account: the organisation's estate adds them (`presets/folder-workload.satz` or `presets/project-workload.satz`), or the estate grants itself a role on a project it was given".to_string()),
+                        refused: Some("not delegated to this estate's account: the organisation's estate adds them (`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz`), or the estate grants itself a role on a project it was given".to_string()),
                     });
                     needs_attention = true;
                 }
