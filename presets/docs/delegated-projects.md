@@ -17,7 +17,7 @@ ONE LIST. One entry of `delegated_projects`,
 { name = "shop-frontend" delegation = "shop" }
 is one Google project `{customer_shortname}-<name>-001`. One account works in as many
 projects as name its delegation. The grant names the account by reference, so an entry
-that names a delegation no entry of `delegations` declares is refused by the compile,
+that names a delegation no entry of `delegations` declares is refused by the transpile,
 which lists the accounts that exist. Entries are bound in the estate, added with
 `satz add-entry`, or requested by the team as `contributes_delegated_projects`.
 
@@ -25,21 +25,21 @@ WHAT AN ACCOUNT HOLDS ON ITS PROJECT. `delegated_projects_roles` — the project
 its services — on that project and nowhere else: it creates no project and reaches none
 beside its own. What its estate's resource types need beyond that it grants its own
 account in its estate, on the project (`google_project_iam_member`, which the interface
-allows). `budgets = true` adds the organisation's budget role on the project
+allows). `budgets = true` adds the organization's budget role on the project
 (`presets/delegated-budget-role.satz`).
 
 THE PROJECT. Billed to the infrastructure billing account and created in
-`delegated_projects_folder`: empty is the organisation; the workload folder `satz init
+`delegated_projects_folder`: empty is the organization; the workload folder `satz init
 --workload-folder-name` writes is `google_folder.workload_folder.name`. Its `apis` are
 the five below unless the entry states its own list, whole. The team's CALLS are billed
 to the delegation's infrastructure project, not to this one: an API a call needs is
 asked for in the delegation's entry.
 
-WHAT THE TEAM'S ESTATE READS. The interface `<name>`, taken beside the delegation's own:
+WHAT THE WORKLOAD ESTATE READS. The interface `<name>`, taken beside the delegation's own:
 `project_id` (an attach point for `google_project_iam_member`), `project_number`,
 `delegated_project_roles` and `delegated_budgets`, which `satz` judges the estate's
 needs against. One estate reads one project's interface: an account that works in two
-projects is rolled out by two estates that run as the same account. A project's name is
+projects is worked in by two estates that run as the same estate account. A project's name is
 an interface's name: no folder of `presets/delegated-folders.satz` may carry the same.
 
 MORE IN AN INTERFACE. An interface declared in two files is one interface, so the estate
@@ -87,7 +87,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `delegated_projects_folder` | The folder the delegated projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | — |
+| `delegated_projects_folder` | The folder the delegated projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | — |
 
 **delegated_projects_folder** — It decides the policies and the grants every project inherits. Changing it afterwards moves every live project between parents.
 
@@ -101,7 +101,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

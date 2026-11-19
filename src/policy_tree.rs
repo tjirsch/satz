@@ -1,5 +1,5 @@
 //! Recursive org-policy audit: sweep the resource hierarchy (organization, folders,
-//! projects) with their DECLARED org policies via Cloud Asset Inventory, and classify
+//! projects) with their DECLARED organization policies via Cloud Asset Inventory, and classify
 //! each node-level policy against a framework baseline.
 //!
 //! Design constraints (see the flat diff in `org_policy.rs` for the counterpart):
@@ -40,7 +40,7 @@ pub struct RawAsset {
     /// `//orgpolicy.googleapis.com/folders/456/policies/compute.requireOsLogin`.
     pub name: String,
     pub asset_type: String,
-    /// Ancestry from the asset itself up to the org root, e.g.
+    /// Ancestry from the asset itself up to the organization root, e.g.
     /// `["folders/456", "folders/123", "organizations/1"]`. Projects appear by NUMBER.
     pub ancestors: Vec<String>,
     /// `resource.data`: CRM node JSON, or the v2 policy JSON for policy assets.
@@ -177,8 +177,8 @@ pub struct TreeSummary {
 // Sweep (the module's only IO)
 // ---------------------------------------------------------------------------
 
-/// Fetch the resource hierarchy and every declared org policy in ONE paginated
-/// `list_assets` call. `org` may be `organizations/N` or a bare numeric id.
+/// Fetch the resource hierarchy and every declared organization policy in ONE paginated
+/// `list_assets` call. `organization` may be `organizations/N` or a bare numeric id.
 pub async fn sweep(org: &str, quota_project: Option<String>) -> Result<Vec<RawAsset>, BoxErr> {
     use google_cloud_asset_v1::model::ContentType;
     use google_cloud_gax::options::RequestOptionsBuilder;
@@ -345,7 +345,7 @@ pub fn assemble_tree(org: &str, assets: Vec<RawAsset>) -> Result<PolicyTree, Box
         }
     }
 
-    // The org asset itself can be absent (e.g. no resourcemanager.organizations.get);
+    // The organization asset itself can be absent (e.g. no resourcemanager.organizations.get);
     // synthesize the root so the tree still hangs together.
     if !nodes.contains_key(&root_id) {
         warnings.push(format!(
@@ -1005,7 +1005,7 @@ mod tests {
         }
     }
 
-    /// org 1 ── folder 10 "Prod" ── project p-one (number 111, has a policy)
+    /// organization 1 ── folder 10 "Prod" ── project p-one (number 111, has a policy)
     ///       └─ folder 20 "Dev"  ── project p-two (number 222, clean)
     /// folder 10 declares an enforce-false override; policies on p-one arrive by NUMBER.
     fn fixture() -> Vec<RawAsset> {

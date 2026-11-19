@@ -10,7 +10,7 @@
     uv run scripts/mcp-probe.py --tools satz_triage,satz_report_compliance
     uv run scripts/mcp-probe.py --mode net               # + check_presets, a real Checkov
     uv run scripts/mcp-probe.py --mode live --live-dir <estate-checkout> \\
-        --live-estate <main>.satz                        # + ADC: reads the organisation
+        --live-estate <main>.satz                        # + signed in: reads the organization
 
 The probe reads the server's stdout pipe itself, not through an MCP SDK: an SDK drops
 a line that is not JSON, so a test built on one cannot see a leak. Any stdout line that
@@ -25,13 +25,13 @@ a result over --limit-tokens fails the run, because a client cuts an oversized r
 mid-JSON.
 
 Modes, each including the one before:
-  offline  no credentials (the ADC path names a file that does not exist), no network;
+  offline  not signed in (the sign-in file path names a file that does not exist), no network;
            Checkov is a stand-in on PATH that prints a fixed report
   net      + satz_check_presets against the upstream library, and a real Checkov
            (`checkov`, else `uvx checkov`)
-  live     + gcloud's application-default credentials, over a COPY of --live-dir:
+  live     + gcloud's application-default sign-in, over a COPY of --live-dir:
            whoami online, report_compliance live, adopt without execute. Nothing is
-           written to the organisation
+           written to the organization
 
 Servers: `main` (the selected groups), `gp` (get/merge-presets into an estate with no
 library), `ceiling` (--allow read), `gated` (--self-gated), `identity` (estates opened
@@ -452,9 +452,9 @@ def suite_main(s: Server, root: Path, checkov: bool) -> None:
                   len(found) == 1 and found[0][0].endswith("main.tf") and found[0][1] == 16
                   and "google_folder_iam_member" in found[0][2], repr(found))  # fmt: skip
     if run.mode == "offline":
-        s.call("satz_adopt without credentials, refused", "satz_adopt", {}, "error")
-        # the file the table would go to is judged before the organisation is read:
-        # this refusal is about the path, not about the missing credentials
+        s.call("satz_adopt with nobody signed in, refused", "satz_adopt", {}, "error")
+        # the file the table would go to is judged before the organization is read:
+        # this refusal is about the path, not about the missing sign-in
         s.call(
             "satz_adopt out outside the root",
             "satz_adopt",
@@ -667,7 +667,7 @@ def suite_identity(s: Server) -> None:
 
 
 def suite_live(s: Server, config: str, main_satz: str) -> None:
-    """ADC on the test organisation. Reads only: adopt runs without execute."""
+    """Signed in on the test organization. Reads only: adopt runs without execute."""
     opened = s.call(
         "satz_open the live estate",
         "satz_open",
@@ -677,7 +677,7 @@ def suite_live(s: Server, config: str, main_satz: str) -> None:
     who = s.call("satz_whoami online", "satz_whoami", {}, mode="live", timeout=300)
     if s.run.wants("satz_whoami", R, "live"):
         # a cloud-mode estate runs as its account; a local-mode one (runs_as null) as
-        # the ADC itself, impersonating nothing
+        # the signed-in person itself, impersonating nothing
         est, runs_as = who.get("estate", {}), opened.get("runs_as")
         ok = (
             est.get("service_account") == runs_as
@@ -842,8 +842,8 @@ def main() -> None:
     allow = ",".join(g for g in GROUPS if g in groups)
     print(f"mcp-probe: {version}, mode {a.mode}, groups {allow}, work {work}")
     paths = stage(work)
-    # offline, nothing can mint a token: the ADC path names a file that does not exist
-    env = os.environ | {"GOOGLE_APPLICATION_CREDENTIALS": str(work / "no-adc.json")}
+    # offline, nothing can mint a token: the sign-in file path names a file that does not exist
+    env = os.environ | {"GOOGLE_APPLICATION_CREDENTIALS": str(work / "no-sign-in.json")}
     main_env, checkov = env, True
     if a.mode == "offline":
         main_env = env | {

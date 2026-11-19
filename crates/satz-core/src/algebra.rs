@@ -21,7 +21,7 @@ pub struct GrantEdge {
     /// the binding's identity: the emitter reconciles an edge declared with
     /// and without an id into one resource, and refuses two different ids.
     pub import_id: String,
-    /// How the member is written to HCL when a central estate's interface gave part of
+    /// How the member is written to HCL when the interface of an organization's estate gave part of
     /// it: the text with the reference where the fold holds the literal. Empty when the
     /// member is written as it is. Not part of the binding's identity, like `import_id`:
     /// the label hashes `member`, and the emitter reconciles the two.
@@ -31,7 +31,7 @@ pub struct GrantEdge {
 }
 
 /// How an entity's body is written to HCL where that differs from what the fold judges:
-/// a reference in place of a value a central estate's interface gave. Every check reads
+/// a reference in place of a value the interface of an organization's estate gave. Every check reads
 /// the body; only the emission reads this.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rendering {
@@ -65,12 +65,12 @@ pub struct Entity {
     /// for `Scope::Node` types — a project must reference its parent folder at
     /// emission. Intrinsic-scope types ignore it; ⊕ keeps the first occurrence's.
     pub node_path: Vec<String>,
-    /// How the body is written where that differs from the body (a central estate's
-    /// value as a reference). `None` when it is written as it is; ⊕ keeps the first.
+    /// How the body is written where that differs from the body (a value of an organization's estate
+    /// as a reference). `None` when it is written as it is; ⊕ keeps the first.
     pub rendering: Option<Rendering>,
 }
 
-/// A conflict is a value, not an early error: merge is total, compilation fails
+/// A conflict is a value, not an early error: merge is total, transpile fails
 /// iff the folded result contains any ⊥ — which reports every conflict at once.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Conflict {

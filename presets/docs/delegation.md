@@ -6,7 +6,7 @@ Source: `presets/delegation.satz`
 ## Purpose
 
 Delegated access, the base: one identity per delegation. A delegation gives a team — or a
-product, a service — access to a part of the organisation's resources from an estate of
+product, a service — access to a part of the organization's resources from an estate of
 its own, beside this one. This pack is the half every delegation has, whatever is
 delegated: an infrastructure project with the service account the team's pipelines run
 as and the bucket its states live in, and the group whose members may act as that
@@ -28,7 +28,7 @@ resources' calls need is asked for here. Inside it the account `svc-deploy-<name
 the state bucket `{customer_shortname}-deploy-<name>-state`, which the account may
 write; the group reads the project and may become the account — that account only. On
 the billing account the account holds the entry's `billing_roles` (`roles/billing.user`
-unless the entry says more), on the organisation `delegation_organization_roles` —
+unless the entry says more), on the organization `delegation_organization_roles` —
 `roles/browser` and nothing else by default: an interface looks a folder up by its name
 among its parent's folders, and that listing needs `resourcemanager.folders.list` on the
 parent.
@@ -37,11 +37,11 @@ AN ENTRY THAT ASKS FOR MORE. `apis` and `billing_roles` are lists, and an entry 
 states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
 its own.
 
-WHAT THE TEAM'S ESTATE READS. The interface `delegation-<name>`, taken to its
+WHAT THE WORKLOAD ESTATE READS. The interface `delegation-<name>`, taken to its
 `interfaces/incoming/` folder: `deploy_project_id` (its infrastructure project),
 `iac_account`, `state_bucket`, the group that may act as the account, and what was
 delegated to the account beside its targets — `delegated_billing_roles`, `delegated_apis`
-— which `satz` judges the estate's needs against. `satz init --from` writes the team's
+— which `satz` judges the estate's needs against. `satz init --from` writes the workload
 estate from it. Each target's own interface is taken beside it.
 
 NO CLAIM. A delegation is an identity, not a control: this pack witnesses nothing.
@@ -88,11 +88,11 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `delegation_project_folder` | The folder the delegations' infrastructure projects are created in — the infrastructure folder as `google_folder.infra_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | `"google_folder.infra_folder.name"` |
+| `delegation_project_folder` | The folder the delegations' infrastructure projects are created in — the infrastructure folder as `google_folder.infra_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | `"google_folder.infra_folder.name"` |
 
 **delegation_project_folder** — It decides the policies the delegations' infrastructure projects inherit. Changing it afterwards moves every live one between parents.
 
-An empty answer, `""`, is an answer: the organisation itself.
+An empty answer, `""`, is an answer: the organization itself.
 
 
 ## Contributes
@@ -105,13 +105,13 @@ An empty answer, `""`, is an answer: the organisation itself.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|
 | `delegation-{each.name}` | `deploy_project_id` | `"{customer_shortname}-deploy-{each.name}"` | The delegation's infrastructure project: the team's plans are billed to it |
-| `delegation-{each.name}` | `iac_account` | `"svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com"` | The service account the team's estates run as |
-| `delegation-{each.name}` | `state_bucket` | `"{customer_shortname}-deploy-{each.name}-state"` | The bucket the team's estates keep their states in |
+| `delegation-{each.name}` | `iac_account` | `"svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com"` | The service account the workload estates run as |
+| `delegation-{each.name}` | `state_bucket` | `"{customer_shortname}-deploy-{each.name}-state"` | The bucket the workload estates keep their states in |
 | `delegation-{each.name}` | `account_group` | `"{each.owner_group}"` | The group whose members may act as the account |
 | `delegation-{each.name}` | `account_group_roles` | `delegation_group_roles` | What that group holds on the account |
 | `delegation-{each.name}` | `billing_account` | `billing_account_infra` | The billing account a new project is linked to, and a budget is created on |

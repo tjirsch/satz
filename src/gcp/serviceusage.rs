@@ -3,7 +3,7 @@
 //! honest "changed vs. already there" read the state first.
 //!
 //! One service at a time for `bootstrap`, which reports a step per API as it
-//! creates the project; in batches for the `plan`/`apply` preflight, which asks
+//! creates the project; in batches for the `plan`/`apply` API prerequisites check, which asks
 //! about every API an estate declares at once.
 
 use super::ApiError;
@@ -187,7 +187,7 @@ mod tests {
 
     /// The batch response identifies a service by project NUMBER, so the id has
     /// to come out of the name. Matching the request's own spelling instead read
-    /// every service as absent, which the preflight reports as "not answered for".
+    /// every service as absent, which the API prerequisites check reports as "not answered for".
     #[test]
     fn a_batch_row_is_keyed_by_the_service_id_in_its_name() {
         let v: serde_json::Value = serde_json::from_str(

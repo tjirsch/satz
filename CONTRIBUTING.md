@@ -77,7 +77,7 @@ neutral — it names nobody — and rejects:
 
 - identifiers that are not one of the documented example values in
   `docs/examples.md`: Google Workspace directory ids (`C0…`),
-  organisation / project / folder numbers, billing accounts, GUIDs and
+  organization / project / folder numbers, billing accounts, GUIDs and
   their dashless 32-hex form, project ids in `projects/…`, `project = …`
   and `--project`;
 - e-mail addresses, domains that are neither IANA-reserved
@@ -92,11 +92,11 @@ neutral — it names nobody — and rejects:
 
 Run it before you push: `bash scripts/check-names.sh`, and enable the
 pre-commit hook once per clone with `git config core.hooksPath .githooks`.
-Use the example customers for anything that looks like a real organisation.
+Use the example customers for anything that looks like a real organization.
 
 ## License
 
-satz is licensed under the Apache License, Version 2.0. Section 5 of that licence
+satz is licensed under the Apache License, Version 2.0. Section 5 of that license
 states the terms for contributions: a contribution you deliberately submit for
 inclusion is licensed to the project under Apache 2.0. There is no separate
 contributor agreement to sign.

@@ -1,7 +1,7 @@
 # satz housekeeping
 
 A handful of files are **derived from something outside the repository** — Google's
-provider schema, Google's constraint catalogue, Google's asset-type list, a CIS
+provider schema, Google's constraint catalog, Google's asset-type list, a CIS
 benchmark release. When the source changes, these files go stale without any test
 failing.
 
@@ -29,20 +29,20 @@ ships it).
 | `presets/cis/*-dry-run.satz` | `scripts/build_dry_run_fragments.py` | the enforcing fragment it is derived from changes | smoke: `--check`, which compares byte for byte |
 | `presets/CHANGELOG.md` (`## Changelog`) | by hand, one row per pack version | a pack version changes | `doc-presets --check`: fails on a version with no row |
 | `presets/catalogs/*.yaml` | by hand, from the benchmark | a benchmark release | **nothing** |
-| `src/prerequisites.rs` (the prerequisite table: roles and APIs per type) | by hand, from Google's predefined roles | a pack emits a new resource type; Google changes a role | a new type: `cargo test` (`prerequisites_gate`); a changed role: **nothing** — run `scripts/check_prerequisites.py` |
-| `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | emission changes | `cargo test` (that is the gate) |
+| `src/prerequisites.rs` (the prerequisite table: roles and APIs per type) | by hand, from Google's predefined roles | a pack writes a new resource type; Google changes a role | a new type: `cargo test` (`prerequisites_gate`); a changed role: **nothing** — run `scripts/check_prerequisites.py` |
+| `tests/corpus/*/expected.sorted.txt` | `UPDATE_CORPUS=1 cargo test` | HCL code changes | `cargo test` (that is the gate) |
 | provider version pin | by hand | a provider release | **nothing** |
 | crate versions | `cargo update` | routine | `cargo test` after the fact |
 | `NOTICE` (its third-party entries) | by hand, one entry per piece of foreign material | material from outside the project enters or leaves the tree | **nothing** |
 | `THIRD-PARTY-LICENSES.md` | `scripts/update-third-party-licenses.sh` | `Cargo.lock` moves — a dependency added, removed or updated | the `checks` job of `smoke.yml`: `--check`, which compares byte for byte |
 | the published releases | `.github/workflows/prune-releases.yml`, after every release | a release | it keeps the five newest AND the release `satz_core::LAST_YAML_CONVERTING_RELEASE` names, read out of the source at that commit — a refusal that sends an operator to a release that was pruned is a dead end, and `--cleanup-tag` takes the tag with it |
 | `.github/workflows/release.yml` | `dist generate`, run with the cargo-dist version `dist-workspace.toml` pins | `dist-workspace.toml` changes; the `cargo-dist-version` pin moves | the `release-workflow` job of `smoke.yml`: `dist generate --check`, which prints the diff |
-| `assets/fonts/` — eight faces and the two licence texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
+| `assets/fonts/` — eight faces and the two license texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
 | `src/privacy_shapes.rs` (the gate's content rules, a second copy of `scripts/check-names.sh`'s) | by hand, in the same change as the script | a rule of the gate changes | `cargo test` (`the_gate_script_and_satz_flag_the_same_tokens_in_every_corpus_file`): both copies over `tests/privacy-shapes/`, token by token |
 | `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
-Six have **no** automatic check, and the IaC role table has none for a changed
+Six have **no** automatic check, and the estate account's role table has none for a changed
 role, nor the fonts for a face behind the crate, nor the interface lookups for a row the
 showcase does not use, nor the attach points for whether a row matches the provider:
 refresh them on their trigger.
@@ -67,7 +67,7 @@ gone or whether its attribute and block surface has drifted. **Run it when the
 provider pin moves**; no other check reports it.
 
 The script never deletes types, because a scan of the sources misjudges usage in both
-directions. Three fixture types appear in no `.satz` file because the *emitter*
+directions. Three fixture types appear in no `.satz` file because the *transpile*
 produces them from structural nodes —
 `google_folder_iam_member` from a grant map inside a folder,
 `google_cloud_identity_group_membership` from members, `google_logging_project_sink`
@@ -116,14 +116,14 @@ repository adds.
 Where Google replaces a legacy org-policy constraint with a managed one, the packs
 run the replacement alone and declare the twin off; see *Superseded legacy
 constraints* in the [presets guide](../presets/README.md). The pairing is data,
-generated from a live organisation, so a test checks the rule.
+generated from a live organization, so a test checks the rule.
 
 ```
 uv run scripts/update_constraint_equivalents.py
 ```
 
-Needs ADC and a quota project. Nothing about the organisation reaches the file — the
-constraint catalogue is Google's and identical for every customer. The section below
+Needs a signed-in person and a quota project. Nothing about the organization reaches the file — the
+constraint catalog is Google's and identical for every customer. The section below
 the `CURATED` marker is preserved: it holds the one pair Google does not declare.
 
 The rule is gated offline by
@@ -145,7 +145,7 @@ Two rules for transcribing:
 
 - **Check renumbered controls, not only new ones.** CIS 5.0 renumbered 1.1→1.2,
   1.4→1.5, 1.5→1.6, 1.16→1.17, 3.8→3.10 while the content stayed the same. A claim
-  on the old number compiles and reports the wrong control.
+  on the old number transpiles and reports the wrong control.
 - **Prefer a machine-readable third party over the PDF.** Prowler ships its CIS
   mappings as data; check the numbers against them (Cloud SQL public IP is 6.6 in 4.0
   and 6.7 in 5.0; the API-key constraint is 1.14/1.15).
@@ -186,9 +186,9 @@ the packs that implement them.
   the operator must supply — has a `question` in the same file, or both commands
   refuse the pack.
 
-## The IaC role table
+## The estate account's role table
 
-`src/prerequisites.rs` — per resource type, the permission the IaC service account needs
+`src/prerequisites.rs` — per resource type, the permission the estate account needs
 to manage it and the predefined roles that carry that permission, plus the reads every
 estate needs. `satz update-prerequisites <estate>` checks an estate against it and writes the
 missing roles into the estate, `--report-only` lists them and writes nothing; `satz whoami
@@ -196,9 +196,9 @@ missing roles into the estate, `--report-only` lists them and writes nothing; `s
 
 Two triggers make it stale:
 
-- **A pack emits a type the table has no row for.** `prerequisites_gate` in `cargo test`
-  compiles the cases under `tests/iac/` — together they use every pack, each one
-  unconditionally — and fails on an emitted type without a row, and on a pack no case
+- **A pack writes a type the table has no row for.** `prerequisites_gate` in `cargo test`
+  transpiles the cases under `tests/iac/` — together they use every pack, each one
+  unconditionally — and fails on an written type without a row, and on a pack no case
   uses. A new pack gets a line in one of those cases; a new type gets its row.
 - **Google changes a predefined role** — a permission renamed, or moved out of the role
   the table names. Nothing in the repository sees it. `scripts/check_prerequisites.py`
@@ -213,33 +213,33 @@ the provider schema fixture and the provider's own text inside it, the release
 workflow cargo-dist generates, and the control identifiers the catalogs carry. Apache
 2.0 §4(d) makes that file travel with every redistribution of satz, so material that
 arrives from outside and is not named there goes unattributed everywhere satz is
-redistributed. The crates satz is compiled from are the one thing it does not
+redistributed. The crates satz is built from are the one thing it does not
 enumerate: their texts are in `THIRD-PARTY-LICENSES.md`, which `NOTICE` points at.
 
 Nothing checks it. Write the entry in the same change that brings the material in,
 and delete the entry in the change that takes it out.
 
-## The third-party licence texts
+## The third-party license texts
 
-`THIRD-PARTY-LICENSES.md` carries the licence text of every crate compiled into the
+`THIRD-PARTY-LICENSES.md` carries the license text of every crate built into the
 binary — one copy per crate, as the crate ships it, because a copyright line is part
 of the MIT and BSD texts. MIT and Apache 2.0 ask a binary redistribution to carry
 them, so the file travels in every release archive: `include` in
 `dist-workspace.toml` names it beside `NOTICE`.
 
 It is generated from `Cargo.lock`, never edited:
-[`update-third-party-licenses.sh`](#update-third-party-licensessh--the-crates-licence-texts)
+[`update-third-party-licenses.sh`](#update-third-party-licensessh--the-crates-license-texts)
 writes it and `--check` fails on a stale one. `about.toml` holds the allow-list of
-licences and the four release targets, `about.hbs` the layout. The privacy gate skips
+licenses and the four release targets, `about.hbs` the layout. The privacy gate skips
 the file: it is upstream authors' e-mail addresses and domains, written by a tool.
 
-The two files divide the subject: a crate's licence is here, and everything that is
+The two files divide the subject: a crate's license is here, and everything that is
 not a crate — the provider schema fixture, the fonts satz typesets with, the control
 identifiers in the catalogs — is in `NOTICE`.
 
 ## The embedded fonts
 
-`assets/fonts/` holds the faces `--format pdf` typesets with, compiled into the
+`assets/fonts/` holds the faces `--format pdf` typesets with, built into the
 binary by `include_bytes!` in `src/pdf.rs`: Libertinus Serif and DejaVu Sans Mono,
 each in regular, bold, italic and bold italic. They are the `typst-assets` crate's
 own files, copied out of the crate in the dependency tree, so the bytes are the ones
@@ -252,20 +252,20 @@ cp ~/.cargo/registry/src/*/typst-assets-<version>/files/fonts/{LibertinusSerif-{
 Eight faces are 2.3 MB; the crate's whole bundle is 9.7 MB, the difference being New
 Computer Modern text and math, which nothing here sets. Two families in four styles
 is the square the markup can ask for: a heading, a strong span and a table header are
-bold, an emphasised span is italic, a code span takes the weight and slant of
+bold, an emphasized span is italic, a code span takes the weight and slant of
 whatever it sits in. Typst answers a request it has no face for with the nearest face
 it has and reports nothing, so `cargo test`
 (`each_family_carries_all_four_styles`) resolves all eight and fails when one
 collapses onto another.
 
 The trigger to refresh is the `typst` version pin in `Cargo.toml` moving: nothing
-compares the committed faces with the crate's. The licence texts beside them —
+compares the committed faces with the crate's. The license texts beside them —
 `LICENSE-Libertinus-OFL.txt` (SIL Open Font License 1.1) and `LICENSE-DejaVu.txt`
-(the Bitstream Vera licence) — come from the same crate's `NOTICE` and are what those
-licences ask a redistributor to carry with the files; `include` in
+(the Bitstream Vera license) — come from the same crate's `NOTICE` and are what those
+licenses ask a redistributor to carry with the files; `include` in
 `dist-workspace.toml` names both, so they travel in every release archive beside
 `NOTICE` and `THIRD-PARTY-LICENSES.md`. The privacy gate skips the whole directory:
-upstream bytes and upstream licence text, written by nobody here.
+upstream bytes and upstream license text, written by nobody here.
 
 ## Versions
 
@@ -282,7 +282,7 @@ upstream bytes and upstream licence text, written by nobody here.
   to `docs/competitive.md`. Keeps the framework inputs, never replaces them.
 - **Fleet re-transpile after every satz release** — the estates live outside this
   repository; the check is in it: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
-  An estate whose emitted HCL differs from what the current binary produces blocks the
+  An estate whose transpiled HCL code differs from what the current binary produces blocks the
   release. Run it after each release, so a difference points at that release.
 
 ## The scripts
@@ -296,7 +296,7 @@ A cloud step cannot be **written** in Satz, so it is a script. An estate can
 **declare and invoke** it: an
 [`action`](language.md#613-action--a-step-with-no-provider-resource) names
 the step, binds it to a script, and builds its arguments from the estate's own
-params, so `satz run-actions` runs it with the organisation id the estate
+params, so `satz run-actions` runs it with the organization id the estate
 already has. Nothing runs at transpile time, and an action carries no claim: the
 compliance plane cannot see into the script.
 
@@ -311,22 +311,22 @@ second kind.
 
 | script | kind | what it does |
 |---|---|---|
-| `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the org, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
+| `presets/scc/scc-enable-all.sh` | cloud step | enable every SCC service at the organization, inherit below. Under `presets/` so `get-presets` ships it and the SCC pack can bind it as an `action` |
 | `update_import_config.py` | helper | keep `presets/import-config.yaml` current: new provider types, and `asset_type` filled from Google's Cloud Asset Inventory list |
 | `update_cai_asset_types.py` | helper | refresh `presets/cai-asset-types.txt` from Google's published asset-type list; refuses when a type it carries is no longer published, `--check` says whether it is behind |
 | `build-skills.py` | helper + gate | package every `skills/<name>/` as `skills/<name>.skill`, stored and sorted so the bytes are the same on every platform; `--check` names a zip behind its folder |
 | `smoke.sh` | gate | every estate-consuming command end to end against `tests/smoke/`; CI runs it on every PR and every push to `main` |
 | `mcp-probe.py` | gate | every tool of `satz mcp` over raw JSON-RPC, per capability group: no stdout byte that is not JSON-RPC, results valid against their published schema, refusals as prose, each tool's largest result. Run by hand, not by CI |
-| `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it emitted before. Not run by CI — CI has no estates. Run it after every release |
-| `update_constraint_equivalents.py` | helper | refresh `presets/managed-constraint-equivalents.txt` — which managed constraint replaces which legacy one — from a live organisation's `ListConstraints` |
-| `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs emit; `--check` names what is missing |
+| `fleet-v1.sh` | gate | every estate you operate, re-transpiled on the current binary and compared block by block against what it written before. Not run by CI — CI has no estates. Run it after every release |
+| `update_constraint_equivalents.py` | helper | refresh `presets/managed-constraint-equivalents.txt` — which managed constraint replaces which legacy one — from a live organization's `ListConstraints` |
+| `update_schema_fixture.py` | helper | keep `tests/schemas/google.json` in step with the types the packs write; `--check` names what is missing |
 | `inspect_schema.py` | helper | print one resource type's schema out of a provider schema dump |
 | `build_dry_run_fragments.py` | helper | generate each CIS extension's dry-run twin from the enforcing fragment: `spec` becomes `dry_run_spec`, every claim is dropped. `--check` fails on a stale twin |
-| `check_prerequisites.py` | gate | hold the prerequisite table's roles (`src/prerequisites.rs`) against Google's predefined role definitions; needs ADC, not run by CI |
+| `check_prerequisites.py` | gate | hold the prerequisite table's roles (`src/prerequisites.rs`) against Google's predefined role definitions; needs a signed-in person, not run by CI |
 | `build-satz-doc.py` | helper | render one `docs/*.md` as a self-contained, theme-aware HTML page (SVGs inlined) |
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column (on a pack page followed by the library, grouped as `presets/library-groups.txt` sorts it) and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
-| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure). Its allow-lists are `scripts/check-names-allow.txt`, which satz compiles in for `review-preset` |
-| `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the licence text of every crate compiled into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a licence outside the allow-list. CI runs `--check` in the `checks` job |
+| `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure). Its allow-lists are `scripts/check-names-allow.txt`, which satz transpiles in for `review-preset` |
+| `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the license text of every crate built into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a license outside the allow-list. CI runs `--check` in the `checks` job |
 | `check-grammar.sh` | gate | hold the tree-sitter grammar `editors/zed/extension.toml` pins against the parser: every keyword in `STATEMENT_KEYWORDS` must be a node the grammar declares, and every `.satz` under `presets/` and `tests/` must parse with no `ERROR` or `MISSING` node; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
@@ -363,7 +363,7 @@ of a list joined into one alternation. The script refuses to run without it or w
 list that has no entry.
 
 The content rules exist twice. The script is the gate: it runs with no toolchain and on
-a tree that does not compile. `src/privacy_shapes.rs` is the same rules in satz, so
+a tree that does not build. `src/privacy_shapes.rs` is the same rules in satz, so
 `satz review-preset` refuses a pack that carries a private-looking token (kind
 `private-shape`) on any machine, with no checkout of this repository. Both read the one
 allow-list file, and a `cargo test` runs the script (`FILE` mode, `LC_ALL=C`) and satz
@@ -404,16 +404,17 @@ commits that push adds. `main` is never force-pushed: a push whose previous
 ## `smoke.sh` — the command matrix
 
 The unit tests cover the engines and pin the bugs that were fixed; `scripts/smoke.sh`
-covers the *commands*, end to end, one check of each command's core behaviour. It
+covers the *commands*, end to end, one check of each command's core behavior. It
 runs, offline, against the fixture estate in `tests/smoke/` (the shipped CIS,
-contacts and monitoring packs, a group with a member, org grants, a project with
+contacts and monitoring packs, a group with a member, organization grants, a project with
 services and a bucket): `transpile` (then `tofu validate` when `tofu` is on PATH —
 no state, no cloud), `require`, `check-presets` against the repository's own
 presets (must be clean), `import` in its state shape (with the skipped report and
-import blocks), hcl shape (translated, then `tofu validate`; a vendor-shaped
-configuration that asks for the organisation, in `tests/smoke/tf-handwritten/`; and `--wrap-all`),
+import blocks), hcl shape (converted, then `tofu validate`;
+ a vendor-shaped
+configuration that asks for the organization, in `tests/smoke/tf-handwritten/`; and `--wrap-all`),
 the refusal a `.yaml` estate gets from `import` and from `transpile`, `adopt` (a
-credentials error without ADC), `scan` against a stand-in `checkov` that prints a
+sign-in error without a sign-in file), `scan` against a stand-in `checkov` that prints a
 report, every MCP tool, then `cargo test`. The providers every `tofu init` needs are
 downloaded once, into `TF_PLUGIN_CACHE_DIR` (default
 `~/.cache/satz-smoke/tofu-plugins`).
@@ -429,8 +430,8 @@ every pull request, and on the push to `main` that merges it or bumps the releas
 A branch push without a pull request runs nothing, and a release tag runs nothing,
 because it tags a commit `main` already tested. A newer push to a pull request
 cancels the run it supersedes, in this workflow and in the privacy gate; a run on
-`main` is never cancelled or queued behind another. The Rust jobs restore the cargo
-registry and the dependencies' build from `Swatinem/rust-cache`, so a run compiles only
+`main` is never canceled or queued behind another. The Rust jobs restore the cargo
+registry and the dependencies' build from `Swatinem/rust-cache`, so a run builds only
 satz's own crates. The `smoke` job sets `SMOKE_SKIP_CARGO_TEST=1`, because the
 `checks` job runs `cargo test` on the same commit, and restores the provider cache
 with `actions/cache`. A new command that reads an estate gets a step here in the same PR.
@@ -474,20 +475,21 @@ only where the edit can be undone:
 
 | server | started with | what it proves |
 |---|---|---|
-| `main` | the selected groups | the exact `tools/list` set and each tool's schemas; a call before `satz_open` refused; a missing and a mistyped argument; then each tool once at the level it needs — the interview created and answered, remediation items annotated, transpile and then Checkov over what it wrote; `satz_adopt` refused without credentials (`offline`) |
+| `main` | the selected groups | the exact `tools/list` set and each tool's schemas; a call before `satz_open` refused; a missing and a mistyped argument; then each tool once at the level it needs — the interview created and answered, remediation items annotated, transpile and then Checkov over what it wrote; `satz_adopt` refused with nobody signed in (`offline`) |
 | `gp` | `read,write` | `get-presets` from a pristine library into an estate that has none, then `merge-presets` report and write |
 | `ceiling` | `--allow read` | every write and exec tool refused naming the group; every path outside the root refused, an existing and a missing one alike |
 | `gated` | `--self-gated` | `satz_restrict` narrows and never widens again |
-| `identity` | `--allow read` | `runs_as` and `satz_whoami` follow each estate opened in turn; an estate with a mode the compile refuses, or cloud mode without its account, is refused by every call that would act as it |
+| `identity` | `--allow read` | `runs_as` and `satz_whoami` follow each estate opened in turn; an estate with a mode the transpile refuses, or cloud mode without its account, is refused by every call that would act as it |
 | `live` | `--allow read` | `--mode live` only: whoami online answers `runs_as`, report-compliance reads the inventory, adopt resolves without `execute` |
 
 **The modes.** Each includes the one before.
 
 | mode | needs | adds |
 |---|---|---|
-| `offline` | nothing: the ADC path names a file that does not exist, and Checkov is a stand-in on `PATH` that prints a fixed report | every tool that works without credentials, and `satz_adopt`'s refusal without them |
+| `offline` | nothing: the sign-in file's path names a file that does not exist, and Checkov is a stand-in on `PATH` that prints a fixed report | every tool that works without a sign-in, and `satz_adopt`'s refusal without one |
 | `net` | the network | `satz_check_presets` against the upstream library (one GitHub API request), `satz_scan_checkov` with a real Checkov — `checkov`, else `uvx checkov`; skipped, by name, when neither is on `PATH` |
-| `live` | ADC that may impersonate the estate's IaC service account; `--live-dir`, `--live-estate`, `--live-config` (default `config.toml`) | the `live` server over a copy of that estate. It writes nothing to the organisation. Run it on the test organisation, never on a customer's |
+| `live` | a sign-in that may impersonate the estate's estate account;
+ `--live-dir`, `--live-estate`, `--live-config` (default `config.toml`) | the `live` server over a copy of that estate. It writes nothing to the organization. Run it on the test organization, never on a customer's |
 
 **The report.** After the per-call lines come the stray stdout lines, the protocol
 deviations, how each malformed argument was refused, and a table of each tool's largest
@@ -498,16 +500,17 @@ client cuts an oversized result mid-JSON. The exit status is non-zero on any fai
 or stray line.
 
 **When to run it.** CI does not: run `offline` before a pull request that changes a tool,
-its arguments or its report type, and `live` on the test organisation before a release
+its arguments or its report type, and `live` on the test organization before a release
 that changes a live tool.
 
 ## `fleet-v1.sh` — every estate on the current binary
 
-The script answers: **does every estate you operate still compile on the current
-binary, and does it emit the same infrastructure?** The corpus tests the compiler
+The script answers: **does every estate you operate still transpile on the current
+binary, and does it write the same infrastructure?** The corpus tests the transpile
 against fixtures, the smoke matrix tests the commands against one estate, and
-`tofu plan` tests one estate against its own organisation with that estate's
-credentials; none of them re-transpiles the fleet.
+`tofu plan` tests one estate against its own organization as that estate's
+account; none of them
+ re-transpiles the fleet.
 
 ```bash
 scripts/fleet-v1.sh ~/estates/acme            # one estate
@@ -554,18 +557,18 @@ Exit codes follow: `0` clean, `1` blocker (or `--require-all` with an unchecked
 estate), `2` delta only.
 
 **A hand-written `.tf` in `hcl/` is listed, not compared.** The comparison set is what
-satz *emits*; a file this emission did not produce is listed with `!` and its blocks
+satz *writes*; a file this transpile did not write is listed with `!` and its blocks
 are left out of the count. An estate may keep one: a write-only secret cannot come
 from the estate, so the `variable` block declaring it lives in `hcl/` beside the
 generated files. Compared, its blocks would read as deletions. The script cannot tell
-a hand-written file from one an older satz emitted, so it names the file; check a
+a hand-written file from one an older satz written, so it names the file; check a
 named file that is not hand-written.
 
-**A subdirectory in `hcl/` is the same thing one level up.** satz emits flat files into
+**A subdirectory in `hcl/` is the same thing one level up.** satz writes flat files into
 `hcl/` and never below it, so a `modules/` or `landing-zones/` tree an estate keeps
-there is its own, and the `main.tf` inside is not the emitted `main.tf` that shares the
+there is its own, and the `main.tf` inside is not the written `main.tf` that shares the
 name. The walk is flat: a subdirectory is listed with `!` and nothing in it is
-compared. Walked, such a tree would read as deletions on an estate whose emission
+compared. Walked, such a tree would read as deletions on an estate whose HCL code
 has not changed at all.
 
 **Why a moved address blocks.** A body delta renders the same resources differently.
@@ -574,25 +577,25 @@ A moved address means the next plan creates or destroys a resource.
 ### When the delta is the state backend
 
 A delta in the `terraform` block's backend is a changed state backend, and `tofu`
-refuses the next command until it is re-initialised, once per estate:
+refuses the next command until it is re-initialized, once per estate:
 
 ```bash
 cd hcl/ && tofu init -reconfigure
 ```
 
-Local-mode estates need nothing, and `satz migrate --mode cloud` re-initialises
+Local-mode estates need nothing, and `satz migrate --mode cloud` re-initializes
 on its own.
 
 ### What it does not do
 
 - **It never writes into a checkout.** Every estate is copied to a scratch
   directory and transpiled there, because estate repositories carry work in
-  progress. Pass `--scratch DIR` to keep the emitted trees.
+  progress. Pass `--scratch DIR` to keep the written trees.
 - **It does not diff text.** `git diff hcl/` also reports a block that only moved.
   Blocks are matched by **address**, so content counts and order does not.
 - **It does not treat a missing checkout as a pass**; it reports it as UNAVAILABLE.
-- **It reads no cloud.** It compares what satz *emits*. What the organisation has is
-  `report-compliance`, with that estate's credentials.
+- **It reads no cloud.** It compares what satz *writes*. What the organization has is
+  `report-compliance`, with that estate's estate account.
 
 ## `build-site.py` — which docs become pages
 
@@ -643,7 +646,7 @@ Excluded, and why:
 
 `build-satz-doc.py` is the renderer `build-site.py` imports. It turns one
 `docs/*.md` into a self-contained, theme-aware HTML page, inlining any SVG that sits
-beside the markdown and recolouring it through CSS tokens so it follows the viewer's
+beside the markdown and recoloring it through CSS tokens so it follows the viewer's
 theme. It parses with cmark-gfm, GitHub's own parser
 ([ADR 0008](adr/0008-the-site-renders-markdown-with-githubs-parser.md)), so a page
 shows what GitHub shows and every heading carries the anchor GitHub gives it. Both
@@ -702,7 +705,7 @@ comments and row order survive (`ruamel.yaml`):
   sweep over the shipped table, by default and under `--all`.
 - `--probe <parent>` asks Cloud Asset Inventory for one page of every named
   row's asset type under `<parent>` (`organizations/<n>`, `folders/<n>`,
-  `projects/<id>`), with the Application Default Credentials through gcloud and
+  `projects/<id>`), with the person signed in through gcloud and
   80 requests a minute (`--probe-rate`), below the ListAssets quota. Google's
   list names types ListAssets refuses at the row's `content_type` — the Access
   Context Manager, Cloud Identity, Cloud SQL user and database types among
@@ -759,13 +762,13 @@ Google publishes, per org-policy constraint, the constraint that replaces it
 alone, declare the legacy twin off — so it lives in the repository as generated data:
 
 ```
-uv run scripts/update_constraint_equivalents.py            # auto-detect org + quota project
+uv run scripts/update_constraint_equivalents.py            # auto-detect organization + quota project
 uv run scripts/update_constraint_equivalents.py --org 123456789012
 ```
 
-Writes `presets/managed-constraint-equivalents.txt`. Needs ADC **and** a quota project —
-the OrgPolicy API refuses bare ADC. Nothing about the organisation reaches the file: the
-constraint catalogue is Google's and identical for every customer.
+Writes `presets/managed-constraint-equivalents.txt`. Needs a signed-in person **and** a quota project —
+the OrgPolicy API refuses a sign-in without one. Nothing about the organization reaches the file: the
+constraint catalog is Google's and identical for every customer.
 
 The script:
 
@@ -779,9 +782,9 @@ The script:
   above the marker is rewritten wholesale; do not edit it by hand.
 
 The table is enforced offline by `constraint_equivalents::no_pack_runs_a_superseded_constraint`
-(`src/main.rs`), which compiles every corpus case and fails when a pack enforces a legacy
+(`src/main.rs`), which transpiles every corpus case and fails when a pack enforces a legacy
 constraint that has a replacement, or enables a replacement without declaring its twin off.
-Refreshing the table needs credentials; the rule is checked on every `cargo test`
+Refreshing the table needs a sign-in; the rule is checked on every `cargo test`
 without any.
 
 ## `update_schema_fixture.py` — keep the test schema current
@@ -804,17 +807,17 @@ moves**; no other check does. `--add` inserts or re-cuts types from the real sch
 and leaves the rest byte for byte; regenerate the corpus afterwards.
 
 It never deletes: three fixture types appear in no `.satz` source because the
-emitter produces them from structural nodes, and one referenced type needs no schema
+transpile writes them from structural nodes, and one referenced type needs no schema
 because it sits in a raw `hcl { }` block, so usage in the sources does not show which
 types are needed.
 
-Needs `tofu` on PATH; talks to no organisation.
+Needs `tofu` on PATH; talks to no organization.
 
 ## `build_dry_run_fragments.py` — the dry-run twins
 
-An org policy can carry `dry_run_spec` instead of `spec`. Google evaluates every rule,
+An organization policy can carry `dry_run_spec` instead of `spec`. Google evaluates every rule,
 writes a violation to the audit log for each action it WOULD have blocked, and blocks
-nothing — so a breaking control is sized against a live organisation before it is
+nothing — so a breaking control is sized against a live organization before it is
 enforced.
 
 The twin must measure exactly the policy that is later enforced, or its numbers answer a
@@ -828,7 +831,7 @@ uv run scripts/build_dry_run_fragments.py --check    # fail if any is stale
 `DRY_RUNNABLE` at the top of the script is the list, with the param that gates each
 twin. A fragment reaches it when its constraint supports a dry run; five extensions do
 not, each for a stated reason in that table — the legacy constraints (Shielded VM, both
-CMEK list constraints) have no dry-run form, Access Approval is not an org policy, and
+CMEK list constraints) have no dry-run form, Access Approval is not an organization policy, and
 the two on-by-default extensions have nothing to size.
 
 Three things the derivation does:
@@ -852,7 +855,8 @@ refused, naming both params and what each choice means.
 
 ## `check_prerequisites.py` — the prerequisite table's roles against Google's roles
 
-The IaC role table names, per resource type, a permission and the predefined roles
+The estate account's role table names, per resource type,
+ a permission and the predefined roles
 that carry it. The script reads the table from `satz update-prerequisites --format json` (of this
 checkout through `cargo run`, or of an installed binary with `--satz`), fetches each
 role it names from the IAM API (`roles.get`), and fails when none of an entry's roles
@@ -864,10 +868,10 @@ uv run scripts/check_prerequisites.py                 # the table of this checko
 uv run scripts/check_prerequisites.py --satz satz     # the table of an installed binary
 ```
 
-Needs Application Default Credentials; predefined roles are Google's and the same for
-every organisation, so any credential that may call the IAM API will do. Workspace
+Needs a signed-in person; predefined roles are Google's and the same for
+every organization, so any account that may call the IAM API will do. Workspace
 entries are not IAM roles and are skipped. Run it when adding a row and on each
-provider pin move; CI has no credentials to run it.
+provider pin move; CI has no sign-in to run it.
 
 ## `check-grammar.sh` — the editor grammar against every Satz file
 
@@ -902,11 +906,11 @@ grammar repository's own CI parses a fresh clone of this one on every push and o
 week. A language change is a grammar commit first, then the pin bump here, in the PR
 that changes the parser; the job fails on a PR that changes the parser without it.
 
-## `update-third-party-licenses.sh` — the crates' licence texts
+## `update-third-party-licenses.sh` — the crates' license texts
 
-`cargo about` reads `Cargo.lock`, finds each crate's licence file in its unpacked
+`cargo about` reads `Cargo.lock`, finds each crate's license file in its unpacked
 source, and renders `about.hbs` into `THIRD-PARTY-LICENSES.md`: a summary table, then
-every licence text with the crates it belongs to. The script is the only way that file
+every license text with the crates it belongs to. The script is the only way that file
 is written. It runs `cargo about` offline, so the sources on disk are the whole input
 and the network cannot change what the file says; a dependency whose source is not
 unpacked yet needs `cargo fetch --locked` first.
@@ -919,29 +923,29 @@ scripts/update-third-party-licenses.sh --check   # fail when it is stale, print 
 `about.toml` decides what the file contains:
 
 - **`accepted`** is the allow-list, and the preference order for a crate that offers a
-  choice. A dependency under a licence it does not name fails the run, naming the
-  crate, so a new licence reaches a person. Apache-2.0 comes first: a crate offered as
-  `MIT OR Apache-2.0` is taken under Apache 2.0, satz's own licence.
+  choice. A dependency under a license it does not name fails the run, naming the
+  crate, so a new license reaches a person. Apache-2.0 comes first: a crate offered as
+  `MIT OR Apache-2.0` is taken under Apache 2.0, satz's own license.
 - **`targets`** are the four release targets (ADR 0029), so a dependency only Windows
   or only Linux pulls in is in the file wherever it is generated.
-- **Dev dependencies are out** — `cargo test` compiles them and no archive carries
+- **Dev dependencies are out** — `cargo test` builds them and no archive carries
   them. Build dependencies are in: a build script is how the C in `aws-lc-sys` and
   `zlib-rs` reaches the binary.
 - **`[private] ignore = true`** keeps `satz`, `satz-core` and `satz-hcl` out; all three
-  carry `publish = false`, and their licence is `LICENSE`. The root manifest therefore
+  carry `publish = false`, and their license is `LICENSE`. The root manifest therefore
   also carries `[package.metadata.dist] dist = true`, or `publish = false` would hide
   the binary from dist and a release would build nothing.
 
 The script requires one exact `cargo-about` version and names it when another is
 installed (`cargo binstall cargo-about@<version>`). A different version can read a
-crate's licence file differently, and the file would then differ between a machine and
+crate's license file differently, and the file would then differ between a machine and
 CI with nothing in the repository having changed. That `WANT=` line is where the
 version lives: moving it is one edit plus a regenerated file in the same commit.
 
 CI runs `--check` in the `checks` job of `.github/workflows/smoke.yml`, last, where
 the cargo cache already is. The job installs the version the script names — read out
 of the script — and runs `cargo fetch --locked` first, because a Linux build unpacks
-what Linux compiles and the file also covers the crates only Windows and macOS pull
+what Linux builds and the file also covers the crates only Windows and macOS pull
 in.
 
 ## `build-satz-doc.py` — one page, self-contained
@@ -978,7 +982,7 @@ presets/scc/scc-enable-all.sh --organization 123456789012            # dry run
 presets/scc/scc-enable-all.sh --organization 123456789012 --apply    # write
 ```
 
-**Or let the estate supply the organisation id.** `presets/scc/scc-service-enablement.satz`
+**Or let the estate supply the organization id.** `presets/scc/scc-service-enablement.satz`
 is a pack whose only content is an `action` binding this script, since service
 enablement has no provider resource:
 
@@ -1011,8 +1015,8 @@ These are opt-in:
 | `--with-optional` | `ARTIFACT_ANALYSIS` | billed per image scan |
 | `--with-multicloud` | the AWS/Azure connector services | they fail until an AWS or Azure connector exists |
 
-Without the flag those services are **left alone**: not enabled at the org, and not
-swept to `INHERITED` below it. Sweeping them would make descendants take the org's
+Without the flag those services are **left alone**: not enabled at the organization, and not
+swept to `INHERITED` below it. Sweeping them would make descendants take the organization's
 value, which is unset, and switch off a scanner enabled on one project.
 
 ### Why it is a script
@@ -1021,7 +1025,7 @@ google/google-beta carry **no binding** for
 `securitycentermanagement.googleapis.com`'s `SecurityCenterService`. Turning
 Security Health Analytics, Event Threat Detection, Container Threat Detection,
 VM Threat Detection, Web Security Scanner or DSPM on or off therefore cannot be
-written as a resource in any language satz compiles, and neither can tier
+written as a resource in any language satz transpiles, and neither can tier
 activation. Provider **7.14.1** ships 35 `google_scc_*` / `google_securityposture_*`
 types and none of them is service enablement or a tier — the
 `google_scc_management_*` ones are custom modules only.
@@ -1031,7 +1035,7 @@ custom modules (SHA + ETD), sources and source IAM, notification configs,
 BigQuery exports, mute configs, and
 `google_securityposture_posture(_deployment)`. Use the **v2** notification
 resources: the v1 API answers `This API is no longer available. Please use API
-V2` on a live org, so `google_scc_notification_config` does not work;
+V2` on a live organization, so `google_scc_notification_config` does not work;
 `google_scc_v2_organization_notification_config` is the one to write.
 
 ### It calls the API, not `gcloud scc manage`
@@ -1057,10 +1061,10 @@ organization's own state:
   to end.
 - **VM Manager cannot be enabled at all here.** The API answers `Invalid
   intended_enablement_state. ENABLED is not a valid enablement state`: SCC mirrors
-  whether GCE's VM Manager is running. It is skipped in the org pass with a note
+  whether GCE's VM Manager is running. It is skipped in the organization pass with a note
   and still swept to `INHERITED`, which the API does accept.
 - **Security Health Analytics answers `FAILED_PRECONDITION`** at every level on an
-  org where it is disabled and the subscription does not carry it. The script passes
+  organization where it is disabled and the subscription does not carry it. The script passes
   the API's message through.
 - **The built-in fallback list is in the API's own names**, which is what discovery
   returns; a CLI spelling there names no service the API
@@ -1070,13 +1074,13 @@ organization's own state:
 
 Two passes:
 
-1. **org pass** — each service → `ENABLED` at `organizations/<id>`.
+1. **organization pass** — each service → `ENABLED` at `organizations/<id>`.
 2. **descendant sweep** — each service → `INHERITED` at every folder and every
    project under the org.
 
 The second pass makes the organization the one place the state is set: a descendant
-with its own `ENABLED`/`DISABLED` overrides the organization, so enabling at the org
-alone does not reach it. (`INHERITED` is only a legal state below the org, which is
+with its own `ENABLED`/`DISABLED` overrides the organization, so enabling at the organization
+alone does not reach it. (`INHERITED` is only a legal state below the organization, which is
 why the two passes set different values.)
 
 With `--reset-modules` each service's individual **modules** are set to
@@ -1086,13 +1090,13 @@ With `--reset-modules` each service's individual **modules** are set to
 
 | flag | effect |
 |---|---|
-| `--organization ID` | numeric org id (required); `organizations/123` is accepted too |
+| `--organization ID` | numeric organization id (required); `organizations/123` is accepted too |
 | `--apply` | actually write — without it every call carries `validateOnly` |
 | `--services "a b c"` | use this service list verbatim instead of discovering it |
 | `--with-optional` | also enable Web Security Scanner and Artifact Analysis |
 | `--with-multicloud` | include the AWS/Azure connector services |
 | `--quota-project ID` | project the API bills the call to; defaults to the active gcloud project |
-| `--org-only` | enable at the org, skip the sweep |
+| `--org-only` | enable at the organization, skip the sweep |
 | `--descendants-only` | only sweep folders/projects to `INHERITED` |
 | `--reset-modules` | also set every module to `INHERITED` |
 | `--targets-file FILE` | explicit `folders/<id>` / `projects/<id>` list instead of hierarchy discovery |
@@ -1102,14 +1106,14 @@ With `--reset-modules` each service's individual **modules** are set to
 **It is a dry run by default.** Every call carries `validateOnly` until `--apply` is
 passed.
 
-**The service list is read from the org, not hardcoded.** It comes from the API's
+**The service list is read from the organization, not hardcoded.** It comes from the API's
 own `securityCenterServices` listing, so a service Google adds later is picked up
 without touching the script. The built-in list of 14 is only a fallback for when
 that call cannot be made, and the AWS/Azure connectors in it are skipped unless
-`--with-multicloud`, because they fail on an org with no such connector.
+`--with-multicloud`, because they fail on an organization with no such connector.
 
 **Activate the SCC tier first.** Tier activation has no API the script could call,
-and enabling a service on an org on the Standard tier fails
+and enabling a service on an organization on the Standard tier fails
 at the API.
 
 ### Failures it classifies
@@ -1119,8 +1123,8 @@ error:
 
 - **`PERMISSION_DENIED`** — the caller lacks
   `securitycentermanagement.securityCenterServices.update` (`roles/securitycenter.admin`
-  at the org, or the settings admin role).
-- **service unavailable** — the org's SCC tier does not carry that service, or
+  at the organization, or the settings admin role).
+- **service unavailable** — the organization's SCC tier does not carry that service, or
   its API is off.
 - **blocked by a constraint** — the CIS §1.1 lock refused Google's role grant to
   a service agent that `allowed_policy_member_subjects` does not name. The pack's

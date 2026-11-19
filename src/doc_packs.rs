@@ -58,7 +58,7 @@ pub(crate) fn packs(presets_dir: &Path) -> Result<Vec<(PathBuf, File, String)>, 
             if !file.is_pack {
                 return Err(format!("{}: not a pack (no `pack` header) — an estate does not belong in the preset library", p.display()).into());
             }
-            // `/` between components on every platform: the path is written into `use`
+            // `/` between path segments on every platform: the path is written into `use`
             // lines and the pages, and compared with what the library's docs say
             out.push((PathBuf::from(crate::fsx::slash(p.strip_prefix(presets_dir)?)), file, src));
         }
@@ -404,7 +404,7 @@ struct Shape {
     bare: Vec<String>,
     uses: Vec<String>,
     /// the same resources, addressable — grant maps and nested `use`s excluded,
-    /// because a grant's emitted address comes from its member and role, not
+    /// because a grant's written address comes from its member and role, not
     /// from the key, and joining it to a witness would report every grant as
     /// unclaimed
     resources: Vec<Res>,
@@ -436,7 +436,7 @@ fn shape(items: &[Entry]) -> Shape {
                             }
                             Entry::Attr { key, .. } => format!("{} (grant map)", key_text(key)),
                             Entry::Use { .. } => entry_text(b),
-                            // one label per entry of the list, known once the estate compiles
+                            // one label per entry of the list, known once the estate transpiles
                             Entry::Each { list, key, .. } => format!("one per entry of {}, by {}", list, key),
                             // a labelled body under a condition: there where the param carries a value
                             Entry::When { cond, entry, .. } => match entry.as_ref() {
@@ -1084,7 +1084,7 @@ fn render(
 
     if !file.notices.is_empty() {
         md.push_str("## Notices\n\n");
-        md.push_str("What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.\n\n");
+        md.push_str("What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.\n\n");
         md.push_str("| param | run | severity | what and why |\n|---|---|---|---|\n");
         for n in &file.notices {
             md.push_str(&format!(
@@ -1195,7 +1195,7 @@ fn render(
         md.push('\n');
     }
     // What the pack publishes to the HCL beside an estate that uses it: outputs of the
-    // root module and of `hcl/interface/`.
+    // HCL code and of `hcl/interface/`.
     let exports: Vec<(&str, &satz_core::satz::ExportDecl)> = file
         .exports
         .iter()
@@ -1206,7 +1206,7 @@ fn render(
         file.interfaces.iter().flat_map(|i| i.uses.iter().map(move |u| (i.name.as_str(), u))).collect();
     if !exports.is_empty() || !uses.is_empty() {
         md.push_str("## Exports\n\n");
-        md.push_str("Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.\n\n");
+        md.push_str("Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.\n\n");
     }
     if !exports.is_empty() {
         md.push_str("| interface | output | value | description |\n|---|---|---|---|\n");
@@ -1424,7 +1424,7 @@ fn index(rows: &[Row], groups: &[Group], cats: &Catalogs) -> String {
         md.push_str("## Framework coverage\n\n");
         md.push_str(
             "What some pack in this library CLAIMS — never a verdict on an estate. A claim is proof \
-             only once its witnesses are emitted; `satz require <framework> <estate>` judges an \
+             only once its witnesses are written; `satz require <framework> <estate>` judges an \
              estate.\n\n",
         );
         md.push_str("| framework | controls in the catalog | claimed by a pack | claimed by none |\n|---|---|---|---|\n");

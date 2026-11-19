@@ -1,7 +1,7 @@
 // The project `shop-dev` as a Satz team writes it: the template's inputs bound here, the
 // template used. This file is the whole instance — the template carries the resources, the
-// providers and the organisation's interface — and it compiles to the HCL the template
-// compiles to, with these values in `terraform.tfvars`.
+// providers and the organization's interface — and it transpiles to the HCL the template
+// transpiles to, with these values in `terraform.tfvars`.
 
 estate shop_dev
 

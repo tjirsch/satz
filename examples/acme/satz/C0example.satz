@@ -1,7 +1,7 @@
-// The organisation every example under examples/acme/ reads: the estate `satz init
+// The organization every example under examples/acme/ reads: the estate `satz init
 // --workload-folder-name Workloads` writes for Customer A of docs/examples.md, with
 // `presets/estate-core.satz` switched on. Every id and name in `params` is an example
-// value — replace each with your organisation's before anything is applied.
+// value — replace each with your organization's before anything is applied.
 //
 // What the examples read is at the end of this file, in the core pack and in
 // `presets/delegation.satz` and `presets/delegated-folders.satz`: the core exports (`customer_domain`,
@@ -33,11 +33,11 @@ params {
   compliance_frameworks     = ["cis-gcp-5.0"]
   // The folder the audit archive's project is created in, read by
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
-  // the folder: unbound, that pack creates its project under the organisation.
+  // the folder: unbound, that pack creates its project under the organization.
   logsink_project_folder    = "google_folder.infra_folder.name"
-  // Where the customer's and the projects' folders live: "" is the organisation, a name one
+  // Where the customer's and the projects' folders live: "" is the organization, a name one
   // folder directly under it. The section at the end of this file publishes it as
-  // `workload_folder`; the compile refuses a name and a section that disagree.
+  // `workload_folder`; the transpile refuses a name and a section that disagree.
   workload_folder_name      = "Workloads"
   // The delegation the examples under this folder work with: its own account and state
   // bucket from `presets/delegation.satz`, and the folder that account works in from
@@ -49,7 +49,7 @@ params {
   delegated_folders         = [{ name = "shop" delegation = "shop" display_name = "Shop" }]
 }
 
-// The day-0 params with their questions, and the core exports every interface carries.
+// The bootstrap params with their questions, and the core exports every interface carries.
 use "presets/estate-core.satz"
 
 // One identity per delegation, and the folders it works in.
@@ -87,14 +87,14 @@ google_cloud_identity_group {
   svc_iac_users {
     id           = "{svc_iac_users_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
-    description  = "Service account users allowed to impersonate the IaC service account"
+    description  = "Service account users allowed to impersonate the estate account"
     owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
     member       = ["user:{first_admin}@{customer_domain}"]
   }
 }
 
 google_organization_iam_member {
-  // The IaC service account: read on every project (import, adopt, reports), and
+  // The estate account: read on every project (import, adopt, reports), and
   // the roles this estate's resource types need — `satz update-prerequisites` adds the ones
   // further packs bring. Granted at the organization, so every folder and project
   // inherits them, hand-made ones included. The Groups Admin role in the Workspace
@@ -120,7 +120,7 @@ google_organization_iam_member {
   ]
 }
 
-// The users group may become the IaC service account — that account only, not
+// The estate account user group may act as the estate account — that account only, not
 // every service account in the organization.
 google_service_account_iam_member {
   service_account_id = "${{google_service_account.provisioner.name}}"
@@ -193,12 +193,12 @@ google_folder {
   }
 }
 
-// The folder, published to the projects beside the estate (interfaces/outgoing/). Its number
+// The folder, published to the workload estates beside the estate (interfaces/outgoing/). Its number
 // exists once the folder does, so the interfaces look it up.
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 
 // ---- the workload folder: where the customer's and the projects' folders live -------
-// One folder directly under the organisation, `workload_folder_name`. Google refuses a
+// One folder directly under the organization, `workload_folder_name`. Google refuses a
 // second folder of one name under one parent: a folder the customer already has is imported
 // (`satz adopt <estate> --execute --import`), and until it is, the apply stops on it.
 google_folder {

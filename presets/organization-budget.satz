@@ -4,7 +4,7 @@
 //   use "presets/organization-budget.satz"
 //
 // WHAT AN ENTRY IS. `{ name amount }`, and optionally `projects`, `folders`, `email` and
-// `import_id`. The first entry of `budgets` is the organisation's budget, `global-budget`,
+// `import_id`. The first entry of `budgets` is the organization's budget, `global-budget`,
 // built from `budget_amount` and `budget_notification_email`. Binding `budgets` in the
 // estate replaces the whole list, so an estate that adds budgets writes that entry too;
 // a project asks for its own with `contributes_budgets`, checked by `satz check-request`.
@@ -31,7 +31,7 @@
 pack organization_budget version "2.1"
 
 params {
-  // The organisation budget's amount per calendar month, in whole units of the billing
+  // The organization budget's amount per calendar month, in whole units of the billing
   // account's currency. Asked: no amount fits every customer, and the default is no
   // answer — the question stays open until the estate binds one.
   budget_amount   = "1000"
@@ -61,7 +61,7 @@ params {
   budget_default_recipients_off = false
   // The project the e-mail channels live in.
   budget_channel_project        = infra_project_name
-  // One entry per budget; the first is the organisation's.
+  // One entry per budget; the first is the organization's.
   budgets = [
     {
       name   = "global-budget"
@@ -73,7 +73,7 @@ params {
 // ---- what a customer decides, asked -------------------------------------------------
 
 question budget_amount {
-  prompt   = "The organisation budget's amount per calendar month, in whole units of the billing account's currency"
+  prompt   = "The organization budget's amount per calendar month, in whole units of the billing account's currency"
   why      = "Alerts go out at 50, 80 and 100 % of it. Too high and the alarm comes after the money is gone; too low and the alerts are noise nobody reads."
   reversal = edit
   blast    = none

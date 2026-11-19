@@ -1,15 +1,15 @@
-//! Which runs change the customer's ORGANISATION, and the one gate that stands in front
+//! Which runs change the customer's ORGANIZATION, and the one gate that stands in front
 //! of them.
 //!
 //! A pack says what has to happen before its resources are applied, and how much it holds
 //! back (`severity` on a `notice`, `src/notices.rs`). Whether a run is held back is not
 //! the pack's business and not the command's either: it is one rule, here. `of` answers
 //! it for EVERY command — the match is exhaustive, so a command added to the CLI does not
-//! compile until it says which it is, and a reason is required for saying no. `refuse`
+//! transpile until it says which it is, and a reason is required for saying no. `refuse`
 //! then asks the estate's packs and refuses while one of their messages is an open error.
 //!
 //! No command's own arm mentions a notice, a severity or a param. A command says what it
-//! does to the organisation; this decides what that means.
+//! does to the organization; this decides what that means.
 
 use std::path::PathBuf;
 
@@ -17,44 +17,44 @@ use crate::findings::CompileRefusal;
 use crate::{estate_path, Commands};
 use crate::settings::{ToolConfig};
 
-/// What a run does to the organisation it is pointed at.
+/// What a run does to the organization it is pointed at.
 #[derive(Debug, PartialEq)]
 pub(crate) enum OrgWrite {
-    /// It changes that organisation, and this estate's packs speak for it.
+    /// It changes that organization, and this estate's packs speak for it.
     Writes(PathBuf),
-    /// It changes an organisation but is handed no estate, so no pack's message is
+    /// It changes an organization but is handed no estate, so no pack's message is
     /// reachable from here. The reason is the entry.
     NoEstate(&'static str),
-    /// It changes no organisation: it reads, or it writes files. The reason is the entry.
+    /// It changes no organization: it reads, or it writes files. The reason is the entry.
     Reads(&'static str),
 }
 
-/// Every command, classified. A new one fails to compile until it is here — running
-/// against a customer's organisation while a pack says the estate is not ready is a
-/// wrong apply, and a wrong apply is visible in the organisation, not in a diff.
+/// Every command, classified. A new one fails to transpile until it is here — running
+/// against a customer's organization while a pack says the estate is not ready is a
+/// wrong apply, and a wrong apply is visible in the organization, not in a diff.
 pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
     use OrgWrite::{NoEstate, Reads, Writes};
     let estate = |input: &str| Writes(estate_path(PathBuf::from(input), runtime));
     match command {
         // the two that create and change what the estate declares
         Commands::Transpile { input, apply: true, .. } => estate(input),
-        Commands::Transpile { .. } => Reads("--check and --plan compile and propose; only --apply writes"),
+        Commands::Transpile { .. } => Reads("--check and --plan transpile and propose; only --apply writes"),
         Commands::Bootstrap { estate: e, dry_run: false, .. } => Writes(estate_path(e.clone(), runtime)),
         Commands::Bootstrap { .. } => Reads("--dry-run prints the plan and creates nothing"),
-        // `--mode cloud` grants the IaC service account Groups Admin on the organisation;
+        // `--mode cloud` grants the estate account Groups Admin on the organization;
         // `--mode local` moves the state home and grants nothing. Without the flag the
         // target is the other of the two, which only the estate says: a run that may
         // write is one.
         Commands::Migrate { mode: Some(m), .. } if m == "local" => Reads("--mode local moves the state home and grants nothing"),
         Commands::Migrate { input, .. } => estate(input),
-        // the estate's own deployment steps, run against the organisation by `--execute`
+        // the estate's own deployment steps, run against the organization by `--execute`
         Commands::RunActions { input, execute: true, .. } => estate(input),
         Commands::RunActions { .. } => Reads("without --execute it prints, or runs each action's dry-run form"),
-        // `tofu apply` in hcl_dir is handed a directory, and the emitted HCL does not name
+        // `tofu apply` in hcl_dir is handed a directory, and the transpiled HCL code does not name
         // the estate that wrote it: the estate's messages are not reachable from here.
-        // `transpile --apply` is the route that compiles first, and it is gated.
+        // `transpile --apply` is the route that transpiles first, and it is gated.
         Commands::Apply { .. } => NoEstate("it runs the tool in hcl_dir, which names no estate"),
-        Commands::Plan { .. } | Commands::HclInit { .. } => Reads("the tool proposes, or initialises the backend"),
+        Commands::Plan { .. } | Commands::HclInit { .. } => Reads("the tool proposes, or initializes the backend"),
         // `adopt` is the command a notice asks for: it writes the tofu state and the
         // estate file, and `--activate` turns constraints on so they can be imported —
         // the step that closes a message, never the apply a message guards
@@ -67,7 +67,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::ReportOrganizationalPolicies { .. }
         | Commands::ReportCompliance { .. }
         | Commands::Whoami { .. }
-        | Commands::MapTypes { .. } => Reads("it reads the organisation and writes nothing to it"),
+        | Commands::MapTypes { .. } => Reads("it reads the organization and writes nothing to it"),
         // the file-writers: an estate, a preset, a report, this machine's config
         Commands::Init { .. }
         | Commands::Packs { .. }
@@ -111,16 +111,16 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
     }
 }
 
-/// The gate. A run that writes to an estate's organisation is refused while a message
+/// The gate. A run that writes to an estate's organization is refused while a message
 /// that estate's packs declare is open and an `error`; the refusal is the findings
 /// themselves, so it prints where every other finding prints and at the line it names.
 ///
 /// An estate that cannot be read is no pass: the caller is about to change an
-/// organisation on the strength of that file.
+/// organization on the strength of that file.
 pub(crate) fn refuse(command: &Commands, tool_config: &ToolConfig, runtime: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
     let OrgWrite::Writes(estate) = of(command, runtime) else { return Ok(()) };
-    // one spelling of the file, the compile's: a `[[silence]]` row written from a
-    // compile's JSON answers to the same finding here
+    // one spelling of the file, the transpile's: a `[[silence]]` row written from a
+    // transpile's JSON answers to the same finding here
     let mut findings: Vec<_> = crate::notices::open_errors(&estate, runtime)?
         .into_iter()
         .map(|f| crate::estate_relative_file(f, runtime.dir.as_deref()))
@@ -152,7 +152,7 @@ mod tests {
     /// by hand, the two that write and never asked, and the command a notice names —
     /// which must never be held back by the message it closes.
     #[test]
-    fn what_a_run_does_to_the_organisation_is_read_from_its_command_line() {
+    fn what_a_run_does_to_the_organization_is_read_from_its_command_line() {
         let writes = |args: &[&str]| matches!(of_args(args), OrgWrite::Writes(_));
         assert!(writes(&["transpile", "e.satz", "--apply"]));
         assert!(!writes(&["transpile", "e.satz", "--plan"]));
@@ -173,16 +173,16 @@ mod tests {
     /// The classification is only worth what its reasons are worth: a `Reads` with an
     /// empty reason is a command nobody thought about. And no arm may answer for a
     /// command it was not asked about — the match is exhaustive, which is what makes a
-    /// new command fail to compile until it is classified, so this test reads the source
+    /// new command fail to transpile until it is classified, so this test reads the source
     /// for the wildcard that would defeat it.
     #[test]
-    fn every_command_says_what_it_does_to_the_organisation() {
+    fn every_command_says_what_it_does_to_the_organization() {
         let src = include_str!("org_write.rs");
         let body = src.split("#[cfg(test)]").next().unwrap_or(src);
         assert!(
             !body.contains("_ =>"),
             "org_write::of answers a command with a wildcard arm — then a new command \
-             writes to a customer's organisation without ever saying so"
+             writes to a customer's organization without ever saying so"
         );
         for reason in ["Reads(\"\")", "NoEstate(\"\")"] {
             assert!(!body.contains(reason), "a command classified with no reason: {}", reason);

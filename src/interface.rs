@@ -1,29 +1,29 @@
-//! The interface an estate publishes to the projects beside it (ADR 0070). A project is an
-//! estate that depends on parts of another estate's interface: its own repository or
+//! The interface an estate publishes to the workload estates beside it (ADR 0070). A workload
+//! estate depends on parts of another estate's interface and has its own repository or
 //! folder, config, state and pipeline, written in HCL or in Satz.
 //!
-//! Every `export` becomes an output of the root module's `outputs.tf`, where the operator
+//! Every `export` becomes an output of the HCL code's `outputs.tf`, where the operator
 //! reads it with `tofu output`, and a value of the generated interfaces under
 //! `interfaces/outgoing/`, beside `hcl/`. An export outside every `interface` block is a core
 //! export, carried by every interface. Each interface has two forms side by side:
 //! `<name>/hcl/`, a relocatable module (it names no file outside itself, takes no variable,
-//! has no backend and reads no state), and `<name>/satz/interface.satz`, a file a project
+//! has no backend and reads no state), and `<name>/satz/interface.satz`, a file a workload
 //! estate written in Satz `use`s.
 //!
 //! `interfaces/outgoing/common/` holds the library alone — `core`, every interface a pack declares
-//! and every one marked `common`. `interfaces/outgoing/<project>/` holds one project's own
-//! interface and the whole library beside it, so a project takes its folder whole.
+//! and every one marked `common`. `interfaces/outgoing/<name>/` holds one interface of
+//! its own and the whole library beside it, so a workload estate takes its folder whole.
 //!
-//! Per `${type.label.attr}` reference, the compile decides what the value is:
+//! Per `${type.label.attr}` reference, the transpile decides what the value is:
 //!
 //! - **static** — satz writes the attribute itself (`project_id`, `display_name`), or it is
 //!   derived from attributes satz writes (a service account's `email`): a literal output;
 //! - **a lookup** — only the cloud knows it (a folder's `name`, a project's `number`): a
 //!   `data` source, keyed by what satz writes (`presets/interface-lookups.yaml`), which the
-//!   consumer's plan reads through the consumer's own provider and credentials. A key that
+//!   consumer's plan reads through the consumer's own provider and sign-in. A key that
 //!   is itself a lookup chains to that resource's data source.
 //!
-//! The root module needs neither: there the reference names the resource.
+//! The HCL code needs neither: there the reference names the resource.
 
 use crate::manifest::{EmittedResource, Manifest};
 use std::collections::{BTreeMap, BTreeSet};
@@ -66,8 +66,8 @@ pub(crate) struct LookupRow {
     pub all: String,
 }
 
-/// The lookup table, compiled in: what the interface emits for a type is part of the
-/// emitter, and one binary emits one interface whatever preset directory it reads.
+/// The lookup table, built in: what the interface writes for a type is part of the
+/// emitter, and one binary writes one interface whatever preset directory it reads.
 pub(crate) fn lookups() -> BTreeMap<String, LookupRow> {
     serde_yaml::from_str(include_str!("../presets/interface-lookups.yaml")).expect("presets/interface-lookups.yaml parses")
 }
@@ -98,7 +98,7 @@ pub(crate) struct Central {
     pub same_node: bool,
 }
 
-/// The attach-point table, compiled in for the reason the lookup table is.
+/// The attach-point table, built in for the reason the lookup table is.
 pub(crate) fn attach_points() -> BTreeMap<String, AttachRow> {
     serde_yaml::from_str(include_str!("../presets/attach-points.yaml")).expect("presets/attach-points.yaml parses")
 }
@@ -137,7 +137,7 @@ pub(crate) struct DataBlock {
     /// argument → HCL expression
     pub args: Vec<(String, String)>,
     /// argument → the same as text, `${…}` where it reads another lookup: the form a
-    /// project's own emission writes
+    /// workload estate's own transpile writes
     pub texts: Vec<(String, String)>,
     pub permission: String,
     /// the other data blocks its keys read
@@ -153,7 +153,7 @@ impl DataBlock {
 /// How an output obtains its value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum How {
-    /// known at compile time: the HCL literal
+    /// known at transpile time: the HCL literal
     Static(String),
     /// read by the consumer's plan: the data blocks it needs, by address
     Lookup(Vec<String>),
@@ -167,15 +167,15 @@ pub(crate) struct Output {
     pub description: Option<String>,
     /// the value in the module
     pub module_value: String,
-    /// the value in the root module
+    /// the value in the HCL code
     pub root_value: String,
     /// the value a workload estate reads as `${{interface.<folder>.<value>}}`: a literal, or text over
     /// `${data.<type>.<label>.<attr>}` where it is looked up
     pub value: serde_yaml::Value,
     pub how: How,
-    /// the attachment types a project may create against it
+    /// the attachment types a workload estate may create against it
     pub attach: Vec<String>,
-    /// the emitted resources its value reads, by address; for `all <type>`, every one
+    /// the written resources its value reads, by address; for `all <type>`, every one
     /// the map holds
     pub targets: Vec<String>,
     /// `all <type>`: the type the map is of, keyed by the labels in `targets`
@@ -199,7 +199,7 @@ pub(crate) struct Interface {
     pub google_version: Option<String>,
 }
 
-/// An export the compile refuses, where it is declared.
+/// An export the transpile refuses, where it is declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refusal {
     /// the interface the export stands in; `None` for a core export
@@ -210,7 +210,7 @@ pub(crate) struct Refusal {
     pub msg: String,
 }
 
-/// Build the interface from the resolved exports and what the emitter emitted. Every
+/// Build the interface from the resolved exports and what the emitter written. Every
 /// export is judged; the refusals are all returned, each at its declaration.
 pub(crate) fn build(
     estate: &str,
@@ -287,7 +287,7 @@ pub(crate) fn build(
 }
 
 /// (module HCL, root HCL, whether it is known now, the data blocks it reads directly, the
-/// value a Satz project reads)
+/// value a workload estate written in Satz reads)
 type Resolved = (String, String, bool, Vec<String>, serde_yaml::Value);
 
 struct Resolver<'a> {
@@ -299,7 +299,7 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
-    /// Every resource of `tf_type` the estate emits and does not mark `private`, by label —
+    /// Every resource of `tf_type` the estate writes and does not mark `private`, by label —
     /// with `under`, the ones placed under that folder or project.
     fn members<'s>(&'s self, tf_type: &'s str, under: Option<&str>) -> Vec<&'s EmittedResource> {
         let mut out: Vec<&EmittedResource> = self
@@ -360,7 +360,7 @@ impl Resolver<'_> {
     }
 
     /// One export value: (module HCL, root HCL, whether it is known now, the data blocks it
-    /// reads directly, the value a Satz project reads).
+    /// reads directly, the value a workload estate written in Satz reads).
     fn value(&mut self, v: &serde_yaml::Value) -> Result<Resolved, String> {
         use serde_yaml::Value;
         match v {
@@ -427,7 +427,7 @@ impl Resolver<'_> {
     fn reference(&mut self, inner: &str) -> Result<Vec<Part>, String> {
         let bad = || {
             format!(
-                "`${{{}}}` is no reference to what the estate emits — an export reads `${{{{type.label.attribute}}}}` of a resource this estate declares",
+                "`${{{}}}` is no reference to what the estate writes — an export reads `${{{{type.label.attribute}}}}` of a resource this estate declares",
                 inner
             )
         };
@@ -446,14 +446,14 @@ impl Resolver<'_> {
             let mut same: Vec<&str> = self.manifest.of_type(tf_type).map(|r| r.label.as_str()).collect();
             same.sort();
             if same.is_empty() {
-                format!("`{}` names nothing this estate emits — no `{}` is emitted here at all", address, tf_type)
+                format!("`{}` names nothing this estate writes — no `{}` is written here at all", address, tf_type)
             } else {
-                format!("`{}` names nothing this estate emits — emitted `{}` labels: {}", address, tf_type, same.join(", "))
+                format!("`{}` names nothing this estate writes — written `{}` labels: {}", address, tf_type, same.join(", "))
             }
         })
     }
 
-    /// An attribute of an emitted resource: what satz writes, else what derives from it,
+    /// An attribute of an written resource: what satz writes, else what derives from it,
     /// else a lookup.
     fn attribute(&mut self, tf_type: &str, label: &str, attr: &str) -> Result<Vec<Part>, String> {
         if let Some(parts) = self.written(tf_type, label, attr)? {
@@ -605,7 +605,7 @@ impl Resolver<'_> {
     }
 }
 
-/// The emitted resources an export's value reads: every `${type.label.…}` in it.
+/// The written resources an export's value reads: every `${type.label.…}` in it.
 fn addresses_in(v: &serde_yaml::Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut add = |s: &str| {
@@ -654,7 +654,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                     for other in manifest.of_type(&central_type) {
                         if on_node(other, r) {
                             out.push(format!(
-                                "attach \"{}\": `{}` lets a project add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a project adds. Grant with `{}` in the estate instead",
+                                "attach \"{}\": `{}` lets a workload estate add its own members to `{}`, and the estate declares `{}`, which sets that node's members whole — the estate's next apply would remove every member a workload estate adds. Grant with `{}` in the estate instead",
                                 t,
                                 t,
                                 address,
@@ -671,7 +671,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                 if let Some(key) = &c.sets {
                     if r.set.contains_key(key) {
                         out.push(format!(
-                            "attach \"{}\": projects attach to `{}` in their own state, and the estate sets its `{}` — the list the attachments add to. Remove `{}` from `{}`",
+                            "attach \"{}\": workload estates attach to `{}` in their own state, and the estate sets its `{}` — the list the attachments add to. Remove `{}` from `{}`",
                             t, address, key, key, address
                         ));
                     }
@@ -680,7 +680,7 @@ fn attach_refusals(attach: &[String], targets: &[String], manifest: &Manifest, t
                     let held = r.set.get("lifecycle.ignore_changes").is_some_and(|l| l.replace(' ', "").contains(ignore.as_str()));
                     if !held {
                         out.push(format!(
-                            "attach \"{}\": projects attach to `{}` in their own state, and its `lifecycle` does not ignore `{}` — the estate's next apply would remove what they attached. Write `lifecycle {{ ignore_changes = [{}] }}` on `{}`",
+                            "attach \"{}\": workload estates attach to `{}` in their own state, and its `lifecycle` does not ignore `{}` — the estate's next apply would remove what they attached. Write `lifecycle {{ ignore_changes = [{}] }}` on `{}`",
                             t, address, ignore, ignore, address
                         ));
                     }
@@ -769,7 +769,7 @@ fn render_parts(parts: &[Part]) -> String {
     }
 }
 
-/// The parts as the text a Satz project's string holds: a literal with its template openers
+/// The parts as the text a string of a workload estate written in Satz holds: a literal with its template openers
 /// escaped (`$${`, `%%{`), an expression as `${…}`. The emitter writes such text as an HCL
 /// template, so it reads what `render_parts` reads.
 fn template_text(parts: &[Part]) -> String {
@@ -787,7 +787,7 @@ fn template_text(parts: &[Part]) -> String {
     out
 }
 
-/// The export's text in the root module, where its references name the resources: a
+/// The export's text in the HCL code, where its references name the resources: a
 /// whole-value reference as the bare traversal, anything else as the template it is.
 fn root_text(s: &str) -> String {
     if let Some(inner) = s.strip_prefix("${").and_then(|r| r.strip_suffix('}')) {
@@ -815,7 +815,7 @@ fn root_text(s: &str) -> String {
 
 /// The stamp every generated `.tf` file opens with, as `main.tf` does.
 pub(crate) fn stamp(version: &str, estate_path: &str) -> String {
-    format!("# Generated by satz v{} — do not edit; re-emit from {}.\n\n", version, estate_path)
+    format!("# Generated by satz v{} — do not edit; transpile again from {}.\n\n", version, estate_path)
 }
 
 /// An output block's body: its description, when it has one, and its value, aligned.
@@ -827,7 +827,7 @@ fn output_body(d: &Option<String>, value: &str) -> String {
 }
 
 impl Output {
-    /// Its name among the root module's outputs: a core export keeps its name, an
+    /// Its name among the HCL code's outputs: a core export keeps its name, an
     /// interface's is `<interface>__<export>` with `-` as `_`. No export name holds `__`
     /// and no interface name holds `_`, so two never meet.
     pub fn root_name(&self) -> String {
@@ -837,12 +837,12 @@ impl Output {
         }
     }
 
-    /// The text of a static string output, as a project would write it literally.
+    /// The text of a static string export, as a workload estate would write it literally.
     pub fn static_text(&self) -> Option<String> {
         static_text(&self.value)
     }
 
-    /// Where the root module's local holds it.
+    /// Where the HCL code's local holds it.
     fn local_path(&self) -> String {
         match &self.interface {
             Some(i) => format!("local.{}.interfaces[{}].{}", LOCAL, hcl_string(i), self.name),
@@ -865,7 +865,7 @@ impl Interface {
         std::iter::once(CORE.to_string()).chain(self.common.iter().cloned()).collect()
     }
 
-    /// The projects: every declared interface that is not common, each a folder of its own
+    /// The interface folders of their own: every declared interface that is not common, each a folder
     /// under `interfaces/outgoing/`.
     pub fn projects(&self) -> Vec<String> {
         self.modules().into_iter().filter(|m| m != CORE && !self.common.contains(m)).collect()
@@ -889,7 +889,7 @@ impl Interface {
         out
     }
 
-    /// The root module's `outputs.tf`: the values in one local — the core ones, and one map
+    /// The HCL code's `outputs.tf`: the values in one local — the core ones, and one map
     /// per interface — and one output per export that reads it.
     pub fn root_outputs_tf(&self) -> String {
         fn values(out: &mut String, outputs: &[&Output], pad: &str) {
@@ -1001,12 +1001,12 @@ impl Interface {
             "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` of the estate writes `interfaces/outgoing/` whole.\n\n",
             version, estate_path
         ));
-        s.push_str("It publishes values the estate exports to a project: an estate with its own repository or\n");
+        s.push_str("It publishes values the estate exports to a workload estate: an estate with its own repository or\n");
         s.push_str("folder, config, state and pipeline, written in HCL or in Satz. It has two forms with the same\n");
         s.push_str("values: `hcl/` is a module that references no file outside itself, takes no input variable and\n");
-        s.push_str("reads no state — copy it, move it, or source it by git URL — and `satz/interface.satz` is a file\n");
-        s.push_str("a project estate `use`s. When the last transpile changed a value here, `CHANGES.md` beside this\n");
-        s.push_str("file says what a project that reads it does about it.\n\n");
+        s.push_str("reads no state — copy it, move it, or source it by git URL — and `satz/interface.satz` is the\n");
+        s.push_str("interface file a workload estate `use`s. When the last transpile changed a value here, `CHANGES.md`\n");
+        s.push_str("beside this file says what a workload estate that reads it does about it.\n\n");
         if module == CORE {
             s.push_str("It holds the core values alone: the ones every interface of this estate carries.\n\n");
         } else {
@@ -1036,7 +1036,7 @@ impl Interface {
         }
         s.push_str(&format!(
             "It needs the `google` provider ({}{}) in the calling configuration. A lookup runs through that\n\
-             provider, with the caller's credentials, and needs the read permission its row names.\n\n",
+             provider, as the signed-in caller, and needs the read permission its row names.\n\n",
             self.google_source,
             self.google_version.as_deref().map(|v| format!(", {} or later", v)).unwrap_or_default()
         ));
@@ -1048,13 +1048,13 @@ impl Interface {
             None => s.push_str("```\n\n"),
         }
         s.push_str("A static value becomes its literal. A looked-up value becomes the same `data` source the module\n");
-        s.push_str("reads, written once into the project's root module. The project's compile holds its own resources\n");
+        s.push_str("reads, written once into the workload estate's HCL code. Its transpile holds its own resources\n");
         s.push_str("to the capabilities below.\n\n");
         s.push_str("## Exports\n\n");
         if outputs.is_empty() {
             s.push_str("None: the estate exports no core value.\n");
         } else {
-            s.push_str("| Output | From | Description | How it is obtained |\n|---|---|---|---|\n");
+            s.push_str("| Export | From | Description | How it is obtained |\n|---|---|---|---|\n");
         }
         for o in &outputs {
             let how = match &o.how {
@@ -1081,7 +1081,7 @@ impl Interface {
                     format!(
                         "a map of every `{}`, keyed by label — {}; {}",
                         t,
-                        if keys.is_empty() { "none is emitted".to_string() } else { format!("keys {}", keys.join(", ")) },
+                        if keys.is_empty() { "none is written".to_string() } else { format!("keys {}", keys.join(", ")) },
                         how
                     )
                 }
@@ -1103,9 +1103,9 @@ impl Interface {
             s.push_str("Every value is read. An attach point also takes the attachment resources named beside it, in your\n");
             s.push_str("own state: they add your object to the shared one, and the estate leaves what you add alone.\n");
             s.push_str("Any other write to shared infrastructure goes into this estate as a contribution. `satz\n");
-            s.push_str("check-consumer <your directory>` checks your HCL against this table; a project estate's own\n");
-            s.push_str("compile checks its resources against it.\n\n");
-            s.push_str("| Output | Read | Attach |\n|---|---|---|\n");
+            s.push_str("check-consumer <your directory>` checks your HCL against this table; a workload estate's own\n");
+            s.push_str("transpile checks its resources against it.\n\n");
+            s.push_str("| Export | Read | Attach |\n|---|---|---|\n");
             for o in &outputs {
                 let attach = if o.attach.is_empty() {
                     "—".to_string()
@@ -1142,9 +1142,9 @@ impl Interface {
 }
 
 impl Interface {
-    /// `<module>/satz/interface.satz`: the same values as the module, as data a project
+    /// `<module>/satz/interface.satz`: the same values as the module, as data a workload
     /// estate `use`s — each value in the form `${{interface.<name>}}` stands for, the
-    /// lookups those read, and the facts its compile holds the project's resources to.
+    /// lookups those read, and the facts its transpile holds the project's resources to.
     pub fn satz_file(&self, module: &str, facts: &crate::consumer::Facts, version: &str, estate_path: &str) -> String {
         use satz_core::satz::quote;
         let list = |items: &[String]| format!("[{}]", items.iter().map(|i| quote(i)).collect::<Vec<_>>().join(", "));
@@ -1191,8 +1191,8 @@ impl Interface {
         }
         for m in &facts.managed {
             s.push_str(&format!("\nmanaged {} {{\n", quote(&m.address)));
-            // the ids and key values hashed: the file travels into every project's folder,
-            // and the duplicate rule needs equality, not the central estate's inventory
+            // the ids and key values hashed: the file travels into every interface folder,
+            // and the duplicate rule needs equality, not the inventory of the organization's estate
             if !m.ids.is_empty() {
                 s.push_str(&format!("  ids = {}\n", list(&m.ids.iter().map(|i| crate::consumer::hashed(i)).collect::<Vec<_>>())));
             }
@@ -1213,10 +1213,10 @@ impl Interface {
     }
 
     /// `interfaces/outgoing/<folder>/README.md`: what the folder holds, where it came from, and the
-    /// content hash of every other file in it. `folder` is `common` or a project.
-    /// What an interface hands to a team that works beside the estate, said to that team:
+    /// content hash of every other file in it. `folder` is `common` or an interface's name.
+    /// What an interface gives a workload's team, said to that team:
     /// the account, who may act as it, what it holds, and what to do next. Written when the
-    /// interface carries what a delegation pack publishes (`presets/delegation.satz`,
+    /// interface carries what a delegation preset publishes (`presets/delegation.satz`,
     /// `presets/delegated-folders.satz`, `presets/delegated-projects.satz`), by the names
     /// those exports have; `None` for every
     /// other interface. The folder is what changes hands, so the instructions travel in it.
@@ -1248,45 +1248,46 @@ impl Interface {
         }
         let mut s = String::from("## Delegated access: what you were given\n\n");
         s.push_str(
-            "This folder is handed to a team the estate delegates access to: an account of its own that holds\n\
-             roles on a part of the organisation and nowhere else, used from a repository of its own.\n\
-             Nothing in it is secret: it holds names, and what was granted. No key is issued.\n\n| | |\n|---|---|\n",
+            "This interface folder is copied to a workload's team. The organization's estate gives that team\n\
+             delegated access: an estate account of its own that holds roles on named resources of the organization\n\
+             and nowhere else, used from the workload repository. Nothing in the folder is secret: it holds\n\
+             names, and what was delegated. No key is issued.\n\n| | |\n|---|---|\n",
         );
         let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
         if let Some(a) = &account {
-            row("the account your estate runs as", format!("`{}`", a));
+            row("the estate account your workload estate runs as", format!("`{}`", a));
             match (text("account_group"), list("account_group_roles")) {
                 (Some(g), roles) => row(
                     "who may act as it",
                     format!(
-                        "the members of `{}`{}. Who is a member is decided in the directory, not here; a member needs nothing else",
+                        "the members of the estate account user group `{}`{}. Who is a member is decided in the directory, not here; a member needs nothing else",
                         g,
                         roles.map(|r| format!(", which holds {} on the account", code(&r))).unwrap_or_default()
                     ),
                 ),
-                (None, _) => row("who may act as it", "the members of the group the estate names for this account; ask its owners which".to_string()),
+                (None, _) => row("who may act as it", "the members of the estate account user group the organization's estate names for this account; ask the organization's team which".to_string()),
             }
         }
         if let Some(p) = text("deploy_project_id") {
-            row("the project its calls are billed to", format!("`{}`", p));
+            row("the delegation's infrastructure project, which its calls are billed to", format!("`{}`", p));
         }
         if let Some(b) = text("state_bucket") {
-            row("where its estates keep their state", format!("`gs://{}`", b));
+            row("the state bucket its workload estates keep their state in", format!("`gs://{}`", b));
         }
         if let Some(b) = text("billing_account") {
             row("the billing account a new project is linked to", format!("`{}`", b));
         }
         if folder {
-            row("the folder to build in", format!("`${{{{interface.{}.delegated_folder}}}}`: looked up at plan time; everything the estate creates stands under it", module));
+            row("the delegated folder to build in", format!("`${{{{interface.{}.delegated_folder}}}}`: looked up at plan time; everything the workload estate creates stands under it", module));
         }
         if let Some(p) = text("project_id") {
-            row("the project to build in", format!("`{}`, read as `${{{{interface.{}.project_id}}}}` in the estate", p, module));
+            row("the delegated project to build in", format!("`{}`, read as `${{{{interface.{}.project_id}}}}` in the workload estate", p, module));
         }
         if let Some(r) = &folder_roles {
-            row("on each of its folders the account holds", format!("{} — and no role that sets a folder's access", code(r)));
+            row("on each of its delegated folders the account holds", format!("{} — and no role that sets a folder's access", code(r)));
         }
         if let Some(r) = &project_roles {
-            row("on this project the account holds", code(r));
+            row("on this delegated project the account holds", code(r));
         }
         if let Some(r) = list("delegated_billing_roles") {
             row("on the billing account it holds", code(&r));
@@ -1294,47 +1295,51 @@ impl Interface {
         match text("delegated_budgets").as_deref() {
             Some("true") => row(
                 "budgets",
-                "delegated: the account may create and change budgets for this scope, and sees its costs; it holds nothing on the billing account".to_string(),
+                format!(
+                    "delegated: the account may create and change budgets for this delegated {}, and sees its costs; it holds nothing on the billing account",
+                    if folder { "folder" } else { "project" }
+                ),
             ),
-            Some(_) => row("budgets", "not delegated: ask the estate's owners for `budgets = true` on this entry".to_string()),
+            Some(_) => row("budgets", "not delegated: ask the organization's team for `budgets = true` on this entry".to_string()),
             None => {}
         }
         if let Some(r) = list("delegated_apis") {
-            row("APIs enabled on the project its calls are billed to", code(&r));
+            row("APIs enabled on the delegation's infrastructure project", code(&r));
         }
         s.push_str("\n### What to do with it\n\n");
         let mut steps: Vec<String> = Vec::new();
         if account.is_some() {
             steps.push(
-"In your repository run `satz init --from <this folder> <the interface folder of every folder and project the estate works in>`. It \
-                 copies them into `interfaces/incoming/`, where satz never writes again, and writes your estate: it runs as the account \
-                 above, bills its calls to the project above and keeps its state in the bucket above. One estate may work in several \
-                 folders and projects; a second estate of the same account takes a `--name` of its own."
+"In the workload repository run `satz init --from <this folder> <the interface folder of every delegated folder and delegated \
+                 project the workload estate works in>`. It copies them into `interfaces/incoming/`, where satz never writes again, and \
+                 writes your workload estate: it runs as the account above, bills its calls to the infrastructure project above and \
+                 keeps its state in the state bucket above. One workload estate may work in several delegated folders and delegated \
+                 projects; a second workload estate of the same account takes a `--name` of its own."
                     .to_string(),
             );
         } else {
             steps.push(format!(
-                "Take this folder together with the one that carries your account, `delegation-<name>`: `satz init --from` both writes your \
-                 estate. For an estate that exists, copy this folder into its `interfaces/incoming/` and add \
+                "Take this interface folder together with the one that carries your account, `delegation-<name>`: `satz init --from` both \
+                 writes your workload estate. For a workload estate that exists, copy this folder into its `interfaces/incoming/` and add \
                  `use \"interfaces/incoming/{}/{}/satz/interface.satz\"` beside the line of your account's interface.",
                 module, module
             ));
         }
         steps.push(
-            "Compile: `satz transpile <estate> --check`. satz judges the estate against what this table says was granted. A line that names \
-             something missing says who closes it: the estate's owners, or you with a grant on a project you were given. Nothing at the \
-             organisation is yours to grant."
+            "Check: `satz transpile <estate> --check`. satz judges the workload estate against what this table says was delegated. A line \
+             that names something missing says who closes it: the organization's team, or you with a grant on a delegated project. \
+             Nothing at the organization is yours to grant."
                 .to_string(),
         );
         if account.is_some() {
-            steps.push("Be a member of the group above, then `gcloud auth application-default login` and `satz whoami <estate>`.".to_string());
+            steps.push("Be a member of the estate account user group above, then `gcloud auth application-default login` and `satz whoami <estate>`.".to_string());
             steps.push("`satz transpile <estate> --plan`, read it, then `--apply`: both run as the account.".to_string());
         }
-        steps.push("Take the folder again after every change of the estate; `CHANGES.md` here says what moved.".to_string());
+        steps.push("Take the folder again after every change of the organization's estate; `CHANGES.md` here says what moved.".to_string());
         for (n, step) in steps.iter().enumerate() {
             s.push_str(&format!("{}. {}\n", n + 1, step));
         }
-        s.push_str(&format!("\nThe whole procedure, for both sides: <{}>.\n\n", HANDOVER_GUIDE));
+        s.push_str(&format!("\nThe whole procedure, for both teams: <{}>.\n\n", HANDOVER_GUIDE));
         Some(s)
     }
 
@@ -1343,7 +1348,7 @@ impl Interface {
         if folder == COMMON {
             s.push_str(&format!("# The common interfaces of estate `{}`\n\n", self.estate));
         } else {
-            s.push_str(&format!("# The interfaces of estate `{}` for the project `{}`\n\n", self.estate, folder));
+            s.push_str(&format!("# The interface folder `{}` of estate `{}`\n\n", folder, self.estate));
         }
         s.push_str(&format!(
             "Generated by satz v{} from `{}`. Do not edit: every `satz transpile` of the estate writes this\n\
@@ -1355,22 +1360,22 @@ impl Interface {
             version, estate_path, hash
         ));
         if folder == COMMON {
-            s.push_str("It holds the library alone — the interfaces every project's folder carries — for a project that\n");
+            s.push_str("It holds the library alone — the interfaces every interface folder carries — for a workload estate that\n");
             s.push_str("reads no interface of its own. Take the folder whole.\n\n");
         } else {
-            s.push_str("A project is an estate that depends on parts of this estate's interface, with its own repository or\n");
-            s.push_str("folder, config, state and pipeline. Take the folder whole: it holds the project's own interface and\n");
-            s.push_str("the library every project's folder carries.\n\n");
+            s.push_str("It is for a workload estate: an estate that depends on parts of this estate's interface, with its own\n");
+            s.push_str("repository or folder, config, state and pipeline. Take the folder whole: it holds the interface of its\n");
+            s.push_str("own name and the library every interface folder carries.\n\n");
         }
         s.push_str("Every interface has the same two forms: `<name>/hcl/` is a module a configuration written in HCL\n");
-        s.push_str("sources, and `<name>/satz/interface.satz` is a file a workload estate written in Satz `use`s, reading a\n");
+        s.push_str("sources, and `<name>/satz/interface.satz` is the interface file a workload estate written in Satz `use`s, reading a\n");
         s.push_str("value as `\"${{interface.<name>.<value>}}\"`. `<name>/README.md` lists the values and what may be done with them,\n");
-        s.push_str("and `<name>/CHANGES.md` is there when the last transpile changed a value: the todo for a project that reads it.\n\n");
+        s.push_str("and `<name>/CHANGES.md` is there when the last transpile changed a value: the todo for a workload estate that reads it.\n\n");
         s.push_str("| Interface | What it holds |\n|---|---|\n");
         if folder != COMMON {
             let used = &self.carried(folder)[1..];
             s.push_str(&format!(
-                "| `{}` | the project's own: its exports and the core ones{} |\n",
+                "| `{}` | the folder's own interface: its exports and the core ones{} |\n",
                 folder,
                 if used.is_empty() { String::new() } else { format!(", and those of {}", used.iter().map(|u| format!("`{}`", u)).collect::<Vec<_>>().join(", ")) }
             ));
@@ -1430,9 +1435,9 @@ pub(crate) struct Notice {
     pub topic_output: String,
 }
 
-/// The text of a string value that holds no template — a value a project could write as a
+/// The text of a string value that holds no template — a value a workload estate could write as a
 /// literal. One definition for both forms of the interface, so a literal matches the same
-/// export whichever form the project reads.
+/// export whichever form the workload estate reads.
 pub(crate) fn static_text(v: &serde_yaml::Value) -> Option<String> {
     let serde_yaml::Value::String(s) = v else { return None };
     (!s.contains("${") && !s.contains("%{")).then(|| s.clone())
@@ -1532,13 +1537,13 @@ resource "google_cloud_identity_group" "g" {
     #[test]
     fn an_absent_address_an_unreadable_type_and_an_unread_attribute_are_refused() {
         let e = build_one("${google_folder.nope.name}").unwrap_err();
-        assert!(e[0].msg.contains("names nothing this estate emits") && e[0].msg.contains("infra, team"), "{}", e[0].msg);
+        assert!(e[0].msg.contains("names nothing this estate writes") && e[0].msg.contains("infra, team"), "{}", e[0].msg);
         let e = build_one("${google_cloud_identity_group.g.name}").unwrap_err();
         assert!(e[0].msg.contains("no lookup for `google_cloud_identity_group`"), "{}", e[0].msg);
         let e = build_one("${google_folder.infra.create_time}").unwrap_err();
         assert!(e[0].msg.contains("the attributes an export of `google_folder` reads: folder_id, id, name"), "{}", e[0].msg);
         let e = build_one("${var.x}").unwrap_err();
-        assert!(e[0].msg.contains("is no reference to what the estate emits"), "{}", e[0].msg);
+        assert!(e[0].msg.contains("is no reference to what the estate writes"), "{}", e[0].msg);
         assert_eq!((e[0].file.as_str(), e[0].line), ("e.satz", 3));
     }
 
@@ -1584,8 +1589,8 @@ resource "google_cloud_identity_group" "g" {
         assert!(root.contains("\"team-b\" = {"), "{}", root);
     }
 
-    /// A project's interface carries the exports of every interface it uses, the README names
-    /// the interface each value comes from, and the root module still has each export once.
+    /// An interface carries the exports of every interface it uses, the README names
+    /// the interface each value comes from, and the HCL code still has each export once.
     #[test]
     fn a_module_carries_the_interfaces_it_uses_and_says_where_each_value_is_from() {
         use satz_core::pipeline::ResolvedInterface;
@@ -1704,9 +1709,9 @@ resource "google_project_iam_binding" "team_viewers" {
         satz_core::pipeline::ResolvedInterface { name: name.into(), common, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 }
     }
 
-    /// `interfaces/outgoing/` is satz's and `interfaces/incoming/` is never touched: `common/` holds the library, each project's folder its own
-    /// interface and the whole library — never another project's — each interface in both
-    /// forms; a transpile removes a project the estate no longer declares, `hcl/interfaces/`,
+    /// `interfaces/outgoing/` is satz's and `interfaces/incoming/` is never touched: `common/` holds the library, each other interface folder its own
+    /// interface and the whole library — never another interface's — each interface in both
+    /// forms; a transpile removes the folder of an interface the estate no longer declares, `hcl/interfaces/`,
     /// and the directory and `outputs.tf` when the estate exports nothing.
     #[test]
     fn the_interfaces_directory_holds_the_library_and_one_folder_per_project() {
@@ -1733,7 +1738,7 @@ resource "google_project_iam_binding" "team_viewers" {
         };
         assert_eq!(listing(&out), ["common", "pay", "ship"]);
         assert_eq!(listing(&out.join("common")), ["README.md", "core", "net"]);
-        assert_eq!(listing(&out.join("pay")), ["README.md", "core", "net", "pay"], "a project carries its own and the library, never another project's");
+        assert_eq!(listing(&out.join("pay")), ["README.md", "core", "net", "pay"], "an interface folder carries its own interface and the library, never another's");
         assert_eq!(listing(&out.join("ship")), ["README.md", "core", "net", "ship"]);
         for m in ["core", "net", "pay"] {
             for f in ["README.md", "hcl/versions.tf", "hcl/outputs.tf", "satz/interface.satz"] {
@@ -1752,7 +1757,7 @@ resource "google_project_iam_binding" "team_viewers" {
         let one = [export("org", "123"), in_interface("pay", "a", "1")];
         let i = build("e", &one, &[ri("pay", false, &[])], &manifest, "hashicorp/google", None).unwrap();
         crate::write_interface(Some(&i), &manifest, &[], &hcl, &root, "e.satz").unwrap();
-        assert_eq!(listing(&out), ["common", "pay"], "the folder of a removed project survived");
+        assert_eq!(listing(&out), ["common", "pay"], "the folder of a removed interface survived");
         // `pay` no longer uses `net`, so its module lost `vpc`: a CHANGES.md beside its README,
         // and none for `core`, which did not change
         let changes = std::fs::read_to_string(out.join("pay/pay/CHANGES.md")).expect("pay changed");

@@ -1,9 +1,9 @@
-// Corpus case: a project estate — one that reads a central estate's interface file
+// Corpus case: a workload estate — one that reads the interface file of an organization's estate
 // (`use "interface.satz"`, checked in beside this file as the case's input) and names its
 // values `${{interface.<export>}}`. A static value becomes its literal, a looked-up one
 // the data source's address with the `data` block written once into main.tf (its
 // argument reads the folder's parent, a literal), and one inside a longer string its
-// text. The project's own resources stand in the central estate's Google project, and the
+// text. The project's own resources stand in the Google project of the organization's estate, and the
 // grant is at an attach point. Snapshot-gated; the harness also holds the case to the
 // interface's rules, so a finding fails it.
 

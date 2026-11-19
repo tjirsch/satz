@@ -4,7 +4,7 @@
 //
 // The dry-run twin of bucket-retention.satz. Google evaluates every rule below, writes a
 // violation to the audit log for each action it WOULD have blocked, and blocks
-// nothing — so the organisation's own numbers answer "will this break us?" before
+// nothing — so the organization's own numbers answer "will this break us?" before
 // the control is enforced. Read them in Cloud Logging:
 //
 //   protoPayload.metadata."@type"="type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo"
@@ -31,14 +31,14 @@ params {
 }
 
 notice cis_bucket_retention_dry_run_adopted {
-  text     = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  text     = "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }
 
 question allowed_bucket_retention_seconds {
   prompt   = "The retention durations, in seconds, a bucket's retention policy may use"
-  why      = "The default is the 400 days the audit-logsink pack retains. Every bucket in the organisation with a retention policy on another duration can no longer be updated once this is enforced, so the estate's other durations have to be listed first."
+  why      = "The default is the 400 days the audit-logsink pack retains. Every bucket in the organization with a retention policy on another duration can no longer be updated once this is enforced, so the estate's other durations have to be listed first."
   reversal = edit
   blast    = low
 }

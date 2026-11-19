@@ -1,4 +1,4 @@
-//! The day-0 vocabulary of a discovered estate: the params `satz init` writes
+//! The bootstrap vocabulary of a discovered estate: the params `satz init` writes
 //! (`presets/estate-core.satz`), bound from what the platform states and what
 //! the discovered data implies, so a discovered estate lines up with a written
 //! one and the packs drop in. Three classes, each visible in the file:
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use crate::config::{Config, Folder, Project};
 use satz_core::condense::Substitution;
 
-/// What the ADC states about the tenant — `init --from-live`'s derivation,
+/// What the sign-in states about the tenant — `init --from-live`'s derivation,
 /// reused by the live shape. The state shape has none of it.
 #[derive(Debug, Default, Clone)]
 pub struct LiveFacts {
@@ -227,7 +227,7 @@ fn unique_max(counts: &BTreeMap<String, usize>) -> Option<(String, usize, usize)
 }
 
 impl Vocabulary {
-    /// Bind the vocabulary from the discovered estate, the ADC's facts (live
+    /// Bind the vocabulary from the discovered estate, the sign-in's facts (live
     /// shape) and the explicit short name.
     pub fn infer(config: &Config, organization: Option<&str>, live: Option<&LiveFacts>, shortname: Option<&str>) -> Vocabulary {
         let facts = facts_of(config);
@@ -242,7 +242,7 @@ impl Vocabulary {
         // --- what the platform states
         match live.and_then(|l| l.customer_id.as_deref()) {
             Some(id) => derived(&mut v, "customer_id", id),
-            None => v.not_derivable.push(("customer_id", "the directory customer id (C0…); the live shape reads it from the ADC, `satz interview` asks".into())),
+            None => v.not_derivable.push(("customer_id", "the directory customer id (C0…); the live shape reads it from the sign-in, `satz interview` asks".into())),
         }
         if let Some(org) = organization.filter(|o| !o.is_empty()) {
             derived(&mut v, "customer_organization_id", org);
@@ -294,10 +294,10 @@ impl Vocabulary {
 
         match live.and_then(|l| l.first_admin.as_deref()) {
             Some(a) => derived(&mut v, "first_admin", a),
-            None => v.not_derivable.push(("first_admin", "the identity running the import; the live shape reads it from the ADC".into())),
+            None => v.not_derivable.push(("first_admin", "the identity running the import; the live shape reads it from the sign-in".into())),
         }
 
-        // --- the IaC service account and everything that follows from it
+        // --- the estate account and everything that follows from it
         let admins: Vec<&str> = facts
             .org_grants
             .iter()
@@ -328,31 +328,31 @@ impl Vocabulary {
         let infra_project = infra.as_ref().and_then(|(_, id)| facts.projects.iter().find(|p| &p.id == id));
         match (&infra, infra_project) {
             (Some((_, id)), None) => {
-                v.not_derivable.push(("infra_folder_name", format!("the infra project {} is not in the sweep", id)));
-                v.not_derivable.push(("infra_bucket_name", format!("the infra project {} is not in the sweep", id)));
+                v.not_derivable.push(("infra_folder_name", format!("the infrastructure project {} is not in the sweep", id)));
+                v.not_derivable.push(("infra_bucket_name", format!("the infrastructure project {} is not in the sweep", id)));
             }
             (Some(_), Some(p)) => {
                 match &p.folder {
-                    Some(f) => inferred(&mut v, "infra_folder_name", f, format!("the folder holding the infra project {}", p.id)),
-                    None => inferred(&mut v, "infra_folder_name", "", format!("the infra project {} sits at the top level", p.id)),
+                    Some(f) => inferred(&mut v, "infra_folder_name", f, format!("the folder holding the infrastructure project {}", p.id)),
+                    None => inferred(&mut v, "infra_folder_name", "", format!("the infrastructure project {} sits at the top level", p.id)),
                 }
                 let versioned: Vec<&str> = p.buckets.iter().filter(|(_, on)| *on).map(|(b, _)| b.as_str()).collect();
                 match (versioned.as_slice(), p.buckets.as_slice()) {
-                    ([one], _) => inferred(&mut v, "infra_bucket_name", one, format!("the one versioned bucket in the infra project {}", p.id)),
-                    ([], [(one, _)]) => inferred(&mut v, "infra_bucket_name", one, format!("the one bucket in the infra project {}", p.id)),
-                    ([], []) => v.not_derivable.push(("infra_bucket_name", format!("the infra project {} has no bucket", p.id))),
-                    (many, _) if !many.is_empty() => v.not_derivable.push(("infra_bucket_name", format!("{} versioned buckets in the infra project {}: {}", many.len(), p.id, many.join(", ")))),
-                    (_, all) => v.not_derivable.push(("infra_bucket_name", format!("{} buckets in the infra project {}, none versioned", all.len(), p.id))),
+                    ([one], _) => inferred(&mut v, "infra_bucket_name", one, format!("the one versioned bucket in the infrastructure project {}", p.id)),
+                    ([], [(one, _)]) => inferred(&mut v, "infra_bucket_name", one, format!("the one bucket in the infrastructure project {}", p.id)),
+                    ([], []) => v.not_derivable.push(("infra_bucket_name", format!("the infrastructure project {} has no bucket", p.id))),
+                    (many, _) if !many.is_empty() => v.not_derivable.push(("infra_bucket_name", format!("{} versioned buckets in the infrastructure project {}: {}", many.len(), p.id, many.join(", ")))),
+                    (_, all) => v.not_derivable.push(("infra_bucket_name", format!("{} buckets in the infrastructure project {}, none versioned", all.len(), p.id))),
                 }
             }
             (None, _) => {
-                v.not_derivable.push(("infra_folder_name", "follows from the infra project".into()));
-                v.not_derivable.push(("infra_bucket_name", "follows from the infra project".into()));
+                v.not_derivable.push(("infra_folder_name", "follows from the infrastructure project".into()));
+                v.not_derivable.push(("infra_bucket_name", "follows from the infrastructure project".into()));
             }
         }
 
-        // --- billing: the infra project's account, else the single open one
-        let billing = infra_project.and_then(|p| p.billing.clone()).map(|b| (b, Class::Inferred("the infra project's billing account".into())));
+        // --- billing: the infrastructure project's account, else the single open one
+        let billing = infra_project.and_then(|p| p.billing.clone()).map(|b| (b, Class::Inferred("the infrastructure project's billing account".into())));
         let billing = billing.or_else(|| live.and_then(|l| l.billing_account.clone()).map(|b| (b, Class::Derived)));
         match billing {
             Some((b, class)) => {
@@ -365,12 +365,12 @@ impl Vocabulary {
                     }
                 }
             }
-            None => v.not_derivable.push(("billing_account_infra", "no infra project account and no single open billing account".into())),
+            None => v.not_derivable.push(("billing_account_infra", "no infrastructure project account and no single open billing account".into())),
         }
 
         v.not_derivable.push(("customer_longname", "nothing on the platform names it; `satz interview` asks".into()));
 
-        // --- the IaC users group
+        // --- the estate account user group
         match &infra {
             Some((local, _)) => {
                 let wanted = format!("{}-users", local);
@@ -384,7 +384,7 @@ impl Vocabulary {
                     None => v.not_derivable.push(("svc_iac_users_group", format!("no group named {} among the members", wanted))),
                 }
             }
-            None => v.not_derivable.push(("svc_iac_users_group", "follows from the IaC service account".into())),
+            None => v.not_derivable.push(("svc_iac_users_group", "follows from the estate account".into())),
         }
 
         derived(&mut v, "deployment_engine", "tofu");
@@ -597,7 +597,7 @@ project:
         assert_eq!(binding(&v, "first_admin").value, "carol");
         assert_eq!(binding(&v, "customer_shortname").value, "corp");
         assert_eq!(binding(&v, "customer_shortname").class, Class::Derived);
-        assert_eq!(binding(&v, "billing_account_infra").value, "01AA-BB-CC", "the infra project's account beats the ADC's single one");
+        assert_eq!(binding(&v, "billing_account_infra").value, "01AA-BB-CC", "the infrastructure project's billing account beats the sign-in's single one");
         assert_eq!(v.not_derivable.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["customer_longname"]);
     }
 
@@ -614,7 +614,7 @@ project:
         for name in ["infra_project_name", "infra_folder_name", "infra_bucket_name", "svc_iac_users_group"] {
             assert!(v.bindings.iter().all(|b| b.name != name), "{} must not be guessed", name);
         }
-        assert!(v.bindings.iter().all(|b| b.name != "billing_account_infra"), "no infra project, no ADC: not bound");
+        assert!(v.bindings.iter().all(|b| b.name != "billing_account_infra"), "no infrastructure project, no sign-in: not bound");
     }
 
     #[test]

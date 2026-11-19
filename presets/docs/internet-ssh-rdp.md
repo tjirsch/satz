@@ -6,15 +6,15 @@ Source: `presets/cis/internet-ssh-rdp.satz`
 ## Purpose
 
 CIS 3.6 / 3.7 — SSH and RDP closed to the internet, for every network in the
-organisation at once.
+organization at once.
 
-HOW IT WORKS. A hierarchical firewall policy attached to the organisation is read
+HOW IT WORKS. A hierarchical firewall policy attached to the organization is read
 before any VPC firewall rule. It passes TCP 22 and 3389 from
 `admin_port_source_ranges` on to the VPC rules, which still decide, and denies them
 from every other address, IPv4 and IPv6 — so a VPC rule that opens them to 0.0.0.0/0
 opens nothing.
 
-ON BY DEFAULT, one of two fragments here that are. An organisation that has not closed
+ON BY DEFAULT, one of two fragments here that are. An organization that has not closed
 22 and 3389 to the internet is one scan away from the finding it will be asked about,
 and the two controls this satisfies are about internet exposure, not about internal
 administration. An estate that switches it off writes a `deviates` claim, whose
@@ -35,7 +35,7 @@ range listed here, or its access moved to IAP TCP forwarding, which reaches inst
 without an open admin port at all. Google says the same in its own SSH guidance: do
 not expose SSH directly over the public internet, and reach a bastion through IAP.
 Google's published example attaches such a policy to FOLDERS and allows only selected
-VMs; this one is organisation-wide and allows the listed ranges everywhere, which is
+VMs; this one is organization-wide and allows the listed ranges everywhere, which is
 the stricter reading and the one an estate can narrow per folder if it needs to.
 
 WHAT IS DENIED, IN FULL. SSH is TCP 22 and SCTP 22; RDP is TCP 3389 and UDP 3389 —
@@ -100,7 +100,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `admin_port_source_ranges_ipv6` | Which IPv6 ranges may still reach SSH and RDP? | edit | low | — |
 | `admin_port_source_ranges` | Which IPv4 ranges may still reach SSH and RDP (the VPC firewall rules decide for them)? | edit | high | — |
 
-**admin_port_source_ranges_ipv6** — The IPv6 half of the same decision, separate because a firewall rule's sources are IPv4 or IPv6 and never both. The default is Google's IAP range for IPv6 VMs and the unique-local block that plays RFC1918's part. An organisation with no IPv6 VMs can leave it as it is: the rule matches nothing and costs nothing.
+**admin_port_source_ranges_ipv6** — The IPv6 half of the same decision, separate because a firewall rule's sources are IPv4 or IPv6 and never both. The default is Google's IAP range for IPv6 VMs and the unique-local block that plays RFC1918's part. An organization with no IPv6 VMs can leave it as it is: the rule matches nothing and costs nothing.
 
 
 **admin_port_source_ranges** — Every address outside this list is denied on ports 22 and 3389 before any VPC rule is read. The default lists Google's IAP TCP-forwarding range — IAP reaches an instance without an open admin port — and the three private blocks, because the deny matches 0.0.0.0/0 and would otherwise cut SSH between two instances in one subnet. A bastion with a PUBLIC address needs its range here or it loses access the moment the policy attaches. Removing the private blocks denies internal SSH too, which is a narrowing some estates want.
@@ -118,7 +118,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | framework | control | title | kind | witnesses | interpretation |
 |---|---|---|---|---|---|
-| cis-gcp 4.0 | 3.6 | SSH restricted from the internet | implements | `google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4`<br>`google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6`<br>`google_compute_firewall_policy_association.cis_admin_ports` | A firewall policy attached to the organisation denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules. |
+| cis-gcp 4.0 | 3.6 | SSH restricted from the internet | implements | `google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4`<br>`google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6`<br>`google_compute_firewall_policy_association.cis_admin_ports` | A firewall policy attached to the organization denies TCP 22 from the internet before any VPC rule is read; only the listed ranges pass to the VPC rules. |
 | cis-gcp 4.0 | 3.7 | RDP restricted from the internet | implements | `google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4`<br>`google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6`<br>`google_compute_firewall_policy_association.cis_admin_ports` | As for §3.6, for TCP 3389. |
 | cis-gcp 5.0 | 3.6 | SSH restricted from the internet | implements | `google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4`<br>`google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6`<br>`google_compute_firewall_policy_association.cis_admin_ports` | As for 4.0 §3.6 (5.0 §3.6, unchanged). |
 | cis-gcp 5.0 | 3.7 | RDP restricted from the internet | implements | `google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv4`<br>`google_compute_firewall_policy_rule.cis_admin_ports_internet_ipv6`<br>`google_compute_firewall_policy_association.cis_admin_ports` | As for 4.0 §3.7 (5.0 §3.7, unchanged). |

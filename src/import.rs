@@ -1,4 +1,4 @@
-//! `satz import` — an existing organisation, an HCL tree or a Terraform state file,
+//! `satz import` — an existing organization, an HCL tree or a Terraform state file,
 //! read once and written out as Satz.
 //!
 //! The discovery half lives in `src/discovery.rs`: this module is what the command
@@ -54,7 +54,7 @@ pub(crate) fn import_state(
         .with_import_templates(&cfg);
     let mut found = discoverer.discover()?;
     let registry = discoverer.registry.as_ref().ok_or("the registry loaded above is gone")?;
-    // the state shape has no ADC: what the data carries, and the flag. A state
+    // the state shape has no sign-in: what the data carries, and the flag. A state
     // names its organization in a resource (`organizations/<n>`, `org_id`) or
     // in a top-level folder's parent, which the nesting drops.
     let organization = organization.map(|o| o.trim_start_matches("organizations/").to_string());
@@ -82,9 +82,9 @@ pub(crate) fn import_state(
 /// The live shape of `satz import`: one Cloud Asset Inventory sweep under
 /// `parent` (`organizations/<n>`, `folders/<n>` or `projects/<id>`).
 ///
-/// `identity` is as whom the sweep reads: `--as <estate>` reads the scope as that
-/// estate's IaC service account, and without it the sweep runs as the caller's
-/// own credentials. `impersonate` is the same answer as the account the
+/// `identity` is as whom the sweep reads: `--as <estate>` reads the scope as the
+/// estate account of that estate, and without it the sweep runs as the caller's
+/// own sign-in. `impersonate` is the same answer as the account the
 /// `--generate-unmapped` child is told to act as.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_org(
@@ -118,7 +118,7 @@ pub(crate) async fn import_org(
     let added = confirm_enabled_services(&mut found, &|_, _| false).await;
     // what the identity the sweep read as states, the way `init` reads it — the
     // sweep's organization is the hint, so an identity that sees many is no
-    // ambiguity. Under `--as` that identity is the estate's IaC service account,
+    // ambiguity. Under `--as` that identity is the estate account,
     // known already and never asked of the token.
     let live = crate::gcp::identity::live_defaults(true, true, org_hint.as_deref(), identity.account()).await?;
     let facts = crate::vocabulary::LiveFacts {
@@ -157,15 +157,15 @@ pub(crate) async fn import_org(
 /// commands it names finish the job by hand.
 ///
 /// It runs as the identity the run is bound to — `child.impersonate` is the
-/// estate's IaC service account whenever the sweep was given an estate (`--into`
+/// estate account whenever the sweep was given an estate (`--into`
 /// or `--as`), and `None` when it was given none and stayed on the caller's
-/// Application Default Credentials (`IDENTITIES`, `src/main.rs`) — and bills
+/// own sign-in (`IDENTITIES`, `src/main.rs`) — and bills
 /// where the estate it reads for bills: `child.quota_project` is the
 /// `billing_project` of the estate's own default provider under `--into`, and
 /// the project the file a plain sweep wrote names otherwise. The child inherits
 /// the environment; the provider block carries both.
 ///
-/// `organization` is the organisation the generated file's estate is bound to,
+/// `organization` is the organization the generated file's estate is bound to,
 /// which the HCL import refuses to write without.
 ///
 /// `already` is what the estate declares by that live id under `--into`: reported
@@ -294,7 +294,7 @@ fn report_outcomes(
 
 /// The providers the candidates' types come from, at the versions the tool
 /// config pins — so the scratch directory reads the same provider the estate is
-/// compiled against.
+/// transpiled against.
 fn providers_for(
     candidates: &[crate::generate_config::Candidate],
     registry: &ResourceRegistry,
@@ -369,7 +369,7 @@ pub(crate) fn detect_import_shape(source: Option<&str>, root: Option<&crate::con
         return Ok("hcl".into());
     }
     match path.extension().and_then(|e| e.to_str()) {
-        // recognised only so the refusal names what the file is
+        // recognized only so the refusal names what the file is
         Some("yaml") | Some("yml") => Ok("yaml".into()),
         Some("tf") => Ok("hcl".into()),
         Some("json") | Some("tfstate") => Ok("state".into()),
@@ -409,13 +409,13 @@ pub(crate) async fn resolve_import_parent(
     Ok(format!("organizations/{}", org.trim_start_matches("organizations/")))
 }
 
-/// Refused unless the swept scope is the estate's organisation or inside it
-/// (ADR 0069): a sweep of another organisation run as this estate's service
-/// account would write that organisation's resources into this estate.
+/// Refused unless the swept scope is the estate's organization or inside it
+/// (ADR 0069): a sweep of another organization run as this estate's service
+/// account would write that organization's resources into this estate.
 ///
 /// `organizations/<n>` is compared as written; a folder or a project is walked up
 /// through Resource Manager, as the identity the run is bound to, to the
-/// organisation above it. A walk that cannot be read is a refusal too — satz does
+/// organization above it. A walk that cannot be read is a refusal too — satz does
 /// not sweep a scope it could not place.
 pub(crate) async fn refuse_scope_outside(parent: &str, org: &str, estate: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let found = if parent.starts_with("organizations/") {
@@ -423,7 +423,7 @@ pub(crate) async fn refuse_scope_outside(parent: &str, org: &str, estate: &Path)
     } else {
         let unreadable = |e: String| {
             format!(
-                "import: which organisation {} belongs to cannot be read ({}), so satz cannot tell whether it is inside organizations/{}, the one {} is bound to. Nothing was swept.",
+                "import: which organization {} belongs to cannot be read ({}), so satz cannot tell whether it is inside organizations/{}, the one {} is bound to. Nothing was swept.",
                 parent,
                 e,
                 org,
@@ -436,7 +436,7 @@ pub(crate) async fn refuse_scope_outside(parent: &str, org: &str, estate: &Path)
     Ok(scope_verdict(parent, &found, org, estate)?)
 }
 
-/// The verdict of [`refuse_scope_outside`], once the scope's organisation is known.
+/// The verdict of [`refuse_scope_outside`], once the scope's organization is known.
 fn scope_verdict(parent: &str, found: &str, org: &str, estate: &Path) -> Result<(), String> {
     let want = format!("organizations/{}", org.trim_start_matches("organizations/"));
     if found == want {
@@ -444,7 +444,7 @@ fn scope_verdict(parent: &str, found: &str, org: &str, estate: &Path) -> Result<
     }
     let place = if found == parent { String::new() } else { format!(", which is inside {}", found) };
     Err(format!(
-        "import: the scope is {}{}, and {} is bound to {} — a sweep of another organisation would write its resources into this estate. \
+        "import: the scope is {}{}, and {} is bound to {} — a sweep of another organization would write its resources into this estate. \
          Sweep a scope inside {}, or name the estate bound to {}. Nothing was swept.",
         parent,
         place,
@@ -477,18 +477,18 @@ pub(crate) const MISSING_ORGANIZATION: &str = "import: no organization id — no
 from `customer_organization_id`. Nothing written. Name it with `--organization <n>` (state shape), or sweep \
 `organizations/<n>` (live shape).";
 
-/// A discovered `Config` as a Satz estate that compiles as-is: the local
+/// A discovered `Config` as a Satz estate that transpiles as-is: the local
 /// backend the emitter requires, `customer_organization_id` taken from the
 /// resources (every `organizations/<n>` reference or `org_id` names it) or the
 /// hint the shape carries, and referenced wherever the number was written, the
 /// document shaped into the language's own forms (`satz_core::condense`),
 /// printed by the same printer the yaml import uses, and shorthand type keys
-/// (`folder`, `project`) normalised to provider names.
+/// (`folder`, `project`) normalized to provider names.
 ///
 /// Nothing is written when neither names an organization: the estate would
 /// hold `MISSING_ORGANIZATION`'s invalid literals.
 ///
-/// Discovery emits plain data — no anchors, tags, includes or nulls — so no
+/// Discovery writes plain data — no anchors, tags, includes or nulls — so no
 /// dialect pre-pass is needed; that is what makes the direct route possible.
 pub(crate) fn discovered_to_satz(
     config: &Config,
@@ -503,7 +503,7 @@ pub(crate) fn discovered_to_satz(
         other => return Err(format!("discovered config is not a mapping: {:?}", other).into()),
     };
     if !top.contains_key(serde_yaml::Value::String("terraform".into())) {
-        // the scaffold `init` writes: the local backend for day 0 and, once
+        // the scaffold `init` writes: the local backend for the bootstrap and, once
         // the state bucket is known, the gcs one `deployment_mode` switches to
         let mut backend: serde_yaml::Value =
             serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n")?;
@@ -517,12 +517,12 @@ pub(crate) fn discovered_to_satz(
         }
         top.insert(serde_yaml::Value::String("terraform".into()), backend);
     }
-    // Root-scoped resources (org IAM, org policies, groups) use the root
+    // Root-scoped resources (organization IAM, organization policies, groups) use the root
     // provider alias, which an estate declares in `providers { … }`; without
     // it `tofu plan` says "Provider configuration not present" (live-run F10).
     if !top.contains_key(serde_yaml::Value::String("providers".into())) {
-        // Org-scoped APIs (Org Policy, Cloud Identity) need a quota project
-        // that enables them, the way the Day-0 template uses the infra
+        // Org-scoped APIs (Organization Policy, Cloud Identity) need a quota project
+        // that enables them, the way the bootstrap template uses the infrastructure
         // project. Review it.
         let billing = quota_project(config);
         let quota = billing
@@ -683,7 +683,7 @@ pub(crate) async fn map_types(cfg: ImportConfig, only: Vec<String>, verbose: boo
 /// carried verbatim inside `hcl trust` (`--wrap-all`: everything), one estate.
 ///
 /// `final_output` is where the estate is written, resolved already.
-/// `organization` is `--organization`, or the organisation the sweep that ran
+/// `organization` is `--organization`, or the organization the sweep that ran
 /// `--generate-unmapped` read: the estate is bound to one, and the import refuses
 /// to write it without one (`satz_hcl::import`).
 pub(crate) fn import_hcl(
@@ -788,11 +788,11 @@ impl satz_hcl::Schema for RegistrySchema<'_> {
 
 /// The live shape with `--into`: the delta against what the estate declares.
 ///
-/// `identity` is as whom the sweep reads — the estate's IaC service account, or the
-/// caller's own credentials for a local-mode estate or under `--no-impersonate` —
+/// `identity` is as whom the sweep reads — the estate account, or the
+/// caller's own sign-in for a local-mode estate or under `--no-impersonate` —
 /// and `impersonate` the same answer as the account `--generate-unmapped`'s child
 /// acts as. The child bills where the estate bills: the `billing_project` of the
-/// estate's own default `google` provider, as the compile emits it.
+/// estate's own default `google` provider, as the transpile writes it.
 ///
 /// Everything the run writes is composed in memory first; the packs, the
 /// estate's `use` lines and the removal of a pack nothing is left in reach disk
@@ -991,8 +991,8 @@ pub(crate) async fn import_delta(
     }
     if generate_unmapped {
         let (unmapped, already) = delta::undeclared(&found.skipped, &declared, &|s| found.skipped_import_id(s));
-        // the project the estate's own default provider bills to, as the compile
-        // emitted it — the estate's, never one chosen from the sweep
+        // the project the estate's own default provider bills to, as the transpile
+        // written it — the estate's, never one chosen from the sweep
         let quota = crate::emitted_billing_project(&out.providers_tf)?;
         let child = generate_config::ChildProvider { impersonate: impersonate.as_deref(), quota_project: quota.as_deref() };
         let org = out.org_id.clone().or_else(|| found.organization.clone());
@@ -1240,9 +1240,9 @@ fn add_needed(
 
 /// The APIs a live import's own reads call, billed to the infrastructure project of
 /// the estate it is given: the sweep (Cloud Asset), the enabled services (Service
-/// Usage), the billing links (Cloud Billing), the scope's organisation and the
+/// Usage), the billing links (Cloud Billing), the scope's organization and the
 /// projects (Resource Manager), and the lookups `--into` resolves the estate's
-/// declarations with (Org Policy, Cloud Identity).
+/// declarations with (Organization Policy, Cloud Identity).
 pub(crate) const READ_APIS: [&str; 6] = [
     "cloudasset.googleapis.com",
     "cloudbilling.googleapis.com",
@@ -1308,13 +1308,13 @@ fn keep_enabled(
 
 /// The alphabetically first project id in the discovered tree, at any depth.
 /// The APIs an organization-scoped read is billed against: a quota project
-/// without them makes every org policy, service list and contact read fail
+/// without them makes every organization policy, service list and contact read fail
 /// with a 403, which is how a live import's `tofu plan` came out as 25 errors
 /// on the test organization.
 const QUOTA_PROJECT_APIS: [&str; 2] = ["orgpolicy.googleapis.com", "serviceusage.googleapis.com"];
 
 /// The project the providers bill organization-scoped calls to: the first
-/// (by id) that enables the APIs those calls need — the day-0 infra project
+/// (by id) that enables the APIs those calls need — the bootstrap's infrastructure project
 /// does — else the first project at all. `(id, whether it enables them)`, `None`
 /// without a project.
 pub(crate) fn quota_project_choice(config: &Config) -> Option<(String, bool)> {
@@ -1395,7 +1395,7 @@ pub(crate) fn infer_org_id(v: &serde_yaml::Value) -> Option<String> {
 #[cfg(test)]
 mod discover_satz {
     //! `discover-* --satz`: the discovered data must come out as an estate the
-    //! fragment pipeline compiles, with the preamble the emitter requires and
+    //! fragment pipeline transpiles, with the preamble the emitter requires and
     //! every discovered id carried as an import.
     use super::*;
     use crate::Commands;
@@ -1444,7 +1444,7 @@ google_organization_iam_member:
         let text = discovered_to_satz(&config, "discovered", None, &reg, &crate::vocabulary::Vocabulary::default()).unwrap();
         assert!(text.contains("customer_organization_id = \"123456789012\""), "{}", text);
         assert!(text.contains("terraform {"), "{}", text);
-        assert!(text.contains("google_folder {"), "shorthand keys must be normalised:\n{}", text);
+        assert!(text.contains("google_folder {"), "shorthand keys must be normalized:\n{}", text);
         // the condensed forms: one line per service and per grant edge, a
         // single block as a block, the organization referenced not repeated,
         // a project name equal to its id dropped
@@ -1463,7 +1463,7 @@ google_organization_iam_member:
 
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
-            .unwrap_or_else(|e| panic!("discovered estate does not compile: {:?}\n{}", e, text));
+            .unwrap_or_else(|e| panic!("discovered estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty());
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
@@ -1497,7 +1497,7 @@ google_organization_iam_member:
 
     #[test]
     fn a_counted_grant_emits_its_own_address() {
-        // one principal, one role, two folders: the map form alone emits one
+        // one principal, one role, two folders: the map form alone writes one
         // address (its label hashes member + role) and the emitter refuses;
         // with the counter the second edge is a labelled resource of its own
         let yaml = r#"
@@ -1526,7 +1526,7 @@ folder:
 
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
-            .unwrap_or_else(|e| panic!("counted estate does not compile: {:?}\n{}", e, text));
+            .unwrap_or_else(|e| panic!("counted estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
@@ -1590,7 +1590,7 @@ project:
         assert!(text.contains("bucket = \"acme-logs-001\""), "{}", text);
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
-            .unwrap_or_else(|e| panic!("pinned estate does not compile: {:?}\n{}", e, text));
+            .unwrap_or_else(|e| panic!("pinned estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
@@ -1604,7 +1604,7 @@ project:
 
     #[test]
     fn the_vocabulary_is_bound_in_the_params_and_referenced_in_the_body() {
-        // the day-0 params, inferred from what the sweep found, each marked
+        // the bootstrap params, inferred from what the sweep found, each marked
         // with its rule; every literal they name becomes the reference the
         // library spells, and an interpolated import id still resolves
         let yaml = r#"
@@ -1653,12 +1653,12 @@ project:
         assert!(text.contains("\"import-id\" = \"{customer_organization_id} roles/resourcemanager.organizationAdmin serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com\""), "{}", text);
         assert!(text.contains("project_id = \"{customer_shortname}-logs-001\""), "{}", text);
         assert!(text.contains("billing_account = \"\""), "a project without an account says so:\n{}", text);
-        assert!(!text.contains("billing_account = \"01AA-BB-CC\""), "the infra project's account is the param:\n{}", text);
+        assert!(!text.contains("billing_account = \"01AA-BB-CC\""), "the infrastructure project's account is the param:\n{}", text);
         assert!(text.contains("bucket = infra_bucket_name") && text.contains("prefix = \"hcl/state\""), "the gcs backend beside the local one:\n{}", text);
 
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
-            .unwrap_or_else(|e| panic!("vocabulary estate does not compile: {:?}\n{}", e, text));
+            .unwrap_or_else(|e| panic!("vocabulary estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
@@ -1675,7 +1675,7 @@ project:
     }
 
     /// Cloud Asset went on listing a switched-off service as `ENABLED` on a live
-    /// organisation, and `tofu plan` refused its import ("Cannot import
+    /// organization, and `tofu plan` refused its import ("Cannot import
     /// non-existent remote object"). What Service Usage does not report enabled
     /// leaves the estate and is listed as skipped; a service it did not answer
     /// for is not enabled either.
@@ -1703,7 +1703,7 @@ project:
         assert!(skipped.iter().all(|s| matches!(s.reason, crate::discovery::SkipReason::NotLive(_))));
     }
 
-    /// A whole-organisation import planned four 403s: the `_Default`/`_Required` log
+    /// A whole-organization import planned four 403s: the `_Default`/`_Required` log
     /// bucket configs of two projects whose Logging API is off, read through each
     /// project's own provider. The resources inside a project node need their APIs on
     /// that project; its own services do not count, since the provider around the
@@ -1735,7 +1735,7 @@ google_storage_bucket:
     }
 
     /// What Service Usage reports off is added with the import id it has once the
-    /// preflight switched it on; what is on, or listed already, is left alone; what it
+    /// API prerequisites check switched it on; what is on, or listed already, is left alone; what it
     /// did not answer for is named, never guessed.
     #[test]
     fn an_api_the_project_has_off_is_added_to_its_services() {
@@ -1816,23 +1816,23 @@ folder:
         let v: serde_yaml::Value = serde_yaml::from_str("a:\n  b:\n    org_id: \"222222222222\"\n").unwrap();
         assert_eq!(infer_org_id(&v).as_deref(), Some("222222222222"));
         let v: serde_yaml::Value = serde_yaml::from_str("a:\n  name: organizations/1/policies/x\n").unwrap();
-        assert_eq!(infer_org_id(&v), None, "a policy name is not an org reference");
+        assert_eq!(infer_org_id(&v), None, "a policy name is not an organization reference");
         assert_eq!(satz_output_path("yaml", PathBuf::from("discovered.yaml")), PathBuf::from("yaml/discovered.satz"));
         assert_eq!(satz_output_path("yaml", PathBuf::from("/abs/x.satz")), PathBuf::from("/abs/x.satz"));
     }
 }
 
 #[cfg(test)]
-mod scope_in_organisation {
+mod scope_in_organization {
     //! `import --into A` / `--as A` sweeps a scope as A's service account and
-    //! writes (or reads) A's resources: a scope of another organisation is refused
+    //! writes (or reads) A's resources: a scope of another organization is refused
     //! before anything is swept (ADR 0069).
     use super::*;
 
     #[test]
-    fn a_scope_in_the_estates_organisation_passes_and_any_other_is_refused() {
+    fn a_scope_in_the_estates_organization_passes_and_any_other_is_refused() {
         let estate = Path::new("yaml/acme.satz");
-        scope_verdict("organizations/123456789012", "organizations/123456789012", "123456789012", estate).expect("its own organisation");
+        scope_verdict("organizations/123456789012", "organizations/123456789012", "123456789012", estate).expect("its own organization");
         scope_verdict("folders/123456789", "organizations/123456789012", "123456789012", estate).expect("a folder inside it");
         let e = scope_verdict("organizations/222222222222", "organizations/222222222222", "123456789012", estate).unwrap_err();
         assert!(e.contains("the scope is organizations/222222222222, and yaml/acme.satz is bound to organizations/123456789012"), "{e}");
@@ -1847,7 +1847,7 @@ mod state_without_an_organization {
     //! Every estate is bound to an organization, and a state file can name
     //! none.
     //!
-    //! Measured on a live organisation: `tofu show -json` carried no
+    //! Measured on a live organization: `tofu show -json` carried no
     //! organization id, and the import warned and wrote the estate anyway —
     //! `parent = "organizations/"` on a folder and `org_id = ""` on an
     //! organization grant, which no apply can use.

@@ -6,18 +6,18 @@ Source: `presets/cis/access-approval.satz`
 ## Purpose
 
 CIS 4.0 §2.15 / 5.0 §2.16 — Access Approval: Google personnel reach the
-organisation's content only after someone approves the request.
+organization's content only after someone approves the request.
 
 Opt-in because it changes every support case: a Google engineer who needs to
 look at the customer's content waits until someone on the notification list
 approves. Who that is, is the customer's decision.
 
-Access Approval needs Access Transparency enabled for the organisation first.
-Access Transparency has no provider resource: an organisation administrator
+Access Approval needs Access Transparency enabled for the organization first.
+Access Transparency has no provider resource: an organization administrator
 switches it on in the Cloud console (IAM & Admin → Settings) before the apply
 that creates these settings, and the apply fails without it.
 
-Deleting these settings switches Access Approval off for the organisation.
+Deleting these settings switches Access Approval off for the organization.
 
 ## Use it
 
@@ -52,7 +52,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `access_approval_notification_emails` | Which addresses receive Google's access approval requests? | edit | low | — |
 
-**access_approval_notification_emails** — Every request by Google personnel to reach the organisation's content waits for an approval from this list. Nobody on it, or an unwatched mailbox, stalls support cases until someone answers.
+**access_approval_notification_emails** — Every request by Google personnel to reach the organization's content waits for an approval from this list. Nobody on it, or an unwatched mailbox, stalls support cases until someone answers.
 
 
 ## Contributes
@@ -65,12 +65,12 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | framework | control | title | kind | witnesses | interpretation |
 |---|---|---|---|---|---|
-| cis-gcp 4.0 | 2.15 | Access Approval enabled | implements | `google_organization_access_approval_settings.access_approval` | Access Approval covers every supported service at the organisation, so Google personnel reach its content only after an approval. |
+| cis-gcp 4.0 | 2.15 | Access Approval enabled | implements | `google_organization_access_approval_settings.access_approval` | Access Approval covers every supported service at the organization, so Google personnel reach its content only after an approval. |
 | cis-gcp 5.0 | 2.16 | Access Approval enabled | implements | `google_organization_access_approval_settings.access_approval` | As for 4.0 §2.15 (5.0 §2.16: its new §2.2 moved the rest of §2 by one). |
 
 **What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
 
-- **Access Approval enabled** (cis-gcp 4.0 §2.15, cis-gcp 5.0 §2.16) — Google personnel reach the organisation's content only after someone approves the request.
+- **Access Approval enabled** (cis-gcp 4.0 §2.15, cis-gcp 5.0 §2.16) — Google personnel reach the organization's content only after someone approves the request.
 
 **Manual duties** (a control stays *partial* until each is attested):
 

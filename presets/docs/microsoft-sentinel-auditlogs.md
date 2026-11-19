@@ -5,13 +5,13 @@ Source: `presets/integrations/microsoft-sentinel-auditlogs.satz`
 
 ## Purpose
 
-The organisation's audit logs, on their way to Microsoft Sentinel.
+The organization's audit logs, on their way to Microsoft Sentinel.
 
 NEEDS `presets/integrations/microsoft-sentinel.satz`: the connector authenticates
 through the federation that file creates and reads as the account it creates.
-Used without it, the compile stops with `unknown param 'sentinel_project_id'`.
+Used without it, the transpile stops with `unknown param 'sentinel_project_id'`.
 
-FOUR RESOURCES, AND EACH ONE IS LOAD-BEARING: an organisation sink that exports
+FOUR RESOURCES, AND EACH ONE IS LOAD-BEARING: an organization sink that exports
 the four audit log streams with `include_children`, so every project is covered
 and a project created tomorrow is covered too; the topic it writes to; the
 subscription Sentinel pulls from; and two grants — `roles/pubsub.publisher` for
@@ -26,7 +26,7 @@ not make. The predefined `roles/pubsub.subscriber` on this subscription alone is
 the same access where it is needed and none where it is not.
 
 THE FILTER IS OR-ONLY. Cloud Logging charges a sink nothing for what it exports,
-but an `AND`, a `NOT` or a `!=` in an organisation sink's filter narrows it per
+but an `AND`, a `NOT` or a `!=` in an organization sink's filter narrows it per
 project in ways that are hard to read back; the audit streams are named as four
 alternatives, exactly as the archive sink names them. Data access logs are in the
 list and are the loud half of the volume — Sentinel's own ingestion is charged by
@@ -41,7 +41,7 @@ replaced when its filter changes and the replacement drops what was in flight.
 
 NO CLAIM. Exporting audit logs to a SIEM does not satisfy a retention control:
 `monitoring/organization-audit-logsink.satz` is what claims those, and this sink
-is a copy leaving the organisation, not the archive.
+is a copy leaving the organization, not the archive.
 
 ## Use it
 
@@ -83,7 +83,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `sentinel_auditlogs_filter` | Which audit logs travel to Sentinel — all four streams, or without data access? | recreate | low | — |
 
-**sentinel_auditlogs_filter** — Data Access logs are most of the volume, and Sentinel is charged by the gigabyte ingested: leaving them in buys full visibility of who read what, taking them out cuts the bill and the answer to that question with it. The organisation's own archive keeps whatever this sink drops. Widening it later replaces the sink, and what was in flight at that moment is not re-sent.
+**sentinel_auditlogs_filter** — Data Access logs are most of the volume, and Sentinel is charged by the gigabyte ingested: leaving them in buys full visibility of who read what, taking them out cuts the bill and the answer to that question with it. The organization's own archive keeps whatever this sink drops. Widening it later replaces the sink, and what was in flight at that moment is not re-sent.
 
 
 ## Contributes

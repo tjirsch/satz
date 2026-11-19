@@ -45,7 +45,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `essential_contacts_email` | The address that receives every Google notification for the organisation (a group, never a person) | edit | high | — |
+| `essential_contacts_email` | The address that receives every Google notification for the organization (a group, never a person) | edit | high | — |
 
 **essential_contacts_email** — Suspension notices, security advisories and legal notices go here and nowhere else. The mailbox must exist and accept external mail; a wrong address means Google's warnings are read by nobody until the consequence arrives.
 

@@ -9,7 +9,7 @@
 
 Defaults: docs/language.md → docs/language.html, title from the
 first `# heading`. Any `![…](name.svg)` image whose file sits beside the
-markdown is inlined and recoloured through CSS tokens so it follows the
+markdown is inlined and recolored through CSS tokens so it follows the
 viewer's theme. One source, two renderings: the markdown is what the repo
 keeps and GitHub shows; this page is the same text, parsed by the same
 parser: cmark-gfm, GitHub's own (ADR 0008).
@@ -254,7 +254,7 @@ def github_slug(text: str) -> str:
 def heading_ids(body: str) -> str:
     """GitHub's id on every heading, a repeat numbered `-1`, `-2` in page order,
     so an anchor written against GitHub lands on the site and the reverse.
-    cmark-gfm emits none; GitHub adds them after parsing, and so does this."""
+    cmark-gfm writes none; GitHub adds them after parsing, and so does this."""
     seen: Counter = Counter()
 
     def one(m: "re.Match[str]") -> str:

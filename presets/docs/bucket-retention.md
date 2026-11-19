@@ -7,16 +7,16 @@ Source: `presets/cis/bucket-retention.satz`
 
 CIS 4.0 §2.3 / 5.0 §2.4 — retention on the log-export bucket.
 
-Opt-in because it constrains EVERY bucket in the organisation, not only the
+Opt-in because it constrains EVERY bucket in the organization, not only the
 log sink's: once a duration list is set, a bucket may carry a retention
 policy only if its duration is in the list. An estate with buckets on other
 durations loses the ability to update them.
 
 The constraint is a MANAGED one carrying a parameter, not a bare boolean —
-verified against a live organisation's OrgPolicy `ListConstraints`.
+verified against a live organization's OrgPolicy `ListConstraints`.
 
 It is a `contributes`, not an `implements`: the control asks for retention
-configured USING BUCKET LOCK, and no org policy locks a bucket. The
+configured USING BUCKET LOCK, and no organization policy locks a bucket. The
 audit-logsink pack carries the same duty.
 
 ## Use it
@@ -52,16 +52,16 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `allowed_bucket_retention_seconds` | The retention durations, in seconds, a bucket's retention policy may use | edit | low | — |
 
-**allowed_bucket_retention_seconds** — The default is the 400 days the audit-logsink pack retains. Every bucket in the organisation with a retention policy on another duration can no longer be updated once this is enforced, so the estate's other durations have to be listed first.
+**allowed_bucket_retention_seconds** — The default is the 400 days the audit-logsink pack retains. Every bucket in the organization with a retention policy on another duration can no longer be updated once this is enforced, so the estate's other durations have to be listed first.
 
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_bucket_retention_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_bucket_retention_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 

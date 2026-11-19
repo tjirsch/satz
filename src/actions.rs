@@ -295,7 +295,7 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// Render one argument for `shell`: a plain argument as it is, anything else quoted.
-/// A backslash is plain on Windows, where it separates path components; `,` and `@`
+/// A backslash is plain on Windows, where it separates path segments; `,` and `@`
 /// are not, because PowerShell reads an unquoted one as an array or a splat.
 fn quote_for(s: &str, shell: Shell) -> String {
     let plain = match shell {
@@ -403,7 +403,7 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
 
     // Locate and vet every action BEFORE spawning any of them: a run that dies
     // half-way because the fourth script was not executable has already changed the
-    // organisation with the first three.
+    // organization with the first three.
     let mut plan: Vec<(&ResolvedAction, PathBuf, Vec<String>)> = Vec::new();
     for a in &selected {
         let exe = locate(a, opts).map_err(|e| format!("action \"{}\" ({}:{}): {}", a.name, a.file, a.line, e))?;
@@ -487,7 +487,7 @@ pub(crate) fn run(actions: &[ResolvedAction], opts: &RunOptions) -> Result<(), S
             Some(0) => {}
             // Propagate rather than wrap. An action's exit code is its own contract
             // with whoever is reading it, and the remaining actions do not run: a
-            // failed step is not a reason to keep changing the organisation.
+            // failed step is not a reason to keep changing the organization.
             Some(code) => {
                 eprintln!("action \"{}\" failed (exit {}) — stopping, {} action(s) not run", a.name, code, plan.len() - 1);
                 std::process::exit(code);

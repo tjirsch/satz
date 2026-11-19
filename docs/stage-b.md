@@ -11,7 +11,7 @@ stays the reference until the last increment flips the default.
 dialect composes textually: packs reference anchors their includer defines, so a
 pack file cannot even parse standalone — per-file fragments are impossible in
 YAML-land without reimplementing anchor scoping. Satz already has real parameter
-scoping (pack defaults, estate wins), so the front-end compiles the satz AST
+scoping (pack defaults, estate wins), so the front-end transpiles the satz AST
 (`satz_core::satz::File`) straight to `Vec<Fragment>` — one per source file —
 with resolved params and structural scope. The YAML dialect stays supported on
 the old pipeline until it retires (M3); MERGE_KEY_PREFIX and the rename passes
@@ -19,7 +19,7 @@ die together with that pipeline's composition step.
 
 Corpus cases gain `main.satz` twins so both pipelines share one source:
 - pipeline A: `main.satz` → gen.yaml → include/rename/fold → walk → HCL
-- pipeline B: `main.satz` → fragments → `algebra::fold` → emit from `Folded`
+- pipeline B: `main.satz` → fragments → `algebra::fold` → write from `Folded`
 
 The harness asserts **A(satz) == existing snapshot** (proves the satz twin is a
 faithful conversion, continuously) and **B == A** (the differential gate),
@@ -47,7 +47,7 @@ coverage without failing the build.
   and the walk-interception paths; scope-as-typing replaces them. YAML inputs
   keep the old pipeline until M3 retires the dialect.
 - **I5 — IR-level adoption diffs**: `presets::sem_equal` (and later the
-  `.diff.satz` content) compares folded IR instead of compiled YAML twins.
+  `.diff.satz` content) compares folded IR instead of transpiled YAML twins.
 
 ## Parity notes (collected as they are discovered)
 

@@ -61,7 +61,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
 | `network_host_project_id` | The Google project that hosts the shared VPC | recreate | high | — |
-| `network_host_project_folder` | The folder the host project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | — |
+| `network_host_project_folder` | The folder the host project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | — |
 
 **network_host_project_id** — A project id is immutable. Changing it later creates a second host project and a second network, and every project attached to the first stays there.
 
@@ -83,7 +83,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

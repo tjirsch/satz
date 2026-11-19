@@ -10,10 +10,10 @@
 //!
 //! The checks are the ones that already exist; what is new is that they are reachable
 //! from outside the repository, in the order a pack fails them, as the same `Finding`
-//! the compile, `satz lsp` and `satz_transpile_check` produce. Nothing renders them
+//! the transpile, `satz lsp` and `satz_transpile_check` produce. Nothing renders them
 //! specially: an editor already knows that shape.
 //!
-//! A pack is a fragment, so to learn what it emits satz folds it into an estate. It
+//! A pack is a fragment, so to learn what it writes satz folds it into an estate. It
 //! synthesises one — the documented example values for the estate's own params, the
 //! pack's own declared defaults for its questions — which checks the pack the way a
 //! customer first meets it. `--against <estate>` judges it inside a real estate
@@ -31,7 +31,7 @@ type BoxErr = Box<dyn std::error::Error>;
 
 /// The estate params a pack may read that no pack declares — the estate's own
 /// vocabulary (`presets/estate-core.satz`). Bound to the documented example values,
-/// so a pack that reads one compiles and a pack that reads something else says so.
+/// so a pack that reads one transpiles and a pack that reads something else says so.
 const EXAMPLE_PARAMS: &[(&str, &str)] = &[
     ("customer_id", "C0example"),
     ("customer_organization_id", "123456789012"),
@@ -74,7 +74,7 @@ fn example_export(name: &str) -> &'static str {
 
 /// The interface file the review's estate uses when the pack reads interface values: a
 /// pack written for delegated access reads the project or the folder it was given, and
-/// outside an estate that was given one it does not compile. Every value it reads is
+/// outside an estate that was given one it does not transpile. Every value it reads is
 /// here, as a literal example.
 pub(crate) fn synthetic_interface(reads: &std::collections::BTreeSet<String>) -> String {
     let mut s = String::from(
@@ -106,7 +106,7 @@ pub(crate) fn synthetic_estate(pack: &Path, interface: Option<&Path>) -> String 
     if let Some(i) = interface {
         s.push_str(&format!("use \"{}\"\n", crate::fsx::slash(i)));
     }
-    // `/` between components: a `\` in a Satz string is an escape
+    // `/` between path segments: a `\` in a Satz string is an escape
     s.push_str(&format!("use \"{}\"\n", crate::fsx::slash(pack)));
     s
 }
@@ -280,13 +280,13 @@ pub(crate) fn review(
         }
     }
 
-    // no private data: a pack written against its author's own organisation carries its
+    // no private data: a pack written against its author's own organization carries its
     // ids, domains and addresses, and each one becomes a param — or a documented example
     // value — before the pack goes upstream. The rules and the allow-lists are the
     // repository's privacy gate's (`src/privacy_shapes.rs`).
     f.extend(private_shapes(&pack, &src));
 
-    // The fold: a pack is a fragment, so what it emits is only knowable inside an
+    // The fold: a pack is a fragment, so what it writes is only knowable inside an
     // estate. Everything below reads that estate. The synthetic one lives in a scratch
     // directory this review alone owns, removed on every return below.
     let mut scratch: Option<Scratch> = None;
@@ -317,9 +317,9 @@ pub(crate) fn review(
         }
     }
 
-    // 5. it compiles, and 9. everything the compile itself checks — raw HCL, actions,
+    // 5. it transpiles, and 9. everything the transpile itself checks — raw HCL, actions,
     //    required arguments — arrives as the findings the CLI and the editor already
-    //    read. The compile is internal, so it prints nothing: this report is the output.
+    //    read. The transpile is internal, so it prints nothing: this report is the output.
     let compiled = crate::pipeline_b_compile(
         &estate,
         tool_config,
@@ -335,7 +335,7 @@ pub(crate) fn review(
                 Some(refusal) => refusal.brief(),
                 None => first_line(&e.to_string()),
             };
-            f.push(at(&pack, None, Severity::Error, format!("does not compile inside an estate: {}", why)));
+            f.push(at(&pack, None, Severity::Error, format!("does not transpile inside an estate: {}", why)));
             return Ok(Review { pack: pack.display().to_string(), folded_into, emits: Vec::new(), findings: f });
         }
     };
@@ -356,8 +356,8 @@ pub(crate) fn review(
                 None => Severity::Warning,
             },
             match against {
-                Some(e) => format!("{} emits nothing from this pack — does that estate `use` it?", e.display()),
-                None => "it emits no resource in a fresh estate — a pack whose resources are all behind a \
+                Some(e) => format!("{} writes nothing from this pack — does that estate `use` it?", e.display()),
+                None => "it writes no resource in a fresh estate — a pack whose resources are all behind a \
                          `when` is checked with `--against <estate>`"
                     .to_string(),
             },
@@ -380,7 +380,7 @@ pub(crate) fn review(
                 n.param,
                 n.severity,
                 n.run,
-                if blocks { ", and every command that writes to the organisation refuses until then" } else { "" },
+                if blocks { ", and every command that writes to the organization refuses until then" } else { "" },
                 n.param
             ),
         ));
@@ -463,7 +463,7 @@ pub(crate) fn review(
                 Severity::Error,
                 format!(
                     "enforces the legacy constraint {}, which Google replaced with {} — run the replacement \
-                     alone and declare this one `spec {{ reset = true }}`, or an organisation ends up with \
+                     alone and declare this one `spec {{ reset = true }}`, or an organization ends up with \
                      both set from two places",
                     constraint, managed
                 ),
@@ -471,8 +471,8 @@ pub(crate) fn review(
         }
     }
 
-    // 9. what this pack obliges an estate to declare, from the types it emits: the
-    //    roles its IaC service account needs and the APIs its infra project must
+    // 9. what this pack obliges an estate to declare, from the types it writes: the
+    //    roles its estate account needs and the APIs its infrastructure project must
     //    enable. `satz update-prerequisites` writes exactly these into a customer's
     //    estate — saying them here is what tells the author what adopting it costs.
     let mut roles: std::collections::BTreeSet<&str> = Default::default();
@@ -491,8 +491,8 @@ pub(crate) fn review(
             None,
             Severity::Error,
             format!(
-                "emits {} — no row in satz's prerequisite table, so neither the role its IaC service account \
-                 needs nor the API that serves it can be checked. A type the library emits carries a row \
+                "writes {} — no row in satz's prerequisite table, so neither the role its estate account \
+                 needs nor the API that serves it can be checked. A type the library writes carries a row \
                  (src/prerequisites.rs); until it does, an estate using this pack fails its apply on a \
                  permission or an API nobody named",
                 unknown.join(", ")
@@ -531,7 +531,7 @@ pub(crate) fn review(
                     None,
                     Severity::Warning,
                     format!(
-                        "emits {} — `satz adopt` has no rule for {}, so an object that already exists cannot be \
+                        "writes {} — `satz adopt` has no rule for {}, so an object that already exists cannot be \
                          brought under management except by `tofu import` by hand. Add `import_id:` (the id \
                          follows from what the pack declares) or `match_on:` (a live lookup) to the row in \
                          import-config.yaml",
@@ -552,7 +552,7 @@ pub(crate) fn review(
         Err(e) => f.push(at(&pack, None, Severity::Error, format!("adoption rules not checked: {}", e))),
     }
 
-    // What the compile said that names this pack's own file — raw HCL it carries, an
+    // What the transpile said that names this pack's own file — raw HCL it carries, an
     // action it declares. The estate-wide findings are about the scratch estate.
     for finding in out.findings.iter().filter(|x| x.file.as_deref().is_some_and(|file| same_file(file, &pack))) {
         f.push(finding.clone());
@@ -568,7 +568,7 @@ pub(crate) fn review(
 
 /// Every token of the pack shaped like private data that is not a documented example
 /// value, one finding each at its line. An error: the library's bar is the bar a pack
-/// goes upstream with, and a pack that keeps its author's organisation in it cannot.
+/// goes upstream with, and a pack that keeps its author's organization in it cannot.
 fn private_shapes(pack: &Path, src: &str) -> Vec<Finding> {
     crate::privacy_shapes::scan(src)
         .into_iter()
@@ -577,7 +577,7 @@ fn private_shapes(pack: &Path, src: &str) -> Vec<Finding> {
                 Severity::Error,
                 Kind::PrivateShape,
                 format!(
-                    "`{}` looks like {} — a pack that goes upstream names no organisation: make it a param, or \
+                    "`{}` looks like {} — a pack that goes upstream names no organization: make it a param, or \
                      use the documented example value (docs/examples.md)",
                     hit.token,
                     hit.shape.describe()
@@ -586,7 +586,7 @@ fn private_shapes(pack: &Path, src: &str) -> Vec<Finding> {
             .in_group("shaped like private data")
             // one block per shape: the rows name the tokens, the sentence is said once
             .shared(format!(
-                "Each looks like {} — a pack that goes upstream names no organisation: make it a param, or \
+                "Each looks like {} — a pack that goes upstream names no organization: make it a param, or \
                  use the documented example value (docs/examples.md).",
                 hit.shape.describe()
             ))
@@ -646,12 +646,12 @@ fn same_file(a: &str, b: &Path) -> bool {
     }
 }
 
-/// The review as a human reads it: what the pack is, what it emits, then the findings
+/// The review as a human reads it: what the pack is, what it writes, then the findings
 /// in the order they were checked — in the layout every command prints a finding in
 /// (`findings::lay_out`) — the count by severity, and the verdict.
 pub(crate) fn render(r: &Review, width: crate::findings::Width) -> String {
     let mut out = format!("pack: {}\nfolded into: {}\n", r.pack, r.folded_into);
-    out.push_str(&format!("emits: {}\n\n", if r.emits.is_empty() { "nothing".to_string() } else { r.emits.join(", ") }));
+    out.push_str(&format!("writes: {}\n\n", if r.emits.is_empty() { "nothing".to_string() } else { r.emits.join(", ") }));
     // the first line names the pack in full, so a finding about it names the file alone:
     // the rows stay narrow, and the JSON keeps the path
     let pack_name = Path::new(&r.pack).file_name().map(|n| n.to_string_lossy().into_owned());
@@ -699,7 +699,7 @@ mod tests {
         };
         assert_eq!(
             render(&r, crate::findings::Width::Unwrapped),
-            "pack: /tmp/x/my-pack.satz\nfolded into: synthetic\nemits: nothing\n\n\
+            "pack: /tmp/x/my-pack.satz\nfolded into: synthetic\nwrites: nothing\n\n\
              error    pack  my-pack.satz\n    not formatted\n    fix: satz fmt /tmp/x/my-pack.satz\n\n\
              info     pack  my-pack.satz:3\n    a fact for the log\n\n\
              1 error, 1 info\n\
@@ -768,7 +768,7 @@ mod tests {
                         let messages: Vec<&str> = r.findings.iter().map(|f| f.message.as_str()).collect();
                         assert_eq!(r.emits, std::slice::from_ref(&address), "review {} of {}: {:?}", n, pack.display(), messages);
                         assert!(
-                            !messages.iter().any(|m| m.starts_with("does not compile")),
+                            !messages.iter().any(|m| m.starts_with("does not transpile")),
                             "review {} of {}: {:?}",
                             n,
                             pack.display(),
@@ -784,8 +784,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A bucket the pack declares outside any project: what the compile says about it is a
-    /// finding in the review, at the pack's line, and the review's own compile prints
+    /// A bucket the pack declares outside any project: what the transpile says about it is a
+    /// finding in the review, at the pack's line, and the review's own transpile prints
     /// nothing — the report is the output.
     #[test]
     fn what_the_compile_says_about_the_pack_is_in_the_review_and_nowhere_else() {
@@ -803,7 +803,7 @@ mod tests {
         .unwrap();
         crate::findings::take_said();
         let r = review(&pack, None, Bar::Library, &cfg, &cfg).expect("the review runs");
-        assert!(crate::findings::take_said().is_empty(), "the review's compile printed");
+        assert!(crate::findings::take_said().is_empty(), "the review's transpile printed");
         let f = r
             .findings
             .iter()
@@ -815,7 +815,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A pack written against its author's organisation: each value shaped like private
+    /// A pack written against its author's organization: each value shaped like private
     /// data is an error at its own line, naming the token and saying it becomes a param.
     /// The values are built from parts, so this file carries none of them.
     #[test]
@@ -823,7 +823,7 @@ mod tests {
         let org = format!("{}{}", "4815", "1623420");
         let domain = format!("{}.{}", "realcorp", "de");
         let text = format!(
-            "// A log sink written against its author's organisation.\n\
+            "// A log sink written against its author's organization.\n\
              pack central_logs version \"1.0\"\n\n\
              google_logging_organization_sink {{\n  central {{\n    org_id      = \"{org}\"\n    \
              destination = \"storage.googleapis.com/acme-logs\"\n    filter      = \"{domain}\"\n  }}\n}}\n"
@@ -839,7 +839,7 @@ mod tests {
             ]
         );
         assert!(found[0].message.contains("make it a param"), "{}", found[0].message);
-        assert!(found[0].message.contains("an organisation, folder or project number"), "{}", found[0].message);
+        assert!(found[0].message.contains("an organization, folder or project number"), "{}", found[0].message);
     }
 
     /// The documented example values are what a pack upstream names, and they pass.

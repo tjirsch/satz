@@ -55,7 +55,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
 | `logsink_project_id` | The project that holds the audit-log archive | recreate | high | — |
-| `logsink_project_folder` | The folder the audit-archive project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | — |
+| `logsink_project_folder` | The folder the audit-archive project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | — |
 | `logsink_bucket_name` | The archive bucket's name (globally unique) | recreate | high | — |
 | `logsink_bucket_location` | Where the archive bucket lives (a region or multi-region) | recreate | high | — |
 | `logsink_retention_days` | How many days the archive keeps audit logs before the lifecycle deletes them | edit | high | — |
@@ -63,12 +63,12 @@ What to ask before this pack is configured, and what changing the answer costs.
 **logsink_project_id** — A project id is immutable. Changing it later creates a second project and abandons the first, with the archive bucket inside it — and every pack that points at the logging project by reference moves with it.
 
 
-**logsink_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits.
+**logsink_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits.
 
-An empty answer, `""`, is an answer: the organisation itself; the project is created directly under it.
+An empty answer, `""`, is an answer: the organization itself; the project is created directly under it.
 
 
-**logsink_bucket_name** — The bucket holds the organisation's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence.
+**logsink_bucket_name** — The bucket holds the organization's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence.
 
 
 **logsink_bucket_location** — A bucket's location cannot change. Audit logs are the record a regulator asks for, so where they are stored is the customer's data-residency decision, not the pack's; the default follows the estate's default region.
@@ -93,7 +93,7 @@ An empty answer, `""`, is an answer: the organisation itself; the project is cre
 |---|---|---|---|---|---|
 | cis-gcp 4.0 | 2.1 | Cloud Audit Logging on all services | implements | `google_organization_iam_audit_config.org_all_services` | ADMIN_READ/DATA_READ/DATA_WRITE on allServices at organization scope; exemptions via exempted_members keep the category enabled and visible. |
 | cis-gcp 5.0 | 2.1 | Cloud Audit Logging on all services | implements | `google_organization_iam_audit_config.org_all_services` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
-| cis-gcp 4.0 | 2.2 | Sinks for all log entries | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only. |
+| cis-gcp 4.0 | 2.2 | Sinks for all log entries | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | Aggregated organization sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only. |
 | cis-gcp 5.0 | 2.3 | Sinks for all log entries | implements | `google_logging_organization_sink.organization_audit_gcs`<br>`google_storage_bucket.org_audit_logs`<br>`google_storage_bucket_iam_member.org_audit_sink_writer` | As for 4.0 §2.2 — 5.0 §2.3 (5.0 inserted a new 2.2 for Workspace data sharing). |
 | cis-gcp 4.0 | 2.3 | Retention on the log bucket | contributes | `google_storage_bucket.org_audit_logs` | Lifecycle retention (logsink_retention_days) is automated; the bucket LOCK is a deliberate human decision, so coverage is honestly partial. |
 | cis-gcp 5.0 | 2.4 | Retention on the log bucket | contributes | `google_storage_bucket.org_audit_logs` | As for 4.0 §2.3 — 5.0 §2.4. |

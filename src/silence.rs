@@ -113,7 +113,7 @@ impl Rule {
     }
 }
 
-/// Every rule in force for one compile, in tier order: the estate's first, then the
+/// Every rule in force for one transpile, in tier order: the estate's first, then the
 /// machine's, then the run's. The first rule that names a finding is the one recorded.
 pub(crate) struct Silences(Vec<(Tier, Rule)>);
 
@@ -147,7 +147,7 @@ pub(crate) fn estate_rules(tool: &ToolConfig) -> &[Rule] {
 ///
 /// Process-wide because that is what they are: one settings file and one command line
 /// per process, read before any estate is opened. Neither is ever written per call —
-/// `satz mcp` compiles for many calls at once, and a list one call changed would
+/// `satz mcp` transpiles for many calls at once, and a list one call changed would
 /// silence another call's findings. The run tier is refused for `mcp` and `lsp`
 /// outright, so a server never carries one.
 static MACHINE: OnceLock<Vec<Rule>> = OnceLock::new();
@@ -169,7 +169,7 @@ fn run_rules() -> &'static [Rule] {
     RUN.get().map(Vec::as_slice).unwrap_or_default()
 }
 
-/// The three tiers, for one compile of this estate.
+/// The three tiers, for one transpile of this estate.
 pub(crate) fn in_force(tool: &ToolConfig) -> Silences {
     let mut rules: Vec<(Tier, Rule)> = Vec::new();
     rules.extend(estate_rules(tool).iter().map(|r| (Tier::Estate, r.clone())));
@@ -244,7 +244,7 @@ fn machine_file() -> String {
 }
 
 /// `satz silence list`: both files, every rule, its reason, and — when an estate is
-/// named — whether anything it compiles still answers to it.
+/// named — whether anything it transpiles still answers to it.
 pub(crate) fn list(estate: Option<&Path>, tool: &ToolConfig, runtime: &ToolConfig, config: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let found: Option<Vec<Finding>> = match estate {
         Some(e) => Some(findings_of(e, tool, runtime)?),
@@ -279,7 +279,7 @@ pub(crate) fn list(estate: Option<&Path>, tool: &ToolConfig, runtime: &ToolConfi
     Ok(())
 }
 
-/// What one rule does to one compile's findings: how many it silences, that it names an
+/// What one rule does to one transpile's findings: how many it silences, that it names an
 /// error and therefore silences nothing, or that nothing answers to it any more.
 fn state(rule: &Rule, findings: &[Finding]) -> String {
     let errors = findings.iter().filter(|f| f.severity == Severity::Error && rule.names(f)).count();
@@ -292,7 +292,7 @@ fn state(rule: &Rule, findings: &[Finding]) -> String {
     }
 }
 
-/// Everything that estate finds, silenced or not — a refused compile included, whose
+/// Everything that estate finds, silenced or not — a refused transpile included, whose
 /// errors are what a stale rule has to be judged against too.
 fn findings_of(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig) -> Result<Vec<Finding>, Box<dyn std::error::Error>> {
     match crate::pipeline_b_compile(estate, tool, runtime, crate::PrerequisiteFindings::Report, crate::FindingsOutput::Silent) {

@@ -18,7 +18,7 @@
 //!
 //! Claims are language syntax: a `.satz` pack declares them inline and they reach
 //! this module through the fragment pipeline's front end, produced by the same
-//! compile that produced the `main.tf` whose addresses supply the witnesses. One
+//! transpile that produced the `main.tf` whose addresses supply the witnesses. One
 //! read, so claims and witnesses can never disagree about which estate they
 //! describe. There is no sidecar route.
 
@@ -116,14 +116,14 @@ pub(crate) struct ManualDuty {
 /// One control's verdict in the goal view.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Goal {
-    /// ≥1 `implements` claim from an included pack, every witness emitted, no duties.
+    /// ≥1 `implements` claim from an included pack, every witness written, no duties.
     Satisfied { witnesses: Vec<String> },
     /// Witnesses present but duties remain open, or only `contributes` claims exist.
     Partial { witnesses: Vec<String>, open_duties: Vec<String>, contributes_only: bool },
     /// A pack was included and claims this control, but declared witnesses are not
-    /// in the emitted estate — a broken lemma, worse than unmet.
+    /// in the written estate — a broken lemma, worse than unmet.
     ClaimBroken { missing: Vec<String>, pack: String },
-    /// The witnesses are all emitted, and they do not do what the claim says. An
+    /// The witnesses are all written, and they do not do what the claim says. An
     /// `implements` whose policy carries `enforce = "FALSE"` or `reset = true` discharges
     /// nothing; a `deviates` whose policy is fully enforcing discloses a non-conformance
     /// that is not there. Worse than a missing witness, because the estate reads as
@@ -150,7 +150,7 @@ pub(crate) enum Goal {
 // Pure layer: goal resolution
 // ---------------------------------------------------------------------------
 
-/// What an org policy in the estate actually does, for the claims that name it.
+/// What an organization policy in the estate actually does, for the claims that name it.
 ///
 /// `Enforcing` and `Inert` are only ever decided where the manifest is sure: a block
 /// declaring exactly one `enforce`, or declaring `reset = true`. A list constraint
@@ -169,7 +169,7 @@ pub(crate) enum PolicyEffect {
     Unknown,
 }
 
-/// Read the effect of every org policy the estate emits, by address.
+/// Read the effect of every organization policy the estate writes, by address.
 ///
 /// Only `google_org_policy_policy` is judged. Every other witness type — a sink, a
 /// bucket, a custom constraint — is `Unknown`: their existence IS their effect, which is
@@ -245,7 +245,7 @@ fn contradictions(
 }
 
 /// Resolve every catalog control against the claims of included packs and the
-/// emitted resource addresses. `library_claims` = claims of ALL packs in the
+/// written resource addresses. `library_claims` = claims of ALL packs in the
 /// preset library (for remediation suggestions only); `included_claims` = the
 /// claims the estate actually pulled in, carried with the file that declared
 /// them rather than looked up by pack name — a `.local` fork shares its
@@ -319,7 +319,7 @@ pub(crate) fn resolve_goals(
             included.iter().copied().filter(|(_, c)| c.coverage == "deviates").collect();
         if !deviations.is_empty() {
             // Witnesses are optional on a deviation, but any it DOES declare must
-            // still be emitted — one estate's policy exists with enforce = "FALSE", and
+            // still be written — one estate's policy exists with enforce = "FALSE", and
             // if someone later deletes it outright that is a different fact and
             // must resurface rather than stay silently "deviated".
             let mut missing = Vec::new();
@@ -371,7 +371,7 @@ pub(crate) fn resolve_goals(
             continue;
         }
 
-        // A claim holds iff every declared witness is actually emitted.
+        // A claim holds iff every declared witness is actually written.
         let mut witnesses = Vec::new();
         let mut open_duties = control.duties.clone();
         let mut has_implements = false;
@@ -707,7 +707,7 @@ pub(crate) struct Measure {
     /// the estate uses the pack (or declares the claim); false for a pack the library
     /// holds and the estate does not use
     pub included: bool,
-    /// the claim's witnesses: the resources the pack emits for it
+    /// the claim's witnesses: the resources the pack writes for it
     pub resources: Vec<String>,
     pub interpretation: Option<String>,
     /// gcloud commands that meet the control without satz, one per entry, with
@@ -797,7 +797,7 @@ pub(crate) struct ControlRow {
     pub open_duties: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub providers: Vec<String>,
-    /// witnesses a pack claims and the estate does not emit
+    /// witnesses a pack claims and the estate does not write
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub missing: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -1046,7 +1046,7 @@ pub(crate) fn render_require(r: &RequireReport) -> String {
     if exempted > 0 {
         out.push_str(&format!(
             "{} control(s) carry a conditional exemption — enforced, with named resources let out. \
-             `satz report-compliance` lists what each one is bound to on the organisation.\n",
+             `satz report-compliance` lists what each one is bound to on the organization.\n",
             exempted
         ));
     }
@@ -1167,7 +1167,7 @@ mod tests {
         let lib = vec![claim("baseline", "2.1", "implements", &["google_org_policy_policy.p"], &[])];
         let emitted: BTreeSet<String> = ["google_org_policy_policy.p".to_string()].into();
 
-        // The witness is emitted, so the pre-R7 verdict was "satisfied".
+        // The witness is written, so the pre-R7 verdict was "satisfied".
         let ok = resolve_goals(&catalog(), &lib, &lib, &emitted, &no_effects());
         assert!(matches!(ok["2.1"], Goal::Satisfied { .. }));
 
@@ -1311,7 +1311,7 @@ catalog: cis-gcp
 version: "4.0"
 controls:
   "2.1": { title: audit logging, automatability: technical }
-  "2.2": { title: org sink, automatability: technical }
+  "2.2": { title: organization sink, automatability: technical }
   "2.3": { title: retention, automatability: partial }
   "9.9": { title: policy doc, automatability: organizational }
 "#,
@@ -1575,7 +1575,7 @@ controls:
         }
     }
 
-    /// The live side. Shape verified against the Org Policy API on a real org:
+    /// The live side. Shape verified against the Organization Policy API on a real organization:
     /// `enforce` is a JSON BOOL live while HCL spells it "TRUE"/"FALSE".
     #[test]
     fn live_enforcement_reads_the_real_api_shape() {
@@ -1654,7 +1654,7 @@ resource "google_org_policy_policy" "os_login" {
     /// DISCLOSED DEVIATION, not a gap. An estate declares
     /// `compute.managed.requireOsLogin` with `enforce = "FALSE"` because a
     /// service needs metadata SSH keys — the resource exists, so the witness is
-    /// emitted, and a copied `implements` claim would have read "satisfied".
+    /// written, and a copied `implements` claim would have read "satisfied".
     #[test]
     fn a_declared_deviation_is_a_finding_not_a_gap() {
         let mut dev = claim("cis_fork", "2.1", "deviates", &["audit.policy"], &["review"]);
@@ -1682,7 +1682,7 @@ resource "google_org_policy_policy" "os_login" {
         let mut dev = claim("acme", "2.1", "deviates", &[], &[]);
         dev.1.reason = "suppressed on purpose".into();
         let included = vec![packclaim.clone(), dev];
-        let emitted: BTreeSet<String> = BTreeSet::new(); // suppressed → not emitted
+        let emitted: BTreeSet<String> = BTreeSet::new(); // suppressed → not written
 
         let goals = resolve_goals(&catalog(), &[packclaim], &included, &emitted, &no_effects());
         assert!(
@@ -1706,7 +1706,7 @@ resource "google_org_policy_policy" "os_login" {
     /// A `.local` fork declares the SAME pack name as its pristine twin but may
     /// claim different witnesses. Resolving inclusion by pack name would let the
     /// pristine claim be attributed to an estate running the fork — reporting a
-    /// control satisfied by a resource the estate never emits, or broken when it
+    /// control satisfied by a resource the estate never writes, or broken when it
     /// is fine. Included claims therefore travel with the file that was used.
     #[test]
     fn a_fork_claims_for_itself_not_for_its_pristine_twin() {
@@ -1714,7 +1714,7 @@ resource "google_org_policy_policy" "os_login" {
         let pristine = claim("cis", "2.1", "implements", &["audit.pristine"], &[]);
         let fork = claim("cis", "2.1", "implements", &["audit.fork"], &[]);
         let lib = vec![pristine, fork.clone()];
-        // The estate used the fork, and emits exactly what the fork claims.
+        // The estate used the fork, and writes exactly what the fork claims.
         let included = vec![fork];
         let emitted: BTreeSet<String> = ["audit.fork".to_string()].into();
 
@@ -1725,7 +1725,7 @@ resource "google_org_policy_policy" "os_login" {
         }
     }
 
-    /// A pack that claims a control whose witnesses are NOT in the emitted estate is
+    /// A pack that claims a control whose witnesses are NOT in the written estate is
     /// a broken lemma — reported as such, never silently satisfied or merely unmet.
     #[test]
     fn missing_witnesses_are_a_broken_claim() {
@@ -1824,7 +1824,7 @@ fn goal_witnesses(goal: &Goal) -> &[String] {
 /// was giving it the human's copy.
 ///
 /// `declared_at` is the link a cloud-native compliance dashboard cannot make:
-/// not "the organisation has this policy" but "here is the code that put it
+/// not "the organization has this policy" but "here is the code that put it
 /// there".
 fn witness_facts(
     goal: &Goal,
@@ -1883,12 +1883,12 @@ fn estate_commit(estate: &Path) -> Option<serde_json::Value> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) enum LiveState {
     /// Found in the live estate: the live identifier that matched, and — for an
-    /// org policy — its conditional rules, each an exemption or a tightening for
+    /// organization policy — its conditional rules, each an exemption or a tightening for
     /// a tagged part of the hierarchy that the unconditional verdict does not show.
     Verified { id: String, conditional: Vec<String> },
-    /// The declared estate emits it, but the live estate does not contain it.
+    /// The declared estate writes it, but the live estate does not contain it.
     Missing,
-    /// Present live, but not doing what the estate declares — an org policy that
+    /// Present live, but not doing what the estate declares — an organization policy that
     /// exists with `enforce = "TRUE"` in the config while the live policy has
     /// enforcement OFF. Existence was never the claim; this is the difference
     /// between "a resource is there" and "the control is in force".
@@ -1908,7 +1908,7 @@ pub(crate) enum LiveState {
 pub(crate) enum LiveOutcome {
     /// `--no-live`: never attempted.
     Skipped,
-    /// Attempted, but the estate names no organisation to read.
+    /// Attempted, but the estate names no organization to read.
     NoOrganizationId,
     /// Attempted, but no witness in this catalog has a live check to make.
     NoWitnesses,
@@ -2016,7 +2016,7 @@ mod live_outcome_tests {
 /// HCL attribute carries the matchable identifier.
 /// Alert policies and notification channels have server-assigned names, so their
 /// identifier is the display_name (read from CAI resource data).
-/// How a witness type is found live: the CAI asset type, the emitted
+/// How a witness type is found live: the CAI asset type, the written
 /// attribute that identifies it, and the SCOPE the identifier is unique in.
 /// A same-named metric in another project is not this witness — the scope
 /// is part of the key, never inferred.
@@ -2046,11 +2046,11 @@ fn live_matcher(tf_type: &str) -> Option<(&'static str, &'static str, WitnessSco
         "google_monitoring_notification_channel" => {
             Some(("monitoring.googleapis.com/NotificationChannel", "display_name", WitnessScope::Project, Resource))
         }
-        // The emitted `name` is `organizations/<org>/policies/<constraint>`, which
+        // The written `name` is `organizations/<org>/policies/<constraint>`, which
         // is exactly the CAI asset name minus its `//service/` prefix.
         "google_org_policy_policy" => Some(("orgpolicy.googleapis.com/Policy", "name", WitnessScope::Path, Resource)),
         // These two live in an IAM policy, not in resource data: the audit config
-        // is the organisation's own policy, the member is a binding on the bucket.
+        // is the organization's own policy, the member is a binding on the bucket.
         "google_organization_iam_audit_config" => Some((
             "cloudresourcemanager.googleapis.com/Organization",
             "org_id",
@@ -2135,7 +2135,7 @@ fn log_type_name(v: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Does the live organisation audit the declared service with every declared
+/// Does the live organization audit the declared service with every declared
 /// log type? `Ok(())` when it does; `Err` says what is missing, for the row.
 fn audit_config_state(policy: &serde_json::Value, service: &str, want: &[String]) -> Result<(), String> {
     let configs = policy.get("auditConfigs").and_then(|c| c.as_array()).map(|a| a.as_slice()).unwrap_or(&[]);
@@ -2235,7 +2235,7 @@ fn inventory_keys(asset_name: &str, data: &serde_json::Value) -> Vec<String> {
 }
 
 /// The key the DECLARED witness must be found under, built from its own
-/// attributes — the `project`/`org_id` it is emitted with, resolved to the
+/// attributes — the `project`/`org_id` it is written with, resolved to the
 /// form Cloud Asset uses (project NUMBER). `Err` names what is missing.
 fn expected_key(
     w: &str,
@@ -2255,8 +2255,8 @@ fn expected_key(
             let org = a.get("org_id").map(|o| o.trim_start_matches("organizations/").to_string()).unwrap_or_else(|| org_id.to_string());
             let collection = match tf_type {
                 "google_logging_organization_sink" => "sinks",
-                // the audit config IS the organisation's policy, not a resource
-                // filed under the organisation
+                // the audit config IS the organization's policy, not a resource
+                // filed under the organization
                 "google_organization_iam_audit_config" => return Ok(format!("organizations/{}", org)),
                 other => return Err(format!("no organization-scoped path rule for {}", other)),
             };
@@ -2274,7 +2274,7 @@ fn expected_key(
     }
 }
 
-/// The project id a witness is emitted with: a literal `project`, or a
+/// The project id a witness is written with: a literal `project`, or a
 /// `google_project.<x>.project_id` reference followed to that project's id.
 fn witness_project(w: &str, manifest: &Manifest) -> Option<String> {
     let r = manifest.resources.get(w)?;
@@ -2317,7 +2317,7 @@ async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<String, Stri
 /// the asset's resource data attached.
 ///
 /// The data used to be discarded, which capped live verification at "does a
-/// resource with this identifier exist". For an org policy that is not the
+/// resource with this identifier exist". For an organization policy that is not the
 /// control: a policy with enforcement OFF exists just as much as one with it on.
 pub(crate) type Inventory = BTreeMap<(String, LiveContent), BTreeMap<String, serde_json::Value>>;
 
@@ -2326,8 +2326,8 @@ pub(crate) async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String,
     use google_cloud_gax::options::RequestOptionsBuilder;
     let client = crate::gcp::asset_service().await?;
     // Cloud Asset is billed to the quota project, and a request without one is
-    // refused outright when the credentials carry no default. `policy_tree`'s
-    // sweep has always sent it; this one did not, so the same organisation
+    // refused outright when the sign-in carries no default. `policy_tree`'s
+    // sweep has always sent it; this one did not, so the same organization
     // answered `report-organizational-policies` and refused `report-compliance`.
     let quota_project = crate::org_policy::resolve_quota_project();
     let mut out: Inventory = BTreeMap::new();
@@ -2350,7 +2350,7 @@ pub(crate) async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String,
         while let Some(asset) = stream.next().await {
             let asset: google_cloud_asset_v1::model::Asset = asset?;
             // An asset without the requested content is `Null`: a witness with
-            // nothing to compare. Content that cannot be serialised is an error —
+            // nothing to compare. Content that cannot be serialized is an error —
             // evidence that cannot be read is not evidence of anything.
             let data = match content {
                 LiveContent::Resource => match asset.resource.as_ref().and_then(|r| r.data.as_ref()) {
@@ -2358,7 +2358,7 @@ pub(crate) async fn live_inventory(org_id: &str, asset_types: &BTreeSet<(String,
                         .map_err(|e| format!("{}: the live resource data is not readable as JSON: {}", asset.name, e))?,
                     None => serde_json::Value::Null,
                 },
-                // the policy set ON the asset: the organisation's audit configs,
+                // the policy set ON the asset: the organization's audit configs,
                 // a bucket's bindings
                 LiveContent::IamPolicy => match asset.iam_policy.as_ref() {
                     Some(p) => serde_json::to_value(p)
@@ -2389,7 +2389,7 @@ pub(crate) struct LiveEnforcement {
     pub conditional: Vec<String>,
 }
 
-/// Shape (verified against the Org Policy API): `spec.rules[].enforce` as a JSON
+/// Shape (verified against the Organization Policy API): `spec.rules[].enforce` as a JSON
 /// bool — the live form is a boolean while HCL spells it "TRUE"/"FALSE" — and
 /// `spec.rules[].condition` on a conditional rule. No verdict unless exactly one
 /// rule is unconditional.
@@ -2661,7 +2661,7 @@ pub(crate) fn ingest_prowler(
 
 /// The combined verdict of a control's row and Prowler's findings on it
 /// (proposal I2): a FAIL on one of the control's verified witnesses is
-/// CONTESTED — two readers of the same organisation disagree, and the
+/// CONTESTED — two readers of the same organization disagree, and the
 /// report says so; a FAIL elsewhere is an unmanaged finding beside a
 /// verified witness; MANUAL findings are duties.
 pub(crate) fn prowler_verdict(findings: &[ProwlerFinding], witness_ids: &[String], status_verified: bool) -> String {
@@ -2714,7 +2714,7 @@ pub(crate) async fn report_compliance_evidence(
     prowler_must_map: bool,
 ) -> Result<(serde_json::Value, String), BoxErr> {
     let catalog = load_catalog(presets_dir, framework)?;
-    // Checkov findings by emitted address: a failed check on a WITNESS is
+    // Checkov findings by written address: a failed check on a WITNESS is
     // evidence against the control it witnesses
     let checkov_by_res: BTreeMap<String, Vec<String>> = checkov
         .map(|r| {
@@ -2806,10 +2806,10 @@ pub(crate) async fn report_compliance_evidence(
                     ));
                     warnings.push(
                         "the three usual causes — cloudasset.googleapis.com not enabled on the quota \
-                         project (the init template's infra project lists it); the caller without org-wide \
+                         project (the init template's infrastructure project lists it); the caller without organization-wide \
                          cloudasset read access: roles/cloudasset.viewer, granted to the security groups by \
                          the security-group model (roles/iam.securityReviewer does NOT carry it); or a quota \
-                         project the credentials cannot reach at all — `satz whoami` checks that one and \
+                         project the sign-in cannot reach at all — `satz whoami` checks that one and \
                          names the fix"
                             .to_string(),
                     );
@@ -2881,7 +2881,7 @@ pub(crate) async fn report_compliance_evidence(
                                     }
                                 }
                                 Some(data) => {
-                                    // Existence is not the control. For an org
+                                    // Existence is not the control. For an organization
                                     // policy, compare what the estate DECLARES
                                     // against what the live policy actually does.
                                     match (declared.get(w).copied(), live_enforcement(data)) {
@@ -3062,7 +3062,7 @@ pub(crate) async fn report_compliance_evidence(
                     else if !open.is_empty() { "partial (open duty)".to_string() }
                     else if matches!(goal, Goal::Partial { contributes_only: true, .. }) { "partial (contributes)".to_string() }
                     // "verified*" must mean SOME witness was verified live; when
-                    // none was (no ADC, inventory down) the honest word is unverified
+                    // none was (nobody signed in, inventory down) the honest word is unverified
                     else if any_unver && n_verified == 0 { format!("**unverified** ({})", first_unver) }
                     else if any_unver { format!("verified* ({} of {})", n_verified, witnesses.len()) }
                     else if no_live || live.is_empty() { "declared".to_string() }
@@ -3089,7 +3089,7 @@ pub(crate) async fn report_compliance_evidence(
                 "–".into(),
             ),
             // The live column cannot soften this: the estate itself says the
-            // policy does nothing, before anyone asks the organisation.
+            // policy does nothing, before anyone asks the organization.
             Goal::ClaimContradicted { inert, pack, coverage } => (
                 "**CONTRADICTED CLAIM**".into(),
                 format!(
@@ -3338,14 +3338,14 @@ pub(crate) async fn run_report_compliance(
     Ok(())
 }
 
-/// `--fail-on undeclared-exemption`, as the gate normalises it. Not a row status: it reads the
+/// `--fail-on undeclared-exemption`, as the gate normalizes it. Not a row status: it reads the
 /// report's exemption-binding section, and `any` does not include it, so a pipeline opts in by
 /// name.
 const UNDECLARED_EXEMPTION: &str = "undeclared exemption";
 
 /// What `--fail-on undeclared-exemption` fails on, per report: each live binding of the estate's
 /// exemption key the estate does not declare, and a check that did not run — skipped by
-/// `--no-live`, refused by Cloud Asset Inventory, or without an organisation id — because a
+/// `--no-live`, refused by Cloud Asset Inventory, or without an organization id — because a
 /// gate asked to look that could not look has not passed. An estate that declares no exemption
 /// key has nothing to check.
 fn exemption_gate<'a>(reports: impl IntoIterator<Item = &'a serde_json::Value>) -> Vec<String> {
@@ -3917,7 +3917,7 @@ pub(crate) struct TriageRow {
     pub severity: String,
     pub resource: String,
     pub project: String,
-    /// the emitted address the resource matched, when any
+    /// the written address the resource matched, when any
     pub declared: Option<String>,
     pub plan: String,
 }
@@ -4044,7 +4044,7 @@ pub(crate) fn bucket_for(goal: Option<&Goal>, status: &str, has_resource: bool) 
     }
 }
 
-/// The emitted address whose IDENTIFIER names this resource — the reverse
+/// The written address whose IDENTIFIER names this resource — the reverse
 /// index from a live id to the block that declares it. Only the attribute the
 /// live matcher keys the type on counts (`name`, `display_name`), matched on
 /// a path-segment boundary: a `project = "x"` attribute must never claim a
@@ -4624,7 +4624,7 @@ mod fix_plan_tests {
     }
 
     /// A pack the library named but this checkout does not have is a finding of
-    /// its own. Emitting a `use` for it would be a line that does not compile.
+    /// its own. Writing a `use` for it would be a line that does not transpile.
     #[test]
     fn a_pack_that_is_not_installed_is_named_not_pasted() {
         let rows = vec![row(Bucket::A, "9.9", "adopt `not_a_real_pack`", "")];
@@ -4697,7 +4697,7 @@ mod iam_witness_tests {
     }
 
     /// The asset client renders the proto enum as its number, so a live policy
-    /// that audits everything reads `1, 2, 3`. Read as names, that org audits
+    /// that audits everything reads `1, 2, 3`. Read as names, that organization audits
     /// nothing and the row would say the estate's three types are missing.
     #[test]
     fn a_log_type_arrives_as_the_proto_enums_number() {
@@ -4816,7 +4816,7 @@ mod iam_witness_tests {
         assert!(why.contains("is not live"), "{}", why);
     }
 
-    /// Both types are checked against the organisation's or the bucket's IAM
+    /// Both types are checked against the organization's or the bucket's IAM
     /// policy, which Cloud Asset serves as its own content type.
     #[test]
     fn the_two_iam_witnesses_ask_for_policy_content() {
@@ -4830,7 +4830,7 @@ mod iam_witness_tests {
 
     /// CIS 3.1 is "no `default` network exists". The policy's value says what happens
     /// from now on; the networks say what is there. Seen on a customer's new
-    /// organisation: the policy enforced, and the infrastructure project holding the
+    /// organization: the policy enforced, and the infrastructure project holding the
     /// `default` network Google created a moment before it.
     #[test]
     fn the_skip_default_network_witness_is_judged_by_the_networks_too() {

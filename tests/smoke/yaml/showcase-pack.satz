@@ -12,8 +12,8 @@ params {
   // param `<param>` that another file declares — here the estate's
   // `infra_project_services`. The entries are added to whatever that list holds and
   // leave with this pack; an entry it already holds is not added twice; and where this
-  // `use` line stands decides nothing, because the merge happens before the compile.
-  // A pack that needs an API, or a principal let past an org policy, says so itself
+  // `use` line stands decides nothing, because the merge happens before the transpile.
+  // A pack that needs an API, or a principal let past an organization policy, says so itself
   // instead of asking every estate to edit a list by hand.
   contributes_infra_project_services = [
     "bigquery.googleapis.com",
@@ -22,8 +22,8 @@ params {
 
 // A pack may name ONE command to run once it is switched on. satz shows it then, and
 // warns at the estate's `use` line until the estate binds `pack_bucket_adopted = true`;
-// `severity = error` makes every command that writes to the organisation refuse while it
-// is open. The param is an acknowledgement, never emitted: binding it moves no line of the HCL.
+// `severity = error` makes every command that writes to the organization refuse while it
+// is open. The param is an acknowledgement, never written: binding it moves no line of the HCL.
 notice pack_bucket_adopted {
   text     = "The bucket may already exist in the project — creating it again fails. Import what is live first."
   run      = "satz adopt <estate> --execute --import"
@@ -31,7 +31,7 @@ notice pack_bucket_adopted {
 }
 
 // Declared outside a project, so it names the one it belongs in: without `project`
-// it would go to the provider block's, and the compile warns about exactly that. The
+// it would go to the provider block's, and the transpile warns about exactly that. The
 // estate keeps it out of its interface with `private google_storage_bucket.pack_bucket`.
 google_storage_bucket {
   pack_bucket {
@@ -47,7 +47,7 @@ claim "cis-gcp" "4.0" "5.2" contributes {
 }
 
 // A pack may ship an executable step. It is reported as coming from a pack on
-// every compile, and `--no-pack-actions` skips exactly these.
+// every transpile, and `--no-pack-actions` skips exactly these.
 action "pack-step" {
   reason = "a pack-declared step: enablement the provider has no resource for"
   run    = "../scripts/showcase-action.sh"

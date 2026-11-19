@@ -10,7 +10,7 @@ Billing-account IAM, split by audience.
 Everyone in the domain may USE and VIEW the billing account (link projects,
 read costs); the full administration — and every other billing-account role —
 goes to ONE group, named by a param so no customer forks the pack for it. The
-IaC service account keeps `billing.admin`: it manages this account's budgets
+estate account keeps `billing.admin`: it manages this account's budgets
 and project links on every apply.
 
 ## Use it

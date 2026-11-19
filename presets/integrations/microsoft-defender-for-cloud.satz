@@ -17,7 +17,7 @@
 // Required from the estate: `customer_organization_id`. The management project
 // takes `billing_account_infra` unless the estate sets `billing_account` on it,
 // and it is created in the folder `mdc_mgmt_project_folder` names — under the
-// organisation while that param says nothing.
+// organization while that param says nothing.
 //
 // WHY the plans are separate files and not a list param: a pack cannot add to
 // another fragment's project — two fragments defining one project is a fold
@@ -53,10 +53,10 @@ params {
   mdc_mgmt_project_id = ""
 
   // The folder that project is created in. Empty says nothing, and the node the
-  // `use` line stands in decides — the organisation at the top level. A folder
+  // `use` line stands in decides — the organization at the top level. A folder
   // the estate declares is named by reference, `google_folder.<label>.name`; one
   // that already exists by its id, `"123456789012"`. Setting it is what makes
-  // this pack emit the same project wherever it is used.
+  // this pack write the same project wherever it is used.
   mdc_mgmt_project_folder = ""
 
   // Which plans are licensed. Each `true` pulls in that plan's fragment; a plan
@@ -92,16 +92,16 @@ question mdc_mgmt_project_id {
 }
 
 question mdc_mgmt_project_folder {
-  prompt   = "The folder the Defender management project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
-  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit."
+  prompt   = "The folder the Defender management project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization"
+  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit."
   reversal = edit
   blast    = low
-  empty    = "the organisation itself; the project is created directly under it"
+  empty    = "the organization itself; the project is created directly under it"
 }
 
 question mdc_plan_cspm {
   prompt   = "Is the Defender CSPM plan licensed for this customer?"
-  why      = "Each licensed plan pulls in its fragment with the roles that plan needs. A plan that is on without a licence grants roles nothing uses; one that is off with a licence leaves the connector without access."
+  why      = "Each licensed plan pulls in its fragment with the roles that plan needs. A plan that is on without a license grants roles nothing uses; one that is off with a license leaves the connector without access."
   reversal = edit
   blast    = low
 }

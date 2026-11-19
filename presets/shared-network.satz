@@ -17,7 +17,7 @@ pack shared_network version "1.0"
 
 params {
   network_host_project_id     = "{customer_shortname}-net-host-001"
-  // The folder the host project is created in. Empty is the organisation. A folder the
+  // The folder the host project is created in. Empty is the organization. A folder the
   // estate declares is named by reference, `google_folder.<label>.name`; one that
   // already exists by its id.
   network_host_project_folder = ""
@@ -44,7 +44,7 @@ question network_host_project_id {
 }
 
 question network_host_project_folder {
-  prompt   = "The folder the host project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  prompt   = "The folder the host project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization"
   why      = "It decides the policies and the grants the host project inherits. Changing it afterwards moves a live project between parents."
   reversal = edit
   blast    = low

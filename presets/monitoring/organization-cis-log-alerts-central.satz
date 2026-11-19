@@ -3,7 +3,7 @@
 //
 //   use "presets/monitoring/organization-cis-log-alerts-central.satz"
 //
-// One logging bucket + second org sink + 8 bucket-scoped metrics + 8 alert
+// One logging bucket + second organization sink + 8 bucket-scoped metrics + 8 alert
 // policies + email channel. Estate wiring: nothing to set when the audit logsink
 // pack is used — the alert project defaults to ITS project. Without that pack,
 // set cis_central_bucket_project.
@@ -49,7 +49,7 @@ params {
 // defaults and are not asked.
 
 question cis_central_email {
-  prompt   = "The address the organisation's security alerts are sent to (a group, never a person)"
+  prompt   = "The address the organization's security alerts are sent to (a group, never a person)"
   why      = "Monitoring sends from alerting-noreply@google.com, so the mailbox must exist and accept external mail; a group whose members have no mailboxes drops every alert silently, and nothing in the estate can detect that. People leave; groups have owners."
   reversal = edit
   blast    = high
@@ -69,7 +69,7 @@ google_logging_project_bucket_config {
     location       = cis_central_bucket_location
     bucket_id      = cis_central_bucket_id
     retention_days = cis_central_bucket_retention_days
-    description    = "CIS 2.5-2.12 — org-wide audit logs for metrics and alerting"
+    description    = "CIS 2.5-2.12 — organization-wide audit logs for metrics and alerting"
   }
 }
 
@@ -433,7 +433,7 @@ claim "cis-gcp" "4.0" "2.4" contributes {
     "google_logging_organization_sink.cis_central_metrics_sink",
     "google_monitoring_notification_channel.cis_central_alerts",
   ]
-  interpretation = "Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on."
+  interpretation = "Central metrics pipeline: organization-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on."
   gcloud = [
     "gcloud logging buckets create ALERT_BUCKET_ID --project=LOG_PROJECT_ID --location=REGION --retention-days=30",
     "gcloud logging sinks create cis-central-metrics-sink logging.googleapis.com/projects/LOG_PROJECT_ID/locations/REGION/buckets/ALERT_BUCKET_ID --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",
@@ -444,7 +444,7 @@ claim "cis-gcp" "4.0" "2.4" contributes {
     "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
     "gcloud beta monitoring channels list --project=LOG_PROJECT_ID --format='table(name,displayName,type,labels.email_address)'",
   ]
-  risk = "Without an organisation-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
+  risk = "Without an organization-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
 }
 claim "cis-gcp" "5.0" "2.5" contributes {
   resources = [
@@ -462,7 +462,7 @@ claim "cis-gcp" "5.0" "2.5" contributes {
     "gcloud logging sinks list --organization=ORGANIZATION_ID --format='table(name,destination,includeChildren,filter)'",
     "gcloud beta monitoring channels list --project=LOG_PROJECT_ID --format='table(name,displayName,type,labels.email_address)'",
   ]
-  risk = "Without an organisation-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
+  risk = "Without an organization-wide pipeline an alert sees only the project it is defined in, so a change anywhere else raises nothing."
 }
 
 claim "cis-gcp" "4.0" "2.4" implements {

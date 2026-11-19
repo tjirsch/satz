@@ -1,4 +1,4 @@
-//! Bootstrap pre-flight: test the caller's REQUIRED PERMISSIONS before
+//! The bootstrap's prerequisites check: test the caller's REQUIRED PERMISSIONS before
 //! anything is created, and self-grant the missing ones when the caller holds
 //! `setIamPolicy` on the scope root.
 //!
@@ -8,13 +8,13 @@
 //! billing.creator, the creating super admin holds organizationAdmin, and
 //! organizationAdmin carries `organizations.setIamPolicy` but NOT
 //! `folders.create` / `orgpolicy.policies.create` — so the old bootstrap
-//! 403'd mid-run on the org's own admin. Now the missing pair
+//! 403'd mid-run on the organization's own admin. Now the missing pair
 //! (folderAdmin + orgpolicy.policyAdmin) is granted up front, audibly, or the
 //! exact grant commands are printed and nothing is created.
 //!
 //! Folder-scoped installs (`customer_organization_id = "folders/<id>"`) are
 //! first-class: org-root operations are simply out of scope and say so — a
-//! folder-granted caller is never told to become org admin.
+//! folder-granted caller is never told to become organization admin.
 
 use crate::gcp::{ApiError, ErrorClass};
 
@@ -109,7 +109,7 @@ pub(crate) fn detect_scope(normalized_parent: &str) -> Result<Scope, String> {
     ))
 }
 
-/// The permission on the billing account: bootstrap links the infra project.
+/// The permission on the billing account: bootstrap links the infrastructure project.
 pub(crate) const BILLING_PERMISSION: &str = "billing.resourceAssociations.create";
 /// The role an administrator grants to supply [`BILLING_PERMISSION`].
 pub(crate) const BILLING_ROLE: &str = "roles/billing.user";
@@ -122,13 +122,13 @@ pub(crate) fn required_permissions(wants_folder: bool) -> Vec<(&'static str, &'s
         perms.push(("resourcemanager.folders.create", "roles/resourcemanager.folderAdmin"));
     }
     perms.push(("resourcemanager.projects.create", "roles/resourcemanager.projectCreator"));
-    // Not used by bootstrap itself, but the estate's org policies land here on
+    // Not used by bootstrap itself, but the estate's organization policies land here on
     // the first apply — finding out now beats finding out mid-apply.
     perms.push(("orgpolicy.policies.create", "roles/orgpolicy.policyAdmin"));
     perms
 }
 
-/// What the pre-flight decided. Pure, so the table is pinned by tests.
+/// What the prerequisites check decided. Pure, so the table is pinned by tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Decision {
     /// Everything required is granted.
@@ -198,7 +198,7 @@ pub(crate) type PermRole = (String, String);
 /// the organization level cannot be self-granted there (the folder grant is
 /// INVALID_ARGUMENT — live-verified 2026-09-02) and must not block a
 /// folder-scoped install either: it is split out as advisory — named in the
-/// output, never silently waved through. At org scope nothing is advisory.
+/// output, never silently waved through. At organization scope nothing is advisory.
 pub(crate) fn split_folder_advisory(
     scope: &Scope,
     missing: Vec<PermRole>,
@@ -212,13 +212,13 @@ pub(crate) fn split_folder_advisory(
 }
 
 /// Is this scope root visible to the caller at all, and — when the estate also
-/// binds a directory customer id — is it the organisation that customer owns?
+/// binds a directory customer id — is it the organization that customer owns?
 ///
 /// `testIamPermissions` on a resource the caller cannot see returns the EMPTY
 /// set, which is byte-identical to "you legitimately hold none of these". So a
-/// wrong organisation id used to be reported as missing permissions, with
+/// wrong organization id used to be reported as missing permissions, with
 /// `add-iam-policy-binding` advice that could never work for anyone. Asking
-/// first turns that into the truth: the organisation is not visible, or it is
+/// first turns that into the truth: the organization is not visible, or it is
 /// not the customer's.
 ///
 /// A folder scope is left alone: `organizations:search` does not list folders,
@@ -234,9 +234,9 @@ pub(crate) async fn resolve_organization(
     let id = resource.trim_start_matches("organizations/");
     let orgs = crate::gcp::resourcemanager::search_organizations(client, token)
         .await
-        .map_err(|e| format!("could not list the organizations visible to these credentials: {}", e))?;
+        .map_err(|e| format!("could not list the organizations visible to this sign-in: {}", e))?;
     let _ = id;
-    match organization_verdict(resource, &orgs, customer_id, principal.unwrap_or("these credentials")) {
+    match organization_verdict(resource, &orgs, customer_id, principal.unwrap_or("this sign-in")) {
         Ok(line) => {
             println!("  ok       {}", line);
             Ok(())
@@ -272,7 +272,7 @@ fn organization_verdict(
         ));
     };
     // The estate binds BOTH ids. One search resolves the directory customer to
-    // its organisation, so a mismatch is caught here rather than on apply.
+    // its organization, so a mismatch is caught here rather than on apply.
     if let Some(cid) = customer_id.map(str::trim).filter(|c| !c.is_empty()) {
         if let Some(owner) = found.get("directoryCustomerId").and_then(|v| v.as_str()).filter(|o| *o != cid) {
             return Err(format!(
@@ -287,7 +287,7 @@ fn organization_verdict(
     Ok(format!("{} is visible to {}", named(found), who))
 }
 
-/// Run the pre-flight against the live IAM: test, decide, and — on a live run
+/// Run the prerequisites check against the live IAM: test, decide, and — on a live run
 /// with `setIamPolicy` in hand — self-grant, audibly, then re-test until IAM
 /// propagation catches up. Returns only when bootstrap may create things;
 /// every other outcome is an `Err` and nothing has been created.
@@ -306,8 +306,8 @@ pub(crate) async fn run(
     let scope = detect_scope(normalized_parent)?;
     let resource = scope.resource().to_string();
 
-    println!("--- Pre-flight: permissions of the caller ---");
-    // does this organisation exist, and is it the customer's — the question that
+    println!("--- Prerequisites check: permissions of the caller ---");
+    // does this organization exist, and is it the customer's — the question that
     // has to come before any permission verdict, because an invisible resource
     // answers a permission test with silence
     resolve_organization(client, token, &scope, customer_id, principal).await?;
@@ -342,7 +342,7 @@ pub(crate) async fn run(
     for (perm, role) in &advisory {
         println!(
             "  note: {} stays missing — {} is an organization-level role; the estate's \
-             folder-level org policies will need an organization-level grant before their \
+             folder-level organization policies will need an organization-level grant before their \
              first apply. Continuing.",
             perm, role
         );
@@ -355,13 +355,13 @@ pub(crate) async fn run(
 
     match decide(&missing, !billing_granted, can_set_policy, &scope, billing_account, principal) {
         Decision::Proceed => {
-            println!("pre-flight: OK");
+            println!("prerequisites check: OK");
             Ok(())
         }
         Decision::SelfGrant(roles) if no_default_grants => {
             // The operator has declined the self-grant. Acquiring folderAdmin
-            // and orgPolicyAdmin at the organisation root is the reportable
-            // event in a change process that audits org-level IAM, and printing
+            // and orgPolicyAdmin at the organization root is the reportable
+            // event in a change process that audits organization-level IAM, and printing
             // the undo afterwards does not unmake it. Same path as a grant that
             // is impossible: the commands, and nothing created.
             let member = principal.map(|p| format!("user:{}", p)).unwrap_or_else(|| "user:<YOUR_ADMIN_EMAIL>".to_string());
@@ -380,12 +380,12 @@ pub(crate) async fn run(
                     println!("  would self-grant {} to user:{} on {}", role, principal, resource);
                 }
                 // A would-be self-grant is the HEALTHY outcome for a fresh
-                // organisation: the live run resolves it. Reporting it as
-                // `Error:` made a good pre-flight read as a refusal, so the
+                // organization: the live run resolves it. Reporting it as
+                // `Error:` made a good prerequisites check read as a refusal, so the
                 // dry run says so and exits 0. Non-zero is for what a live run
                 // could not fix.
                 println!(
-                    "pre-flight: OK on a live run — {} permission(s) missing now, self-granted then (the caller holds {})",
+                    "prerequisites check: OK on a live run — {} permission(s) missing now, self-granted then (the caller holds {})",
                     missing.len(),
                     scope.set_iam_policy_permission()
                 );
@@ -393,7 +393,7 @@ pub(crate) async fn run(
             }
             self_grant(client, token, &scope, &roles, principal).await?;
             retest(client, token, &resource, &missing).await?;
-            println!("pre-flight: OK (after self-grant)");
+            println!("prerequisites check: OK (after self-grant)");
             Ok(())
         }
         Decision::Stop(commands) => {
@@ -408,10 +408,10 @@ pub(crate) async fn run(
     }
 }
 
-/// A pre-flight probe that itself failed — the caller cannot even ask. A
+/// A prerequisites probe that itself failed — the caller cannot even ask. A
 /// quota-class 403 gets its own explanation instead of reading as a denial.
 /// Whether the caller holds [`BILLING_PERMISSION`] on the billing account,
-/// printed as a pre-flight line.
+/// printed as a line of the prerequisites check.
 async fn billing_probe(
     client: &reqwest::Client,
     token: &str,
@@ -433,7 +433,7 @@ async fn billing_probe(
     Ok(granted)
 }
 
-/// The billing half of the pre-flight, on its own, for greenfield: the scope
+/// The billing half of the prerequisites check, on its own, for greenfield: the scope
 /// root the rest is tested on does not exist until the parentless project
 /// creation materializes it, and that project is a real resource. What can be
 /// tested before it — the billing account the project will be linked to — is
@@ -443,12 +443,12 @@ pub(crate) async fn billing(
     token: &str,
     billing_account: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("--- Pre-flight (greenfield, before anything is created): the billing account ---");
+    println!("--- Prerequisites check (greenfield, before anything is created): the billing account ---");
     if billing_probe(client, token, billing_account).await? {
         return Ok(());
     }
     Err(format!(
-        "pre-flight: {} is missing on billingAccounts/{} — a billing account administrator grants {} \
+        "prerequisites check: {} is missing on billingAccounts/{} — a billing account administrator grants {} \
          to the caller, then re-run; nothing was created",
         BILLING_PERMISSION, billing_account, BILLING_ROLE
     )
@@ -458,11 +458,11 @@ pub(crate) async fn billing(
 fn preflight_probe_error(resource: &str, e: ApiError) -> String {
     match e.class() {
         ErrorClass::QuotaProject => format!(
-            "pre-flight could not test permissions on {}: {} — this is the quota project, not \
+            "the prerequisites check could not test permissions on {}: {} — this is the quota project, not \
              your permissions; run `gcloud auth application-default set-quota-project <project>`",
             resource, e
         ),
-        _ => format!("pre-flight could not test permissions on {}: {}", resource, e),
+        _ => format!("the prerequisites check could not test permissions on {}: {}", resource, e),
     }
 }
 
@@ -658,7 +658,7 @@ mod tests {
         assert_eq!(blocking, vec![missing[0].clone()]);
         assert_eq!(advisory, vec![missing[1].clone()]);
 
-        // At org scope the role IS grantable — nothing becomes advisory.
+        // At organization scope the role IS grantable — nothing becomes advisory.
         let (blocking, advisory) = split_folder_advisory(&org(), missing.clone());
         assert_eq!(blocking, missing);
         assert!(advisory.is_empty());
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn an_organisation_the_caller_cannot_see_is_named_as_that_not_as_missing_permissions() {
+    fn an_organization_the_caller_cannot_see_is_named_as_that_not_as_missing_permissions() {
         // testIamPermissions answers an invisible resource with the EMPTY set,
         // which reads exactly like "you hold none of these" — so the question
         // has to be asked before any permission verdict
@@ -693,7 +693,7 @@ mod tests {
         assert!(organization_verdict("organizations/111", &visible, Some("C0acme"), "who").is_ok());
         assert!(organization_verdict("organizations/111", &visible, None, "who").is_ok());
         assert!(organization_verdict("organizations/111", &visible, Some("  "), "who").is_ok());
-        // an organisation the search reports without a directory customer id
+        // an organization the search reports without a directory customer id
         let bare = [serde_json::json!({"name": "organizations/111"})];
         assert!(organization_verdict("organizations/111", &bare, Some("C0acme"), "who").is_ok());
     }
@@ -703,7 +703,7 @@ mod tests {
         // `--no-default-grants` does not change the DECISION — the caller still
         // holds setIamPolicy — it changes what satz does with it: the same
         // commands a caller who cannot self-grant would be given, and nothing
-        // created. Acquiring folderAdmin at the organisation root is the
+        // created. Acquiring folderAdmin at the organization root is the
         // reportable event; printing the undo afterwards does not unmake it.
         let scope = Scope::Org("organizations/123456789012".into());
         let missing = vec![

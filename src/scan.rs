@@ -1,6 +1,6 @@
-//! `satz scan` (roadmap Phase 6): Checkov over the emitted HCL, findings
+//! `satz scan` (roadmap Phase 6): Checkov over the transpiled HCL code, findings
 //! pointed back at the Satz source through the emission manifest. A finding
-//! on an emitted resource is evidence input for the compliance plane later;
+//! on an written resource is evidence input for the compliance plane later;
 //! today it is a report — and a gate: failed checks exit non-zero.
 //!
 //! Checkov is not bundled: `checkov` on PATH, else `uvx checkov` (uv runs it

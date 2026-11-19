@@ -2,14 +2,14 @@
 //!
 //! One module answers it for every reader. `satz presets` and `satz_presets` report it,
 //! `satz add-preset` and `satz remove-preset` change it, the interview and `merge-presets`
-//! write pack lines through it, and the compile's pack findings are its findings — so
+//! write pack lines through it, and the transpile's pack findings are its findings — so
 //! what an editor marks, what `transpile --check` prints and what `add-preset` refuses
 //! are the same sentences.
 //!
 //! The inputs are the estate's text and the graph that ships with its presets
 //! (`presets/pack-graph.json`, ADR 0031). A gate's value is read from the estate's own
 //! `params {}` and, where the estate binds nothing, from the default in the library file
-//! that declares it — so the report works on an estate that does not compile, which is
+//! that declares it — so the report works on an estate that does not transpile, which is
 //! when it is needed most.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -212,8 +212,8 @@ impl Library {
             files.insert(p.to_string(), file);
         }
         // A `.local` fork carries its own notices — an estate that uses the fork is asked
-        // what the fork says, which is what the compile walks. One that does not read is
-        // left out: the estate naming it does not compile either, and the row then says
+        // what the fork says, which is what the transpile walks. One that does not read is
+        // left out: the estate naming it does not transpile either, and the row then says
         // what the pristine pack carries.
         for n in &graph.nodes {
             let rel = n.path.strip_prefix("presets/").unwrap_or(&n.path);
@@ -305,7 +305,7 @@ impl<'a> View<'a> {
     /// The estate's ANSWER to a gate: its own `params {}` binding, resolved. `None` while
     /// the estate binds nothing — the default in the map or in the declaring pack is what
     /// the library proposes, not what this estate decided, and the interview means the
-    /// same thing by an answer. A day-0 skeleton answers nothing and every pack line is
+    /// same thing by an answer. A scaffold-only estate answers nothing and every pack line is
     /// commented, which is the normal state and not a finding.
     fn answered(&self, param: &str) -> Option<bool> {
         self.eval(self.own.get(param)?, 0)
@@ -319,7 +319,7 @@ impl<'a> View<'a> {
         }
     }
 
-    /// Whether the pack emits: its line is active, and its `when` — if it has one — holds.
+    /// Whether the pack writes: its line is active, and its `when` — if it has one — holds.
     pub(crate) fn deploys(&self, path: &str) -> bool {
         self.deploys_at(path, 0)
     }
@@ -350,7 +350,7 @@ impl<'a> View<'a> {
             out.push(("gate", vec![e.to.clone()], e.params.clone()));
         }
         // a gate the map declares: no pack edge says so, and the map has to be used for
-        // `when <gate>` to compile at all
+        // `when <gate>` to transpile at all
         if let (Some(d), Some(g)) = (&n.gate_declared_in, &n.gate) {
             if d != &n.path && !from(EdgeKind::Gate).any(|e| &e.to == d) {
                 out.push(("gate", vec![d.clone()], vec![g.clone()]));
@@ -403,7 +403,7 @@ impl<'a> View<'a> {
             .into_iter()
             .map(|(kind, any_of, params)| {
                 // a gate the estate binds itself is answered, whether or not the pack that
-                // asks it is used: `when <gate>` compiles, and the line is on or off by it
+                // asks it is used: `when <gate>` transpiles, and the line is on or off by it
                 let gate_bound = kind == "gate" && !params.is_empty() && params.iter().all(|p| self.own.contains_key(p));
                 let met = any_of.iter().any(|p| on(p)) || (kind == "data" && self.data_bound(n, &params)) || gate_bound;
                 Requirement { kind, any_of, params, met }
@@ -411,7 +411,7 @@ impl<'a> View<'a> {
             .collect()
     }
 
-    /// The sentence for a requirement `n` has and that is off — the same in the compile's
+    /// The sentence for a requirement `n` has and that is off — the same in the transpile's
     /// finding, `packs`, and `add-preset`'s refusal.
     fn requirement_text(&self, n: &Node, r: &Requirement) -> String {
         let name = |p: &str| match self.node(p).and_then(|m| m.gate.clone()) {
@@ -479,7 +479,7 @@ impl<'a> View<'a> {
                     Kind::DryRunConflict,
                     format!(
                         "`{}` and `{}` are both true — a dry run REPLACES enforcement while it measures.\n\
-                         Switch one off: `{}` to size the control against this organisation first, `{}` to enforce it now.",
+                         Switch one off: `{}` to size the control against this organization first, `{}` to enforce it now.",
                         enforcing, dry_gate, dry_gate, enforcing
                     ),
                 )
@@ -513,7 +513,7 @@ impl<'a> View<'a> {
             let (state, line) = self.state(n);
             // a gate the ESTATE answered yes with no line to switch on. The library's own
             // default is not an answer: a fresh skeleton uses the map, whose defaults
-            // propose six packs, and every line is commented on day 0 by design.
+            // propose six packs, and every line is commented until after the bootstrap by design.
             if let (Some(g), true) = (&n.gate, n.order.is_some() && n.by_hand.is_none()) {
                 if self.answered(g) == Some(true) && matches!(state, "commented" | "absent") {
                     let msg = if state == "commented" {
@@ -529,7 +529,7 @@ impl<'a> View<'a> {
                 ungated.push((
                     n.path.clone(),
                     format!(
-                        "`{}` is used without `when {}`, so a no to `{}` does not switch it off — write `{}` on that line and bind `{} = true` in this estate's own `params {{ }}`: the line deploys the pack, and the binding keeps it deploying",
+                        "`{}` is used without `when {}`, so a no to `{}` does not switch it off — write `{}` on that line and bind `{} = true` in this estate's own `params {{ }}`: the line puts the pack in the estate, and the binding keeps it there",
                         n.path, g, g, gated_line(l, g), g
                     ),
                     None,
@@ -561,7 +561,7 @@ impl<'a> View<'a> {
                 ));
             }
         };
-        group(unadopted, Kind::UnadoptedPack, "packs this estate asks for but does not use — the answer is bound and nothing emits it");
+        group(unadopted, Kind::UnadoptedPack, "packs this estate asks for but does not use — the answer is bound and nothing writes it");
         group(ungated, Kind::UngatedPack, "pack lines without their gate — a no does not switch them off");
         group(needs, Kind::PackRequirement, "packs on while a pack they need is off");
         out
@@ -682,9 +682,9 @@ impl<'a> View<'a> {
     }
 }
 
-/// The compile's pack findings, in two halves: the exclusions, which stop the compile
+/// The transpile's pack findings, in two halves: the exclusions, which stop the transpile
 /// before the fold, and the rest. A library file the graph names that does not read is
-/// one warning, never a stopped compile.
+/// one warning, never a stopped transpile.
 pub(crate) fn compile_findings(
     graph: &PackGraph,
     presets_dir: &Path,
@@ -713,7 +713,7 @@ pub(crate) fn compile_findings(
 /// often a pack whose provider is off, and the graph names it.
 ///
 /// The hint rides in the typed error, so one refusal has one shape — `file` and `line`
-/// survive for the LSP's diagnostics, `satz_transpile_check` and satz-studio, which are
+/// survive for the findings in the editor, `satz_transpile_check` and satz-studio, which are
 /// the readers that most need the line for exactly these refusals.
 pub(crate) fn hinted(
     e: PipelineError,
@@ -786,7 +786,7 @@ pub(crate) struct PackRow {
     /// the param an active line is gated on when it is not the pack's gate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gated_on: Option<String>,
-    /// the pack emits: its line is active and its `when` holds
+    /// the pack writes: its line is active and its `when` holds
     pub deploys: bool,
     pub requires: Vec<Requirement>,
     /// the packs with a requirement this one meets
@@ -799,11 +799,11 @@ pub(crate) struct PackRow {
     /// is not `acknowledged`
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<crate::notices::NoticeRow>,
-    /// what the pack adds to another pack's list params while it deploys — the entries
+    /// what the pack adds to another pack's list params while it creates resources — the entries
     /// beside the estate's own, so a reader sees which pack put each one there
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub contributes: Vec<Contributed>,
-    /// the compile's findings about this pack
+    /// the transpile's findings about this pack
     pub findings: Vec<String>,
 }
 
@@ -824,13 +824,13 @@ pub(crate) struct Unmanaged {
     pub at_line: usize,
 }
 
-/// What an estate works in: the organisation itself, or a place its account was delegated
+/// What an estate works in: the organization itself, or a delegated resource — what its account was given
 /// access to. Read from the interface files it uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum WorksIn {
-    /// it uses no interface file: an organisation's estate
-    Organisation,
+    /// it uses no interface file: an organization's estate
+    Organization,
     /// an interface it uses publishes `delegated_folder`
     Folder,
     /// it uses an interface file and none publishes a delegated folder: a delegated project
@@ -840,7 +840,7 @@ pub(crate) enum WorksIn {
 /// What the estate works in, from the exports of the interface files it uses.
 fn works_in(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> WorksIn {
     if interfaces.is_empty() {
-        return WorksIn::Organisation;
+        return WorksIn::Organization;
     }
     let load = crate::satz_loader(estate, &runtime.include_dirs);
     let folder = interfaces.iter().any(|u| {
@@ -853,8 +853,8 @@ fn works_in(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> Wo
     if folder { WorksIn::Folder } else { WorksIn::Project }
 }
 
-/// One interface file the estate uses, and what it says about who delegated: the central
-/// estate that wrote it and the identity and place it carries. Read from the file's own
+/// One interface file the estate uses, and what it says about who delegated: the organization's
+/// estate that wrote it and the account and delegated resource it carries. Read from the file's own
 /// static values; a value the file does not carry is absent.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct DelegatedBy {
@@ -862,20 +862,20 @@ pub(crate) struct DelegatedBy {
     pub path: String,
     /// the interface's name
     pub interface: String,
-    /// the name of the central estate that wrote the file
+    /// the name of the organization's estate that wrote the file
     pub estate: String,
-    /// the organisations that estate manages, `organizations/<id>`
+    /// the organizations that estate manages, `organizations/<id>`
     pub organizations: Vec<String>,
-    /// the organisation's short name, when the file carries the core value
+    /// the organization's short name, when the file carries the core value
     #[serde(skip_serializing_if = "Option::is_none")]
     pub customer_shortname: Option<String>,
-    /// the account the team's estates run as: a delegation's own interface carries it
+    /// the account the workload estates run as: a delegation's own interface carries it
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
     /// the group whose members may act as that account
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_group: Option<String>,
-    /// the project the team's calls are billed to
+    /// the delegation's infrastructure project, which the account's calls are billed to
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deploy_project: Option<String>,
     /// the delegated project, when the file is one's
@@ -912,7 +912,7 @@ fn delegated_by(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PacksReport {
     pub estate: String,
-    /// what the estate works in: the organisation, a delegated folder or a delegated project
+    /// what the estate works in: the organization, a delegated folder or a delegated project
     pub works_in: WorksIn,
     /// why the report has no packs: the presets carry no pack graph
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -920,13 +920,13 @@ pub(crate) struct PacksReport {
     /// every node of the graph, in the graph's order
     pub packs: Vec<PackRow>,
     pub unmanaged: Vec<Unmanaged>,
-    /// the interface files of central estates the estate reads — no pack, and no pack
+    /// the interface files it reads from an organization's estate — no pack, and no pack
     /// graph's business
     pub interfaces: Vec<Unmanaged>,
-    /// per used interface file, who delegated and what it carries: the central estate, the
-    /// organisation, the account, the place
+    /// per used interface file, who delegated and what it carries: the organization's estate, the
+    /// organization, the account, the delegated resource
     pub delegated_by: Vec<DelegatedBy>,
-    /// the compile's pack findings, as `transpile --check` prints them
+    /// the transpile's pack findings, as `transpile --check` prints them
     pub findings: Vec<Finding>,
 }
 
@@ -974,7 +974,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         unmanaged,
         delegated_by: delegated_by(estate, runtime, &interfaces),
         interfaces,
-        // as the compile reports them: the pack is the subject, the file is relative to
+        // as the transpile reports them: the pack is the subject, the file is relative to
         // the estate's directory
         findings: found.into_iter().map(|(path, f)| crate::estate_relative_file(f.about(path), runtime.dir.as_deref())).collect(),
     })
@@ -982,7 +982,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
 
 /// The lines the graph does not know, split: those that use a generated interface file
 /// (`interface "<name>"` as its header), and the rest. A file that does not read stays
-/// with the rest — the compile says why.
+/// with the rest — the transpile says why.
 fn interface_files(estate: &Path, runtime: &ToolConfig, lines: Vec<Unmanaged>) -> (Vec<Unmanaged>, Vec<Unmanaged>) {
     let load = crate::satz_loader(estate, &runtime.include_dirs);
     lines.into_iter().partition(|u| {
@@ -993,7 +993,7 @@ fn interface_files(estate: &Path, runtime: &ToolConfig, lines: Vec<Unmanaged>) -
 pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> String {
     let mut s = format!("packs — {}\n", r.estate);
     s.push_str(match r.works_in {
-        WorksIn::Organisation => "  works in: the organisation\n",
+        WorksIn::Organization => "  works in: the organization\n",
         WorksIn::Folder => "  works in: a delegated folder\n",
         WorksIn::Project => "  works in: a delegated project\n",
     });
@@ -1071,7 +1071,7 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
         }
     }
     if !r.interfaces.is_empty() {
-        s.push_str("\ninterfaces — the interface files of central estates it reads:\n");
+        s.push_str("\ninterfaces — the interface files it reads from an organization's estate:\n");
         for u in &r.interfaces {
             s.push_str(&format!("  {} (line {})\n", u.path, u.at_line));
         }
@@ -1090,7 +1090,7 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
         s.push_str(&format!("{}\n\n", n));
     }
     if !r.packs.is_empty() {
-        s.push_str("| Pack | Gate | Answer | Default | Line | Deploys | Needs | Needed by |\n|---|---|---|---|---|---|---|---|\n");
+        s.push_str("| Pack | Gate | Answer | Default | Line | Creates | Needs | Needed by |\n|---|---|---|---|---|---|---|---|\n");
         for p in &r.packs {
             let needs: Vec<String> =
                 p.requires.iter().map(|q| format!("{}{}", q.any_of.join(" or "), if q.met { "" } else { " (off)" })).collect();
@@ -1289,7 +1289,7 @@ pub(crate) struct LineEdit {
 ///
 /// A commented line that stands where the pack is not used — inside a folder's or a
 /// project's body, where an estate written before that was refused keeps its commented
-/// lines — is refused, naming the move: uncommented there, it is a `use` the compile
+/// lines — is refused, naming the move: uncommented there, it is a `use` the transpile
 /// refuses, and satz does not move an estate's lines for it.
 pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String, Option<LineEdit>), String> {
     let s = scan(src);
@@ -1391,7 +1391,7 @@ pub(crate) struct PackChange {
     pub contributes: Vec<ContributionRow>,
 }
 
-/// One pack's entries in another pack's list param, as the compile merges them.
+/// One pack's entries in another pack's list param, as the transpile merges them.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ContributionRow {
     /// the file that contributes, as the `use` that reached it names it
@@ -1404,7 +1404,7 @@ pub(crate) struct ContributionRow {
     pub applied: bool,
 }
 
-/// Every contribution of the packs this estate deploys, from the compile's own
+/// Every contribution of the packs this estate uses, from the transpile's own
 /// schema-free walk.
 pub(crate) fn contributions(estate: &Path, runtime: &ToolConfig) -> Result<Vec<ContributionRow>, String> {
     let src = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
@@ -1451,14 +1451,14 @@ fn resolve<'g>(graph: &'g PackGraph, arg: &str) -> Result<Vec<&'g Node>, String>
     Ok(on_gate)
 }
 
-/// The estate written, compiled, and restored when the compile refuses: an edit that
+/// The estate written, transpiled, and restored when the transpile refuses: an edit that
 /// leaves the estate broken is never left behind (ADR 0023's rule).
 fn write_proven(estate: &Path, before: &str, after: &str, tool: &ToolConfig, runtime: &ToolConfig) -> Result<(), BoxErr> {
     crate::fsx::write_edited_satz(estate, before, after)?;
     if let Err(e) = crate::pipeline_b_compile(estate, tool, runtime, crate::PrerequisiteFindings::Quiet, crate::FindingsOutput::Silent) {
         return Err(match crate::fsx::write_verbatim(estate, before) {
-            Ok(()) => format!("the edited estate does not compile — {} restored:\n{}", estate.display(), e).into(),
-            Err(w) => format!("the edited estate does not compile ({}) — and restoring {} failed: {}", e, estate.display(), w).into(),
+            Ok(()) => format!("the edited estate does not transpile — {} restored:\n{}", estate.display(), e).into(),
+            Err(w) => format!("the edited estate does not transpile ({}) — and restoring {} failed: {}", e, estate.display(), w).into(),
         });
     }
     Ok(())
@@ -1473,7 +1473,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
     let mut targets = resolve(&graph, arg)?;
     for n in &targets {
         match n.role {
-            Role::Core => return Err(format!("`{}` is the day-0 pack every estate starts with — it is not switched", n.path).into()),
+            Role::Core => return Err(format!("`{}` is the bootstrap pack every estate starts with — it is not switched", n.path).into()),
             Role::Map | Role::Pack => {}
         }
     }
@@ -1599,7 +1599,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
 }
 
 /// `satz remove-preset <estate> <gate|path>`: the gate bound false, the line left as it
-/// is — a gated line with a false gate deploys nothing.
+/// is — a gated line with a false gate creates nothing.
 pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, cascade: bool) -> Result<PackChange, BoxErr> {
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
@@ -1763,7 +1763,7 @@ mod tests {
     }
 
     /// `use interface` names an interface, not a pack: the scanner reads no line from it,
-    /// the compile reports no unmanaged pack for it, and switching a gate on leaves it be.
+    /// the transpile reports no unmanaged pack for it, and switching a gate on leaves it be.
     #[test]
     fn a_use_interface_line_is_no_pack_line() {
         let block = "\ninterface \"team-a\" {\n  use interface \"network\" when use_budget\n  use interface [\"dns\", \"logs\"]\n}\n";
@@ -1802,9 +1802,9 @@ mod tests {
         assert!(messages(&src).iter().all(|m| !m.contains("organization-budget")), "{:?}", messages(&src));
     }
 
-    /// A day-0 skeleton uses the map and answers nothing: the map's own defaults propose
+    /// A scaffold-only estate uses the map and answers nothing: the map's own defaults propose
     /// six packs and every line is commented, which is the state `satz init` writes. The
-    /// compile says nothing about it — at `validation_level = "error"` too — and starts
+    /// transpile says nothing about it — at `validation_level = "error"` too — and starts
     /// once this estate binds the answer itself.
     #[test]
     fn a_library_default_is_not_the_estate_s_answer() {
@@ -1944,7 +1944,7 @@ mod tests {
     }
 
     /// An estate written before a pack's `use` was refused inside a folder keeps its commented
-    /// line there; uncommented where it stands it is a `use` the compile refuses. The yes is
+    /// line there; uncommented where it stands it is a `use` the transpile refuses. The yes is
     /// refused and names the move — satz does not move the estate's line.
     #[test]
     fn a_commented_line_inside_a_folder_is_refused_naming_the_move() {

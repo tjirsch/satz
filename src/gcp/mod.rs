@@ -1,5 +1,5 @@
 //! Thin clients for the Google Cloud APIs satz talks to directly (REST over
-//! `reqwest`, ADC bearer token). One module per API; the pure parts — page
+//! `reqwest`, the sign-in's bearer token). One module per API; the pure parts — page
 //! merging, matching, error classification — are separate functions so they
 //! can be tested without a network.
 
@@ -98,14 +98,14 @@ pub(crate) fn configure_impersonation(sa: Option<String>) -> Result<(), String> 
     describe_conflict(IMPERSONATE.get_or_init(|| Identity::Bound(sa.clone())), &sa)
 }
 
-/// `--no-impersonate`: pin the process to the plain ADC. It wins over any
+/// `--no-impersonate`: pin the process to the plain sign-in. It wins over any
 /// later estate binding instead of colliding with it.
 pub(crate) fn disable_impersonation() {
     let _ = IMPERSONATE.set(Identity::Disabled);
 }
 
-/// Whether `--no-impersonate` pinned the process to the plain ADC — the one reason
-/// a cloud-mode estate's calls run as the credentials themselves.
+/// Whether `--no-impersonate` pinned the process to the plain sign-in — the one reason
+/// a cloud-mode estate's calls run as the signed-in person themselves.
 pub(crate) fn impersonation_disabled() -> bool {
     matches!(IMPERSONATE.get(), Some(Identity::Disabled))
 }
@@ -113,15 +113,15 @@ pub(crate) fn impersonation_disabled() -> bool {
 /// Pure so the four cases are testable without touching the global.
 fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), String> {
     match current {
-        // The operator asked for the plain ADC; an estate does not override that.
+        // The operator asked for the plain sign-in; an estate does not override that.
         Identity::Disabled => Ok(()),
         Identity::Bound(bound) if bound == wanted => Ok(()),
         Identity::Bound(bound) => Err(format!(
             "this process is already acting as {}, and this estate needs {} — one process \
              serves one identity. Run the command again for the other estate, or restart \
              `satz mcp` pointed at it.",
-            bound.as_deref().unwrap_or("the plain ADC (a local-mode estate)"),
-            wanted.as_deref().unwrap_or("the plain ADC (a local-mode estate)"),
+            bound.as_deref().unwrap_or("the plain sign-in (a local-mode estate)"),
+            wanted.as_deref().unwrap_or("the plain sign-in (a local-mode estate)"),
         )),
     }
 }
@@ -130,7 +130,7 @@ fn describe_conflict(current: &Identity, wanted: &Option<String>) -> Result<(), 
 /// one, the process binding otherwise.
 ///
 /// `--no-impersonate` is checked FIRST and outranks both. The operator asked for
-/// the plain ADC, and a per-call scope is no more entitled to override that than
+/// the plain sign-in, and a per-call scope is no more entitled to override that than
 /// an estate binding was.
 pub(crate) fn impersonation_target() -> Option<String> {
     if impersonation_disabled() {
@@ -145,10 +145,10 @@ pub(crate) fn impersonation_target() -> Option<String> {
     }
 }
 
-/// An ADC bearer token for the cloud-platform scope — minted AS the
+/// A bearer token of the sign-in for the cloud-platform scope — minted AS the
 /// configured impersonation target when one is set. The chokepoint every
 /// live command mints through — which is what lets [`identity::announce`]
-/// print the credential line exactly once, before the first API call, without
+/// print the sign-in line exactly once, before the first API call, without
 /// any command knowing about it.
 pub(crate) async fn access_token() -> Result<String, String> {
     let base = base_access_token().await?;
@@ -161,32 +161,32 @@ pub(crate) async fn access_token() -> Result<String, String> {
     Ok(token)
 }
 
-/// The credential's OWN token, before any estate exchange.
+/// The sign-in's OWN token, before any estate exchange.
 ///
-/// `whoami` needs it to answer both halves: who you logged in as is a question
-/// about the base credential, and the impersonation check has to be made AS that
-/// credential — asking the estate's account whether it may impersonate itself
+/// `whoami` needs it to answer both halves: who you signed in as is a question
+/// about the base sign-in, and the impersonation check has to be made AS that
+/// sign-in — asking the estate's account whether it may impersonate itself
 /// answers a different question.
 ///
-/// One credentials object per process: google-cloud-auth caches the token inside
+/// One sign-in object per process: google-cloud-auth caches the token inside
 /// it and refreshes it before it expires, so a command that builds five clients
 /// mints once instead of five times. A failed request drops the object: a failed
-/// refresh latches inside it, and the next call has to read the ADC file again —
+/// refresh latches inside it, and the next call has to read the sign-in file again —
 /// which is what a `gcloud auth application-default login` during a long-lived
 /// `satz mcp` replaced.
 pub(crate) async fn base_access_token() -> Result<String, String> {
     match base_credentials()?.access_token().await {
         Ok(t) => Ok(t.token),
         Err(e) => {
-            *BASE_CREDENTIALS.lock().map_err(|_| "the credentials cache lock is poisoned".to_string())? = None;
+            *BASE_CREDENTIALS.lock().map_err(|_| "the sign-in cache lock is poisoned".to_string())? = None;
             Err(e.to_string())
         }
     }
 }
 
-/// A token of the credential's OWN identity requesting `scopes` — a separate credential,
-/// so the one every command mints through keeps its cloud-platform scope. A user's ADC
-/// carries the scopes chosen at login whatever is requested here; a service account or
+/// A token of the sign-in's OWN identity requesting `scopes` — a separate sign-in,
+/// so the one every command mints through keeps its cloud-platform scope. A user's sign-in
+/// carries the scopes chosen at sign-in whatever is requested here; a service account or
 /// an external account gets exactly these. For the one call satz makes outside
 /// cloud-platform: assigning a Workspace admin role.
 pub(crate) async fn scoped_base_token(scopes: &[&str]) -> Result<String, String> {
@@ -202,11 +202,11 @@ pub(crate) async fn scoped_base_token(scopes: &[&str]) -> Result<String, String>
 
 /// A cloud-platform token AS `sa`, whatever identity the process is bound to — for the
 /// one question only that account can answer about itself: whether it holds Groups
-/// Admin. `--no-impersonate` pinned the run to the credential itself, so it refuses
+/// Admin. `--no-impersonate` pinned the run to the sign-in itself, so it refuses
 /// rather than answering for the wrong identity.
 pub(crate) async fn token_as(sa: &str) -> Result<String, String> {
     if impersonation_disabled() {
-        return Err(format!("--no-impersonate pins this run to your own credential, so nothing runs as {}", sa));
+        return Err(format!("--no-impersonate pins this run to your own sign-in, so nothing runs as {}", sa));
     }
     let base = base_access_token().await?;
     match plan_impersonation(adc_impersonation_target().as_deref(), Some(sa))? {
@@ -219,7 +219,7 @@ static BASE_CREDENTIALS: std::sync::Mutex<Option<google_cloud_auth::credentials:
     std::sync::Mutex::new(None);
 
 fn base_credentials() -> Result<google_cloud_auth::credentials::AccessTokenCredentials, String> {
-    let mut cached = BASE_CREDENTIALS.lock().map_err(|_| "the credentials cache lock is poisoned".to_string())?;
+    let mut cached = BASE_CREDENTIALS.lock().map_err(|_| "the sign-in cache lock is poisoned".to_string())?;
     if let Some(c) = cached.as_ref() {
         return Ok(c.clone());
     }
@@ -309,7 +309,7 @@ async fn ensure_quota_project(base: &str) -> Result<(), String> {
         QUOTA_OK.store(true, std::sync::atomic::Ordering::Relaxed);
         return Ok(());
     };
-    // The estate's own infra project is the right answer in every estate, so
+    // The estate's own infrastructure project is the right answer in every estate, so
     // name it rather than telling the operator to think of one.
     let bound = impersonation_target();
     let suggest = bound.as_deref().and_then(identity::project_of);
@@ -318,7 +318,7 @@ async fn ensure_quota_project(base: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether this credential may act as `sa`: one `generateAccessToken`, the token
+/// Whether this sign-in may act as `sa`: one `generateAccessToken`, the token
 /// discarded.
 ///
 /// It is the very call every live command makes after init, so a failure here is
@@ -336,13 +336,13 @@ pub(crate) async fn may_impersonate(base: &str, sa: &str) -> Result<(), String> 
 /// What the token path has to do to end up acting as the estate's account.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Exchange {
-    /// The credential is already the right identity.
+    /// The sign-in is already the right identity.
     UseBase,
     /// Exchange it for this service account's token.
     Mint(String),
 }
 
-/// The service account the ADC FILE itself impersonates, if it is one of those.
+/// The service account the sign-in FILE itself impersonates, if it is one of those.
 /// `gcloud auth application-default login --impersonate-service-account` writes
 /// exactly this shape.
 fn adc_impersonation_target() -> Option<String> {
@@ -355,29 +355,29 @@ fn adc_impersonation_target() -> Option<String> {
     identity::email_from_adc_json(&json)
 }
 
-/// Reconcile the identity the CREDENTIAL already carries with the one the
+/// Reconcile the identity the SIGN-IN already carries with the one the
 /// ESTATE asks for. Pure, so the four cases are testable without a network.
 ///
 /// The two token paths used to answer this differently. REST always exchanged,
-/// so an ADC that already impersonated the estate's account asked
+/// so a sign-in that already impersonated the estate account asked
 /// `generateAccessToken` to mint that account a token for ITSELF — a 403 unless
-/// it holds TokenCreator on itself. gRPC returned such an ADC unwrapped but
-/// ignored the requested account entirely, so a credential impersonating one
+/// it holds TokenCreator on itself. gRPC returned such a sign-in unwrapped but
+/// ignored the requested account entirely, so a sign-in impersonating one
 /// service account silently served an estate that declared another.
 pub(crate) fn plan_impersonation(
     adc_target: Option<&str>,
     estate_target: Option<&str>,
 ) -> Result<Exchange, String> {
     match (adc_target, estate_target) {
-        // Nothing asked for: whatever the credential is, is what we are.
+        // Nothing asked for: whatever the sign-in is, is what we are.
         (_, None) => Ok(Exchange::UseBase),
-        // The ordinary path: a human credential, exchanged for the estate's account.
+        // The ordinary path: a person's sign-in, exchanged for the estate's account.
         (None, Some(sa)) => Ok(Exchange::Mint(sa.to_string())),
         // Already that account. Exchanging again would be self-impersonation.
         (Some(have), Some(want)) if have == want => Ok(Exchange::UseBase),
         // Two different accounts is not a chain to build — it is a mistake to report.
         (Some(have), Some(want)) => Err(format!(
-            "the credentials impersonate {} but this estate runs as {} — log in without \
+            "the sign-in impersonates {} but this estate runs as {} — sign in without \
              --impersonate-service-account, or point satz at the estate whose account that is",
             have, want
         )),
@@ -385,7 +385,7 @@ pub(crate) fn plan_impersonation(
 }
 
 /// Exchange the caller's token for one minted AS the service account —
-/// iamcredentials `generateAccessToken`, the same call an impersonating ADC
+/// iamcredentials `generateAccessToken`, the same call an impersonating sign-in
 /// makes. A denial names the missing TokenCreator grant and the opt-out.
 async fn impersonated_token(base: &str, sa: &str) -> Result<String, String> {
     mint_impersonated(base, sa).await.map(|(token, _)| token)
@@ -430,8 +430,8 @@ async fn mint_impersonated(base: &str, sa: &str) -> Result<(String, u64), String
 }
 
 /// A Cloud Asset client honoring the configured impersonation: with a target
-/// set, the credentials are shaped exactly like an impersonating ADC file
-/// (the on-disk ADC as `source_credentials`); otherwise the default ADC.
+/// set, the sign-in is shaped exactly like an impersonating sign-in file
+/// (the sign-in file on disk as `source_credentials`); otherwise the plain sign-in.
 pub(crate) async fn asset_service() -> Result<google_cloud_asset_v1::client::AssetService, String> {
     let builder = google_cloud_asset_v1::client::AssetService::builder();
     match impersonation_target() {
@@ -447,18 +447,18 @@ pub(crate) async fn asset_service() -> Result<google_cloud_asset_v1::client::Ass
     }
 }
 
-/// The impersonating-ADC JSON, composed in memory: what `gcloud auth
+/// The impersonating sign-in JSON, composed in memory: what `gcloud auth
 /// application-default login --impersonate-service-account` would write, with
-/// the existing ADC as the source.
+/// the existing sign-in as the source.
 ///
-/// An ADC that ALREADY impersonates is kept as-is — re-wrapping would chain
+/// A sign-in that ALREADY impersonates is kept as-is — re-wrapping would chain
 /// impersonations — but only when it names the same account. It used to be
 /// kept whatever account it named, which silently served the estate with a
-/// different service account's credentials; [`plan_impersonation`] now decides,
+/// different service account's sign-in; [`plan_impersonation`] now decides,
 /// and it is the same decision the REST path makes.
 fn impersonated_credential_json(sa: &str) -> Result<serde_json::Value, String> {
     let path = crate::org_policy::adc_file_path().ok_or(
-        "no ADC file to impersonate from — run `gcloud auth application-default login`, or pass --no-impersonate",
+        "no sign-in file to impersonate from — run `gcloud auth application-default login`, or pass --no-impersonate",
     )?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let source: serde_json::Value =
@@ -752,7 +752,7 @@ mod tests {
         assert!(err.contains("globex-infra-001"), "the error hides who was asked for: {}", err);
     }
 
-    /// A local-mode estate wants the plain ADC; that is still an identity, and
+    /// A local-mode estate wants the plain sign-in; that is still an identity, and
     /// mixing it with a cloud-mode estate in one process is still a conflict.
     #[test]
     fn plain_adc_and_a_service_account_conflict_in_both_directions() {
@@ -762,18 +762,18 @@ mod tests {
         assert!(describe_conflict(&some, &None).is_err());
     }
 
-    // --- reconciling the credential's identity with the estate's --------------
+    // --- reconciling the sign-in's identity with the estate's --------------
 
     const ACME: &str = "svc-iac-001@acme-infra-001.iam.gserviceaccount.com";
     const BOLT: &str = "svc-iac-001@bolt-infra-001.iam.gserviceaccount.com";
 
-    /// The ordinary case: a human credential, exchanged for the estate's account.
+    /// The ordinary case: a person's sign-in, exchanged for the estate's account.
     #[test]
     fn a_human_credential_is_exchanged_for_the_estate_account() {
         assert_eq!(plan_impersonation(None, Some(ACME)), Ok(Exchange::Mint(ACME.to_string())));
     }
 
-    /// The REST path used to exchange unconditionally, so a credential that was
+    /// The REST path used to exchange unconditionally, so a sign-in that was
     /// ALREADY the estate's account asked `generateAccessToken` to mint that
     /// account a token for itself — a 403 unless it holds TokenCreator on itself.
     #[test]
@@ -781,18 +781,18 @@ mod tests {
         assert_eq!(plan_impersonation(Some(ACME), Some(ACME)), Ok(Exchange::UseBase));
     }
 
-    /// The gRPC path used to accept any impersonating credential and ignore the
-    /// account the estate asked for — so one customer's credentials quietly
+    /// The gRPC path used to accept any impersonating sign-in and ignore the
+    /// account the estate asked for — so one customer's sign-in quietly
     /// served another customer's estate.
     #[test]
     fn a_credential_for_a_different_account_is_refused_and_names_both() {
         let err = plan_impersonation(Some(BOLT), Some(ACME))
-            .expect_err("a mismatched credential must not be used");
-        assert!(err.contains("bolt-infra-001"), "the error hides the credential: {}", err);
+            .expect_err("a mismatched sign-in must not be used");
+        assert!(err.contains("bolt-infra-001"), "the error hides the sign-in: {}", err);
         assert!(err.contains("acme-infra-001"), "the error hides the estate: {}", err);
     }
 
-    /// Nothing asked for: whatever the credential is, is what we are. This is
+    /// Nothing asked for: whatever the sign-in is, is what we are. This is
     /// `--no-impersonate` and every local-mode estate.
     #[test]
     fn with_no_estate_target_the_credential_is_used_as_it_is() {
@@ -981,7 +981,7 @@ mod tests {
 
 #[cfg(test)]
 mod billed_to_tests {
-    /// The preflight and the import name the infrastructure project as the quota
+    /// The API prerequisites check and the import name the infrastructure project as the quota
     /// project of their Service Usage calls, so an API is switched on in a workload
     /// project whatever that project has on itself.
     #[test]

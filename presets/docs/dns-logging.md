@@ -5,7 +5,7 @@ Source: `presets/cis/dns-logging.satz`
 
 ## Purpose
 
-CIS 5.0 §2.13 — DNS query logging, as far as an org policy can carry it.
+CIS 5.0 §2.13 — DNS query logging, as far as an organization policy can carry it.
 
 WHAT THE CONTROL ASKS. Every VPC network has a Cloud DNS policy with logging enabled,
 so name resolution is auditable — which is how a compromised host asking for its
@@ -15,15 +15,15 @@ such control.
 WHAT A CONSTRAINT CAN AND CANNOT DO, stated plainly because the difference decides
 the claim. An org-policy constraint judges a resource being CREATED or UPDATED. It
 can therefore refuse a DNS policy that has logging off, which is what this pack
-enforces. It cannot require that a resource EXIST: nothing in an org policy can say
+enforces. It cannot require that a resource EXIST: nothing in an organization policy can say
 "every network must have a DNS policy attached", because the network is not the
 resource being changed and carries no reference to one. So this is a `contributes`
-claim, not an `implements` — no org policy discharges §2.13 on its own, and the
+claim, not an `implements` — no organization policy discharges §2.13 on its own, and the
 missing half is a network that simply has no policy at all.
 
 THE MISSING HALF IS THE ESTATE'S. A network the estate declares gets its policy from
 the estate (`google_dns_policy` with `enable_logging = true`, naming that network);
-a network a customer's workload team made in their own project is where
+a network a customer's workload's team made in their own project is where
 `report-compliance` earns its keep — it reads the live state and names the networks
 without logging. That list is the worklist; this constraint is what keeps it from
 growing.
@@ -58,11 +58,11 @@ _None — the pack takes everything from the estate's params._
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_dns_logging_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_dns_logging_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 
@@ -83,7 +83,7 @@ What to run once this pack is switched on. satz shows each notice when the pack 
 
 **Manual duties** (a control stays *partial* until each is attested):
 
-- `attach-policy` (cis-gcp 5.0 §2.13) — The control also asks that every VPC network HAS such a policy, which no org policy can require: the estate declares one per network it owns, and report-compliance names the networks that have none.
+- `attach-policy` (cis-gcp 5.0 §2.13) — The control also asks that every VPC network HAS such a policy, which no organization policy can require: the estate declares one per network it owns, and report-compliance names the networks that have none.
 
 Every resource this pack contributes is a witness of a claim above.
 

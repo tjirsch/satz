@@ -38,9 +38,10 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "_site"
 # left off it either.
 SITE_DOCS: list[str] = [
     "tutorials",
-    "tutorial-organisation",
+    "tutorial-organization",
     "tutorial-projects",
     "tutorial-delegated-access",
+    "glossary",
     "language",
     "workflows",
     "interview",
@@ -122,7 +123,7 @@ if sorted(_menu) != sorted(_pack_stems):
         lines.append(f"  {stem} is in two groups")
     raise SystemExit("\n".join(lines))
 
-# The menu, in reading order: what satz is, the language it is written in, the
+# The menu, in reading order: what satz is, the words it uses, the language it is written in, the
 # library that ships with it and its changelog, how you work with it, the machine
 # interfaces, then
 # the reference shelf. Every page is named here and nothing else is — an unlisted
@@ -131,6 +132,7 @@ if sorted(_menu) != sorted(_pack_stems):
 NAV_ORDER = [
     "satz",
     "tutorials",
+    "glossary",
     "language",
     "library",
     "changelog",
@@ -148,8 +150,8 @@ NAV_ORDER = [
 # in this order, never from the menu itself. A tutorial page not listed here is a
 # page the menu cannot reach, which the check below names.
 TUTORIALS: list[tuple[str, str]] = [
-    ("tutorial-organisation", "An organisation from scratch"),
-    ("tutorial-projects", "Projects beside the organisation"),
+    ("tutorial-organization", "An organization from scratch"),
+    ("tutorial-projects", "Workload estates beside the organization"),
     ("tutorial-delegated-access", "Delegated access: the procedure for both sides"),
 ]
 _tutorial_stems = {stem for stem, _ in TUTORIALS}

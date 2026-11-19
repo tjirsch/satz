@@ -56,13 +56,13 @@ impl BodyKeys {
 /// - `"import-id"` — the live id `satz adopt --execute` writes back; it becomes an
 ///   `import` block, never an attribute.
 /// - `private = true` — keeps the resource out of the interface: `export … = all <type>`
-///   skips it, and an export that names it is refused. Never emitted.
-/// - `lifecycle` and `provider` — the two Terraform meta-arguments satz emits from a
+///   skips it, and an export that names it is refused. Never written.
+/// - `lifecycle` and `provider` — the two Terraform meta-arguments satz writes from a
 ///   body; they belong to no resource schema. `depends_on` is not among them: satz
 ///   derives the ordering a plan needs itself.
 /// - `project_service` on a project — the list of APIs satz turns into
 ///   `google_project_service` resources beside the project.
-/// - `org` on a project — the organisation a project states as its parent where the
+/// - `organization` on a project — the organization a project states as its parent where the
 ///   estate has no enclosing node; the emitter reads it beside `org_id`.
 /// - `member`, `manager`, `owner` and `email` on a group — the membership lists satz
 ///   turns into `google_cloud_identity_group_membership` resources, and the address the
@@ -213,20 +213,20 @@ fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, Pi
     }
 }
 
-/// Every `request` against the list it names, as the compile sees it — contributions
+/// Every `request` against the list it names, as the transpile sees it — contributions
 /// included: the list is declared and is a list, and every entry is an object that
 /// carries the key, uses the declared fields only, and names itself uniquely. One param
-/// has one request point.
+/// has one list.
 fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Result<Vec<ResolvedRequest>, PipelineError> {
     let mut out: Vec<ResolvedRequest> = Vec::new();
     for (file, r) in declared {
         if let Some(first) = out.iter().find(|x| x.param == r.param) {
-            return perr(file, r.line, format!("request {}: declared twice — here and {}:{}; one list has one request point", r.param, first.file, first.line));
+            return perr(file, r.line, format!("request {}: declared twice — here and {}:{}; one list has one list", r.param, first.file, first.line));
         }
         let entries = match env.get(&r.param) {
             Some(serde_yaml::Value::Sequence(s)) => s,
-            Some(other) => return perr(file, r.line, format!("request {}: `{}` is {} — a request point is a list param", r.param, r.param, yaml_kind(other))),
-            None => return perr(file, r.line, format!("request {}: unknown param '{}' — the request point names a list param a file of the estate declares", r.param, r.param)),
+            Some(other) => return perr(file, r.line, format!("request {}: `{}` is {} — a list is a list param", r.param, r.param, yaml_kind(other))),
+            None => return perr(file, r.line, format!("request {}: unknown param '{}' — the list names a list param a file of the estate declares", r.param, r.param)),
         };
         if let Err(msg) = check_request_entries(r, entries, &[]) {
             return perr(file, r.line, msg);
@@ -250,7 +250,7 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
     Ok(out)
 }
 
-/// The entries of a request point's list, or the ones a team asks for (`existing` then
+/// The entries of a list's list, or the ones a team asks for (`existing` then
 /// holds the list as it is, an entry equal to its own not a collision — the file is
 /// already vendored): each an object carrying the key, the declared fields only, each
 /// field a pattern names a string or number the whole of which the pattern matches, keys
@@ -277,10 +277,10 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
                 Some(serde_yaml::Value::Number(v)) => v.to_string(),
                 Some(other) => return Err(format!("request {}: entry `{}` has `{}` = {} — a field with a pattern holds a string", r.param, key, f, yaml_text(other))),
             };
-            // the parser compiled the pattern once already, and refused one that is no regular expression
+            // the parser built the pattern once already, and refused one that is no regular expression
             let re = regex::Regex::new(&satz::whole(pattern)).map_err(|e| format!("request {}: the pattern of `{}`: {}", r.param, f, e))?;
             if !re.is_match(&text) {
-                return Err(format!("request {}: entry `{}` has `{}` = \"{}\", which the request point's pattern `{}` does not match", r.param, key, f, text, pattern));
+                return Err(format!("request {}: entry `{}` has `{}` = \"{}\", which the list's pattern `{}` does not match", r.param, key, f, text, pattern));
             }
         }
         if seen.contains(&key) {
@@ -302,9 +302,9 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
     Ok(())
 }
 
-/// A team's request file against the estate's request points: it holds `params { … }`
+/// A team's request file against the estate's lists: it holds `params { … }`
 /// with `contributes_<param>` entries alone (a `pack` header allowed), every param one
-/// the estate declares a request point for, every entry shaped by it. Each finding is
+/// the estate declares a list for, every entry shaped by it. Each finding is
 /// (line, message).
 pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) -> Vec<(usize, String)> {
     let file = match satz::parse(src) {
@@ -339,7 +339,7 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
             out.push((
                 *line,
                 format!(
-                    "`{}`: the estate declares no request point for `{}` — it takes requests for: {}",
+                    "`{}`: the estate declares no list for `{}` — it takes requests for: {}",
                     name,
                     param,
                     if requests.is_empty() { "nothing".to_string() } else { requests.iter().map(|r| format!("`{}`", r.param)).collect::<Vec<_>>().join(", ") }
@@ -358,8 +358,8 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
                 continue;
             }
         };
-        // a field the file leaves out takes the request point's default, as the estate's
-        // compile fills it in — so an entry already vendored compares equal to its copy in
+        // a field the file leaves out takes the list's default, as the estate's
+        // transpile fills it in — so an entry already vendored compares equal to its copy in
         // the estate's list
         for e in entries.iter_mut() {
             let serde_yaml::Value::Mapping(fields) = e else { continue };
@@ -600,7 +600,7 @@ fn each_value(v: &Value, fields: &serde_yaml::Mapping, line: usize) -> Result<Va
 }
 
 /// A resolved value as the syntax it could have been written as: a string stays literal
-/// text (`${…}` in it stays a reference to what the estate emits), a mapping an object.
+/// text (`${…}` in it stays a reference to what the estate writes), a mapping an object.
 fn ast_of(v: &serde_yaml::Value, line: usize) -> Result<Value, String> {
     Ok(match v {
         serde_yaml::Value::String(s) => Value::Str(vec![StrPart::Lit(s.clone())]),
@@ -683,7 +683,7 @@ fn refuse_params_reading_inputs(file: &File, file_name: &str) -> Result<(), Pipe
     }
     for (name, v, line) in &file.params {
         if let Some(read) = reads_any(v, &input_names) {
-            return perr(file_name, *line, format!("param `{}` reads the input `{}` — a param is a value the compile fixes, an input a variable the plan reads; make `{}` an input too, or write the value", name, read, name));
+            return perr(file_name, *line, format!("param `{}` reads the input `{}` — a param is a value the transpile fixes, an input a variable the plan reads; make `{}` an input too, or write the value", name, read, name));
         }
     }
     Ok(())
@@ -701,7 +701,7 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
         if satz::contribution_target(name).is_some() {
             continue;
         }
-        // Before anything else: a param a release renamed stops the compile here,
+        // Before anything else: a param a release renamed stops the transpile here,
         // whether it is the estate's own binding or a fork's default.
         if let Some(e) = renamed_param(name, file_name, *line) {
             return Err(e);
@@ -724,7 +724,7 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
     Ok(env)
 }
 
-/// One `inputs { … }` entry as the compile sees it: the value as bound, and where it is
+/// One `inputs { … }` entry as the transpile sees it: the value as bound, and where it is
 /// declared. What `satz transpile --input` binds and `variables.tf` declares.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeclaredInput {
@@ -769,14 +769,14 @@ pub struct FrontEnd {
     pub claims: Vec<PackClaims>,
     /// Declared `action`s from the estate and every file it actually `use`s, with
     /// their arguments resolved. Like `hcl`, they bypass the fold and never reach
-    /// the emission manifest; unlike `hcl`, nothing emits them at all — they are
+    /// the emission manifest; unlike `hcl`, nothing writes them at all — they are
     /// inert until `satz run-actions` is invoked.
     pub actions: Vec<ResolvedAction>,
     /// Declared `question`s from the estate and every file it actually `use`s.
-    /// Metadata only: they emit nothing and never reach the fold.
+    /// Metadata only: they write nothing and never reach the fold.
     pub questions: Vec<PackQuestions>,
     /// Declared `notice`s from every pack the estate actually `use`s. Their params
-    /// are not in `tfvars`: an acknowledgement is never emitted.
+    /// are not in `tfvars`: an acknowledgement is never written.
     pub notices: Vec<PackNotices>,
     /// What the packs contributed to the estate's list params, with the pack that
     /// contributed each entry. Already merged into `env` and `tfvars`; this is the
@@ -794,7 +794,7 @@ pub struct FrontEnd {
     /// The name in the estate's header.
     pub estate: Option<String>,
     /// The generated interface files the estate `use`s — a project reading the interface of
-    /// a central estate — each with the path it was used by. Their values are what
+    /// an organization's estate — each with the path it was used by. Their values are what
     /// `${{interface.<export>}}` reads.
     pub interface_files: Vec<UsedInterfaceFile>,
 }
@@ -813,7 +813,7 @@ pub struct ResolvedExport {
     pub interface: Option<String>,
     pub name: String,
     /// The value with every `{param}` resolved. A string may still carry `${…}`
-    /// references to what the estate emits; the emitter decides what each one is.
+    /// references to what the estate writes; the emitter decides what each one is.
     /// `Null` for `all <type>`, which `all` carries.
     pub value: serde_yaml::Value,
     /// `all <resource type>`: every resource of the type, as a map keyed by label
@@ -952,7 +952,7 @@ pub struct ResolvedSuppression {
 
 /// Apply the estate's suppressions to the folded result. Each one must match —
 /// a suppress that stops matching (typo, upstream rename) is a hard error, so
-/// stale subtractive config can never silently deploy what it meant to remove.
+/// stale subtractive config can never silently create what it meant to remove.
 /// One `${…}` reference the estate writes, and where it was written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WrittenRef {
@@ -969,7 +969,7 @@ pub struct WrittenRef {
 /// Every `${…}` reference in the folded estate, wherever it is written: a plain
 /// attribute, a nested block, an element of a list, a grant's member or role,
 /// embedded in a longer string. The caller checks them against what is actually
-/// emitted — a reference naming nothing is a typo that would otherwise compile
+/// written — a reference naming nothing is a typo that would otherwise transpile
 /// and only fail at plan time, or quietly name a real but different resource.
 pub fn written_references(folded: &Folded) -> Vec<WrittenRef> {
     let mut out = Vec::new();
@@ -1020,7 +1020,7 @@ pub fn written_references(folded: &Folded) -> Vec<WrittenRef> {
     out
 }
 
-/// The reference root a project names a central estate's value by: `${interface.<export>}`,
+/// The reference root a project names a value of an organization's estate by: `${interface.<export>}`,
 /// written `"${{interface.<export>}}"` in Satz.
 pub const INTERFACE_ROOT: &str = "interface";
 
@@ -1035,7 +1035,7 @@ pub const INTERFACE_STATIC_LOCAL: &str = "local.interface_static";
 
 /// Every `${interface.<export>}` in the folded estate, replaced by what the used interface
 /// files say it is: a whole-value reference by the value itself (a list stays a list), one
-/// inside a longer string by its text. A value the central estate looks up is text over
+/// inside a longer string by its text. A value the organization's estate looks up is text over
 /// `${data.<type>.<label>.<attr>}`. The body is what every check judges; beside it, each
 /// entity that read a value gets its rendering — the same body with `local.interface.<export>`
 /// where the value was spliced — which is what the emitter writes, `interface.tf` holding the
@@ -1138,7 +1138,7 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
 }
 
 /// The scope pin a grant map's label carries, `<attr>=<value>` before the separator: its
-/// value. `None` for a structural prefix and for an organisation grant.
+/// value. `None` for a structural prefix and for an organization grant.
 fn pin_value_of_label(label: &str) -> Option<String> {
     let (prefix, _) = label.split_once(GRANT_SCOPE_SEP)?;
     let (_, value) = prefix.split_once('=')?;
@@ -1199,8 +1199,8 @@ pub fn reads_lookup(v: &serde_yaml::Value) -> bool {
     texts.iter().any(|t| !data_addresses(t).is_empty())
 }
 
-/// What `interface.tf` holds for a project estate: each export the estate read with its
-/// value — a literal, or text over `${data.<type>.<label>.<attr>}` for a value the central
+/// What `interface.tf` holds for a workload estate: each export the estate read with its
+/// value — a literal, or text over `${data.<type>.<label>.<attr>}` for a value the organization's
 /// estate looks up — and the lookups those values need, with the ones their arguments
 /// read, in dependency order, once each.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1229,7 +1229,7 @@ pub fn interface_locals(read: &[String], files: &[UsedInterfaceFile]) -> Result<
             return Ok(());
         }
         let Some(l) = lookups.get(address) else {
-            return Err(format!("`{}` is read by a value of the used interface files, and none of them carries its lookup — regenerate them with `satz transpile` of the central estate", address));
+            return Err(format!("`{}` is read by a value of the used interface files, and none of them carries its lookup — regenerate them with `satz transpile` of the organization's estate", address));
         };
         if chain.iter().any(|c| c == address) {
             return Err(format!("the lookups read each other in a cycle: {} → {}", chain.join(" → "), address));
@@ -1297,7 +1297,7 @@ pub struct ConfigRendering {
 
 /// Every `${interface.<export>}` in the estate's `terraform` and `providers` blocks, replaced
 /// as in a resource body: a whole-value reference by the value, one inside a longer string
-/// by its text. A value the central estate looks up is refused at the block: a provider is
+/// by its text. A value the organization's estate looks up is refused at the block: a provider is
 /// configured before any data source is read, and the lookup is read through that provider.
 /// The `providers` block gets a rendering like an entity's, over `local.interface_static`
 /// for the same reason; the `terraform` block is written as substituted, because a backend
@@ -1327,7 +1327,7 @@ pub fn resolve_interface_in_config(
                 });
                 match looked_up {
                     Some(name) => Some(format!(
-                        "`interface.{}` is a value the central estate looks up, and a provider is configured before any lookup is read — bind the value as a param, or read it in a resource",
+                        "`interface.{}` is a value the organization's estate looks up, and a provider is configured before any lookup is read — bind the value as a param, or read it in a resource",
                         name
                     )),
                     None => {
@@ -1488,7 +1488,7 @@ fn substitute_text(
 
 /// The value a key names. `<folder>.<value>` is the value of the interface folder of that
 /// name. A bare `<value>` is the one every used folder that carries it agrees on — what the
-/// organisation says once, such as its region; a value two folders carry differently has no
+/// organization says once, such as its region; a value two folders carry differently has no
 /// bare name, and the message says how to name it.
 fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a satz::OfferedOutput, String> {
     if files.is_empty() {
@@ -1664,7 +1664,7 @@ pub fn apply_suppressions(
 /// Params a release renamed, and what they are called now. A renamed param is a
 /// HARD ERROR wherever it is declared, because the failure it prevents is silent:
 /// nothing refuses a param no pack reads, so an estate left on the old name keeps
-/// compiling and the pack quietly uses its own default — a different project, a
+/// transpiling and the pack quietly uses its own default — a different project, a
 /// different bucket, an orphaned archive. Every entry stays for one release line and
 /// is removed when the fleet is past it; the rule that everyone is on the current
 /// version is what makes removal safe.
@@ -1797,7 +1797,7 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
 ];
 
 /// `Some(error)` if this param name was renamed. Declared anywhere — an estate, a
-/// `.local` fork, a pack — it stops the compile and names the replacement.
+/// `.local` fork, a pack — it stops the transpile and names the replacement.
 pub(crate) fn renamed_param(name: &str, file: &str, line: usize) -> Option<PipelineError> {
     RENAMED_PARAMS.iter().find(|(from, _, _)| *from == name).map(|(_, to, why)| PipelineError {
         file: file.to_string(),
@@ -1842,25 +1842,25 @@ const MOVED_PACKS: &[MovedPack] = &[
         from: "presets/workload-deployer.satz",
         to: "presets/delegation.satz",
         why: "delegated access is one base preset, `presets/delegation.satz`, and one preset per kind of target; the folders a delegation's account works in are `presets/delegated-folders.satz`",
-        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the transpile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
     MovedPack {
         from: "presets/folder-workload.satz",
         to: "presets/delegation.satz",
         why: "delegated access is one base preset, `presets/delegation.satz`, and one preset per kind of target; the folders a delegation's account works in are `presets/delegated-folders.satz`",
-        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the transpile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
     MovedPack {
         from: "presets/project-onboarding.satz",
         to: "presets/delegated-projects.satz",
         why: "a delegated project is worked by the account of a delegation, `presets/delegation.satz`, and has none of its own",
-        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the transpile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
     MovedPack {
         from: "presets/project-workload.satz",
         to: "presets/delegated-projects.satz",
         why: "a delegated project is worked by the account of a delegation, `presets/delegation.satz`, and has none of its own",
-        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the transpile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
 ];
 
@@ -1870,7 +1870,7 @@ const MOVED_PACKS: &[MovedPack] = &[
 /// pack's own siblings too — `<stem>.local.satz`, the estate's fork, and
 /// `<stem>.diff.satz`, its adoption delta — because a fork left behind at the old
 /// path is the worst case of all: nothing would refuse it, and the estate would
-/// compile that copy forever.
+/// transpile that copy forever.
 fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
     MOVED_PACKS.iter().find_map(|m| {
         if let Some(rest) = m.from.strip_suffix('/') {
@@ -1894,7 +1894,7 @@ fn moved_to(use_path: &str) -> Option<(String, &'static MovedPack)> {
 /// `Some(error)` if this `use` names a pack that moved.
 ///
 /// Refused rather than followed: the old file is still on disk in every estate
-/// that fetched it, so a `use` of the old path keeps compiling against a copy
+/// that fetched it, so a `use` of the old path keeps transpiling against a copy
 /// nothing will ever update again — a pack frozen at the version it had the day
 /// the library moved it, with no sign that anything is wrong.
 fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> {
@@ -1902,13 +1902,13 @@ fn moved_pack(use_path: &str, file: &str, line: usize) -> Option<PipelineError> 
         file: file.to_string(),
         line,
         msg: format!(
-            "use \"{}\": this pack moved to \"{}\" — {}. {}. Commenting the line out instead takes what the pack deploys off the organisation at the next apply. `satz get-presets` installs the pack at its new path; `## Breaking changes` in presets/CHANGELOG.md has every step.",
+            "use \"{}\": this pack moved to \"{}\" — {}. {}. Commenting the line out instead takes what the pack created off the organization at the next apply. `satz get-presets` installs the pack at its new path; `## Breaking changes` in presets/CHANGELOG.md has every step.",
             use_path, to, m.why, m.edit
         ),
     })
 }
 
-/// Compile an estate source to per-file fragments plus the estate environment.
+/// Transpile an estate source to per-file fragments plus the estate environment.
 pub fn compile_estate(
     file_name: &str,
     src: &str,
@@ -1919,8 +1919,8 @@ pub fn compile_estate(
 }
 
 /// `compile_estate` with `extra_uses` at the estate's top level, as if the estate `use`d
-/// each of them: `check-request` compiles the estate with the request file in place, so
-/// what the compile would refuse once the file is vendored is refused before the pull
+/// each of them: `check-request` transpiles the estate with the request file in place, so
+/// what the transpile would refuse once the file is vendored is refused before the pull
 /// request — an entry without a field the pack's `each` body reads, a key the list holds.
 pub fn compile_estate_using(
     file_name: &str,
@@ -1954,7 +1954,7 @@ pub fn compile_estate_bound(
             file_name,
             i.line,
             format!(
-                "interface \"{}\": this is an interface file satz generated from the estate `{}` — a project estate `use`s it; it is no estate of its own",
+                "interface \"{}\": this is an interface file satz generated from the estate `{}` — a workload estate `use`s it; it is no estate of its own",
                 i.name, i.estate
             ),
         );
@@ -2154,7 +2154,7 @@ pub fn compile_estate_bound(
 /// The interface files the estate uses, each once. The same file used twice is one. Two
 /// files may carry a value of one name: read by its bare name it must be the same in both,
 /// which the read judges (`interface_output`). A lookup two files carry must read the same,
-/// because both are emitted as one `data` block; two files of one interface name are
+/// because both are written as one `data` block; two files of one interface name are
 /// refused, because the name is how a value is told apart.
 fn merge_interface_files(used: Vec<UsedInterfaceFile>) -> Result<Vec<UsedInterfaceFile>, PipelineError> {
     let mut out: Vec<UsedInterfaceFile> = Vec::new();
@@ -2321,7 +2321,7 @@ fn resolve_interfaces(
 /// Resolve one action's arguments against the finished parameter namespace. An
 /// unknown param is a hard error here exactly as it is in a resource body — an
 /// argument list that silently loses a value is a command run against the wrong
-/// organisation.
+/// organization.
 fn resolve_action(
     a: &satz::ActionDecl,
     file_name: &str,
@@ -2353,7 +2353,7 @@ fn resolve_action(
 /// the question. This is a user-visible win with no interview built at all.
 ///
 /// Two true branches are a contradiction wherever they are met. A `required`
-/// choice with NO branch set is refused only with `require_answer` — at compile.
+/// choice with NO branch set is refused only with `require_answer` — at transpile.
 /// The questions report passes `false`: that state is exactly the one it exists
 /// to report, as an unanswered, blocking question an interview can still ask.
 pub fn check_oneof(questions: &[PackQuestions], env: &Env, require_answer: bool) -> Result<(), PipelineError> {
@@ -2512,20 +2512,20 @@ fn contributed_entry(v: &serde_yaml::Value) -> String {
 /// contributes to, the estate's own value (its binding, else the declaring pack's
 /// default) with the contributed entries after it, duplicates dropped.
 ///
-/// It is a pass of its own, before the compile's walk, because the walk resolves a
+/// It is a pass of its own, before the transpile's walk, because the walk resolves a
 /// resource body against the namespace as it stands when it reaches that body — the CIS
 /// baseline's line comes before the packs that contribute to it, so a value completed
 /// during the walk would reach the policy in some estates and not in others. Seeding the
 /// estate's outermost env instead makes the merged value the only one anything sees.
 ///
-/// An estate no pack contributes to gets an EMPTY seed, so nothing about its compile
+/// An estate no pack contributes to gets an EMPTY seed, so nothing about its transpile
 /// changes.
 /// `contribution_seed`, with its error held back rather than raised.
 ///
-/// The seed pass walks the same `use` graph the compile does, but without the compile's
+/// The seed pass walks the same `use` graph the transpile does, but without the transpile's
 /// own refusals — a pack that MOVED, the `use` chain a cycle is reported with. Raising
 /// its error first would replace those messages with a worse one for the same estate, so
-/// the caller lets the compile speak and returns the held-back error only if the compile
+/// the caller lets the transpile speak and returns the held-back error only if the transpile
 /// has nothing to say.
 fn seed_or_deferred(
     file: &File,
@@ -2673,7 +2673,7 @@ const MAX_USE_DEPTH: usize = 64;
 /// legal in all three positions, but deliberately does NOT resolve types: a
 /// resource body's nested attribute blocks (`labels { … }`, `spec { … }`) are
 /// indistinguishable from resource maps without a schema, and guessing made this
-/// walk reject `google_labels` on estates `transpile` compiles happily.
+/// walk reject `google_labels` on estates `transpile` transpiles happily.
 /// The questions an estate can be asked, from itself and every pack it actually
 /// uses — with the params they answer, resolved.
 ///
@@ -2705,7 +2705,7 @@ pub fn estate_questions(
 }
 
 /// What the packs this estate uses contribute to other files' list params — the
-/// records the compile merges, from the same schema-free walk. A switch that turns a
+/// records the transpile merges, from the same schema-free walk. A switch that turns a
 /// pack on compares these before and after to say what it added to a list the estate
 /// does not write itself.
 pub fn estate_contributions(
@@ -3114,9 +3114,9 @@ impl Walk<'_> {
         self.questions.push(pack_questions(file, file_name));
     }
 
-    /// A request point's `defaults` written into the list it names: every entry that does
+    /// A list's `defaults` written into the list it names: every entry that does
     /// not carry a defaulted field takes the default, resolved against the params as they
-    /// stand. Done when the request point is read, before the file's items are walked, so
+    /// stand. Done when the list is read, before the file's items are walked, so
     /// an `each`, the request check, the interface and tfvars all see one list. A list the
     /// walk does not hold yet is left to `resolve_requests`, which names it.
     fn fill_defaults(&mut self, r: &satz::RequestDecl, file_name: &str) -> Result<(), PipelineError> {
@@ -3197,7 +3197,7 @@ impl Walk<'_> {
         self.refuse_input_reads(file, file_name)
     }
 
-    /// What an input may not decide, each refused at its line: a request point (a list the
+    /// What an input may not decide, each refused at its line: a list (a list the
     /// estate owns), an action's args (it runs with fixed values), a suppression (it names
     /// a resource), an export (an interface carries values, not variables). A question on
     /// an input is the parser's refusal: a question travels with its param's file.
@@ -3208,13 +3208,13 @@ impl Walk<'_> {
         let names: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
         for r in &file.requests {
             if names.contains(&r.param.as_str()) {
-                return perr(file_name, r.line, format!("request {}: `{}` is an input — a request point is a list param the estate owns, and an input is a variable the plan reads; make `{}` a param", r.param, r.param, r.param));
+                return perr(file_name, r.line, format!("request {}: `{}` is an input — a list is a list param the estate owns, and an input is a variable the plan reads; make `{}` a param", r.param, r.param, r.param));
             }
         }
         for a in &file.actions {
             for arg in &a.args {
                 if let Some(n) = reads_any(&Value::Str(arg.clone()), &names) {
-                    return perr(file_name, a.line, format!("action \"{}\" reads the input `{}` in its args — an action runs with the values the compile fixed; make `{}` a param", a.name, n, n));
+                    return perr(file_name, a.line, format!("action \"{}\" reads the input `{}` in its args — an action runs with the values the transpile fixed; make `{}` a param", a.name, n, n));
                 }
             }
         }
@@ -3347,7 +3347,7 @@ impl Walk<'_> {
                 None => format!("each {} by {}", list, key),
             };
             if self.inputs.contains_key(list) {
-                return perr(file_name, *line, format!("`{}`: `{}` is an input — an `each` decides labels at compile time, and an input is a variable the plan reads; make `{}` a param", what, list, list));
+                return perr(file_name, *line, format!("`{}`: `{}` is an input — an `each` decides labels at transpile time, and an input is a variable the plan reads; make `{}` a param", what, list, list));
             }
             let mut written: Vec<String> = Vec::new();
             for (entry_label, fields) in each_list(&self.genv, list, key, file_name, *line)? {
@@ -3544,7 +3544,7 @@ impl Walk<'_> {
                                 self.config.insert(k, resolved);
                             } else {
                                 // Silently dropping a block the author wrote means a
-                                // typo deletes infrastructure with no diagnostic at all.
+                                // typo deletes infrastructure with no finding at all.
                                 return perr(file_name, *line, unknown_type_msg(self.types, &k, "block"));
                             }
                         }
@@ -3706,7 +3706,7 @@ impl Walk<'_> {
                     // where `items` rejects it by name with the exact
                     // replacement. Deciding "attribute" here instead would file
                     // a resource block away as a nested attribute of its parent
-                    // and emit nothing, which is how the first cut of this
+                    // and write nothing, which is how the first cut of this
                     // change quietly deleted 60 folder_iam_member bindings from
                     // one estate's bindings and most of another's project resources: transpile
                     // returned 0 and the HCL just got smaller.
@@ -3966,7 +3966,7 @@ impl Walk<'_> {
                                 }
                             }
                             // inside a resource map the map's type IS the key; an
-                            // `as` naming another type cannot be honoured here
+                            // `as` naming another type cannot be honored here
                             if let Some(k) = as_key {
                                 if self.types.resolve(k).map(|t| t.tf_type) != Some(rt.tf_type.clone()) {
                                     return perr(
@@ -4032,7 +4032,7 @@ pub const GRANT_SCOPE_SEP: char = '\u{1}';
 
 /// An explicit scope for a grant map: the resource's own scope attribute and
 /// its value (`service_account_id = "projects/p/serviceAccounts/x@y"`). Types
-/// whose scope is neither the organisation nor the structural node it sits in
+/// whose scope is neither the organization nor the structural node it sits in
 /// carry it this way, so the member-map form works for every `*_iam_member`
 /// type and not only the hierarchy ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4071,7 +4071,7 @@ fn scoped_by_node(tf_type: &str) -> bool {
 }
 
 /// Synthetic address type for an explicitly pinned billing account id
-/// (mirrors the walk's BILLING_ID_TYPE) — consumed by the emitter, never emitted.
+/// (mirrors the walk's BILLING_ID_TYPE) — consumed by the emitter, never written.
 pub const BILLING_ID_TYPE: &str = "__billing_account_id";
 
 #[allow(clippy::too_many_arguments)]
@@ -4095,7 +4095,7 @@ fn insert_grant(
         let (role, condition, import_id) = match r {
             serde_yaml::Value::String(s) => (s, String::new(), String::new()),
             // Conditional binding: `{ role = "…", condition = { … } }`.
-            // The condition is part of the binding's IDENTITY — the emitted label
+            // The condition is part of the binding's IDENTITY — the written label
             // hashes it — so it travels with the edge through the fold.
             serde_yaml::Value::Mapping(m) => {
                 let mut role = String::new();
@@ -4106,7 +4106,7 @@ fn insert_grant(
                     match k {
                         "condition" => {
                             condition = serde_yaml::to_string(v)
-                                .map_err(|e| PipelineError { file: file_name.to_string(), line, msg: format!("condition is not serialisable: {}", e) })?
+                                .map_err(|e| PipelineError { file: file_name.to_string(), line, msg: format!("condition is not serializable: {}", e) })?
                                 .trim_end()
                                 .to_string();
                         }
@@ -4227,7 +4227,7 @@ mod tests {
     #[test]
     fn a_renamed_param_is_refused_by_name_wherever_it_is_declared() {
         // The failure this prevents is silent: nothing refuses a param no pack reads,
-        // so an estate left on the old name would compile and quietly take the new
+        // so an estate left on the old name would transpile and quietly take the new
         // param's default — a different project, and an archive nobody writes to.
         let err = renamed_param("logsink_project_name", "e.satz", 3).expect("the old name is refused");
         assert!(err.msg.contains("logsink_project_id"), "the error names the new param: {}", err.msg);
@@ -4349,7 +4349,7 @@ params {
         }
 
         fn subjects(estate: &str) -> Vec<String> {
-            let env = estate_params("main.satz", estate, &load).expect("compiles");
+            let env = estate_params("main.satz", estate, &load).expect("transpiles");
             match env.get("subjects") {
                 Some(serde_yaml::Value::Sequence(s)) => s.iter().map(|v| v.as_str().unwrap_or_default().to_string()).collect(),
                 other => panic!("subjects is {:?}", other),
@@ -4784,7 +4784,7 @@ mod estate_channel_tests {
     }
 
     /// `${interface.x}` in the `providers` and `terraform` blocks: a static value becomes its
-    /// literal, and a value the central estate looks up is refused at the block's line.
+    /// literal, and a value the organization's estate looks up is refused at the block's line.
     #[test]
     fn an_interface_reference_in_a_config_block_is_its_literal_and_a_lookup_is_refused() {
         let run = |value: &str| {
@@ -4808,7 +4808,7 @@ mod estate_channel_tests {
         assert_eq!(r.providers.unwrap()["google"]["region"], serde_yaml::Value::String("org-${local.interface_static.org_id}".into()));
         let e = run("${{interface.folder}}").unwrap_err();
         assert_eq!((e.file.as_str(), e.line), ("p.satz", 4));
-        assert!(e.msg.starts_with("providers: `interface.folder` is a value the central estate looks up"), "{}", e.msg);
+        assert!(e.msg.starts_with("providers: `interface.folder` is a value the organization's estate looks up"), "{}", e.msg);
         let e = run("${{interface.nope}}").unwrap_err();
         assert!(e.msg.contains("no used interface folder has a value `nope`"), "{}", e.msg);
     }
@@ -4898,7 +4898,7 @@ mod estate_channel_tests {
 
     /// Where an input decides structure it is refused at its line: a key or label, a grant's
     /// member, roles or scope, an `each` list, a `when` gate, an export, a question, a
-    /// request point, an action's args, a suppression, one of satz's own keys, and a param
+    /// list, an action's args, a suppression, one of satz's own keys, and a param
     /// that reads one.
     #[test]
     fn an_input_that_decides_structure_is_refused() {
@@ -5085,7 +5085,7 @@ suppress google_organization_iam_member "group:{who}" role "roles/browser"
     /// (`google_org_policy_policy { use "cis.satz" }`) and as folder content — both
     /// arms load and parse the pack, and both must absorb its claims. Missing
     /// this made every CIS control read "unmet" while the witnesses were
-    /// emitted perfectly.
+    /// written perfectly.
     #[test]
     fn claims_are_absorbed_from_every_use_site() {
         let pack = r#"pack cis version "1.2"
@@ -5190,7 +5190,7 @@ google_org_policy_policy {
 
     /// The directory entry covers what sits BESIDE a moved pack: a `.local` fork
     /// and the adoption delta move with it, and an estate pointing at the old
-    /// fork is refused by the same rule rather than compiling a copy that is now
+    /// fork is refused by the same rule rather than transpiling a copy that is now
     /// orphaned.
     #[test]
     fn a_moved_fork_path_is_refused_too() {
@@ -5203,7 +5203,7 @@ google_org_policy_policy {
         // The baseline's exact-path entry resolves as well, and carries the fork
         // and the adoption delta beside it: an estate that forked the baseline
         // points at `…local.satz`, and a fork left behind at the old path would
-        // compile forever with nothing to refuse it.
+        // transpile forever with nothing to refuse it.
         for (from, to) in [
             ("presets/CIS-GCP-Foundation-4.0.satz", "presets/cis/CIS-GCP-Foundation-4.0.satz"),
             ("presets/CIS-GCP-Foundation-4.0.local.satz", "presets/cis/CIS-GCP-Foundation-4.0.local.satz"),
@@ -5440,7 +5440,7 @@ mod full_type_name_tests {
         let Err(err) = compile(
             "estate e\n\nparams {\n  a = \"x\"\n}\n\norg_policy_policy {\n  p {\n    name = \"c\"\n  }\n}\n",
         ) else {
-            panic!("the shorthand must not compile")
+            panic!("the shorthand must not transpile")
         };
         assert!(err.msg.contains("google_org_policy_policy"), "{}", err.msg);
         assert!(err.msg.contains("in full"), "{}", err.msg);
@@ -5451,14 +5451,14 @@ mod full_type_name_tests {
         let fe = compile(
             "estate e\n\nparams {\n  a = \"x\"\n}\n\ngoogle_org_policy_policy {\n  p {\n    name = \"c\"\n  }\n}\n",
         )
-        .unwrap_or_else(|e| panic!("full name must compile: {:?}", e));
+        .unwrap_or_else(|e| panic!("full name must transpile: {:?}", e));
         let n: usize = fe.fragments.iter().map(|f| f.entities.len()).sum();
-        assert_eq!(n, 1, "expected the policy to be emitted");
+        assert_eq!(n, 1, "expected the policy to be written");
     }
 
     /// The regression that made this dangerous: inside a `project`/`folder` body
     /// a shorthand key was filed away as a nested ATTRIBUTE of the parent and
-    /// emitted nothing at all. Silently — transpile exited 0 and the HCL simply
+    /// written nothing at all. Silently — transpile exited 0 and the HCL simply
     /// got smaller. It has to reach the same rejection as at the top level.
     #[test]
     fn a_shorthand_nested_in_a_project_is_rejected_not_absorbed() {
@@ -5544,7 +5544,7 @@ mod review_2026_08_29_tests {
     #[test]
     fn an_unknown_full_type_name_nested_in_a_folder_is_rejected_not_absorbed() {
         let src = format!("{}google_folder {{ f {{ display_name = \"F\" google_stroage_bucket {{ b {{ name = \"b\" }} }} }} }}\n", HEAD);
-        let err = compile(&src).must_fail("a typo'd nested type must not compile");
+        let err = compile(&src).must_fail("a typo'd nested type must not transpile");
         assert!(err.msg.contains("google_stroage_bucket"), "{}", err.msg);
     }
 
@@ -5595,7 +5595,7 @@ mod review_2026_08_29_tests {
 
 
     // --- scope pins: the member-map form for types whose scope is neither the
-    // organisation nor the folder/project they are written in. -----------------
+    // organization nor the folder/project they are written in. -----------------
 
     fn grant_labels(fe: &FrontEnd, tf_type: &str) -> Vec<String> {
         let folded = fold_fragments(&Table, &fe.fragments);
@@ -5619,7 +5619,7 @@ mod review_2026_08_29_tests {
              \"serviceAccount:${{{{google_service_account.sa.email}}}}\" = [\"roles/storage.objectViewer\"] }}\n",
             HEAD
         );
-        let fe = compile(&src).expect("references are not resolved at compile time");
+        let fe = compile(&src).expect("references are not resolved at transpile time");
         let folded = fold_fragments(&Table, &fe.fragments);
         let found: Vec<String> = written_references(&folded).into_iter().map(|r| r.traversal).collect();
         // a plain attribute, a map value, an element of a list of objects, a
@@ -5684,7 +5684,7 @@ mod review_2026_08_29_tests {
              google_storage_bucket_iam_member {{ bucket = \"logs\" \"group:a@b.c\" = [\"roles/storage.objectViewer\"] }}\n",
             HEAD
         );
-        let fe = compile(&src).expect("two pinned maps must compile");
+        let fe = compile(&src).expect("two pinned maps must transpile");
         assert_eq!(
             grant_labels(&fe, "google_storage_bucket_iam_member"),
             vec![
@@ -5730,9 +5730,9 @@ mod review_2026_08_29_tests {
     }
 
     #[test]
-    fn a_scope_pin_on_an_organisation_grant_is_an_error() {
+    fn a_scope_pin_on_an_organization_grant_is_an_error() {
         let src = format!("{}google_organization_iam_member {{ org_id = \"9\" \"group:a@b.c\" = [\"roles/browser\"] }}\n", HEAD);
-        let err = compile(&src).must_fail("the org scope comes from customer_organization_id");
+        let err = compile(&src).must_fail("the organization scope comes from customer_organization_id");
         assert!(err.msg.contains("customer_organization_id"), "{}", err.msg);
     }
 
@@ -5834,7 +5834,7 @@ google_storage_bucket {
     /// bare `each.x` as the value — beside the map's own labels.
     #[test]
     fn each_writes_one_labelled_body_per_entry() {
-        let fe = compile(EACH).expect("compiles");
+        let fe = compile(EACH).expect("transpiles");
         let got = expanded(&fe, "google_storage_bucket");
         let labels: Vec<&str> = got.iter().map(|(l, _)| l.as_str()).collect();
         assert_eq!(labels, ["audit-trail", "hand_written", "logs"]);
@@ -5846,7 +5846,7 @@ google_storage_bucket {
         assert_eq!(audit["versioning"]["enabled"], serde_yaml::Value::Bool(false));
         // an empty list writes nothing
         let empty = EACH.replace("  buckets = [\n    { name = \"logs\" region = \"europe-west3\" versions = true },\n    { name = \"audit-trail\" region = \"europe-west4\" versions = false },\n  ]", "  buckets = []");
-        assert_eq!(expanded(&compile(&empty).expect("compiles"), "google_storage_bucket").len(), 1);
+        assert_eq!(expanded(&compile(&empty).expect("transpiles"), "google_storage_bucket").len(), 1);
     }
 
     /// An entry a pack contributes is an entry like any other: the list is read with the
@@ -5855,7 +5855,7 @@ google_storage_bucket {
     fn a_contributed_entry_expands_too() {
         let pack = "pack p version \"1\"\nparams {\n  contributes_buckets = [ { name = \"team\" region = \"europe-west3\" versions = true } ]\n}\n";
         let src = EACH.replace("google_storage_bucket {", "use \"p.satz\"\n\ngoogle_storage_bucket {");
-        let fe = compile_with(&src, &[("p.satz", pack)]).expect("compiles");
+        let fe = compile_with(&src, &[("p.satz", pack)]).expect("transpiles");
         let labels: Vec<String> = expanded(&fe, "google_storage_bucket").into_iter().map(|(l, _)| l).collect();
         assert!(labels.contains(&"team".to_string()), "{:?}", labels);
     }
@@ -5864,7 +5864,7 @@ google_storage_bucket {
     #[test]
     fn each_writes_folders_too() {
         let src = "estate e\nparams {\n  customer_organization_id = \"1\"\n  teams = [ { key = \"payments\" title = \"Payments\" } ]\n}\ngoogle_folder {\n  each teams by key {\n    display_name = \"{each.title}\"\n  }\n}\n";
-        let fe = compile(src).expect("compiles");
+        let fe = compile(src).expect("transpiles");
         let got = expanded(&fe, "google_folder");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, "payments");
@@ -5908,13 +5908,13 @@ google_storage_bucket {
     #[test]
     fn each_when_writes_only_the_entries_that_carry_the_field() {
         let src = "estate e\nparams {\n  customer_organization_id = \"1\"\n  xs = [\n    { name = \"a\" budget = 100 },\n    { name = \"b\" },\n    { name = \"c\" budget = \"\" },\n    { name = \"d\" budget = false },\n  ]\n}\ngoogle_storage_bucket {\n  each xs by name {\n    name = \"{each.name}\"\n  }\n}\ngoogle_cloud_identity_group {\n  each xs by name when budget {\n    display_name = \"{each.budget}\"\n  }\n}\n";
-        let fe = compile(src).expect("compiles");
+        let fe = compile(src).expect("transpiles");
         assert_eq!(expanded(&fe, "google_storage_bucket").len(), 4);
         let groups = expanded(&fe, "google_cloud_identity_group");
         assert_eq!(groups.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["a"]);
         assert_eq!(groups[0].1["display_name"], serde_yaml::Value::String("100".into()));
         // `when not` writes the others, so the two together write every entry once
-        let fe = compile(&src.replace("when budget {\n    display_name = \"{each.budget}\"", "when not budget {\n    display_name = \"{each.name}\"")).expect("compiles");
+        let fe = compile(&src.replace("when budget {\n    display_name = \"{each.budget}\"", "when not budget {\n    display_name = \"{each.name}\"")).expect("transpiles");
         let others = expanded(&fe, "google_cloud_identity_group");
         assert_eq!(others.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["b", "c", "d"]);
     }
@@ -5944,14 +5944,14 @@ google_cloud_identity_group {
 }
 "#;
 
-    /// A request point's `defaults` fill every entry that leaves a field out — the
+    /// A list's `defaults` fill every entry that leaves a field out — the
     /// estate's own and a contributed one — before anything reads the list, a default may
     /// read a param, and a field an entry carries is kept as written.
     #[test]
     fn request_defaults_fill_the_entries_that_leave_a_field_out() {
         let team = "pack team version \"1.0\"\nparams {\n  contributes_team_projects = [ { name = \"team\" apis = [\"run.googleapis.com\"] budget = 50 } ]\n}\n";
         let src = format!("{}use \"proj.satz\"\nuse \"team.satz\"\n", HEAD);
-        let fe = compile_with(&src, &[("proj.satz", DEFAULTED), ("team.satz", team)]).expect("compiles");
+        let fe = compile_with(&src, &[("proj.satz", DEFAULTED), ("team.satz", team)]).expect("transpiles");
         let got = expanded(&fe, "google_project");
         let base = &got.iter().find(|(l, _)| l == "base").unwrap().1;
         assert_eq!(base["project_service"], serde_yaml::from_str::<serde_yaml::Value>("[storage.googleapis.com]").unwrap());
@@ -5960,7 +5960,7 @@ google_cloud_identity_group {
         assert_eq!(t["project_service"], serde_yaml::from_str::<serde_yaml::Value>("[run.googleapis.com]").unwrap());
         // `when` reads the filled list: only the entry that carries a budget gets one
         assert_eq!(expanded(&fe, "google_cloud_identity_group").iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["team"]);
-        // the request point reports the entries filled in, and its resolved defaults
+        // the list reports the entries filled in, and its resolved defaults
         assert_eq!(fe.requests[0].defaults.len(), 2);
         assert!(fe.requests[0].entries.iter().all(|e| e.get("email").is_some()));
         // a team's file sending its vendored entry again, as written, is no collision
@@ -5972,7 +5972,7 @@ google_cloud_identity_group {
     #[test]
     fn each_without_by_is_a_label() {
         let src = format!("{}google_storage_bucket {{\n  each {{\n    name = \"x\"\n  }}\n}}\n", HEAD);
-        let fe = compile(&src).expect("compiles");
+        let fe = compile(&src).expect("transpiles");
         assert_eq!(expanded(&fe, "google_storage_bucket")[0].0, "each");
     }
 
@@ -5987,13 +5987,13 @@ request subnets {
 }
 "#;
 
-    /// The request point holds every entry of its list to its shape, a contributed one
+    /// The list holds every entry of its list to its shape, a contributed one
     /// included, and reports how many there are.
     #[test]
     fn a_request_point_checks_every_entry_of_its_list() {
         let team = "pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" region = \"europe-west3\" } ]\n}\n";
         let src = format!("{}use \"net.satz\"\nuse \"team.satz\"\n", HEAD);
-        let fe = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", team)]).expect("compiles");
+        let fe = compile_with(&src, &[("net.satz", REQUESTED), ("team.satz", team)]).expect("transpiles");
         assert_eq!(fe.requests.len(), 1);
         assert_eq!((fe.requests[0].param.as_str(), fe.requests[0].entries.len()), ("subnets", 2));
         let bad = team.replace("region = \"europe-west3\"", "zone = \"a\"");
@@ -6004,14 +6004,14 @@ request subnets {
         assert!(err.msg.contains("two entries are `name` = \"base\""), "{}", err.msg);
         let not_a_list = REQUESTED.replace("subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]", "subnets = \"x\"");
         let err = compile_with(&format!("{}use \"net.satz\"\n", HEAD), &[("net.satz", &not_a_list)]).must_fail("not a list");
-        assert!(err.msg.contains("a request point is a list param"), "{}", err.msg);
-        // a pack switched off declares no request point
+        assert!(err.msg.contains("a list is a list param"), "{}", err.msg);
+        // a pack switched off declares no list
         let off = format!("{}params {{ want = false }}\nuse \"net.satz\" when want\n", HEAD.replace("params { customer_organization_id = \"1\" }\n", "params { customer_organization_id = \"1\" want = false }\n"));
         let off = off.replace("params { want = false }\n", "");
-        assert!(compile_with(&off, &[("net.satz", REQUESTED)]).expect("compiles").requests.is_empty());
+        assert!(compile_with(&off, &[("net.satz", REQUESTED)]).expect("transpiles").requests.is_empty());
     }
 
-    /// A field a pattern names is refused at compile, naming the entry and the value, when
+    /// A field a pattern names is refused at transpile, naming the entry and the value, when
     /// the pattern does not match the whole of it — the estate's own entry and a contributed
     /// one alike, and a team's file before it is vendored.
     #[test]
@@ -6022,7 +6022,7 @@ request subnets {
         assert_eq!(fe.requests[0].patterns, [("cidr".to_string(), "[0-9./]+".to_string())]);
         let bad = patterned.replace("cidr = \"10.0.0.0/24\"", "cidr = \"x10.0.0.0/24\"");
         let err = compile_with(&src, &[("net.satz", &bad)]).must_fail("a value the pattern does not match");
-        assert!(err.msg.contains("entry `base` has `cidr` = \"x10.0.0.0/24\", which the request point's pattern `[0-9./]+` does not match"), "{}", err.msg);
+        assert!(err.msg.contains("entry `base` has `cidr` = \"x10.0.0.0/24\", which the list's pattern `[0-9./]+` does not match"), "{}", err.msg);
         // the whole value, not a part of it
         let tail = patterned.replace("cidr = \"10.0.0.0/24\"", "cidr = \"10.0.0.0/24 \"");
         compile_with(&src, &[("net.satz", &tail)]).must_fail("a trailing blank");
@@ -6033,15 +6033,15 @@ request subnets {
         assert!(found.iter().any(|(_, m)| m.contains("entry `team` has `cidr` = \"ten\"")), "{:?}", found);
     }
 
-    /// A team's file, before it is vendored: contributions to request points alone, each
+    /// A team's file, before it is vendored: contributions to lists alone, each
     /// entry shaped, no key the estate's list holds for another entry.
     #[test]
     fn a_request_file_is_checked_against_the_request_points() {
-        let fe = compile_with(&format!("{}use \"net.satz\"\n", HEAD), &[("net.satz", REQUESTED)]).expect("compiles");
+        let fe = compile_with(&format!("{}use \"net.satz\"\n", HEAD), &[("net.satz", REQUESTED)]).expect("transpiles");
         let check = |src: &str| check_request_file(src, &fe.requests, &fe.tfvars).into_iter().map(|(_, m)| m).collect::<Vec<_>>();
         assert!(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"team\" cidr = \"10.0.1.0/24\" } ]\n}\n").is_empty());
         let has = |got: Vec<String>, needle: &str| assert!(got.iter().any(|m| m.contains(needle)), "wanted `{}` in {:?}", needle, got);
-        has(check("pack team version \"1.0\"\nparams {\n  contributes_firewall = [ { name = \"x\" } ]\n}\n"), "no request point for `firewall`");
+        has(check("pack team version \"1.0\"\nparams {\n  contributes_firewall = [ { name = \"x\" } ]\n}\n"), "no list for `firewall`");
         has(check("pack team version \"1.0\"\nparams {\n  subnets = [ ]\n}\n"), "is no contribution");
         has(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"base\" cidr = \"10.9.0.0/24\" } ]\n}\n"), "is taken");
         assert!(check("pack team version \"1.0\"\nparams {\n  contributes_subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\n").is_empty(), "the estate's own entry again is no collision");
@@ -6051,7 +6051,7 @@ request subnets {
 
     /// `compile_estate_using` reads the estate with the request file at its top level, so
     /// an entry without a field the pack's `each` body reads is refused as the estate's own
-    /// compile would refuse it once the file is vendored.
+    /// transpile would refuse it once the file is vendored.
     #[test]
     fn a_request_file_is_compiled_with_the_estate() {
         const EXPANDING: &str = "pack net version \"1.0\"\nparams {\n  subnets = [ { name = \"base\" cidr = \"10.0.0.0/24\" } ]\n}\nrequest subnets {\n  key         = \"name\"\n  fields      = [\"name\", \"cidr\"]\n  description = \"A subnet\"\n}\ngoogle_storage_bucket {\n  each subnets by name {\n    name     = \"{each.name}-{each.cidr}\"\n    location = \"EU\"\n  }\n}\n";
@@ -6063,7 +6063,7 @@ request subnets {
             let load = |p: &str| files.iter().find(|(n, _)| *n == p).map(|(_, s)| s.to_string()).ok_or_else(|| format!("no such file {}", p));
             compile_estate_using("main.satz", &src, &["req.satz"], &Table, &load)
         };
-        let fe = with(whole).expect("compiles with the file");
+        let fe = with(whole).expect("transpiles with the file");
         assert_eq!(fe.requests[0].entries.len(), 2);
         let err = with(short).must_fail("a field the each reads");
         assert!(err.msg.contains("the entry has no field `cidr`"), "{}", err.msg);

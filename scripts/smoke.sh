@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The smoke matrix: every estate-consuming command, end to end, against the
-# fixture estate in tests/smoke/. Offline — no ADC, no org. It proves that the
+# fixture estate in tests/smoke/. Offline — nobody signed in, no organization. It proves that the
 # COMMANDS run, once each, at their core; the unit tests judge the engines and
 # pin the fixed bugs.
 #
@@ -51,7 +51,7 @@ cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an alr
 printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
 grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
 
-step "lsp: the language server answers an editor — diagnostics, completion, hover, definition, formatting"
+step "lsp: the language server answers an editor — findings, completion, hover, definition, formatting"
 python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
 
 step "init: the estate satz writes is in the canonical layout"
@@ -76,22 +76,22 @@ grep -qx 'yaml_dir = "satz"' tmp/init/config.toml && [ ! -e tmp/init/yaml ] \
   || fail "satz init must create satz/ and name it in config.toml:\n$(cat tmp/init/config.toml)"
 grep -qx 'interfaces_dir = "interfaces"' tmp/init/config.toml \
   || fail "satz init must name interfaces_dir in config.toml:\n$(cat tmp/init/config.toml)"
-# no --workload-folder-name: the organisation is the workload folder, published, nothing created
+# no --workload-folder-name: the organization is the workload folder, published, nothing created
 grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/init/satz/C0example.satz \
   && ! grep -q 'google_folder.workload_folder' tmp/init/satz/C0example.satz \
-  || fail "satz init without a workload folder must export the organisation and declare no folder"
+  || fail "satz init without a workload folder must export the organization and declare no folder"
 # init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
 rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
-  || fail "satz init without credentials must still write an estate:\n$(cat tmp/init-bare.txt)"
+  || fail "satz init with nobody signed in must still write an estate:\n$(cat tmp/init-bare.txt)"
 grep -qE '^  customer_organization_id += ""$' tmp/init-bare/satz/C0bare.satz \
-  || fail "an organisation id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/satz/C0bare.satz)"
+  || fail "an organization id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/satz/C0bare.satz)"
 grep -qE '^  first_admin += ""$' tmp/init-bare/satz/C0bare.satz \
   || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/satz/C0bare.satz)"
 grep -q 'nothing could be derived' tmp/init-bare.txt \
   || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
-# the pack menu is written commented out: an init estate compiles with no presets fetched
+# the pack menu is written commented out: an init estate transpiles with no presets fetched
 grep -q '// use "presets/estate-map.satz"' tmp/init/satz/C0example.satz \
   || fail "satz init wrote no pack menu — an estate nothing can add a pack to"
 # with no presets there is no graph: no menu, and init says which two commands write it
@@ -101,7 +101,7 @@ fi
 grep -q 'satz get-presets`, then `satz merge-presets`, write the pack lines' tmp/init-bare.txt \
   || fail "init without a pack graph must say what writes the menu:\n$(cat tmp/init-bare.txt)"
 if grep -qE '^use "presets/' tmp/init/satz/C0example.satz; then
-  fail "an init estate must compile with no presets fetched — bootstrap is the next command"
+  fail "an init estate must transpile with no presets fetched — bootstrap is the next command"
 fi
 
 step "transpile, and transpile --check: in memory, the yaml/-prefixed form, nothing written"
@@ -113,9 +113,9 @@ for f in main.tf providers.tf variables.tf terraform.tfvars; do
   [ -s "hcl/$f" ] || fail "hcl/$f missing or empty"
 done
 grep -q 'resource "google_org_policy_policy"' hcl/main.tf || fail "the CIS pack's policies are not in main.tf"
-grep -q 'resource "google_cloud_identity_group_membership"' hcl/main.tf || fail "the group member was not emitted"
+grep -q 'resource "google_cloud_identity_group_membership"' hcl/main.tf || fail "the group member was not written"
 grep -q 'ignore_changes' hcl/main.tf || fail "group lifecycle default missing"
-# the provenance line, added at write time: which satz emitted this, and from what
+# the provenance line, added at write time: which satz written this, and from what
 head -1 hcl/main.tf | grep -q 'Generated by satz v.*smoke.satz' \
   || fail "main.tf carries no provenance line naming its estate:\n$(head -1 hcl/main.tf)"
 
@@ -137,7 +137,7 @@ fi
 
 step "a top-level folder says its parent: a reference to a declared folder, or the id of one that exists (ADR 0085)"
 "$satz" --config . transpile folder-parent.satz --output "$PWD/tmp/folder-parent-hcl" >/dev/null 2>tmp/folder-parent.err \
-  || fail "the folder-parent estate does not compile:\n$(cat tmp/folder-parent.err)"
+  || fail "the folder-parent estate does not transpile:\n$(cat tmp/folder-parent.err)"
 fp=tmp/folder-parent-hcl/main.tf
 for f in by_param by_reference shop_frontend; do
   grep -A3 "^resource \"google_folder\" \"$f\"" "$fp" | grep -q '^ *parent *= google_folder.workloads.name$' \
@@ -146,29 +146,29 @@ done
 grep -A3 '^resource "google_folder" "shop_data"' "$fp" | grep -q '^ *parent *= "folders/222222222222"$' \
   || fail "a parent that is an id is not written as it is:\n$(grep -A4 '"google_folder" "shop_data"' "$fp")"
 grep -A3 '^resource "google_folder" "workloads"' "$fp" | grep -q '^ *parent *= "organizations/123456789012"$' \
-  || fail "a top-level folder without a parent is not under the organisation"
+  || fail "a top-level folder without a parent is not under the organization"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/folder-parent-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the folder-parent estate does not validate"
 fi
 
 step "showcase: every language feature in one estate (the reference cites it)"
 "$satz" --config . transpile showcase.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/showcase-transpile.err \
-  || fail "the showcase does not compile:\n$(cat tmp/showcase-transpile.err)"
+  || fail "the showcase does not transpile:\n$(cat tmp/showcase-transpile.err)"
 sc=tmp/showcase-hcl/main.tf
 # The reference example puts every resource where it belongs: the pack's bucket is
-# declared outside a project and names its own, so the compile has no scope to warn about.
+# declared outside a project and names its own, so the transpile has no scope to warn about.
 grep -q 'sets no `project`' tmp/showcase-transpile.err \
   && fail "the showcase declares a resource outside a project without naming one:\n$(cat tmp/showcase-transpile.err)"
 awk '/^resource "google_storage_bucket" "pack_bucket"/ { inside = 1 } inside && /^}/ { exit }
      inside && /project = "corp-infra-001"/ { found = 1 } END { exit !found }' "$sc" \
   || fail "the pack's bucket does not name its project"
-grep -q 'vmExternalIpAccess' "$sc" && fail "suppressed policy was emitted"
+grep -q 'vmExternalIpAccess' "$sc" && fail "suppressed policy was written"
 grep -q 'compute.managed.requireOsLogin' "$sc" || fail "policy from the \`as\` pack missing"
-grep -q 'roles/browser' "$sc" && fail "suppressed role was emitted"
+grep -q 'roles/browser' "$sc" && fail "suppressed role was written"
 grep -q 'roles/iam.securityReviewer' "$sc" || fail "the member's other role vanished with the suppressed one"
 grep -q 'audit-objects-only' "$sc" || fail "conditional grant missing"
 grep -q 'trusted: reviewed' "$sc" || fail "hcl trust reason missing"
-grep -q 'showcase-action' "$sc" && fail "an action leaked into main.tf — nothing about an action is ever emitted"
+grep -q 'showcase-action' "$sc" && fail "an action leaked into main.tf — nothing about an action is ever written"
 grep -q 'showcase-step' "$sc" && fail "an action name leaked into main.tf"
 grep -q 'optional-001' "$sc" && fail "a \`when\`=false pack was pulled in"
 grep -q 'corp-pack-bucket-001' "$sc" || fail "top-level pack resource missing"
@@ -179,20 +179,20 @@ grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules miss
 for t in orders billing; do
   grep -q "resource \"google_pubsub_topic\" \"$t\"" "$sc" || fail "each did not write the topic $t:\n$(grep -A4 google_pubsub_topic "$sc")"
 done
-grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "604800s"' "$sc" || fail "each did not read the entry's fields, or the request point's default:\n$(grep -A5 'google_pubsub_topic" "billing"' "$sc")"
+grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "604800s"' "$sc" || fail "each did not read the entry's fields, or the list's default:\n$(grep -A5 'google_pubsub_topic" "billing"' "$sc")"
 # `each … when subscription`: only the entry that carries the field gets a subscription
 grep -q 'resource "google_pubsub_subscription" "orders"' "$sc" || fail "each … when did not write the entry that carries the field"
 grep -q 'resource "google_pubsub_subscription" "billing"' "$sc" && fail "each … when wrote an entry that does not carry the field"
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
 grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
-[ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should emit one resource each"
+[ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should write one resource each"
 "$satz" --config . require cis-gcp-4.0 showcase.satz --format text --out tmp/showcase-require.txt 2>/dev/null || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
 grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim contradicts its own witness in the showcase estate"
 # a question reaches variables.tf as a description and nothing else
 grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
   || fail "the question's prompt did not become the variable's description"
-grep -q 'question' "$sc" && fail "a question must emit nothing into main.tf"
+grep -q 'question' "$sc" && fail "a question must write nothing into main.tf"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
@@ -212,7 +212,7 @@ done
 [ "$(ls interfaces)" = "outgoing" ] || fail "interfaces/ holds more than its outgoing half:\n$(ls interfaces)"
 grep -q 'Content hash: `sha256:[0-9a-f]\{64\}`' $si/README.md || fail "the project's folder carries no content hash:\n$(cat $si/README.md)"
 [ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"
-[ -e tmp/showcase-hcl/interfaces ] && fail "the root module holds interfaces/"
+[ -e tmp/showcase-hcl/interfaces ] && fail "the HCL code holds interfaces/"
 grep -q 'infra_folder *= google_folder.infra.name' tmp/showcase-hcl/outputs.tf || fail "the root output does not name the folder:\n$(cat tmp/showcase-hcl/outputs.tf)"
 grep -q 'output "archive__archive_project_id"' tmp/showcase-hcl/outputs.tf || fail "an interface's root output is not <interface>__<export>:\n$(cat tmp/showcase-hcl/outputs.tf)"
 grep -q 'value *= "corp-infra-001"' $si/core/hcl/outputs.tf || fail "a written attribute is not a literal output:\n$(cat $si/core/hcl/outputs.tf)"
@@ -234,17 +234,17 @@ grep -q 'pack_bucket' $si/*/satz/interface.satz && fail "a private resource reac
 grep -q 'value *= { "archive" = "corp-archive-001", "infra" = "corp-infra-001" }' $si/core/hcl/outputs.tf || fail "all google_project under google_folder.infra is not the two projects placed in it:\n$(grep -A1 infra_projects $si/core/hcl/outputs.tf)"
 cp yaml/showcase.satz tmp/private-stale.satz
 printf '%s\n' 'private google_storage_bucket.no_such_bucket' >> tmp/private-stale.satz
-"$satz" --config . transpile tmp/private-stale.satz --check > tmp/private-stale.txt 2>&1 && fail "a private statement naming nothing compiled"
-grep -q 'private google_storage_bucket.no_such_bucket: the estate emits no such resource' tmp/private-stale.txt || fail "the stale private statement is not named:\n$(cat tmp/private-stale.txt)"
+"$satz" --config . transpile tmp/private-stale.satz --check > tmp/private-stale.txt 2>&1 && fail "a private statement naming nothing transpiled"
+grep -q 'private google_storage_bucket.no_such_bucket: the estate writes no such resource' tmp/private-stale.txt || fail "the stale private statement is not named:\n$(cat tmp/private-stale.txt)"
 grep -q 'private' tmp/showcase-hcl/main.tf && fail "private reached main.tf"
-grep -q 'resource "google_storage_bucket" "pack_bucket"' tmp/showcase-hcl/main.tf || fail "a private bucket must still be emitted"
+grep -q 'resource "google_storage_bucket" "pack_bucket"' tmp/showcase-hcl/main.tf || fail "a private bucket must still be written"
 cp yaml/showcase.satz tmp/private-export.satz
 printf '%s\n' 'export "pack_bucket" = "${{google_storage_bucket.pack_bucket.name}}"' >> tmp/private-export.satz
-"$satz" --config . transpile tmp/private-export.satz --check > tmp/private-export.txt 2>&1 && fail "an export of a private resource compiled"
+"$satz" --config . transpile tmp/private-export.satz --check > tmp/private-export.txt 2>&1 && fail "an export of a private resource transpiled"
 grep -q 'is marked `private = true`' tmp/private-export.txt || fail "the refusal does not name the private mark:\n$(cat tmp/private-export.txt)"
 grep -q '^| `archive_project_id` | yes | `google_project_iam_member` |' $si/archive/README.md || fail "the README's capability table does not show the attach point:\n$(cat $si/archive/README.md)"
 if command -v tofu >/dev/null 2>&1; then
-  # moved away from the estate, a project's module still initialises and validates on its own
+  # moved away from the estate, a project's module still initializes and validates on its own
   rm -rf tmp/relocated && mkdir -p tmp/relocated/elsewhere && cp -R "$si/archive/hcl" tmp/relocated/elsewhere/satz-interface
   (cd tmp/relocated/elsewhere/satz-interface && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) \
     || fail "the archive module does not validate away from the estate"
@@ -252,10 +252,10 @@ fi
 
 step "project: a Satz estate takes interfaces/outgoing/archive/ whole and reads the showcase's values as \${{interface.<export>}}"
 mkdir -p project/interfaces/incoming && cp -R "$si" project/interfaces/incoming/archive
-"$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the team's estate does not transpile:\n$(cat tmp/project.txt)"
+"$satz" --config project/config.toml transpile archive.satz > tmp/project.txt 2>&1 || fail "the workload estate does not transpile:\n$(cat tmp/project.txt)"
 pm=project/hcl/main.tf
 pi=project/hcl/interface.tf
-# what the compile judges is in interface.tf, what main.tf reads is the local
+# what the transpile judges is in interface.tf, what main.tf reads is the local
 grep -q 'archive__archive_project_id = "corp-archive-001"' "$pi" || fail "a static value is not its literal in interface.tf:\n$(cat $pi)"
 grep -q 'infra_folder = data.google_active_folder.infra.name' "$pi" || fail "a looked-up value is not its data address in interface.tf:\n$(cat $pi)"
 [ "$(grep -c '^data "google_active_folder" "infra"' "$pi")" = 1 ] || fail "the lookup is not one data block in interface.tf:\n$(cat $pi)"
@@ -263,18 +263,18 @@ grep -q 'project = local.interface.archive__archive_project_id' "$pm" || fail "a
 grep -q 'folder_id = local.interface.infra_folder' "$pm" || fail "a looked-up value is not read as the local:\n$(cat $pm)"
 grep -q 'parent = local.interface.infra_folder' "$pm" || fail "a folder's looked-up parent is not read as the local:\n$(cat $pm)"
 grep -q '"central" = local.interface.customer_domain' "$pm" || fail "a whole value inside a map is not the bare local:\n$(cat $pm)"
-grep -q 'corp-archive-001\|^data ' "$pm" && fail "main.tf carries the central estate's value or a lookup:\n$(cat $pm)"
+grep -q 'corp-archive-001\|^data ' "$pm" && fail "main.tf carries the value of the organization's estate or a lookup:\n$(cat $pm)"
 [ -e project/interfaces/outgoing ] && fail "a project that exports nothing wrote interfaces/outgoing/"
 [ -f project/interfaces/incoming/archive/archive/satz/interface.satz ] || fail "the transpile of the project touched interfaces/incoming/"
 "$satz" --config project/config.toml presets archive.satz --format text --out - > tmp/project-packs.txt 2>&1 || fail "satz presets failed on the project:\n$(cat tmp/project-packs.txt)"
 grep -A1 '^interfaces' tmp/project-packs.txt | grep -q 'interfaces/incoming/archive/archive/satz/interface.satz' || fail "satz presets does not name the interface file as an interface:\n$(cat tmp/project-packs.txt)"
 sed -n '/^unmanaged/,/^$/p' tmp/project-packs.txt | grep -q 'interface.satz' && fail "satz presets reads the interface file as a pack:\n$(cat tmp/project-packs.txt)"
 if command -v tofu >/dev/null 2>&1; then
-  (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's root module does not validate"
+  (cd project/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the project's HCL code does not validate"
 fi
-# the HCL the project estate wrote reads the estate as `local.interface.<export>`, which check-consumer judges like a module's output
-"$satz" --config . check-consumer project/hcl yaml/showcase.satz > tmp/project-consumer.txt 2>&1 || fail "check-consumer refused the HCL a project estate wrote:\n$(cat tmp/project-consumer.txt)"
-# an attachment off an attach point is refused at the project's own compile
+# the HCL the workload estate wrote reads the estate as `local.interface.<export>`, which check-consumer judges like a module's output
+"$satz" --config . check-consumer project/hcl yaml/showcase.satz > tmp/project-consumer.txt 2>&1 || fail "check-consumer refused the HCL a workload estate wrote:\n$(cat tmp/project-consumer.txt)"
+# an attachment off an attach point is refused at the project's own transpile
 cp project/satz/archive.satz project/satz/tmp-forbidden.satz
 cat >> project/satz/tmp-forbidden.satz <<'SATZ'
 
@@ -286,7 +286,7 @@ google_folder_iam_member {
   }
 }
 SATZ
-"$satz" --config project/config.toml transpile tmp-forbidden.satz --check > tmp/project-forbidden.txt 2>&1 && fail "the project compiled an attachment off an attach point"
+"$satz" --config project/config.toml transpile tmp-forbidden.satz --check > tmp/project-forbidden.txt 2>&1 && fail "the project transpiled an attachment off an attach point"
 rm -f project/satz/tmp-forbidden.satz
 grep -q 'interface-use' tmp/project-forbidden.txt && grep -q 'no attach point for `google_folder_iam_member`' tmp/project-forbidden.txt \
   || fail "the refusal does not say why:\n$(cat tmp/project-forbidden.txt)"
@@ -294,7 +294,7 @@ grep -q 'interface-use' tmp/project-forbidden.txt && grep -q 'no attach point fo
 # CHANGES.md: the previous interface file on disk against the new one, where it changed
 sed 's/export "archive_project_number"/export "archive_number"/' yaml/showcase.satz > tmp/renamed.satz
 grep -q 'export "archive_number"' tmp/renamed.satz || fail "the showcase has no archive_project_number export to rename"
-"$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/renamed.err || fail "the renamed showcase does not compile:\n$(cat tmp/renamed.err)"
+"$satz" --config . transpile tmp/renamed.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/renamed.err || fail "the renamed showcase does not transpile:\n$(cat tmp/renamed.err)"
 [ -f $si/archive/CHANGES.md ] || fail "a renamed export wrote no CHANGES.md for the project's interface:\n$(ls $si/archive)"
 grep -qF -- '- [ ] Replace `module.satz.archive_project_number` / `${{interface.archive_project_number}}` with `…archive_number`: renamed, the same `google_project.archive`.' $si/archive/CHANGES.md \
   || fail "the rename is not the todo:\n$(cat $si/archive/CHANGES.md)"
@@ -306,13 +306,13 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 [ -e $si/archive/CHANGES.md ] && fail "a transpile that changed nothing wrote a CHANGES.md"
 [ "$(grep -o 'sha256:[0-9a-f]*' $si/README.md)" = "$hash_before" ] || fail "the content hash depends on the previous state"
 
-step "examples: the organisation's estate compiles, and each example beside it compiles against its interface"
-# examples/acme/ is the organisation; every subfolder with a config.toml is one example,
-# a workload's estate that reads the interfaces copied to its interfaces/incoming/.
+step "examples: the organization's estate transpiles, and each example beside it transpiles against its interface"
+# examples/acme/ is the organization; every subfolder with a config.toml is one example,
+# a workload estate that reads the interfaces copied to its interfaces/incoming/.
 ex="$root/examples/acme"
 rm -rf "$ex/hcl" "$ex/interfaces"
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile:\n$(cat tmp/example-org.txt)"
-[ -f "$ex/interfaces/outgoing/common/core/satz/interface.satz" ] || fail "the example organisation wrote no common interface:\n$(cat tmp/example-org.txt)"
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile:\n$(cat tmp/example-org.txt)"
+[ -f "$ex/interfaces/outgoing/common/core/satz/interface.satz" ] || fail "the example organization wrote no common interface:\n$(cat tmp/example-org.txt)"
 examples=0
 for cfg in "$ex"/*/config.toml; do
   [ -f "$cfg" ] || continue
@@ -332,15 +332,15 @@ grep -q 'folder_id = local.interface.shop__delegated_folder' "$ex/simple-project
 # the template: inputs as variables in the HCL team's form, bound values in the Satz team's,
 # one main.tf for both
 pt="$ex/simple-project"; sd="$ex/shop-dev"
-grep -q 'variable "cost_centre" {' "$pt/hcl/variables.tf" && grep -q 'description = "the four-digit cost centre the project is billed to"' "$pt/hcl/variables.tf" || fail "the template does not declare its inputs:\n$(cat "$pt/hcl/variables.tf")"
-grep -q 'project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/main.tf" || fail "the template's project id does not read the inputs and the organisation:\n$(cat "$pt/hcl/main.tf")"
+grep -q 'variable "cost_centre" {' "$pt/hcl/variables.tf" && grep -q 'description = "the four-digit cost center the project is billed to"' "$pt/hcl/variables.tf" || fail "the template does not declare its inputs:\n$(cat "$pt/hcl/variables.tf")"
+grep -q 'project_id = "${local.interface.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/main.tf" || fail "the template's project id does not read the inputs and the organization:\n$(cat "$pt/hcl/main.tf")"
 grep -q '"cost_centre" = var.cost_centre' "$pt/hcl/main.tf" || fail "the template's label does not read the input bare:\n$(cat "$pt/hcl/main.tf")"
 grep -q 'project = "${local.interface_static.customer_shortname}-${var.application}-${var.stage}"' "$pt/hcl/providers.tf" || fail "the template's provider alias does not read the inputs:\n$(cat "$pt/hcl/providers.tf")"
-# the organisation's values stand in interface.tf alone; a provider reads the static local
+# the organization's values stand in interface.tf alone; a provider reads the static local
 grep -q 'region = local.interface_static.default_region' "$pt/hcl/providers.tf" || fail "the providers block does not read the interface's region:\n$(cat "$pt/hcl/providers.tf")"
 grep -q 'local.interface\.' "$pt/hcl/providers.tf" && fail "a provider reads the local that holds the lookup it runs:\n$(cat "$pt/hcl/providers.tf")"
-grep -q 'customer_shortname = "acme"' "$pt/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$pt/hcl/interface.tf" && grep -q 'delegated_folder = data.google_active_folder.shop.name' "$pt/hcl/interface.tf" || fail "interface.tf does not hold the organisation's values:\n$(cat "$pt/hcl/interface.tf")"
-grep -q ' = "acme' "$pt/hcl/main.tf" && fail "main.tf carries the organisation's value:\n$(cat "$pt/hcl/main.tf")"
+grep -q 'customer_shortname = "acme"' "$pt/hcl/interface.tf" && grep -q 'interface = merge(local.interface_static, {' "$pt/hcl/interface.tf" && grep -q 'delegated_folder = data.google_active_folder.shop.name' "$pt/hcl/interface.tf" || fail "interface.tf does not hold the organization's values:\n$(cat "$pt/hcl/interface.tf")"
+grep -q ' = "acme' "$pt/hcl/main.tf" && fail "main.tf carries the organization's value:\n$(cat "$pt/hcl/main.tf")"
 for r in owner editor viewer; do
   grep -q "member = \"group:\${local.interface.customer_shortname}-\${var.application}-\${var.stage}-$r@\${local.interface.customer_domain}\"" "$pt/hcl/main.tf" || fail "the $r group is not granted over the local and the inputs:\n$(cat "$pt/hcl/main.tf")"
 done
@@ -355,7 +355,7 @@ fw_lists='  delegations = [{ name = "shop" owner_group = "gcp-shop-admins@exampl
   delegated_folders = [{ name = "shop" delegation = "shop" display_name = "Shop" }, { name = "shop-data" delegation = "shop" parent = "folders/222222222222" }, { name = "rag-acme" delegation = "rag" }]'
 sed -e '/^  delegations  *= /d' -e '/^  delegated_folders  *= /d' -e "s|^  use_delegation  *= true|&\\
 $fw_lists|" "$ex/satz/C0example.satz" > tmp/fw-org.satz
-grep -q 'name = "rag-acme"' tmp/fw-org.satz || fail "the delegated-folders estate was not written from the example organisation"
+grep -q 'name = "rag-acme"' tmp/fw-org.satz || fail "the delegated-folders estate was not written from the example organization"
 mkdir -p tmp/fw
 fw_run() { "$satz" --config "$ex" transpile "$PWD/$1" --output "$PWD/tmp/fw/hcl" --check; }
 "$satz" --config "$ex" transpile "$PWD/tmp/fw-org.satz" --output "$PWD/tmp/fw/hcl" > tmp/fw.txt 2>&1 || fail "the delegated-folders estate does not transpile:\n$(cat tmp/fw.txt)"
@@ -383,26 +383,26 @@ grep -A1 '^output "delegated_folder"' "$fwi/shop-data/shop-data/satz/interface.s
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/fw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the delegated-folders estate does not validate"
 fi
-# a folder entry that names a delegation nobody declared is refused at the compile
+# a folder entry that names a delegation nobody declared is refused at the transpile
 sed 's|{ name = "rag-acme" delegation = "rag" }|{ name = "rag-acme" delegation = "ghost" }|' tmp/fw-org.satz > tmp/fw-ghost.satz
-fw_run tmp/fw-ghost.satz > tmp/fw-ghost.txt 2>&1 && fail "a folder for a delegation nobody declared compiled"
+fw_run tmp/fw-ghost.satz > tmp/fw-ghost.txt 2>&1 && fail "a folder for a delegation nobody declared transpiled"
 grep -q 'google_service_account.deploy_ghost' tmp/fw-ghost.txt && grep -q 'deploy_rag, deploy_shop' tmp/fw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/fw-ghost.txt)"
 # the pack these replaced: its path, its params and its request lists are refused by name
 sed 's|presets/delegation.satz|presets/folder-workload.satz|' tmp/fw-org.satz > tmp/fw-oldpath.satz
-fw_run tmp/fw-oldpath.satz > tmp/fw-old.txt 2>&1 && fail "the old pack path compiled"
+fw_run tmp/fw-oldpath.satz > tmp/fw-old.txt 2>&1 && fail "the old pack path transpiled"
 grep -q 'moved to "presets/delegation.satz"' tmp/fw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/fw-old.txt)"
 for pair in use_delegation:use_folder_workload delegations:folder_workloads delegated_folders:folder_workload_folders delegation_project_folder:folder_workload_project_folder; do
   new=${pair%%:*}; old=${pair##*:}
   sed "s|^  $new\( *\)= |  $old\1= |" tmp/fw-org.satz > tmp/fw-oldparam.satz
   grep -q "^  $old  *= " tmp/fw-oldparam.satz || fail "the estate with the old param $old was not written"
-  fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "the old param $old compiled"
+  fw_run tmp/fw-oldparam.satz > tmp/fw-old.txt 2>&1 && fail "the old param $old transpiled"
   grep -q "param \`$old\` was renamed to \`$new\`" tmp/fw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/fw-old.txt)"
 done
 printf 'pack pay_request version "1.0"\n\nparams {\n  contributes_folder_workloads = [\n    { name = "pay" owner_group = "gcp-pay@example.com" },\n  ]\n}\n' > tmp/fw-request.satz
 "$satz" --config "$ex" check-request "$PWD/tmp/fw-request.satz" "$PWD/tmp/fw-org.satz" > tmp/fw-request.txt 2>&1 && fail "a request for the old list was accepted"
 grep -q 'delegations' tmp/fw-request.txt || fail "the request's refusal does not name the lists that take requests:\n$(cat tmp/fw-request.txt)"
-# the example organisation's own interfaces are what the steps after this one read
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the delegated-folders step"
+# the example organization's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the delegated-folders step"
 
 step "delegated projects: a project per entry, worked by its delegation's account — one account in one project, another in two (ADR 0093)"
 python3 - "$ex/satz/C0example.satz" tmp/pw-org.satz <<'PY2'
@@ -446,19 +446,19 @@ grep -q '^output "project_id"' "$pwi/delegation-shop/delegation-shop/satz/interf
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the delegated-projects estate does not validate"
 fi
-# the folder that is handed over says what it hands over and what to do with it
+# the folder that is copied to the workload's team says what it gives and what to do with it
 hr="$pwi/delegation-shop/delegation-shop/README.md"
-grep -q '^## Delegated access: what you were given' "$hr" && grep -q 'the members of `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
+grep -q '^## Delegated access: what you were given' "$hr" && grep -q 'the members of the estate account user group `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
   && grep -q 'satz init --from' "$hr" \
   || fail "the README of a delegation's interface does not say who may act as the account and what to do:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$hr")"
-grep -q 'the project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'use "interfaces/incoming/payments/payments/satz/interface.satz"' "$pwi/payments/payments/README.md" \
-  && grep -q 'the members of `payments-owners@example.com`' "$pwi/delegation-payments/delegation-payments/README.md" \
-  || fail "the READMEs of a project and of its delegation do not say what was handed over:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
-grep -q 'the folder to build in' "$pwi/shop/shop/README.md" && grep -q 'no role that sets a folder'"'"'s access' "$pwi/shop/shop/README.md" || fail "the README of a delegated folder does not say it is the folder to build in, or what the account holds on it"
-grep -q 'Delegated access: what you were given' "$pwi/common/core/README.md" && fail "the library's README speaks of a hand-over"
-# a project for a delegation nobody declared is refused at the compile
+grep -q 'the delegated project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'use "interfaces/incoming/payments/payments/satz/interface.satz"' "$pwi/payments/payments/README.md" \
+  && grep -q 'the members of the estate account user group `payments-owners@example.com`' "$pwi/delegation-payments/delegation-payments/README.md" \
+  || fail "the READMEs of a workload estate's interface and of its delegation do not say what was given:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
+grep -q 'the delegated folder to build in' "$pwi/shop/shop/README.md" && grep -q 'no role that sets a folder'"'"'s access' "$pwi/shop/shop/README.md" || fail "the README of a delegated folder does not say it is the folder to build in, or what the account holds on it"
+grep -q 'Delegated access: what you were given' "$pwi/common/core/README.md" && fail "the library's README speaks of delegated access"
+# a project for a delegation nobody declared is refused at the transpile
 sed 's|{ name = "shop-backend" delegation = "shop" }|{ name = "shop-backend" delegation = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
-"$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a delegation nobody declared compiled"
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a delegation nobody declared transpiled"
 grep -q 'google_service_account.deploy_ghost' tmp/pw-ghost.txt && grep -q 'deploy_shop' tmp/pw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/pw-ghost.txt)"
 # the estate that works in shop-backend as the delegation's account: it reads two interfaces, and
 # what its bucket needs on the project is its own to grant
@@ -515,19 +515,19 @@ grep -q 'prerequisites' tmp/pw-estate.txt && fail "the estate's own grant on its
 grep -q 'delegates 0 role(s) on its folders, 2 on its project' tmp/pw-report.txt || fail "folder roles count for an estate that works in no folder:\n$(cat tmp/pw-report.txt)"
 # the pack this one replaced: its path and its params are refused by name
 sed 's|presets/delegated-projects.satz|presets/project-workload.satz|' tmp/pw-org.satz > tmp/pw-old.satz
-"$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old project pack path compiled"
+"$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old project pack path transpiled"
 grep -q 'moved to "presets/delegated-projects.satz"' tmp/pw-old.txt || fail "the old path's refusal does not name the new pack:\n$(cat tmp/pw-old.txt)"
 for pair in use_delegated_projects:use_project_workload delegated_projects:project_workload_projects delegated_projects_folder:project_workload_folder; do
   new=${pair%%:*}; old=${pair##*:}
   sed "s|^  $new\( *\)= |  $old\1= |" tmp/pw-org.satz > tmp/pw-old.satz
   grep -q "^  $old  *= " tmp/pw-old.satz || fail "the estate with the old param $old was not written"
-  "$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old param $old compiled"
+  "$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old param $old transpiled"
   grep -q "param \`$old\` was renamed to \`$new\`" tmp/pw-old.txt || fail "the refusal of $old does not name $new:\n$(cat tmp/pw-old.txt)"
 done
-# the example organisation's own interfaces are what the steps after this one read
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the delegated-projects step"
+# the example organization's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the delegated-projects step"
 
-step "add-entry: one entry added to a list a pack declares, checked against the declaration, the estate kept only when it compiles (ADR 0093)"
+step "add-entry: one entry added to a list a pack declares, checked against the declaration, the estate kept only when it transpiles (ADR 0093)"
 cp tmp/pw-org.satz tmp/ae-org.satz
 ae() { "$satz" --config "$ex" add-entry "$PWD/tmp/ae-org.satz" "$@"; }
 ae delegations name=billing owner_group=billing-team@example.com > tmp/ae.txt 2>&1 || fail "add-entry could not add a delegation:\n$(cat tmp/ae.txt)"
@@ -535,7 +535,7 @@ grep -q 'added `billing` to `delegations`' tmp/ae.txt && grep -q '{ name = "bill
 # fields in any order, a yes or no and a list as the declaration types them, written in its order
 ae delegated_projects budgets=false apis=run.googleapis.com,iam.googleapis.com delegation=billing name=billing-reports > tmp/ae.txt 2>&1 || fail "add-entry could not add a project:\n$(cat tmp/ae.txt)"
 grep -q '{ name = "billing-reports" delegation = "billing" apis = \["run.googleapis.com", "iam.googleapis.com"\] budgets = false }' tmp/ae-org.satz || fail "the project's entry is not written in the declaration's order with its kinds:\n$(grep -n delegated_projects tmp/ae-org.satz)"
-"$satz" --config "$ex" transpile "$PWD/tmp/ae-org.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/ae-check.txt 2>&1 || fail "the estate with the added entries does not compile:\n$(cat tmp/ae-check.txt)"
+"$satz" --config "$ex" transpile "$PWD/tmp/ae-org.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/ae-check.txt 2>&1 || fail "the estate with the added entries does not transpile:\n$(cat tmp/ae-check.txt)"
 "$satz" --config "$ex" interfaces "$PWD/tmp/ae-org.satz" --format json --out tmp/ae-interfaces.json >/dev/null 2>&1 || fail "satz interfaces failed on the estate with the added entries"
 python3 - tmp/ae-interfaces.json <<'PY2' || fail "the interfaces report does not carry the entries and the defaults of a list:\n$(cat tmp/ae-interfaces.json)"
 import json, sys
@@ -563,7 +563,7 @@ refused 'owner_group' delegations name=lake owner_group=not-an-address
 refused 'is named by its `name`' delegated_projects delegation=billing
 refused 'google_service_account.deploy_ghost' delegated_projects name=orphan delegation=ghost
 
-step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0091, ADR 0093)"
+step "delegated budgets: the role on the project that asked, the budget pack in the workload estate, and what a pack needs (ADR 0091, ADR 0093)"
 python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
@@ -588,15 +588,15 @@ grep -A3 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"
 bi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_budgets"' "$bi/payments/payments/satz/interface.satz" | grep -q 'value *= true' && grep -A1 '^output "delegated_budgets"' "$bi/plain/plain/satz/interface.satz" | grep -q 'value *= false' \
   || fail "the interfaces do not say which project was delegated budgets"
-grep -q '| budgets | delegated' "$bi/payments/payments/README.md" && grep -q '| budgets | not delegated' "$bi/plain/plain/README.md" || fail "the hand-over README does not say whether budgets were delegated"
+grep -q '| budgets | delegated' "$bi/payments/payments/README.md" && grep -q '| budgets | not delegated' "$bi/plain/plain/README.md" || fail "the README of the interface folder does not say whether budgets were delegated"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/bud/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate that delegates budgets does not validate"
 fi
 # an entry that asks while the role's pack is off names a role nobody declares
 sed 's|use_delegated_budgets = true|use_delegated_budgets = false|' tmp/bud-org.satz > tmp/bud-off.satz
-"$satz" --config "$ex" transpile "$PWD/tmp/bud-off.satz" --output "$PWD/tmp/bud/hcl" --check > tmp/bud-off.txt 2>&1 && fail "an entry asked for budgets while the role is not declared, and compiled"
+"$satz" --config "$ex" transpile "$PWD/tmp/bud-off.satz" --output "$PWD/tmp/bud/hcl" --check > tmp/bud-off.txt 2>&1 && fail "an entry asked for budgets while the role is not declared, and transpiled"
 grep -q 'google_organization_iam_custom_role.delegated_budgets' tmp/bud-off.txt || fail "the refusal does not name the missing role:\n$(cat tmp/bud-off.txt)"
-# the team's estate in the project that was delegated budgets: the budget pack, nothing missing
+# the workload estate in the project that was delegated budgets: the budget pack, nothing missing
 bud_estate() { # <dir> <name of the delegation and of its project>
   rm -rf "$1" && mkdir -p "$1/satz" "$1/interfaces/incoming" "$1/packs"
   cp -R "$bi/$2" "$bi/delegation-$2" "$1/interfaces/incoming/" && cp "$root/packs/project-budget.satz" "$1/packs/"
@@ -640,17 +640,17 @@ providers {
 SATZ
 }
 bud_estate tmp/bud/team payments
-"$satz" --config tmp/bud/team transpile team.satz > tmp/bud-team.txt 2>&1 || fail "the team's estate with the budget pack does not transpile:\n$(cat tmp/bud-team.txt)"
+"$satz" --config tmp/bud/team transpile team.satz > tmp/bud-team.txt 2>&1 || fail "the workload estate with the budget pack does not transpile:\n$(cat tmp/bud-team.txt)"
 grep -q 'prerequisites' tmp/bud-team.txt && fail "a budget in a project that was delegated budgets has an open prerequisite:\n$(cat tmp/bud-team.txt)"
 bt=tmp/bud/team/hcl/main.tf
 grep -q '"projects/${local.interface.project_number}"' "$bt" && grep -q 'billing_account = local.interface.billing_account' "$bt" || fail "the budget does not count the delegated project on its billing account:\n$(grep -A12 google_billing_budget "$bt")"
 grep -A4 '^resource "google_project_service" "budget_api"' "$bt" | grep -q 'disable_on_destroy = false' || fail "the pack's API switch would switch the API off when the pack is taken out"
 if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/bud/team/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the team's estate with the budget pack does not validate"
+  (cd tmp/bud/team/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the workload estate with the budget pack does not validate"
 fi
 "$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated project' || fail "the presets report does not say the estate works in a delegated project"
 "$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated folder' || fail "the presets report does not say the example works in a delegated folder"
-"$satz" --config "$pt" presets simple-project.satz --format json --out tmp/pt-presets.json >/dev/null 2>&1 || fail "the presets report of the example team's estate failed"
+"$satz" --config "$pt" presets simple-project.satz --format json --out tmp/pt-presets.json >/dev/null 2>&1 || fail "the presets report of the example workload estate failed"
 python3 - tmp/pt-presets.json <<'PY2' || fail "the presets report does not say who delegated:\n$(cat tmp/pt-presets.json)"
 import json, sys
 by = {d["interface"]: d for d in json.load(open(sys.argv[1]))["delegated_by"]}
@@ -660,30 +660,30 @@ assert base["account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.
 assert base["account_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
 assert folder["folder"] is True and "account" not in folder, folder
 PY2
-"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organisation' || fail "the presets report does not say the organisation's estate works in the organisation"
-"$satz" --config tmp/bud/team packs --from "$root/packs" --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the team's estate:\n$(cat tmp/bud-packs.txt)"
+"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
+"$satz" --config tmp/bud/team packs --from "$root/packs" --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
 grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
 # the same estate in the project that was not: told what to ask for, and how
 bud_estate tmp/bud/plain plain
-"$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the team's estate without delegated budgets does not compile at level warn:\n$(cat tmp/bud-plain.txt)"
+"$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile at level warn:\n$(cat tmp/bud-plain.txt)"
 grep -q '`budgets = true` on the entry of this project or folder' tmp/bud-plain.txt || fail "an estate that was not delegated budgets is not told how to ask:\n$(cat tmp/bud-plain.txt)"
-# an API the organisation already switched on, declared again by the team
+# an API the organization already switched on, declared again by the team
 printf '\ngoogle_project_service {\n  again {\n    project = infra_project_name\n    service = "storage.googleapis.com"\n  }\n}\n' >> tmp/bud/team/satz/team.satz
-"$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not compile at level warn:\n$(cat tmp/bud-twice.txt)"
+"$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not transpile at level warn:\n$(cat tmp/bud-twice.txt)"
 grep -q '1 API(s) are switched on twice on acme-deploy-payments' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
-# the example organisation's own interfaces are what the steps after this one read
-"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the budgets step"
+# the example organization's own interfaces are what the steps after this one read
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the budgets step"
 
-step "a workload's estate is judged against what was delegated to its account, and what is missing is asked for (ADR 0087)"
+step "a workload estate is judged against what was delegated to its account, and what is missing is asked for (ADR 0087)"
 # the example: everything it needs was delegated, so the check is quiet — no role at the organization, no API to write
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
-grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organisation binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
-"$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload's estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
+grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organization binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
+"$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
 grep -q "delegates 6 role(s) on its folders, 0 on its project, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q 'delegation-shop' tmp/wl-report.txt && grep -q '^not delegated: none' tmp/wl-report.txt \
   || fail "the report does not say what was delegated:\n$(cat tmp/wl-report.txt)"
 # the published values say `delegated_…` (ADR 0089): nothing the example writes carries an old
 # name, and an interface copied before the rename is refused where it is used, not read
-grep -rq 'delivered_' "$ex/interfaces/outgoing" && fail "an interface the example organisation writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces/outgoing")"
+grep -rq 'delivered_' "$ex/interfaces/outgoing" && fail "an interface the example organization writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces/outgoing")"
 rm -rf tmp/oldif && mkdir -p tmp/oldif/interfaces && cp -R "$pt/satz" tmp/oldif/ && cp -R "$pt/interfaces/incoming" tmp/oldif/interfaces/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/oldif/config.toml
 oldif=tmp/oldif/interfaces/incoming/shop/shop/satz/interface.satz
@@ -694,23 +694,23 @@ grep -q 'exports `delivered_folder_roles`: it was written by satz before v0.98.0
   || fail "the refusal of an old interface does not say what to do:\n$(cat tmp/oldif.txt)"
 # a budget needs an API on the workload's infrastructure project and a billing role: neither was delegated
 { cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-not-delegated.satz"
-"$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate with a need that was not delegated does not compile at level warn:\n$(cat tmp/wl.txt)"; }
+"$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload estate with a need that was not delegated does not transpile at level warn:\n$(cat tmp/wl.txt)"; }
 grep -q "not enabled on acme-deploy-shop, the project its calls are billed to" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated API is not asked for:\n$(cat tmp/wl.txt)"; }
 grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the delegation'"'"'s entry in `delegations`' tmp/wl.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated billing role is not asked for:\n$(cat tmp/wl.txt)"; }
-grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload's estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
+grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
 # the write: nothing is written for what was not delegated, the file stays as it is, and the command fails
 cp "$pt/satz/tmp-not-delegated.satz" tmp/wl-before.satz
-"$satz" --config "$pt" update-prerequisites tmp-not-delegated.satz > tmp/wl-write.txt 2>&1 && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites succeeded on a workload's estate with not delegated needs"; }
-cmp -s "$pt/satz/tmp-not-delegated.satz" tmp/wl-before.satz || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites wrote into a workload's estate:\n$(diff tmp/wl-before.satz "$pt/satz/tmp-not-delegated.satz")"; }
+"$satz" --config "$pt" update-prerequisites tmp-not-delegated.satz > tmp/wl-write.txt 2>&1 && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites succeeded on a workload estate with not delegated needs"; }
+cmp -s "$pt/satz/tmp-not-delegated.satz" tmp/wl-before.satz || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites wrote into a workload estate:\n$(diff tmp/wl-before.satz "$pt/satz/tmp-not-delegated.satz")"; }
 grep -q '2 prerequisite(s) are not delegated to svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com' tmp/wl-write.txt && ! grep -q '^wrote \|gcloud services enable' tmp/wl-write.txt \
   || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the write does not say what is not delegated, or offers to enable it:\n$(cat tmp/wl-write.txt)"; }
 # the apply: refused while an API is not delegated, with whom to ask
 "$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" --apply > tmp/wl-apply.txt 2>&1 && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "an estate with a not delegated API was applied"; }
 rm -f "$pt/satz/tmp-not-delegated.satz"
 grep -q "apply refused: 1 API(s) this estate's resources need are not enabled on the project its calls are billed to — billingbudgets.googleapis.com on acme-deploy-shop" tmp/wl-apply.txt \
-  && grep -q "the organisation's estate's" tmp/wl-apply.txt || fail "the apply's refusal does not name the API and whom to ask:\n$(cat tmp/wl-apply.txt)"
+  && grep -q "belongs to the organization's estate" tmp/wl-apply.txt || fail "the apply's refusal does not name the API and whom to ask:\n$(cat tmp/wl-apply.txt)"
 
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
 ih=tmp/inputs-hcl
@@ -725,7 +725,7 @@ grep -q '^showcase_retention = "600s"' tmp/input.txt || fail "--input did not bi
 "$satz" --config . transpile yaml/showcase.satz --input nope=1 --check > tmp/input-bad.txt 2>&1 && fail "--input bound a name no file declares as an input"
 grep -q 'no file of the estate declares `nope` in an `inputs` block' tmp/input-bad.txt && grep -q '`showcase_retention`' tmp/input-bad.txt || fail "the refusal does not list the inputs:\n$(cat tmp/input-bad.txt)"
 
-step "delegation: an entry of each list, their interfaces out, and a team's estate written from the folders it takes (init --from)"
+step "delegation: an entry of each list, their interfaces out, and a workload estate written from the folders it takes (init --from)"
 python3 - yaml/showcase.satz tmp/with-project.satz <<'PY2'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
@@ -747,12 +747,12 @@ assert [i for i in r["interfaces"] if i["name"] == "audit"][0]["common"]
 q = [x for x in r["requests"] if x["param"] == "event_topics"]
 assert q and q[0]["key"] == "name" and q[0]["fields"] == ["name", "retention", "subscription"] and q[0]["entries"] == 2, r["requests"]
 PY
-# a project's request file, checked offline against the estate's request points
+# a project's request file, checked offline against the estate's lists
 "$satz" --config . check-request "$root/tests/smoke/requests/ok.satz" "$PWD/tmp/with-project.satz" > tmp/check-request.txt 2>&1 || fail "a fitting request file was refused:\n$(cat tmp/check-request.txt)"
 "$satz" --config . check-request "$root/tests/smoke/requests/bad.satz" "$PWD/tmp/with-project.satz" > tmp/check-request-bad.txt 2>&1 && fail "a request file with an undeclared field passed"
 grep -q 'has `labels`, which is no field of this request' tmp/check-request-bad.txt || fail "the refusal does not name the field:\n$(cat tmp/check-request-bad.txt)"
 grep -q '## What you may request' interfaces/outgoing/common/core/README.md || fail "the interface README does not say what may be requested:\n$(cat interfaces/outgoing/common/core/README.md)"
-"$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not compile:\n$(cat tmp/with-project.err)"
+"$satz" --config . transpile tmp/with-project.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-project.err || fail "the estate with a project does not transpile:\n$(cat tmp/with-project.err)"
 pi=interfaces/outgoing/payments/payments/satz/interface.satz
 [ -f "$pi" ] || fail "the project's interface was not written:\n$(ls interfaces/outgoing)"
 for o in project_id project_number audit_bucket_name; do
@@ -766,14 +766,14 @@ done
 for t in orders billing; do
   grep -q '^output "topic"' "interfaces/outgoing/$t-events/$t-events/satz/interface.satz" || fail "the showcase's each wrote no interface $t-events:\n$(ls interfaces/outgoing)"
 done
-grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not emitted"
+grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not written"
 out="$PWD/interfaces/outgoing"
 rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
 # a target alone carries no identity, and nothing is written for it
 (cd tmp/payments && "$satz" init --from "$out/payments" > ../init-alone.txt 2>&1) && fail "init wrote an estate from a folder that carries no account"
 grep -q "none of the folders is a delegation's own" tmp/init-alone.txt || fail "the refusal does not say which folder is missing:\n$(cat tmp/init-alone.txt)"
 rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
-(cd tmp/payments && "$satz" init --from "$out/delegation-payments" "$out/payments" > ../init-project.txt 2>&1) || fail "init could not write the team's estate:\n$(cat tmp/init-project.txt)"
+(cd tmp/payments && "$satz" init --from "$out/delegation-payments" "$out/payments" > ../init-project.txt 2>&1) || fail "init could not write the workload estate:\n$(cat tmp/init-project.txt)"
 for f in delegation-payments payments; do
   [ -f "tmp/payments/interfaces/incoming/$f/$f/satz/interface.satz" ] && [ -f "tmp/payments/interfaces/incoming/$f/core/satz/interface.satz" ] || fail "init did not take the folder $f whole into interfaces/incoming/:\n$(find tmp/payments/interfaces 2>/dev/null)"
   grep -q "^use \"interfaces/incoming/$f/$f/satz/interface.satz\"" tmp/payments/satz/payments.satz || fail "the estate does not use the interface $f:\n$(cat tmp/payments/satz/payments.satz)"
@@ -783,11 +783,11 @@ grep -q 'prefix = "payments/state"' tmp/payments/satz/payments.satz || fail "the
 (cd tmp/payments && "$satz" init --from interfaces/incoming/delegation-payments interfaces/incoming/payments > ../init-again.txt 2>&1) && fail "init rewrote an estate that exists"
 grep -q 'exists — `--force` rewrites it' tmp/init-again.txt && ! grep -q '^Took ' tmp/init-again.txt || fail "a folder already in interfaces/incoming/ was copied, or the refusal is another:\n$(cat tmp/init-again.txt)"
 "$satz" fmt --check tmp/payments/satz/payments.satz || fail "the estate init wrote is not in the canonical layout"
-grep -q 'deployment_mode    = "cloud"' tmp/payments/satz/payments.satz || fail "the team's estate does not run in cloud mode:\n$(cat tmp/payments/satz/payments.satz)"
-"$satz" --config tmp/payments/config.toml transpile payments.satz > tmp/project-transpile.txt 2>&1 || fail "the team's estate does not transpile:\n$(cat tmp/project-transpile.txt)"
-grep -q 'impersonate_service_account = "svc-deploy-payments@corp-deploy-payments.iam.gserviceaccount.com"' tmp/payments/hcl/providers.tf || fail "the team's estate does not run as its delegation's account:\n$(cat tmp/payments/hcl/providers.tf)"
+grep -q 'deployment_mode    = "cloud"' tmp/payments/satz/payments.satz || fail "the workload estate does not run in cloud mode:\n$(cat tmp/payments/satz/payments.satz)"
+"$satz" --config tmp/payments/config.toml transpile payments.satz > tmp/project-transpile.txt 2>&1 || fail "the workload estate does not transpile:\n$(cat tmp/project-transpile.txt)"
+grep -q 'impersonate_service_account = "svc-deploy-payments@corp-deploy-payments.iam.gserviceaccount.com"' tmp/payments/hcl/providers.tf || fail "the workload estate does not run as its delegation's account:\n$(cat tmp/payments/hcl/providers.tf)"
 if command -v tofu >/dev/null 2>&1; then
-  (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the team's estate's root module does not validate"
+  (cd tmp/payments/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the workload estate's HCL code does not validate"
 fi
 
 step "named reads: one workload estate over two delegated projects, each read by the name of its interface folder"
@@ -798,7 +798,7 @@ o = 'delegated_projects = [{ name = "payments" delegation = "payments" }]'
 assert o in s
 open(sys.argv[2], "w", encoding="utf-8").write(s.replace(o, 'delegated_projects = [{ name = "payments" delegation = "payments" }, { name = "ledger" delegation = "payments" }]'))
 PY2
-"$satz" --config . transpile tmp/with-two.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-two.err || fail "the estate with two delegated projects does not compile:\n$(cat tmp/with-two.err)"
+"$satz" --config . transpile tmp/with-two.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/with-two.err || fail "the estate with two delegated projects does not transpile:\n$(cat tmp/with-two.err)"
 rm -rf tmp/two && mkdir -p tmp/two && seed_schemas tmp/two
 (cd tmp/two && "$satz" init --from "$out/delegation-payments" "$out/payments" "$out/ledger" > ../init-two.txt 2>&1) || fail "init refused an estate over two delegated projects:\n$(cat tmp/init-two.txt)"
 two=tmp/two/satz/payments.satz
@@ -826,7 +826,7 @@ if command -v tofu >/dev/null 2>&1; then
 fi
 # by its bare name the project is two different ones
 sed -i.bak 's/project = "${{interface.ledger.project_id}}"/project = "${{interface.project_id}}"/' "$two"
-"$satz" --config tmp/two/config.toml transpile payments.satz --check > tmp/two-bare.txt 2>&1 && fail "a bare read of a value two folders carry differently compiled"
+"$satz" --config tmp/two/config.toml transpile payments.satz --check > tmp/two-bare.txt 2>&1 && fail "a bare read of a value two folders carry differently transpiled"
 grep -q 'they differ' tmp/two-bare.txt && grep -q 'interface.ledger.project_id' tmp/two-bare.txt || fail "the refusal does not name the two reads:\n$(cat tmp/two-bare.txt)"
 
 # an estate that exports nothing keeps neither file from an earlier run
@@ -841,7 +841,7 @@ s = re.sub(r'(?m)^export .*\n', "", s)
 open(p, "w", encoding="utf-8").write(s)
 PY
 "$satz" --config . transpile tmp/no-exports.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/no-exports.err \
-  || fail "the showcase without exports does not compile:\n$(cat tmp/no-exports.err)"
+  || fail "the showcase without exports does not transpile:\n$(cat tmp/no-exports.err)"
 [ -e tmp/showcase-hcl/outputs.tf ] && fail "outputs.tf survived a transpile of an estate that exports nothing"
 [ -e interfaces ] && fail "interfaces/ survived a transpile of an estate that exports nothing"
 
@@ -929,7 +929,7 @@ grep -q 'customer_shortname' tmp/questions.txt || fail "the showcase's question 
 grep -q 'one-way' tmp/questions.txt || fail "a recreate-reversal question must be marked as a one-way door"
 grep -q 'group_model' tmp/questions.txt || fail "the oneof question is missing"
 "$satz" --config . questions showcase.satz --format json --out tmp/questions.json 2>/dev/null || true
-python3 - <<'PYEOF' || fail "satz questions --format json did not emit parseable JSON"
+python3 - <<'PYEOF' || fail "satz questions --format json did not write parseable JSON"
 import json
 d = json.load(open("tmp/questions.json"))
 subs = {q["subject"]: q for q in d["questions"]}
@@ -956,20 +956,20 @@ grep -q 'All 5 questions are answered' tmp/decisions.md || fail "the decisions s
 
 step "interview: a skeleton, piped answers, derived defaults, the gate, and the decisions sheet"
 # The third way to start an estate. `init` takes every answer as a flag; this asks.
-# A DAY-0 file: the scaffold and nothing else, so the questions are the estate's own
+# A SCAFFOLD-ONLY file: the scaffold and nothing else, so the questions are the estate's own
 # eighteen. Piped input: accept the opening offer, type the values nobody can default,
 # then Enter for each name that became an offer once its inputs landed.
 rm -rf tmp/iv && mkdir -p tmp/iv
 printf '%s\n' y C0example 123456789012 example.com acme Acme first.admin 012345-6789AB-CDEF01 '' '' '' '' '' '' '' '' '' '' \
   | "$satz" --config . interview "$PWD/tmp/iv/new.satz" --create > tmp/iv/run.txt 2>&1 \
   || fail "satz interview failed:\n$(cat tmp/iv/run.txt)"
-grep -q 'accepted 9 default(s)' tmp/iv/run.txt || fail "a day-0 file offers nine defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
-# accepting `workload_folder_name = ""` writes the section that publishes the organisation
+grep -q 'accepted 9 default(s)' tmp/iv/run.txt || fail "a scaffold-only file offers nine defaults, not the whole library's:\n$(cat tmp/iv/run.txt)"
+# accepting `workload_folder_name = ""` writes the section that publishes the organization
 grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/iv/new.satz \
   || fail "answering the workload folder must write its export:\n$(tail -5 tmp/iv/new.satz)"
 # every pack is commented out, and estate-core is the only `use` that is not
 [ "$(grep -c '^use \"presets' tmp/iv/new.satz)" = 1 ] \
-  || fail "a day-0 estate uses exactly one pack (estate-core):\n$(grep '^use \"presets' tmp/iv/new.satz)"
+  || fail "a scaffold-only estate uses exactly one pack (estate-core):\n$(grep '^use \"presets' tmp/iv/new.satz)"
 grep -q '^// use \"presets/estate-map.satz\"' tmp/iv/new.satz \
   || fail "the map must be written commented — it is what asks which packs the estate has"
 grep -q '^// use \"presets/scc/scc-export.satz\" when use_scc_export' tmp/iv/new.satz \
@@ -979,8 +979,8 @@ grep -q 'complete — every question is answered' tmp/iv/run.txt || fail "the in
 grep -q 'would have named this file C0example.satz' tmp/iv/run.txt || fail "the rename hint is missing"
 # `+=`: the interview keeps a formatted file formatted, so `=` is aligned across the params block
 grep -qE 'customer_shortname += "acme"' tmp/iv/new.satz || fail "the answer was not written into params"
-grep -qE 'security_model_s1 += true' tmp/iv/new.satz && fail "a day-0 file does not answer the map's choices — the map is not in it yet"
-"$satz" --config . transpile "$PWD/tmp/iv/new.satz" --check > tmp/iv/check.txt 2>&1 || fail "the interviewed estate does not compile:\n$(cat tmp/iv/check.txt)"
+grep -qE 'security_model_s1 += true' tmp/iv/new.satz && fail "a scaffold-only file does not answer the map's choices — the map is not in it yet"
+"$satz" --config . transpile "$PWD/tmp/iv/new.satz" --check > tmp/iv/check.txt 2>&1 || fail "the interviewed estate does not transpile:\n$(cat tmp/iv/check.txt)"
 "$satz" fmt --check "$PWD/tmp/iv/new.satz" || fail "the interview left the skeleton unformatted — an edit keeps a formatted file formatted"
 # THE GATE. An estate with an open question is refused by apply and by bootstrap;
 # a dry run warns — looking is how you find out.
@@ -1015,7 +1015,7 @@ grep -q 'group_model_flat and group_model_split are both true' tmp/twochoice.txt
   || fail "the oneof refusal does not name both branches:\n$(cat tmp/twochoice.txt)"
 
 # a used file is judged by where its `use` stands: a pack that declares its own types, used
-# in the folder map, compiled into folders named after those types
+# in the folder map, built into folders named after those types
 { cat yaml/smoke.satz; printf 'google_folder {\n  use "presets/cis/cmek.satz"\n}\n'; } > tmp/misplaced.satz
 if "$satz" --config . transpile tmp/misplaced.satz --check >tmp/misplaced.txt 2>&1; then
   fail "a pack that declares its own types was accepted inside google_folder { … }"
@@ -1058,7 +1058,7 @@ grep -q 'wrote ' tmp/require.json && fail "a progress line reached the report fi
 step "require cis-gcp-5.0: the same pack answers both benchmark versions"
 "$satz" --config . require cis-gcp-5.0 smoke.satz --format text --out tmp/require-50.txt 2>/dev/null || true
 grep -q 'satisfied' tmp/require-50.txt || fail "require printed no verdict line:\n$(cat tmp/require-50.txt)"
-grep -q '0 broken claim' tmp/require-50.txt || fail "a 5.0 claim names a witness the estate does not emit:\n$(grep -i broken tmp/require-50.txt)"
+grep -q '0 broken claim' tmp/require-50.txt || fail "a 5.0 claim names a witness the estate does not write:\n$(grep -i broken tmp/require-50.txt)"
 # CIS 5.0 §2.14 is the one control whose witness is the SCAFFOLD's, not a pack's: the
 # infrastructure project enables the Cloud Asset API, so the estate satisfies it. The
 # address is derived from the `infra` project label, which is the same contract
@@ -1074,7 +1074,7 @@ grep -qE '✓ 3.10 .*compute_requireVpcFlowLogs' tmp/require-50.txt || fail "4.0
 # 1.2 keeps the 4.0 claim's duties, so it is partial rather than satisfied — the
 # point is that it resolves at all, against the same policy
 grep -qE '◐ 1.2 .*legacy-superseded' tmp/require-50.txt || fail "4.0 1.1 -> 5.0 1.2 did not carry over with its duties"
-# 1.1.4 asks whether the org constrains its projects centrally: the whole baseline is the witness
+# 1.1.4 asks whether the organization constrains its projects centrally: the whole baseline is the witness
 grep -qE '◐ 1.1.4 .*review-baseline' tmp/require-50.txt || fail "the 5.0 §1.1.4 baseline claim is missing:\n$(grep '1.1.4' tmp/require-50.txt)"
 
 step "CIS extensions: opt-in coverage, off by default and on when asked"
@@ -1083,7 +1083,7 @@ grep -q 'compute.requireShieldedVm' hcl/main.tf && fail "an opt-in extension lea
 grep -q 'gcp.restrictNonCmekServices' hcl/main.tf && fail "an opt-in extension leaked into the baseline"
 # and on when the estate asks. The three constraint SHAPES differ, and a wrong
 # body is a policy that either does nothing or refuses everything — so assert
-# each one, not just that something was emitted.
+# each one, not just that something was written.
 sed -e 's/^params {/params {\n  cis_require_shielded_vm = true\n  cis_cmek_required = true\n  cis_api_key_services = true\n  allowed_api_key_services = ["storage.googleapis.com"]/' yaml/smoke.satz > tmp/ext.satz
 cat >> tmp/ext.satz <<'SATZ'
 use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
@@ -1095,13 +1095,13 @@ grep -q 'name = "organizations/123456789012/policies/compute.requireShieldedVm"'
 grep -q 'parameters = "{\\"allowedServices\\":\[\\"storage.googleapis.com\\"\]}"' tmp/ext-hcl/main.tf || fail "the parameterised constraint did not JSON-encode its parameters:\n$(grep -A3 disableServiceAccountApiKey tmp/ext-hcl/main.tf)"
 grep -q 'denied_values' tmp/ext-hcl/main.tf || fail "the CMEK list constraint lost its values"
 "$satz" --config . require cis-gcp-4.0 tmp/ext.satz --format text --out tmp/ext-require.txt 2>/dev/null || true
-grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witness it does not emit:\n$(grep -i broken tmp/ext-require.txt)"
+grep -q '0 broken claim' tmp/ext-require.txt || fail "an extension claims a witness it does not write:\n$(grep -i broken tmp/ext-require.txt)"
 grep -qE '✓ 4.8 ' tmp/ext-require.txt || fail "4.8 did not become satisfied with its fragment on"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/ext-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the extensions do not validate"
 fi
 
-step "org firewall: the admin ports are closed to the internet and open to the inside"
+step "organization firewall: the admin ports are closed to the internet and open to the inside"
 grep -q 'cis_block_internet_ssh_rdp = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
   || fail "cis_block_internet_ssh_rdp does not default to true"
 cp yaml/smoke.satz tmp/fw.satz
@@ -1127,7 +1127,7 @@ grep -q 'ip_protocol = "udp"' tmp/fw-hcl/main.tf || fail "UDP 3389 is not denied
 [ "$(grep -c 'enable_logging = true' tmp/fw-hcl/main.tf)" = 2 ] \
   || fail "expected logging on the two deny rules only — Google refuses it on goto_next:\n$(grep -c 'enable_logging' tmp/fw-hcl/main.tf)"
 "$satz" --config . require cis-gcp-4.0 tmp/fw.satz --format text --out tmp/fwreq.txt 2>/dev/null || true
-grep -q '0 broken claim' tmp/fwreq.txt || fail "the 3.6/3.7 claims name a witness the estate does not emit:\n$(grep -i broken tmp/fwreq.txt)"
+grep -q '0 broken claim' tmp/fwreq.txt || fail "the 3.6/3.7 claims name a witness the estate does not write:\n$(grep -i broken tmp/fwreq.txt)"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/fw-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the admin-port policy does not validate"
 fi
@@ -1136,7 +1136,7 @@ step "dns logging: the one extension that is on by default, and what it claims"
 # The baseline already enforces flow logs (compute.requireVpcFlowLogs, claimed for
 # 4.0 3.8 / 5.0 3.10), so the smoke estate carries it without asking for anything.
 grep -q 'name = "organizations/123456789012/policies/compute.requireVpcFlowLogs"' hcl/main.tf || fail "the baseline lost its flow-log constraint"
-# The flag defaults TRUE — the only extension that does — but a flag alone emits
+# The flag defaults TRUE — the only extension that does — but a flag alone writes
 # nothing: the estate carries the `use … when` line (ADR 0007), and the skeleton writes it.
 grep -q 'cis_dns_logging            = true' ../../presets/cis/CIS-GCP-Foundation-4.0.satz \
   || fail "cis_dns_logging does not default to true"
@@ -1151,10 +1151,10 @@ grep -q 'resource "google_org_policy_custom_constraint" "cis_dns_logging"' tmp/d
 grep -q 'condition = "resource.enableLogging == true"' tmp/dns-hcl/main.tf \
   || fail "the DNS constraint's condition is not the one measured against the live API"
 grep -q '"dns.googleapis.com/Policy"' tmp/dns-hcl/main.tf || fail "the DNS constraint names the wrong resource type"
-# it CONTRIBUTES, never implements: no org policy can require that a network HAS a policy
+# it CONTRIBUTES, never implements: no organization policy can require that a network HAS a policy
 grep -q 'contributes' ../../presets/cis/dns-logging.satz || fail "the DNS claim must not be an implements"
 "$satz" --config . require cis-gcp-5.0 tmp/dns.satz --format text --out tmp/dnsreq.txt 2>/dev/null || true
-grep -q '0 broken claim' tmp/dnsreq.txt || fail "the DNS claim names a witness the estate does not emit:\n$(grep -i broken tmp/dnsreq.txt)"
+grep -q '0 broken claim' tmp/dnsreq.txt || fail "the DNS claim names a witness the estate does not write:\n$(grep -i broken tmp/dnsreq.txt)"
 
 step "sentinel: federation without a key, and an audit path whose every grant is there"
 sed -e 's/^params {/params {\n  sentinel_project_id = infra_project_name\n  sentinel_workload_pool_id = "22222222222222222222222222222222"\n  sentinel_project_number = "123456789012"/' yaml/smoke.satz > tmp/sent.satz
@@ -1170,7 +1170,7 @@ grep -q 'issuer_uri = "https://sts.windows.net/33e01921-4d64-4f8c-a055-5bdaffd5e
 # the principal set carries the project NUMBER: a pool id alone grants nothing
 grep -q 'principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/22222222222222222222222222222222/\*' tmp/sent-hcl/main.tf \
   || fail "the workloadIdentityUser binding does not name the pool's principal set"
-grep -q 'include_children = true' tmp/sent-hcl/main.tf || fail "the sink must cover every project under the organisation"
+grep -q 'include_children = true' tmp/sent-hcl/main.tf || fail "the sink must cover every project under the organization"
 # without the publisher grant the sink exists and delegates nothing
 grep -q 'role = "roles/pubsub.publisher"' tmp/sent-hcl/main.tf || fail "the sink's writer identity may not publish"
 grep -q 'member = "${google_logging_organization_sink.sentinel_auditlogs.writer_identity}"' tmp/sent-hcl/main.tf \
@@ -1195,7 +1195,7 @@ for f in 'log_id(\"compute.googleapis.com/vpc_flows\")' 'log_id(\"compute.google
   grep -qF "$f" tmp/sentnet-hcl/main.tf || fail "a network stream's filter is missing: $f"
 done
 for sink in vpc-flow firewall dns nat; do
-  grep -q "\"${sink}-logs-organization-sentinel-sink\"" tmp/sentnet-hcl/main.tf || fail "no organisation sink for the ${sink} stream"
+  grep -q "\"${sink}-logs-organization-sentinel-sink\"" tmp/sentnet-hcl/main.tf || fail "no organization sink for the ${sink} stream"
 done
 for sub in vpcflowlogs firewalllogs DNSlogs natlogs; do
   grep -q "\"sentinel-subscription-${sub}\"" tmp/sentnet-hcl/main.tf || fail "no subscription for ${sub} — a stream sharing another's subscription splits its messages"
@@ -1209,7 +1209,7 @@ if command -v tofu >/dev/null 2>&1; then
   (cd tmp/sentnet-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the sentinel network chain does not validate"
 fi
 
-step "scc notifications: the chain is topic + grant + config, and the agent is the organisation's"
+step "scc notifications: the chain is topic + grant + config, and the agent is the organization's"
 sed -e 's/^params {/params {\n  scc_notification_project = infra_project_name/' yaml/smoke.satz > tmp/scc.satz
 cat >> tmp/scc.satz <<'SATZ'
 use "presets/scc/scc-notifications.satz"
@@ -1217,11 +1217,11 @@ SATZ
 "$satz" --config . transpile tmp/scc.satz --output "$PWD/tmp/scc-hcl" > tmp/scc.txt 2>&1 || fail "the scc notification pack does not transpile:\n$(cat tmp/scc.txt)"
 grep -q 'resource "google_pubsub_topic" "scc_findings"' tmp/scc-hcl/main.tf || fail "no topic for the findings"
 grep -q 'role = "roles/securitycenter.notificationServiceAgent"' tmp/scc-hcl/main.tf || fail "the notification service agent was not granted on the topic"
-# the agent is derived from the estate's own organisation id — a hard-coded one
-# would publish another organisation's findings nowhere
+# the agent is derived from the estate's own organization id — a hard-coded one
+# would publish another organization's findings nowhere
 # the PUBLISHER, which is not the agent SCC activation creates — measured live:
 # with `security-center-api` here the config publishes nothing and says nothing
-grep -q 'member = "serviceAccount:service-org-123456789012@gcp-sa-scc-notification.iam.gserviceaccount.com"' tmp/scc-hcl/main.tf || fail "the grant does not name the publishing agent with the estate's organisation id:\n$(grep -A2 notificationServiceAgent tmp/scc-hcl/main.tf)"
+grep -q 'member = "serviceAccount:service-org-123456789012@gcp-sa-scc-notification.iam.gserviceaccount.com"' tmp/scc-hcl/main.tf || fail "the grant does not name the publishing agent with the estate's organization id:\n$(grep -A2 notificationServiceAgent tmp/scc-hcl/main.tf)"
 grep -q 'resource "google_scc_v2_organization_notification_config"' tmp/scc-hcl/main.tf || fail "the v2 notification config is missing"
 grep -q 'location = "global"' tmp/scc-hcl/main.tf || fail "the config must sit at the global location"
 grep -q 'pubsub_topic = "${google_pubsub_topic.scc_findings.id}"' tmp/scc-hcl/main.tf || fail "the config does not point at the topic this pack creates"
@@ -1242,7 +1242,7 @@ grep -q 'message_retention_duration = "604800s"' tmp/sccm-hcl/main.tf || fail "t
 # the address is the central alert pack's, by reference — one security mailbox
 grep -A6 'resource "google_monitoring_notification_channel" "scc_findings_mail"' tmp/sccm-hcl/main.tf > tmp/sccm-channel.txt || true
 grep -q '"email_address" = "gcp-security@example.com"' tmp/sccm-channel.txt \
-  || fail "the mailbox does not default to the address the organisation's CIS alerts go to:\n$(grep -A6 'scc_findings_mail' tmp/sccm-hcl/main.tf | head -12)"
+  || fail "the mailbox does not default to the address the organization's CIS alerts go to:\n$(grep -A6 'scc_findings_mail' tmp/sccm-hcl/main.tf | head -12)"
 grep -q 'resource "google_monitoring_alert_policy" "scc_findings_published"' tmp/sccm-hcl/main.tf || fail "nothing fires when findings arrive"
 grep -q '"${google_monitoring_notification_channel.scc_findings_mail.id}"' tmp/sccm-hcl/main.tf \
   || fail "the alert does not reach the mailbox this pack creates"
@@ -1354,7 +1354,7 @@ grep -q 'FAIL' tmp/ev2.md || fail "the Prowler column is empty"
 grep -q 'Prowler 5.42.0' tmp/ev2.md || fail "the report does not name the Prowler version that wrote the export"
 # `live` means "the inventory WAS read", never "live was requested", so a caller with
 # no stderr (MCP, a pipeline) can tell a blind run from a verified one. CI has no
-# credentials, so `--no-live` is the case it can assert.
+# sign-in, so `--no-live` is the case it can assert.
 "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --format json --out tmp/ev-envelope.json 2>/dev/null || fail "report-compliance --format json failed"
 python3 - <<'PYEOF' || fail "the evidence envelope does not describe the live run"
 import json
@@ -1392,10 +1392,10 @@ assert o["frameworks"] == ["cis-gcp-5.0", "iso27001-2022"], o["frameworks"]
 got = [r["framework"] + "-" + r["version"] for r in o["reports"]]
 assert got == ["cis-gcp-5.0", "iso27001-2022"], got
 PYEOF
-# A framework the library has no catalog for is refused by the COMPILE, with the list.
+# A framework the library has no catalog for is refused by the TRANSPILE, with the list.
 sed 's/"cis-gcp-5.0", "iso27001-2022"/"cis-gcp-9.9"/' yaml/smoke.satz > tmp/frameworks-typo.satz
 if "$satz" --config . transpile ../tmp/frameworks-typo.satz --check >tmp/typo.txt 2>&1; then
-  fail "a compliance_frameworks value naming no catalog compiled"
+  fail "a compliance_frameworks value naming no catalog transpiled"
 fi
 grep -q 'cis-gcp-9.9' tmp/typo.txt || fail "the refusal does not name the value:\n$(cat tmp/typo.txt)"
 grep -q 'cis-gcp-4.0, cis-gcp-5.0, iso27001-2022' tmp/typo.txt \
@@ -1447,7 +1447,7 @@ grep -q 'evidence/prowler/' tmp/prowler-plan.txt || fail "the standard output lo
 # Read-only means read-only: nothing is created, least of all the evidence directory.
 [ ! -e evidence/prowler ] || fail "satz prowler created something — it prints, it does not run"
 "$satz" --config . prowler smoke.satz --format json > tmp/prowler-plan.json 2>/dev/null || true
-python3 - <<'PYEOF' || fail "satz prowler --format json did not emit parseable JSON"
+python3 - <<'PYEOF' || fail "satz prowler --format json did not write parseable JSON"
 import json, pathlib, re
 d = json.loads(pathlib.Path("tmp/prowler-plan.json").read_text())
 assert d["command"].startswith("prowler gcp "), d["command"]
@@ -1533,7 +1533,7 @@ step "review-preset: the library's own bar, as a command, on a good pack and a b
 "$satz" --config . review-preset "$root/presets/organization-budget.satz" --format text --out tmp/review-good.txt 2>/dev/null \
   || fail "a shipped pack does not clear its own library's bar:\n$(cat tmp/review-good.txt)"
 grep -q 'the pack clears the bar' tmp/review-good.txt || fail "the review does not say so:\n$(cat tmp/review-good.txt)"
-grep -q 'emits: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
+grep -q 'writes: google_billing_budget' tmp/review-good.txt || fail "the review did not fold the pack into an estate:\n$(cat tmp/review-good.txt)"
 # and it says what adopting it costs — the roles and APIs update-prerequisites writes
 grep -q 'billingbudgets.googleapis.com' tmp/review-good.txt || fail "the review does not say what the pack costs an estate:\n$(cat tmp/review-good.txt)"
 
@@ -1651,7 +1651,7 @@ grep -q 'prerequisite written: pubsub.googleapis.com' tmp/prq-adopt.txt \
   || fail "merge-presets did not write the API the adopted pack needs:\n$(cat tmp/prq-adopt.txt)"
 "$satz" --config tmp/prq/config.toml --validation error transpile prq.satz --check > tmp/prq-adopted.txt 2>&1 \
   || fail "the estate lacks a prerequisite after the adoption:\n$(cat tmp/prq-adopted.txt)"
-# Without --adopt a used pack whose upstream changed what it emits is forked, the estate is
+# Without --adopt a used pack whose upstream changed what it writes is forked, the estate is
 # repointed at the fork, and the run proves the emission did not move.
 (cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm adopted)
 prq_pack 1.2 '\ngoogle_pubsub_topic {\n  logs {\n    name    = "acme-logs-eu"\n    project = "acme-infra-001"\n  }\n}\n' > tmp/prq/pristine/logs.satz
@@ -1660,7 +1660,7 @@ prq_pack 1.2 '\ngoogle_pubsub_topic {\n  logs {\n    name    = "acme-logs-eu"\n 
 grep -q 'forked logs.satz -> logs.local.satz' tmp/prq-fork.txt || fail "the used pack was not forked:\n$(cat tmp/prq-fork.txt)"
 grep -q 'estate edit verified: transpiled output identical' tmp/prq-fork.txt || fail "the repoint was not proven:\n$(cat tmp/prq-fork.txt)"
 grep -q '^use "presets/logs.local.satz"$' tmp/prq/yaml/prq.satz || fail "the estate was not repointed:\n$(grep -n '^use' tmp/prq/yaml/prq.satz)"
-grep -q 'acme-logs-eu' tmp/prq/presets/logs.local.satz && fail "the fork carries upstream's change instead of what the estate deployed"
+grep -q 'acme-logs-eu' tmp/prq/presets/logs.local.satz && fail "the fork carries upstream's change instead of what the estate created"
 [ -f tmp/prq/presets/logs.diff.satz ] || fail "the adoption delta was not written"
 (cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm forked)
 "$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-again.txt 2>&1 \
@@ -1885,17 +1885,17 @@ fi
 grep -q -- '-generate-config-out' tmp/gen-hcl.txt || fail "the hcl refusal did not say that this shape already reads that output:\n$(cat tmp/gen-hcl.txt)"
 # The delta import takes the flag: offline the run gets as far as its first live
 # call — switching on the APIs its reads call in the estate's infrastructure
-# project — and stops there for want of credentials, which is what this can
+# project — and stops there for want of a sign-in, which is what this can
 # assert. The generated file itself needs a live object to read (§12.2).
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" --config . import organizations/123456789012 --into smoke.satz --generate-unmapped >tmp/gen-into.txt 2>&1; then
-  fail "a delta import must not succeed without credentials:\n$(cat tmp/gen-into.txt)"
+  fail "a delta import must not succeed with nobody signed in:\n$(cat tmp/gen-into.txt)"
 fi
 grep -q 'do not go together' tmp/gen-into.txt && fail "--generate-unmapped and --into are refused together again:\n$(cat tmp/gen-into.txt)"
 grep -q "the APIs the import's reads call are not on corp-infra-001" tmp/gen-into.txt \
   || fail "the delta import did not start with --generate-unmapped:\n$(cat tmp/gen-into.txt)"
-grep -qi 'credential\|token\|auth\|ADC' tmp/gen-into.txt \
-  || fail "the delta import stopped for a reason other than credentials:\n$(cat tmp/gen-into.txt)"
+grep -qi 'credential\|token\|auth\|sign' tmp/gen-into.txt \
+  || fail "the delta import stopped for a reason other than the sign-in:\n$(cat tmp/gen-into.txt)"
 [ -d yaml/imported-state-generate ] && fail "a refused run wrote a scratch directory"
 ls yaml | grep -q -- '-generate$' && fail "a run that reached no provider wrote a scratch directory"
 ls yaml | grep -q -- '-generated.satz' && fail "a run that reached no provider wrote a generated estate"
@@ -1910,24 +1910,24 @@ grep -q 'runs in local mode' tmp/import-as-local.txt \
   || fail "the --as refusal did not say the estate runs in local mode:\n$(cat tmp/import-as-local.txt)"
 # The same estate in cloud mode names an account. Offline the run gets as far as
 # its first live call — the APIs its reads call, in the estate's infrastructure
-# project — and stops there for want of credentials, which is what this can
+# project — and stops there for want of a sign-in, which is what this can
 # assert; the binding itself is unit-tested against a fixture estate
 # (`import_identity`, src/main.rs).
 sed 's/deployment_mode *= *"local"/deployment_mode = "cloud"/' yaml/smoke.satz > yaml/smoke-cloud.satz
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" --config . import organizations/123456789012 --as smoke-cloud.satz >tmp/import-as.txt 2>&1; then
-  fail "a sweep must not succeed without credentials:\n$(cat tmp/import-as.txt)"
+  fail "a sweep must not succeed with nobody signed in:\n$(cat tmp/import-as.txt)"
 fi
 grep -q "the APIs the import's reads call are not on" tmp/import-as.txt \
   || fail "--as did not reach the live sweep:\n$(cat tmp/import-as.txt)"
-grep -qi 'credential\|token\|auth\|ADC' tmp/import-as.txt \
-  || fail "the sweep stopped for a reason other than credentials:\n$(cat tmp/import-as.txt)"
-# the scope must be the estate's organisation or inside it
+grep -qi 'credential\|token\|auth\|sign' tmp/import-as.txt \
+  || fail "the sweep stopped for a reason other than the sign-in:\n$(cat tmp/import-as.txt)"
+# the scope must be the estate's organization or inside it
 if "$satz" --config . import organizations/222222222222 --as smoke-cloud.satz >tmp/import-as-other.txt 2>&1; then
-  fail "--as must refuse a scope outside the estate's organisation"
+  fail "--as must refuse a scope outside the estate's organization"
 fi
 grep -q 'is bound to organizations/123456789012' tmp/import-as-other.txt \
-  || fail "the refusal did not name the estate's organisation:\n$(cat tmp/import-as-other.txt)"
+  || fail "the refusal did not name the estate's organization:\n$(cat tmp/import-as-other.txt)"
 rm -f yaml/smoke-cloud.satz
 # --into names the estate already, so the two together are refused, not reconciled
 if "$satz" --config . import organizations/123456789012 --as smoke.satz --into smoke.satz >tmp/import-as-into.txt 2>&1; then
@@ -1955,7 +1955,7 @@ fi
 grep -q 'pre-Satz YAML dialect' tmp/yaml-transpile.txt || fail "transpile's refusal did not name the dialect:\n$(cat tmp/yaml-transpile.txt)"
 
 step "import, hcl shape: literal resources become Satz, positional ones wrap; --wrap-all wraps every block"
-# --wrap-all translates nothing, so nothing names the organisation but the flag
+# --wrap-all translates nothing, so nothing names the organization but the flag
 if "$satz" --config . import tf --wrap-all -o imported-hcl.satz >tmp/import-hcl-no-org.txt 2>&1; then
   fail "--wrap-all without --organization must be refused"
 fi
@@ -1977,19 +1977,19 @@ grep -q '^google_folder {' yaml/imported-hcl2.satz || fail "no translated folder
 "$satz" --config . transpile imported-hcl2.satz --output "$PWD/tmp/imported-hcl2-hcl" 2>&1 | tee tmp/transpile-hcl2.txt
 grep -q 'lifecycle_rule {' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost its lifecycle_rule"
 grep -q 'name *= *"corp-logs-001"' tmp/imported-hcl2-hcl/main.tf || fail "the promoted param did not resolve back to the source's literal"
-grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the org grant was not emitted"
-grep -q 'resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_' tmp/imported-hcl2-hcl/main.tf || fail "the pinned bucket grant did not emit"
+grep -q 'resource "google_organization_iam_member"' tmp/imported-hcl2-hcl/main.tf || fail "the organization grant was not written"
+grep -q 'resource "google_storage_bucket_iam_member" "iam_group_gcp_auditors_example_com_' tmp/imported-hcl2-hcl/main.tf || fail "the pinned bucket grant did not write"
 grep -q 'provider *= *google-beta.google-beta' tmp/imported-hcl2-hcl/main.tf || fail "the translated bucket lost the provider alias it carried"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/imported-hcl2-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color)
 fi
-# the shape vendors generate for a customer to apply: the organisation asked for
+# the shape vendors generate for a customer to apply: the organization asked for
 # with no default, the provider's project built from it, `element(list,
 # count.index)`, one API listed twice, an authoritative grant that stays verbatim
 "$satz" --config . import tf-handwritten --organization 123456789012 -o imported-handwritten.satz --verbose | tee tmp/import-handwritten.txt
 grep -q '6 block(s) translated' tmp/import-handwritten.txt || fail "the project, three services, the service account and the role should translate:\n$(cat tmp/import-handwritten.txt)"
 grep -q 'the repeat is folded, 3 resource(s) for 4 entries' tmp/import-handwritten.txt || fail "the repeated API was not folded with a note:\n$(cat tmp/import-handwritten.txt)"
-grep -q 'org_id *= *customer_organization_id' yaml/imported-handwritten.satz || fail "the organisation variable was not bound to the organisation"
+grep -q 'org_id *= *customer_organization_id' yaml/imported-handwritten.satz || fail "the organization variable was not bound to the organization"
 "$satz" fmt --check yaml/imported-handwritten.satz || fail "the hcl import wrote a file that is not in the canonical layout"
 "$satz" --config . transpile imported-handwritten.satz --output "$PWD/tmp/imported-handwritten-hcl" >tmp/transpile-handwritten.txt 2>&1 \
   || fail "the imported estate must transpile:\n$(cat tmp/transpile-handwritten.txt)"
@@ -1999,7 +1999,7 @@ grep -q 'region *= *"europe-west3"' tmp/imported-handwritten-hcl/providers.tf ||
 grep -q 'project = local.infra_project_id' tmp/imported-handwritten-hcl/main.tf || fail "the provider the verbatim grant uses was not carried"
 "$satz" --config . import tf-handwritten --wrap-all --organization 123456789012 -o imported-handwritten-all.satz >tmp/import-handwritten-all.txt 2>&1 \
   || fail "--wrap-all must carry the same input:\n$(cat tmp/import-handwritten-all.txt)"
-grep -q 'It deploys as written;' yaml/imported-handwritten-all.satz || fail "--wrap-all dropped a provider block it could carry"
+grep -q 'It is applied as written;' yaml/imported-handwritten-all.satz || fail "--wrap-all dropped a provider block it could carry"
 "$satz" --config . transpile imported-handwritten-all.satz --output "$PWD/tmp/imported-handwritten-all-hcl" >/dev/null 2>&1 \
   || fail "the --wrap-all estate must transpile"
 if command -v tofu >/dev/null 2>&1; then
@@ -2041,19 +2041,19 @@ grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Sat
 PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --format markdown --out tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
 grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
 
-step "adopt, offline dry run must refuse without ADC rather than guess (folders AND projects)"
+step "adopt, offline dry run must refuse when nobody is signed in rather than guess (folders AND projects)"
 for t in google_folder google_project; do
   if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . adopt smoke.satz --only $t >tmp/adopt.txt 2>&1; then
-    fail "adopt --only $t must not succeed without credentials — a project is a live existence check, never a derived id:\n$(cat tmp/adopt.txt)"
+    fail "adopt --only $t must not succeed with nobody signed in — a project is a live existence check, never a derived id:\n$(cat tmp/adopt.txt)"
   fi
-  grep -qi 'credential\|token\|auth\|ADC' tmp/adopt.txt || fail "adopt --only $t failed for a reason other than credentials:\n$(cat tmp/adopt.txt)"
+  grep -qi 'credential\|token\|auth\|sign' tmp/adopt.txt || fail "adopt --only $t failed for a reason other than the sign-in:\n$(cat tmp/adopt.txt)"
 done
 
-step "bootstrap --dry-run: offline-safe, the plan prints, the skipped pre-flight is NAMED"
+step "bootstrap --dry-run: offline-safe, the plan prints, the skipped prerequisites check is NAMED"
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run > tmp/boot-dry.txt 2>&1 \
-  || fail "bootstrap --dry-run must exit 0 without credentials:\n$(cat tmp/boot-dry.txt)"
+  || fail "bootstrap --dry-run must exit 0 with nobody signed in:\n$(cat tmp/boot-dry.txt)"
 grep -q -- '--- Bootstrap Plan ---' tmp/boot-dry.txt || fail "the plan did not print:\n$(cat tmp/boot-dry.txt)"
-grep -q 'pre-flight: SKIPPED' tmp/boot-dry.txt || fail "a pre-flight that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
+grep -q 'prerequisites check: SKIPPED' tmp/boot-dry.txt || fail "a prerequisites check that did not run must say so, never pass silently:\n$(cat tmp/boot-dry.txt)"
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . bootstrap smoke.satz --dry-run --no-default-grants \
   > tmp/boot-nogrants.txt 2>&1 || fail "bootstrap --no-default-grants must be accepted:\n$(cat tmp/boot-nogrants.txt)"
 
@@ -2089,13 +2089,13 @@ cmp -s yaml/smoke.satz "$root/tests/smoke/yaml/smoke.satz" || fail "update-prere
 # estate still has a bucket and alert policies.
 grep -v '"roles/storage.admin",' yaml/smoke.satz | grep -v '"monitoring.googleapis.com",' > tmp/prereq-gap.satz
 cp tmp/prereq-gap.satz tmp/prereq-gap-before.satz
-"$satz" --config . transpile tmp/prereq-gap.satz --check > tmp/prereq-warn.txt 2>&1 || fail "a role gap failed the compile at the default level:\n$(cat tmp/prereq-warn.txt)"
+"$satz" --config . transpile tmp/prereq-gap.satz --check > tmp/prereq-warn.txt 2>&1 || fail "a role gap failed the transpile at the default level:\n$(cat tmp/prereq-warn.txt)"
 grep -q 'roles/storage.admin at the organization — for google_storage_bucket' tmp/prereq-warn.txt \
   || fail "the warning does not name the role and the type:\n$(cat tmp/prereq-warn.txt)"
 grep -q 'monitoring.googleapis.com on corp-infra-001 — needed by google_monitoring_alert_policy' tmp/prereq-warn.txt \
   || fail "the warning does not name the API, the project it is billed to and the type:\n$(cat tmp/prereq-warn.txt)"
 if "$satz" --config . --validation error transpile tmp/prereq-gap.satz --check > tmp/prereq-err.txt 2>&1; then
-  fail "--validation error compiled an estate with a role gap"
+  fail "--validation error transpiled an estate with a role gap"
 fi
 grep -q 'roles/storage.admin' tmp/prereq-err.txt || fail "the refusal does not name the role:\n$(cat tmp/prereq-err.txt)"
 "$satz" --config . --validation none transpile tmp/prereq-gap.satz --check > tmp/prereq-none.txt 2>&1
@@ -2128,7 +2128,7 @@ assert "cloudresourcemanager.googleapis.com" in row["apis"], row["apis"]
 assert t["types"]["google_billing_budget"]["apis"] == ["billingbudgets.googleapis.com"], t["types"]["google_billing_budget"]
 PYEOF
 
-step "plan/apply replace an org policy the state holds with rules and the estate declares reset"
+step "plan/apply replace an organization policy the state holds with rules and the estate declares reset"
 # After adopt moves a legacy twin onto its -superseded address, the state holds its
 # rules under a declaration that says reset; updating that in place is refused by
 # the API. A stand-in tool shows what satz hands to tofu.
@@ -2191,26 +2191,26 @@ grep -q 'is a Satz estate' tmp/reset/init-estate.txt \
 grep -q 'try: satz hcl-init' tmp/reset/init-estate.txt \
   || fail "the refusal does not name the command that works:\n$(cat tmp/reset/init-estate.txt)"
 
-step "whoami: refuses without credentials naming the fix; reads an impersonated-SA ADC offline; answers for an estate"
+step "whoami: refuses when nobody is signed in, naming the fix; reads an impersonating sign-in file offline; answers for an estate"
 if GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" whoami --offline > tmp/who.txt 2>&1; then
-  fail "whoami --offline must fail without an ADC file:\n$(cat tmp/who.txt)"
+  fail "whoami --offline must fail without a sign-in file:\n$(cat tmp/who.txt)"
 fi
 grep -q 'application-default login' tmp/who.txt || fail "whoami failure did not name the fix:\n$(cat tmp/who.txt)"
-printf '{"type":"impersonated_service_account","service_account_impersonation_url":"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/svc-iac@acme-infra-001.iam.gserviceaccount.com:generateAccessToken","quota_project_id":"acme-infra-001"}\n' > tmp/adc.json
-GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/adc.json" "$satz" whoami --offline > tmp/who2.txt 2>&1 \
-  || fail "whoami --offline failed on a valid impersonated-SA ADC:\n$(cat tmp/who2.txt)"
+printf '{"type":"impersonated_service_account","service_account_impersonation_url":"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/svc-iac@acme-infra-001.iam.gserviceaccount.com:generateAccessToken","quota_project_id":"acme-infra-001"}\n' > tmp/sign-in.json
+GOOGLE_APPLICATION_CREDENTIALS="$PWD/tmp/sign-in.json" "$satz" whoami --offline > tmp/who2.txt 2>&1 \
+  || fail "whoami --offline failed on a valid impersonating sign-in file:\n$(cat tmp/who2.txt)"
 grep -q 'svc-iac@acme-infra-001' tmp/who2.txt || fail "impersonation target not shown:\n$(cat tmp/who2.txt)"
-grep -q 'impersonated service account' tmp/who2.txt || fail "credential type not shown:\n$(cat tmp/who2.txt)"
+grep -q 'impersonated service account' tmp/who2.txt || fail "sign-in type not shown:\n$(cat tmp/who2.txt)"
 grep -q 'quota project: acme-infra-001' tmp/who2.txt || fail "quota project not shown:\n$(cat tmp/who2.txt)"
-# BOTH halves, always: the credential, and the account the runs become
+# BOTH halves, always: the sign-in, and the account the runs become
 grep -q '^runs as: *svc-iac@acme-infra-001.* — no estate given' tmp/who2.txt \
-  || fail "without an estate, the runs-as line must name the credential and say no estate was given:\n$(cat tmp/who2.txt)"
+  || fail "without an estate, the runs-as line must name the sign-in and say no estate was given:\n$(cat tmp/who2.txt)"
 grep -q 'not checked (--offline)' tmp/who2.txt \
   || fail "--offline must say the live checks were not made, never imply they passed:\n$(cat tmp/who2.txt)"
 # Given an estate, it answers who the estate acts as, from the estate file alone.
 sed -e 's/^\(  deployment_mode *= *\)"local"/\1"cloud"/' yaml/smoke.satz > tmp/who-cloud.satz
 GOOGLE_APPLICATION_CREDENTIALS=/nonexistent "$satz" --config . whoami tmp/who-cloud.satz --offline > tmp/who3.txt 2>&1 \
-  || fail "whoami <estate> failed without credentials, but it reads the estate file only:\n$(cat tmp/who3.txt)"
+  || fail "whoami <estate> failed with nobody signed in, but it reads the estate file only:\n$(cat tmp/who3.txt)"
 grep -q '^runs as: *svc-iac-001@corp-infra-001.* — impersonated by ' tmp/who3.txt \
   || fail "whoami <estate> did not name the estate's service account and who impersonates it:\n$(cat tmp/who3.txt)"
 
@@ -2362,7 +2362,7 @@ text = 'estate e\n\nparams {\n  a  =  "1"\n}\n'
 print(json.dumps({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
                   "params": {"name": "satz_fmt", "arguments": {"text": text}}}))
 PYEOF
-# An estate that cannot compile: it writes a reference to a folder nobody emits.
+# An estate that cannot transpile: it writes a reference to a folder nobody writes.
 # The refusal must carry that finding at its line, not only the sentence.
 sed 's|name *= *"{customer_shortname}-audit-logs"|name = "${{google_folder.nope.name}}"|' yaml/showcase.satz > tmp/refuse.satz
 grep -q 'google_folder.nope.name' tmp/refuse.satz || fail "the refusing fixture was not written"
@@ -2419,7 +2419,7 @@ assert fmt["formatted"] == 'estate e\n\nparams {\n  a = "1"\n}\n', fmt["formatte
 opened = msgs[12]["result"]["structuredContent"]
 assert opened["estate"].endswith("smoke.satz"), opened
 assert opened["deployment_mode"] == "local", opened
-# A local-mode estate impersonates nothing: the calls ARE the ADC identity.
+# A local-mode estate impersonates nothing: the calls ARE the signed-in person.
 assert opened["runs_as"] is None, opened
 
 # Every data tool publishes an OUTPUT SCHEMA and is ANNOTATED. The annotations are
@@ -2443,14 +2443,14 @@ assert consumer["resources"] == 2, consumer
 assert [(f["kind"], f["file"].endswith("consumer/main.tf"), f["line"]) for f in consumer["findings"]] == [("consumer", True, 16)], consumer
 assert tools["satz_add_preset"]["annotations"]["readOnlyHint"] is False
 
-# the role gap an agent asks about: the smoke estate grants what it emits, and the
+# the role gap an agent asks about: the smoke estate grants what it writes, and the
 # answer names the service account it judged
 roles = msgs[16]["result"]["structuredContent"]["report"]
 assert roles["service_account"].startswith("serviceAccount:") or "@" in roles["service_account"], roles
-assert roles["missing"] == [], f"the smoke estate lacks roles it emits types for: {roles['missing']}"
+assert roles["missing"] == [], f"the smoke estate lacks roles it writes types for: {roles['missing']}"
 assert roles["needs"], "no role need was derived at all"
 assert msgs[16]["result"]["structuredContent"]["written"] == [], "a read-level call wrote grants"
-# What the compile warned about reaches an agent as data — the showcase declares an
+# What the transpile warned about reaches an agent as data — the showcase declares an
 # action and a trusted passthrough, so the check returns both, each at its line.
 chk = msgs[17]["result"]["structuredContent"]
 assert chk["addresses"], chk
@@ -2462,10 +2462,10 @@ assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hc
 # line — a client shows them where they are instead of parsing the sentence.
 bad = msgs[18]["result"]
 assert bad.get("isError"), bad
-assert "does not emit" in bad["content"][0]["text"], bad["content"]
+assert "does not write" in bad["content"][0]["text"], bad["content"]
 ref = [f for f in bad["structuredContent"]["findings"] if f["kind"] == "written-reference"]
 assert ref and ref[0]["severity"] == "error" and ref[0]["line"], bad["structuredContent"]
-assert bad["structuredContent"]["addresses"] == [], "a refused compile emitted nothing"
+assert bad["structuredContent"]["addresses"] == [], "a refused transpile written nothing"
 
 # a granted tool returns the report as STRUCTURED content, not a string to parse
 rep = msgs[3]["result"]["structuredContent"]
@@ -2500,7 +2500,7 @@ assert msgs[15]["result"]["isError"] is True and "needs 'exec'" in msgs[15]["res
 
 PYEOF
 
-step "satz mcp: satz_transpile writes the HCL it compiled, at the write level"
+step "satz mcp: satz_transpile writes the HCL it transpiled, at the write level"
 rm -f hcl/main.tf
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
@@ -2642,8 +2642,8 @@ for open_id, who_id, want in ((20, 21, "acme"), (22, 23, "bolt"), (24, 25, "acme
 
     who = msgs[who_id]["result"]
     assert not who.get("isError"), f"whoami after opening {want} was refused: {who}"
-    # BOTH halves: the estate's service account is what the tools RUN as, and the
-    # ADC is the credential that becomes it. Reporting only one is what this
+    # BOTH halves: the estate account is what the tools RUN as, and the
+    # sign-in is what acts as it. Reporting only one is what this
     # report shape exists to prevent.
     reported = who["structuredContent"]
     assert reported["estate"]["service_account"] == sa, reported
@@ -2664,7 +2664,7 @@ assert est["impersonated"] is False, est
 assert est["service_account"] == "svc-iac-001@corp-infra-001.iam.gserviceaccount.com", est
 
 # A live tool naming an estate whose identity cannot be derived is refused with the
-# reason; nothing runs as the credentials instead.
+# reason; nothing runs as the sign-in instead.
 r = msgs[29]["result"]
 assert r.get("isError"), f"adopt on an estate with no identity was not refused: {r}"
 text = r["content"][0]["text"]
@@ -2696,28 +2696,28 @@ for l in open("tmp/mcp-iv.jsonl"):
             msgs[d["id"]] = d
 a = msgs[3]["result"]["structuredContent"]
 assert a["created"] is True, a
-# `create` over MCP writes the same DAY-0 file the CLI does: the estate's own eighteen,
+# `create` over MCP writes the same SCAFFOLD-ONLY file the CLI does: the estate's own eighteen,
 # and every pack commented out under its phase. Nine of the eighteen need a typed value
 # until their inputs land; the map's choices are not asked at all, because the map is not
 # in yet.
 assert (a["summary"]["unanswered"], a["summary"]["blocking"]) == (18, 9), a["summary"]
 assert len(a["questions"]) == 18 and all(q["state"] == "unanswered" for q in a["questions"]), "the default filter is the worklist"
-assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "no pack choice is asked on a day-0 file"
+assert "use_scc_notifications" not in {q["subject"] for q in a["questions"]}, "no pack choice is asked on a scaffold-only file"
 assert "security_model" not in {q["subject"] for q in a["questions"]}, "the map is commented out, so its choices are not asked"
 by = {q["subject"]: q for q in a["questions"]}
 assert by["infra_project_name"]["blocking"] is True, "a name derived from an unanswered input is not a default"
 assert by["default_zone"]["default"] == "europe-west3-a", by["default_zone"]
-assert "day 0" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
+assert "bootstrap" in by["customer_id"]["pack_description"], by["customer_id"]["pack_description"]
 b = msgs[4]["result"]["structuredContent"]
 # 7 answers, then every remaining default: the estate's own eighteen questions
 assert b["written"] == 18 and b["summary"]["complete"] is True, b["summary"]
-assert "security_model" not in str(b), "a day-0 file has no map, so no choice is answered here"
+assert "security_model" not in str(b), "a scaffold-only file has no map, so no choice is answered here"
 assert b["rename_to"] == "C0example.satz", b
 assert b["questions"] == [], "nothing is open once every answer landed"
 r = msgs[5]["result"]
 assert r["isError"] is True and "no pack this estate uses asks that" in r["content"][0]["text"], r
 PYEOF
-grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a day-0 file has no map, so no choice is bound in it"
+grep -qE '^  security_model_s[12] += ' tmp/iv/agent.satz && fail "a scaffold-only file has no map, so no choice is bound in it"
 grep -q '^export "workload_folder" = "organizations/{customer_organization_id}"' tmp/iv/agent.satz \
   || fail "satz_interview must write the workload folder's section as the CLI interview does"
 # A SECOND ROUND, once the map is in: an agent answers the exclusive choice, and the tool
@@ -2738,10 +2738,10 @@ grep -q '^use "presets/security-group-models/s2-security-groups.satz" when secur
   || fail "answering the choice must uncomment that model's pack line:\n$(grep 'security-group-models' tmp/iv/agent.satz)"
 grep -q '^// use "presets/security-group-models/s1-security-groups.satz"' tmp/iv/agent.satz \
   || fail "the model that was not chosen keeps its line commented"
-"$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not compile"
+"$satz" --config . transpile "$PWD/tmp/iv/agent.satz" --check > /dev/null 2>&1 || fail "the agent-interviewed estate does not transpile"
 
-step "packs, add-preset and remove-preset: one pack logic over the shipped graph, the same in the CLI, the compile and MCP"
-# The interviewed day-0 estate: the map is commented, so every pack line is inert.
+step "packs, add-preset and remove-preset: one pack logic over the shipped graph, the same in the CLI, the transpile and MCP"
+# The interviewed scaffold-only estate: the map is commented, so every pack line is inert.
 rm -rf tmp/pk && mkdir -p tmp/pk && cp tmp/iv/new.satz tmp/pk/e.satz
 "$satz" --config . add-preset "$PWD/tmp/pk/e.satz" presets/estate-map.satz > tmp/pk/map.txt 2>&1 || fail "add-preset of the map failed:\n$(cat tmp/pk/map.txt)"
 grep -q '^use "presets/estate-map.satz"' tmp/pk/e.satz || fail "add-preset did not uncomment the map's line"
@@ -2762,10 +2762,10 @@ if "$satz" --config . remove-preset "$PWD/tmp/pk/e.satz" use_audit_logsink > tmp
   fail "remove-preset of the logsink with the central alerts on was not refused"
 fi
 grep -q 'organization-cis-log-alerts-central.satz` needs' tmp/pk/rm.txt || fail "the refusal must name the dependent:\n$(cat tmp/pk/rm.txt)"
-# the compile names the same requirement when the estate is edited by hand
+# the transpile names the same requirement when the estate is edited by hand
 sed 's/^\(  use_audit_logsink *= \)true/\1false/' tmp/pk/e.satz > tmp/pk/off.satz
 if "$satz" --config . transpile "$PWD/tmp/pk/off.satz" --check > tmp/pk/off.txt 2>&1; then
-  fail "the estate with the logsink off under the central alerts compiled"
+  fail "the estate with the logsink off under the central alerts transpiled"
 fi
 grep -q 'organization-audit-logsink.satz` (`use_audit_logsink`), which is off' tmp/pk/off.txt \
   || fail "transpile --check must print the pack graph's sentence:\n$(cat tmp/pk/off.txt)"
@@ -2796,15 +2796,15 @@ PYEOF
 
 step "a pack's notice: named when the pack goes on, open until the estate binds its param, and apply refuses"
 # The CIS baseline asks for `satz adopt` before the first apply — Google sets some of its
-# policies on every new organisation, and creating one that exists stops the apply.
+# policies on every new organization, and creating one that exists stops the apply.
 "$satz" --config . add-preset "$PWD/tmp/pk/e.satz" use_cis_baseline > tmp/pk/notice.txt 2>&1 \
   || fail "add-preset of the CIS baseline failed:\n$(cat tmp/pk/notice.txt)"
 grep -q 'notice — presets/cis/CIS-GCP-Foundation-4.0.satz' tmp/pk/notice.txt \
   || fail "switching the pack on must name its notice:\n$(cat tmp/pk/notice.txt)"
 grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the notice must say how it is acknowledged"
 "$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-check.txt 2>&1 \
-  || fail "the estate with an open notice must compile:\n$(cat tmp/pk/notice-check.txt)"
-grep -q 'notices open — what a pack asks to be run once it is on (1)' tmp/pk/notice-check.txt || fail "the compile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
+  || fail "the estate with an open notice must transpile:\n$(cat tmp/pk/notice-check.txt)"
+grep -q 'notices open — what a pack asks to be run once it is on (1)' tmp/pk/notice-check.txt || fail "the transpile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
 # the layout: the first line, the sentence under it, the command as a last line of its own
 grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/notice-check.txt || fail "a finding opens with severity, kind, file:line and subject:\n$(cat tmp/pk/notice-check.txt)"
 # the estate is named as a command takes it — this one is given as an absolute path, and
@@ -2835,23 +2835,23 @@ after = {p["path"]: p for p in msgs[4]["result"]["structuredContent"]["packs"]}
 assert after["presets/cis/CIS-GCP-Foundation-4.0.satz"]["notices"][0]["acknowledged"] is True
 PYEOF
 "$satz" --config . transpile "$PWD/tmp/pk/e.satz" --check > tmp/pk/notice-done.txt 2>&1 \
-  || fail "the acknowledged estate does not compile:\n$(cat tmp/pk/notice-done.txt)"
+  || fail "the acknowledged estate does not transpile:\n$(cat tmp/pk/notice-done.txt)"
 grep -q 'notices open' tmp/pk/notice-done.txt && fail "the acknowledged notice still warns:\n$(cat tmp/pk/notice-done.txt)"
 # and the gate: an estate whose questions are all answered is still refused while a notice is open
 rm -rf tmp/nt && mkdir -p tmp/nt
 sed 's/pack_bucket_adopted      = true/pack_bucket_adopted      = false/' yaml/showcase.satz > tmp/nt/open-notice.satz
-# it compiles — the command that closes the notice compiles the estate too — and the
-# acknowledgement reaches no emitted file
+# it transpiles — the command that closes the notice transpiles the estate too — and the
+# acknowledgement reaches no written file
 "$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --output "$PWD/tmp/nt/hcl" > tmp/nt/transpile.txt 2>&1 \
-  || fail "an estate with an open notice must compile:\n$(cat tmp/nt/transpile.txt)"
-grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never emitted"
-# the pack declares `severity = error`, so the run that writes to the organisation refuses
+  || fail "an estate with an open notice must transpile:\n$(cat tmp/nt/transpile.txt)"
+grep -q 'adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars && fail "an acknowledgement is never written"
+# the pack declares `severity = error`, so the run that writes to the organization refuses
 if "$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/apply.txt 2>&1; then
   fail "apply with an open notice was not refused"
 fi
 grep -qE '^error +notice +.*pack_bucket_adopted$' tmp/nt/apply.txt \
   || fail "the refusal is the finding, at its line and by its subject:\n$(cat tmp/nt/apply.txt)"
-grep -q 'every command that writes to the organisation refuses until then' tmp/nt/apply.txt \
+grep -q 'every command that writes to the organization refuses until then' tmp/nt/apply.txt \
   || fail "the refusal must say what holds the run back:\n$(cat tmp/nt/apply.txt)"
 # and no tier may silence it away
 if "$satz" --config . --silence notice transpile "$PWD/tmp/nt/open-notice.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/silenced.txt 2>&1; then
@@ -2861,13 +2861,13 @@ grep -q 'an error is never silenced' tmp/nt/silenced.txt || fail "silencing an e
 
 step "silence: a finding is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
 # The shape this exists for: the CIS extensions all on at once produce eleven findings
-# on every compile — ten open notices and the baseline's requirement — all saying what
+# on every transpile — ten open notices and the baseline's requirement — all saying what
 # has already been read once.
 rm -rf tmp/sil && mkdir -p tmp/sil
 printf 'yaml_dir = "."\nhcl_dir = "hcl"\ninclude_dirs = [".", "../../../.."]\nschema_dir = "../../../schemas"\npresets_dir = "../../../../presets"\ntf_tool = "tofu"\ngoogle_providers = ["google", "google-beta"]\nprovider_version = "7.14.1"\n' > tmp/sil/config.toml
 cp "$root/tests/corpus/cis-packs/main.satz" tmp/sil/cis.satz
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/before.txt 2>&1 \
-  || fail "the corpus estate must compile:\n$(cat tmp/sil/before.txt)"
+  || fail "the corpus estate must transpile:\n$(cat tmp/sil/before.txt)"
 grep -q 'notices open — what a pack asks to be run once it is on (10)' tmp/sil/before.txt || fail "the ten notices are what this silences:\n$(cat tmp/sil/before.txt)"
 grep -q 'packs on while a pack they need is off (1)' tmp/sil/before.txt || fail "the eleventh finding is missing"
 grep -q '^11 warnings, 2 infos$' tmp/sil/before.txt || fail "the run closes with its count by severity:\n$(cat tmp/sil/before.txt)"
@@ -2881,11 +2881,11 @@ grep -q 'the roles this estate.s resource types need were not checked' tmp/sil/b
 "$satz" --config tmp/sil silence add notice --reason "satz adopt --execute --import has run" > tmp/sil/add.txt 2>&1 \
   || fail "silence add failed:\n$(cat tmp/sil/add.txt)"
 "$satz" --config tmp/sil silence add "pack-requirement:presets/cis/CIS-GCP-Foundation-4.0.satz" \
-  --reason "this estate compiles the baseline without the map on purpose" >> tmp/sil/add.txt 2>&1 \
+  --reason "this estate transpiles the baseline without the map on purpose" >> tmp/sil/add.txt 2>&1 \
   || fail "silence add with a subject failed:\n$(cat tmp/sil/add.txt)"
 grep -q 'kind = "notice"' tmp/sil/config.toml || fail "the row was not written into config.toml:\n$(cat tmp/sil/config.toml)"
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/after.txt 2>&1 \
-  || fail "the estate must still compile:\n$(cat tmp/sil/after.txt)"
+  || fail "the estate must still transpile:\n$(cat tmp/sil/after.txt)"
 grep -q 'notices open' tmp/sil/after.txt && fail "a silenced finding was printed:\n$(cat tmp/sil/after.txt)"
 grep -q '11 silenced (11 estate)' tmp/sil/after.txt \
   || fail "every run says how many findings it left out, and from which tier:\n$(cat tmp/sil/after.txt)"
@@ -2931,7 +2931,7 @@ if "$satz" --silence action mcp --root . > tmp/sil/srv.txt 2>&1; then
 fi
 grep -q 'one run' tmp/sil/srv.txt || fail "the refusal must say why:\n$(cat tmp/sil/srv.txt)"
 
-step "satz mcp: adopt refuses without credentials; get-presets stays inside the root and fills a library"
+step "satz mcp: adopt refuses with nobody signed in; get-presets stays inside the root and fills a library"
 {
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
@@ -2971,7 +2971,7 @@ def read(path):
 a = read("tmp/mcp-adopt.jsonl")
 adopt = a[3]["result"]
 assert adopt["isError"] is True, adopt
-assert any(w in adopt["content"][0]["text"].lower() for w in ("credential", "token", "adc", "auth")), adopt
+assert any(w in adopt["content"][0]["text"].lower() for w in ("credential", "token", "sign", "auth")), adopt
 gp_outside = a[4]["result"]
 assert gp_outside["isError"] is True and "outside the server's root" in gp_outside["content"][0]["text"], gp_outside
 g = read("tmp/mcp-gp.jsonl")
@@ -2992,7 +2992,7 @@ assert merged["report_only"] is True, merged
 assert merged["counts"]["current"] == second["current"], merged["counts"]
 assert merged["attention"] is False, merged
 # every event is structured — packs, and the notes the run has to add (an estate
-# with no IaC service account cannot be prerequisite-checked, and says so)
+# with no estate account cannot be prerequisite-checked, and says so)
 assert all(e["kind"] in ("pack", "note") for e in merged["events"]), [e["kind"] for e in merged["events"]][:5]
 PYEOF
 [ -s tmp/gp/presets/cis/CIS-GCP-Foundation-4.0.satz ] || fail "satz_get_presets did not install the library"
@@ -3055,8 +3055,8 @@ refused(10)  # a folder outside the server's root
 PYEOF
 
 step "fleet-v1: clean, body delta, moved address set, and an estate nobody checked"
-# V1 is the only check that catches an estate which quietly stopped compiling or
-# whose emitted resource SET moved. Its own four outcomes are worth a gate,
+# V1 is the only check that catches an estate which quietly stopped transpiling or
+# whose written resource SET moved. Its own four outcomes are worth a gate,
 # because the one that matters most — a checkout that was never looked at — is
 # the one a naive script reports as success.
 mkdir -p tmp/fleet/estate/yaml tmp/fleet/estate/presets
@@ -3093,7 +3093,7 @@ google_folder {
   second { display_name = "Second" }
 }
 EOF
-# The baseline: what the estate emitted "before".
+# The baseline: what the estate written "before".
 "$satz" --config tmp/fleet/estate transpile fixture.satz >/dev/null 2>&1 \
   || fail "the fleet-v1 fixture does not transpile"
 cp -R tmp/fleet/estate/hcl tmp/fleet/baseline

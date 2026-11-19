@@ -1,7 +1,7 @@
 // Corpus case: the member-map grant form for types whose scope is neither the
-// organisation nor the folder/project they are written in. The same member and
+// organization nor the folder/project they are written in. The same member and
 // the same role appear in three scopes here — the scope namespaces the address
-// and enters the emitted label, so they are three resources, not one.
+// and enters the written label, so they are three resources, not one.
 // Snapshot-gated.
 
 estate corpus_grant_scopes

@@ -54,7 +54,7 @@ fn without_verbatim_prefix(s: &str) -> String {
     }
 }
 
-/// A path as Satz text writes it: `/` between components on every platform. A `\` in a
+/// A path as Satz text writes it: `/` between path segments on every platform. A `\` in a
 /// Satz string is an escape, and Windows accepts `/`. On Unix a `\` is part of a name
 /// and stays.
 pub fn slash(path: &Path) -> String {

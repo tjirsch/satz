@@ -1,4 +1,4 @@
-// The interface file of the central estate `corpus_central` for the project `payments`,
+// The interface file of the organization's estate `corpus_central` for the project `payments`,
 // as `satz transpile` writes it under `interfaces/payments/payments/satz/`: the case's
 // input, checked in.
 interface "payments"
@@ -10,7 +10,7 @@ central {
 
 output "organization_id" {
   value       = "123456789012"
-  description = "The organisation id"
+  description = "The organization id"
 }
 output "infra_folder" {
   value       = "${{data.google_active_folder.infra_folder.name}}"

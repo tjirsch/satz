@@ -9,7 +9,7 @@
 //!   template in `import-config.yaml` (`import_id:`), offline; a type whose
 //!   id GCP assigns is looked up by its natural key (folder by display name
 //!   under the resolved parent, group by email, membership by group + email,
-//!   org policy by constraint under its parent);
+//!   organization policy by constraint under its parent);
 //! - resolution is top-down so scope is always exact, and it **never
 //!   guesses**: exactly one candidate resolves, zero is "apply will create
 //!   it", more than one is ambiguous and stops that subtree;
@@ -76,7 +76,7 @@ pub(crate) enum Outcome {
     /// Found live (natural-key lookup), or its id is user-chosen and was rendered
     /// from the rule (`verified: false` — existence is not known offline).
     Resolved { id: String, verified: bool },
-    /// A managed org-policy constraint the organisation has never had: it must
+    /// A managed org-policy constraint the organization has never had: it must
     /// be activated before it can be imported (`--activate`).
     NeedsActivation { id: String, enforce: Option<bool> },
     /// Looked up, provably absent: `apply` will create it, nothing to import.
@@ -108,7 +108,7 @@ pub(crate) struct Resolution {
     pub natural_key: String,
     pub outcome: Outcome,
     pub origin: Option<(String, u32)>,
-    /// For org policies: (parent, constraint) — needed by activation and import.
+    /// For organization policies: (parent, constraint) — needed by activation and import.
     pub org_policy: Option<(String, String)>,
     /// A second line the table prints under the verdict.
     pub note: Option<String>,
@@ -187,7 +187,7 @@ enum Missing {
     /// The lookup behind the value failed — never read as absence.
     Failed(String),
     /// Nothing satz can follow: an expression, a resource the estate does not
-    /// emit, an attribute that is neither a literal nor a live id.
+    /// write, an attribute that is neither a literal nor a live id.
     Unresolvable(String),
 }
 
@@ -348,7 +348,7 @@ fn parent_not_live(r: &EmittedResource, manifest: &Manifest, not_live: &BTreeMap
 /// id IS the project id, verified; provably absent → `apply` creates it.
 async fn resolve_project<L: Live>(r: &EmittedResource, live: &mut L) -> (String, Outcome) {
     let Some(project_id) = r.attrs.get("project_id").cloned() else {
-        return (String::new(), Outcome::Unresolvable(format!("{} emits no literal project_id", r.address())));
+        return (String::new(), Outcome::Unresolvable(format!("{} writes no literal project_id", r.address())));
     };
     match live.project(&project_id).await {
         Ok(Some(_number)) => (project_id.clone(), Outcome::Resolved { id: project_id, verified: true }),
@@ -442,7 +442,7 @@ fn value_of(r: &EmittedResource, key: &str, manifest: &Manifest, known: &Known) 
         return Err(Missing::Unresolvable(format!("{}: `{}` = {} is not a resource reference", r.address(), key, traversal)));
     };
     let Some(t) = manifest.resources.get(&target) else {
-        return Err(Missing::Unresolvable(format!("{}: `{}` references {}, which is not emitted", r.address(), key, target)));
+        return Err(Missing::Unresolvable(format!("{}: `{}` references {}, which is not written", r.address(), key, target)));
     };
     if denotes_live_id(&t.tf_type, &attr) {
         if let Some(id) = known.ids.get(&target) {
@@ -675,7 +675,7 @@ async fn resolve_folder<L: Live>(
 
 async fn resolve_group<L: Live>(r: &EmittedResource, live: &mut L) -> (String, Outcome) {
     let Some(email) = r.nested.get("group_key.id").cloned() else {
-        return (String::new(), Outcome::Unresolvable(format!("{} emits no group_key.id", r.address())));
+        return (String::new(), Outcome::Unresolvable(format!("{} writes no group_key.id", r.address())));
     };
     match live.group(&email).await {
         Ok(Some(id)) => (email, Outcome::Resolved { id, verified: true }),
@@ -689,10 +689,10 @@ async fn resolve_group<L: Live>(r: &EmittedResource, live: &mut L) -> (String, O
 /// that name resolves, several are ambiguous, none means `apply` creates it.
 async fn resolve_budget<L: Live>(r: &EmittedResource, live: &mut L) -> (String, Outcome) {
     let Some(account) = r.attrs.get("billing_account").map(|a| a.trim_start_matches("billingAccounts/").to_string()) else {
-        return (String::new(), Outcome::Unresolvable(format!("{} emits no literal billing_account", r.address())));
+        return (String::new(), Outcome::Unresolvable(format!("{} writes no literal billing_account", r.address())));
     };
     let Some(display_name) = r.attrs.get("display_name").cloned() else {
-        return (String::new(), Outcome::Unresolvable(format!("{} emits no display_name to match on", r.address())));
+        return (String::new(), Outcome::Unresolvable(format!("{} writes no display_name to match on", r.address())));
     };
     let key = format!("{} @ billingAccounts/{}", display_name, account);
     match live.budgets(&account).await {
@@ -714,7 +714,7 @@ async fn resolve_membership<L: Live>(
     live: &mut L,
 ) -> (String, Outcome) {
     let Some(email) = r.nested.get("preferred_member_key.id").cloned() else {
-        return (String::new(), Outcome::Unresolvable(format!("{} emits no preferred_member_key.id", r.address())));
+        return (String::new(), Outcome::Unresolvable(format!("{} writes no preferred_member_key.id", r.address())));
     };
     let Some((group_addr, _)) = r.refs.get("group").and_then(|g| ref_target(g)) else {
         return (email, Outcome::Unresolvable(format!("{} has no group reference", r.address())));
@@ -742,7 +742,7 @@ async fn resolve_org_policy<L: Live>(
 ) -> (String, Outcome) {
     let name = r.attrs.get("name").cloned().unwrap_or_default();
     let constraint = crate::org_policy::constraint_name(&name);
-    // The compile guarantees `parent` is a literal or a reference; an
+    // The transpile guarantees `parent` is a literal or a reference; an
     // unresolvable one is reported as such — never scraped out of the policy
     // name, which is how a wrong parent once became a confident lookup.
     let parent = match value_of(r, "parent", manifest, known) {
@@ -757,7 +757,7 @@ async fn resolve_org_policy<L: Live>(
     match live.org_policy(&parent, &constraint).await {
         Ok(Some(holds_rules)) => {
             // Imported, the state holds the live rules under an address that declares
-            // reset — the one shape the API refuses to update. A new organisation has
+            // reset — the one shape the API refuses to update. A new organization has
             // such policies before anything was set by hand: Google enforces a
             // secure-by-default set on it.
             if holds_rules && r.reset {
@@ -960,7 +960,7 @@ async fn resolve_grant<L: Live>(
 ///
 /// The state comes FIRST, exactly as the import path orders it: an address the
 /// state already manages is skipped whatever its outcome, so a dry run that
-/// ranked it by outcome answered a question nobody asked. On one organisation
+/// ranked it by outcome answered a question nobody asked. On one organization
 /// that read as 25 resources to import when 22 were already managed and the
 /// three that mattered — the ones failing `apply` with "already exists" — were
 /// indistinguishable in the list.
@@ -1086,7 +1086,7 @@ pub(crate) fn rows(
     for r in resolutions {
         if in_state.manages(&r.address) {
             // The same words the import path prints, so the dry run and the run
-            // are recognisably the same statement.
+            // are recognizably the same statement.
             out.push(row(r, "already managed in the state", "skipped".into(), RowAction::None));
             continue;
         }
@@ -1795,7 +1795,7 @@ resource "google_project_iam_member" "fresh_writer" {
         live.searches.insert(
             ("organizations/123456789012".into(), "logging.googleapis.com/LogSink".into()),
             vec![
-                // a project's sink of the same name, listed under the organisation too
+                // a project's sink of the same name, listed under the organization too
                 ("projects/100000000001/sinks/audit".into(), serde_json::json!({"writerIdentity": project_writer})),
                 ("organizations/123456789012/sinks/audit".into(), serde_json::json!({"writerIdentity": org_writer})),
             ],
@@ -1898,7 +1898,7 @@ resource "google_project_iam_member" "fresh_writer" {
         );
     }
 
-    /// Found on a vanilla organisation: adopt imported a live policy with rules onto
+    /// Found on a vanilla organization: adopt imported a live policy with rules onto
     /// the `-superseded` address, which declares reset, and the next apply was refused
     /// with "Cannot set PolicyRules if reset is true". The import is right; the row says
     /// what the apply will have to do with it.
@@ -2034,7 +2034,7 @@ resource "google_project_iam_member" "fresh_writer" {
 
     /// A grant's import id renders offline, so every declared grant used to be an
     /// import candidate, and `--execute --import` ran `tofu import` for each one the
-    /// organisation did not hold — a failure line per grant apply was about to
+    /// organization did not hold — a failure line per grant apply was about to
     /// create. The live policy of the parent decides now.
     #[tokio::test]
     async fn a_grant_is_imported_only_when_the_live_policy_of_its_parent_holds_it() {
@@ -2188,7 +2188,7 @@ resource "google_project_iam_member" "fresh_writer" {
         let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
         let ghost = outcome(&rs, "google_service_account_iam_member.ghost");
         assert!(
-            matches!(ghost, Outcome::Unresolvable(why) if why.contains("google_service_account.gone") && why.contains("not emitted")),
+            matches!(ghost, Outcome::Unresolvable(why) if why.contains("google_service_account.gone") && why.contains("not written")),
             "{:?}",
             ghost
         );
@@ -2299,7 +2299,7 @@ resource "google_project_iam_member" "fresh_writer" {
 mod state_aware_tests {
     //! `--execute --import` skips every address the state already manages, so a
     //! dry run that ranks those as "IMPORT" describes a run that will not
-    //! happen. On one organisation the table read as 25 resources to import when
+    //! happen. On one organization the table read as 25 resources to import when
     //! 22 were already managed and the three that mattered — the ones failing
     //! `apply` with "already exists" — were indistinguishable in the list.
     use super::{Outcome, Resolution, move_conflicts, moved_from, render_table, summary, unanswered};
@@ -2338,7 +2338,7 @@ mod state_aware_tests {
         let table = render_table(&rs, &managed(&["google_org_policy_policy.a"]), &crate::manifest::Manifest::default());
         let a = table.lines().find(|l| l.contains(".a ")).unwrap_or_default();
         // The same words the import path prints, so the dry run and the run are
-        // recognisably the same statement.
+        // recognizably the same statement.
         assert!(a.contains("already managed in the state"), "{}", table);
         assert!(!a.contains("IMPORT"), "{}", table);
         assert!(table.lines().any(|l| l.contains(".b") && l.contains("IMPORT")), "{}", table);
@@ -2495,8 +2495,8 @@ mod state_aware_tests {
     }
 }
 
-/// The adopt dry run, computed: the estate's compile, every declared resource
-/// resolved against the live organisation, the live client (activation needs it),
+/// The adopt dry run, computed: the estate's transpile, every declared resource
+/// resolved against the live organization, the live client (activation needs it),
 /// and what the state already manages. No printing — the CLI and `satz_adopt`
 /// share it. The identity is the caller's: the CLI binds it for the process, the
 /// MCP tool scopes it to the call.
@@ -2523,7 +2523,7 @@ pub(crate) async fn adopt_plan(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
-    // Same compile the emitter uses, so the adopted addresses are exactly the
+    // Same transpile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
     let rules = load_import_config(None, tool_config, &runtime_config.presets_dir)?.ok_or(
@@ -2542,8 +2542,8 @@ pub(crate) async fn adopt_plan(
 // `src/mcp.rs` asserts it over exactly this region. `run_adopt` below is the CLI
 // arm and prints the table a human reads, so the gate stops here.
 
-/// `satz adopt`: compile, resolve every declared resource against the live
-/// org, report, and — only with `--execute` — write the verified ids into the
+/// `satz adopt`: transpile, resolve every declared resource against the live
+/// organization, report, and — only with `--execute` — write the verified ids into the
 /// estate or import them into state now.
 pub(crate) async fn run_adopt(
     input: &str,

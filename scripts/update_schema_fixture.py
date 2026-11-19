@@ -27,7 +27,7 @@ from a sink), and one type that IS referenced needs no schema because it sits in
 a raw `hcl { }` block. A scan of the sources would get both wrong, which is why
 deletion is not offered.
 
-Needs `tofu` on PATH. Nothing here talks to an organisation.
+Needs `tofu` on PATH. Nothing here talks to an organization.
 """
 
 import argparse

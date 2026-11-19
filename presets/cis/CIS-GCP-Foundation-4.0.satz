@@ -1,15 +1,15 @@
 // The CIS GCP Foundation 4.0 organization-policy set, managed constraints
 // included.
 //
-// Every constraint the benchmark asks for as an org policy, with the six
+// Every constraint the benchmark asks for as an organization policy, with the six
 // superseded legacy twins declared OFF (`spec { reset = true }`) so that no
-// organisation ends up with both forms of a constraint enforcing. Some policies
+// organization ends up with both forms of a constraint enforcing. Some policies
 // have to be activated before they can be imported.
 //
 //   use "presets/cis/CIS-GCP-Foundation-4.0.satz" when use_cis_baseline
 //
 // The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
-// Google's constraint catalogue:
+// Google's constraint catalog:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
 pack CIS_GCP_Foundation_4_0 version "2.19"
@@ -20,7 +20,7 @@ params {
   // ---- coverage beyond the baseline: OPT-IN, because each of these can break
   // a workload that was legitimate the day before. Turn one on and `use` its
   // fragment from presets/cis/ — see presets/README.md. Constraint
-  // names and shapes were verified against a live organisation's OrgPolicy
+  // names and shapes were verified against a live organization's OrgPolicy
   // ListConstraints, not transcribed from documentation.
   cis_block_project_ssh_keys                = false
   cis_require_shielded_vm                   = false
@@ -35,8 +35,8 @@ params {
   // ---- the rules of iam.managed.disableServiceAccountKeyCreation, so ONE principal
   // can be let out without the control coming off for a whole folder.
   //
-  // The default is the control, enforced, and an estate that says nothing emits exactly
-  // what it emitted before this param existed. To exempt, `use
+  // The default is the control, enforced, and an estate that says nothing writes exactly
+  // what it written before this param existed. To exempt, `use
   // "presets/exemptions/exemption-tag.satz"`, bind the tag value to the one service
   // account, and rebind this to the two-rule form — the conditional rule turns
   // enforcement OFF only where the tag value is bound, the unconditional rule keeps it
@@ -61,25 +61,25 @@ params {
   // This is the only constraint here whose rules are a param. The rest are written in
   // place, because a param per constraint would put forty list-of-object blocks into
   // every estate's terraform.tfvars for a case nobody has. Another constraint earns one
-  // the same way this did: a real organisation that needed it.
+  // the same way this did: a real organization that needed it.
   cis_sa_key_creation_rules = [
     {
       enforce = "TRUE"
     },
   ]
 
-  // ---- DRY RUN: measure a control against this organisation before enforcing it.
+  // ---- DRY RUN: measure a control against this organization before enforcing it.
   // A dry-run policy carries `dry_run_spec` instead of `spec`: Google evaluates
   // every rule, writes a violation to the audit log for each action it WOULD have
   // blocked, and blocks nothing. So "will this break us?" is answered in the
-  // organisation's own numbers instead of in an outage. Turn one on INSTEAD of its
+  // organization's own numbers instead of in an outage. Turn one on INSTEAD of its
   // enforcing flag - both at once declares the same policy twice and is refused -
   // read the violations in Cloud Logging (`protoPayload.metadata."@type"` =
   // `type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo`), then promote by
   // swapping the two. Nothing is enforced while a dry run runs, so the control
   // reports as unmet, which is the truth. Only these six constraints support it: the
   // legacy ones (Shielded VM, both CMEK list constraints) have no dry-run form,
-  // Access Approval is not an org policy, and the two on-by-default extensions have
+  // Access Approval is not an organization policy, and the two on-by-default extensions have
   // nothing to size.
   cis_api_key_services_dry_run                      = false
   cis_block_project_ssh_keys_dry_run                = false
@@ -89,7 +89,7 @@ params {
   cis_cloud_sql_iam_and_deletion_protection_dry_run = false
 
   // The two extensions that are ON by default. The rest of the list restricts what a
-  // customer may create and waits to be asked for; these two are what an organisation
+  // customer may create and waits to be asked for; these two are what an organization
   // is expected to have already. `cis_dns_logging` makes a RECORD of name resolution,
   // which nothing reconstructs afterwards. `cis_block_internet_ssh_rdp` closes the two
   // administrative ports to the INTERNET — not to the private ranges, which its own
@@ -103,14 +103,14 @@ params {
 
   // CIS §2 resource locations (gcp.resourceLocations): where resources may be
   // created. The default is the two multi-region groups this baseline has always
-  // emitted, so upgrading changes no estate — but it is a DEFAULT, not the
+  // written, so upgrading changes no estate — but it is a DEFAULT, not the
   // control: an estate serving one jurisdiction narrows it here rather than
   // forking the pack. Value groups are Google's (`in:eu-locations`,
   // `in:us-locations`, `in:europe-west3-locations`, …); a bare region works too.
   //
   // Before v2.6 this list was hard-coded, so an operator who tightened the live
   // policy by hand had it widened again by the next apply — which is exactly
-  // what happened on one organisation, and why the value is a param now.
+  // what happened on one organization, and why the value is a param now.
   allowed_resource_locations = [
     "in:eu-locations",
     "in:us-locations",
@@ -118,14 +118,14 @@ params {
 
   // CIS §1.1 Domain Restricted Sharing (iam.managed.allowedPolicyMembers):
   // PRINCIPAL SETS whose members may be granted IAM roles. Default = the
-  // customer's own org. Add a partner's org here when the estate genuinely
+  // customer's own org. Add a partner's organization here when the estate genuinely
   // needs cross-org grants.
   //
   // v2.0 dropped the legacy `iam.allowedPolicyMemberDomains` and its
   // `allowed_policy_member_customers` param; since v2.5 the pack goes further
   // and declares that constraint OFF (`reset = true`, in the superseded
   // section below), because not declaring it leaves a policy already set on the
-  // organisation enforcing beside this one. The claim's
+  // organization enforcing beside this one. The claim's
   // duty_legacy_superseded says why running both is the defect.
   allowed_policy_member_principal_sets = [
     "//cloudresourcemanager.googleapis.com/organizations/{customer_organization_id}",
@@ -140,7 +140,7 @@ params {
   // this list does NOT by itself unblock a service agent.
   //
   // Default = Security Command Center's service agents. They are CANONICAL:
-  // the address is derived from the org id inside a Google-owned domain nobody
+  // the address is derived from the organization id inside a Google-owned domain nobody
   // else can register, so nobody can plant an identity that matches, and
   // allowing them costs nothing. SCC activation grants roles to them, and
   // domain-restricted sharing blocks exactly that.
@@ -151,23 +151,23 @@ params {
   // allowed does NOT go here: it declares
   // `contributes_allowed_policy_member_subjects` in its own params, and its entries
   // are added to whatever this list holds while that pack is on and leave with it.
-  // SCC's org-level service agents, READ OFF estate 1's live org IAM policy — not
+  // SCC's organization-level service agents, READ OFF estate 1's live organization IAM policy — not
   // inferred from the docs, which name two of them and misspell one. All follow
-  // the canonical `service-org-<ORG_ID>@<service>` shape: derived from the org
+  // the canonical `service-org-<ORG_ID>@<service>` shape: derived from the organization
   // id, in a Google-owned domain nobody else can register.
   //
-  // These agents live in Google tenant projects, NOT in the customer's org, so
-  // the org principal set does not cover them — they have to be named.
+  // These agents live in Google tenant projects, NOT in the customer's organization, so
+  // the organization principal set does not cover them — they have to be named.
   //
   // MEASURED 2026-09-04 on a second organization, with every SCC service the SDK
-  // can set turned on: the org IAM policy carried exactly these five and no
+  // can set turned on: the organization IAM policy carried exactly these five and no
   // sixth. They come with SCC activation, not one per service — the earlier
   // caution here, that each further service provisions another agent, was wrong.
   // A notification config does add a `gcp-sa-scc-notification` agent, but on the
   // Pub/Sub TOPIC rather than at the organization, and it was granted with this
   // constraint enforced and that agent not listed. Still unproven: Security
-  // Health Analytics (a failed precondition on that org) and the AWS/Azure
-  // connectors. If an activation ever stalls, the org IAM policy is still where
+  // Health Analytics (a failed precondition on that organization) and the AWS/Azure
+  // connectors. If an activation ever stalls, the organization IAM policy is still where
   // the answer is.
   allowed_policy_member_subjects = [
     "serviceAccount:service-org-{customer_organization_id}@security-center-api.iam.gserviceaccount.com",
@@ -195,7 +195,7 @@ params {
 }
 
 notice cis_baseline_adopted {
-  text     = "Google sets some of these policies on every new organisation, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  text     = "Google sets some of these policies on every new organization, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }
@@ -216,14 +216,14 @@ question cis_block_project_ssh_keys {
 
 question cis_require_shielded_vm {
   prompt   = "Require Shielded VM for every new instance (CIS 4.8)?"
-  why      = "Not every image supports Shielded VM: an organisation with custom or older images fails instance creation until they are rebuilt — and this is the one constraint with no dry-run, so it cannot be rehearsed before it bites."
+  why      = "Not every image supports Shielded VM: an organization with custom or older images fails instance creation until they are rebuilt — and this is the one constraint with no dry-run, so it cannot be rehearsed before it bites."
   reversal = edit
   blast    = high
 }
 
 question cis_confidential_computing {
   prompt   = "Require Confidential Computing for every new instance (CIS 4.11, Level 2)?"
-  why      = "Confidential VMs are limited to particular machine families and cost more; enforced organisation-wide this stops most ordinary workloads from starting."
+  why      = "Confidential VMs are limited to particular machine families and cost more; enforced organization-wide this stops most ordinary workloads from starting."
   reversal = edit
   blast    = high
 }
@@ -237,42 +237,42 @@ question cis_cloud_sql_hardening {
 
 question cis_api_key_services_dry_run {
   prompt   = "Measure first: run 'API keys restricted to the services an application needs' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on."
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on."
   reversal = edit
   blast    = none
 }
 
 question cis_block_project_ssh_keys_dry_run {
   prompt   = "Measure first: run 'project-wide SSH keys blocked on VM instances' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on."
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on."
   reversal = edit
   blast    = none
 }
 
 question cis_bucket_retention_dry_run {
-  prompt   = "Measure first: run 'bucket retention durations constrained organisation-wide' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on."
+  prompt   = "Measure first: run 'bucket retention durations constrained organization-wide' as a DRY RUN instead of enforcing it?"
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on."
   reversal = edit
   blast    = none
 }
 
 question cis_cloud_sql_hardening_dry_run {
   prompt   = "Measure first: run 'Cloud SQL public IPs and authorized networks restricted' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on."
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on."
   reversal = edit
   blast    = none
 }
 
 question cis_confidential_computing_dry_run {
   prompt   = "Measure first: run 'Confidential Computing required on instances' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on."
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on."
   reversal = edit
   blast    = none
 }
 
 question cis_cloud_sql_iam_and_deletion_protection_dry_run {
   prompt   = "Measure first: run 'Cloud SQL IAM authentication and deletion protection required' as a DRY RUN instead of enforcing it?"
-  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on."
+  why      = "Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on."
   reversal = edit
   blast    = none
 }
@@ -292,36 +292,36 @@ question cis_api_key_services {
 }
 
 question cis_bucket_retention {
-  prompt   = "Constrain bucket retention durations organisation-wide (CIS 4.0 §2.3 / 5.0 §2.4)?"
+  prompt   = "Constrain bucket retention durations organization-wide (CIS 4.0 §2.3 / 5.0 §2.4)?"
   why      = "It constrains EVERY bucket, not only the log sink's: once set, a bucket may carry a retention policy only if its duration is in the list, so buckets on other durations can no longer be updated."
   reversal = edit
   blast    = low
 }
 
 question cis_access_approval {
-  prompt   = "Require an approval before Google personnel reach the organisation's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)?"
-  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve. Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) is a MANUAL prerequisite: an organisation administrator holding Access Transparency Admin (roles/axt.admin) switches it on in the Cloud console under IAM & Admin → Settings → Enable Access Transparency, before the apply that creates the Access Approval settings — there is no gcloud command, API or provider resource for it, it needs a Standard, Enhanced or Premium support plan, and the apply fails without it."
+  prompt   = "Require an approval before Google personnel reach the organization's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)?"
+  why      = "Every support case that needs to look at the customer's content then waits for someone on the notification list to approve. Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) is a MANUAL prerequisite: an organization administrator holding Access Transparency Admin (roles/axt.admin) switches it on in the Cloud console under IAM & Admin → Settings → Enable Access Transparency, before the apply that creates the Access Approval settings — there is no gcloud command, API or provider resource for it, it needs a Standard, Enhanced or Premium support plan, and the apply fails without it."
   reversal = edit
   blast    = low
 }
 
 question cis_block_internet_ssh_rdp {
-  prompt   = "Deny SSH and RDP from the internet across the whole organisation (CIS 3.6, 3.7)?"
-  why      = "On by default, because an organisation that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organisation is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read."
+  prompt   = "Deny SSH and RDP from the internet across the whole organization (CIS 3.6, 3.7)?"
+  why      = "On by default, because an organization that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organization is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read."
   reversal = edit
   blast    = high
 }
 
 question cis_cloud_sql_iam_and_deletion_protection {
   prompt   = "Require IAM database authentication and deletion protection on Cloud SQL (CIS 5.0 §6.6, §6.9)?"
-  why      = "Every Cloud SQL create and update in the organisation must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it."
+  why      = "Every Cloud SQL create and update in the organization must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it."
   reversal = edit
   blast    = high
 }
 
 question cis_dns_logging {
   prompt   = "Require Cloud DNS policies to log queries (CIS 5.0 §2.13)?"
-  why      = "On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no org policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason."
+  why      = "On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no organization policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason."
   reversal = edit
   blast    = low
 }
@@ -334,15 +334,15 @@ question allowed_resource_locations {
 }
 
 question allowed_policy_member_principal_sets {
-  prompt   = "Which organisations' identities may be granted IAM roles (CIS §1.1, domain restricted sharing)?"
-  why      = "The default is the customer's own organisation. A partner organisation whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control."
+  prompt   = "Which organizations' identities may be granted IAM roles (CIS §1.1, domain restricted sharing)?"
+  why      = "The default is the customer's own organization. A partner organization whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control."
   reversal = edit
   blast    = high
 }
 
 question allowed_policy_member_subjects {
   prompt   = "Which individual principals may be granted roles despite the lock (Google service agents)?"
-  why      = "The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions."
+  why      = "The default is Security Command Center's five organization-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions."
   reversal = edit
   blast    = high
 }
@@ -350,7 +350,7 @@ question allowed_policy_member_subjects {
 // The policies themselves. The pack carries its own resource type, so an estate
 // `use`s this line as it uses every other pack's — bare, at the top level.
 google_org_policy_policy {
-  // CIS 4.5 — interactive serial console access is off org-wide. Safe enough for
+  // CIS 4.5 — interactive serial console access is off organization-wide. Safe enough for
   // the baseline: nothing routine reaches a VM this way, and the exemption path
   // is a tag condition rather than switching the constraint off.
   "compute-managed-disableSerialPortAccess" {
@@ -366,7 +366,7 @@ google_org_policy_policy {
   }
 
   // The one constraint in this baseline whose rules are a PARAM rather than written
-  // here, because it is the one an organisation actually has to let a single principal
+  // here, because it is the one an organization actually has to let a single principal
   // out of — Google ships their own built-in exemption tag for exactly this constraint.
   // The default below is the plain enforcing rule, so an estate that says nothing gets
   // what it got before. See `cis_sa_key_creation_rules` in this pack's params for the
@@ -608,11 +608,11 @@ google_org_policy_policy {
   }
 
   // ---------------------------------------------------------------------------
-  // Control claims. Each org policy below is the enforcement mechanism for a CIS
-  // control; the claim names the emitted resource so `require` and
+  // Control claims. Each organization policy below is the enforcement mechanism for a CIS
+  // control; the claim names the written resource so `require` and
   // `report-compliance` can find the witness. Control IDs verified against
   // Google's inspec-gcp-cis-benchmark 4.0.0 profile; paraphrases are ours (CIS
-  // prose is licence-restricted).
+  // prose is license-restricted).
   // ---------------------------------------------------------------------------
 
   // 5.0 introduced §1.1 "Organization resources". 1.1.4 asks whether the
@@ -628,17 +628,17 @@ google_org_policy_policy {
   // the REPLACEMENT ALONE. Both forms in force is the defect, not a belt-and-
   // braces win: org-policy constraints AND together, so every exemption would
   // have to lift TWO policies — and for several of these Google's only documented
-  // exemption path is to disable the constraint org-wide, grant, and re-enable,
+  // exemption path is to disable the constraint organization-wide, grant, and re-enable,
   // which is a window with the control switched off.
   //
-  // Absence is not enough. A legacy policy already set on an organisation is
+  // Absence is not enough. A legacy policy already set on an organization is
   // invisible to an apply that does not declare it: it keeps enforcing, and has
   // to be deleted by hand, on every estate, forever. Declaring it with
   // `reset = true` — restore the constraint's default, which is ALLOW for every
-  // constraint below, verified against a live organisation — lets the estate say
+  // constraint below, verified against a live organization — lets the estate say
   // it, the apply do it, and a later re-enabling revert on the next apply.
   //
-  // On an organisation where one of these is already set, run
+  // On an organization where one of these is already set, run
   // `satz adopt --only google_org_policy_policy --execute --import` before the
   // apply, so the existing policy is imported rather than created twice.
   //
@@ -652,14 +652,14 @@ google_org_policy_policy {
   // The address is therefore deliberately DIFFERENT from the one a pre-2.6 estate
   // carries. tofu then plans a destroy of the old address and a create of the new
   // one — the replace, by construction, with no manual step and nothing to
-  // remember. The policy NAME is unchanged, so this is one org policy being
+  // remember. The policy NAME is unchanged, so this is one organization policy being
   // reset, not two. The managed replacement is already enforcing throughout, which
   // is what makes the moment between destroy and create uneventful.
   //
   // A constraint is listed here ONLY when this pack enables its managed
   // replacement; `cis-extensions/` carries its own, next to the fragment that
   // enables them. Managed constraints with no legacy form — most of them, 45 of
-  // the 60 a live organisation offers — need nothing.
+  // the 60 a live organization offers — need nothing.
   // ---------------------------------------------------------------------------
 
   // Superseded by iam.managed.allowedPolicyMembers (CIS 1.1 / 5.0 1.2). Google
@@ -743,8 +743,8 @@ claim "cis-gcp" "5.0" "1.1.4" implements {
     "google_org_policy_policy.storage_publicAccessPrevention",
     "google_org_policy_policy.storage_uniformBucketLevelAccess",
   ]
-  interpretation       = "The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it."
-  duty_review_baseline = "The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for."
+  interpretation       = "The organization carries a centrally managed org-policy baseline: every constraint this pack writes applies at the organization node and is inherited by every folder and project beneath it."
+  duty_review_baseline = "The baseline is a decision, not a default — re-read it when the organization adds a workload class the current constraints were not chosen for."
   gcloud_check = [
     "gcloud org-policies list --organization=ORGANIZATION_ID",
   ]
@@ -755,8 +755,8 @@ claim "cis-gcp" "4.0" "1.1" implements {
   resources = [
     "google_org_policy_policy.iam_managed_allowedPolicyMembers",
   ]
-  interpretation         = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded."
-  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply."
+  interpretation         = "Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organization cannot keep enforcing beside this one — see duty_legacy_superseded."
+  duty_legacy_superseded = "The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off organization-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organization goes on enforcing, unseen by the apply."
   duty_review_allowlist  = "Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant."
   gcloud = [
     """cat > policy.yaml <<'EOF'
@@ -775,7 +775,7 @@ EOF""",
     "gcloud org-policies describe iam.managed.allowedPolicyMembers --organization=ORGANIZATION_ID --effective",
     "gcloud org-policies describe iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID --effective",
   ]
-  risk = "A role can be granted to any Google account, a personal one included, so access to the organisation's resources leaves its own identity control."
+  risk = "A role can be granted to any Google account, a personal one included, so access to the organization's resources leaves its own identity control."
 }
 claim "cis-gcp" "5.0" "1.2" implements {
   resources = [
@@ -801,7 +801,7 @@ EOF""",
     "gcloud org-policies describe iam.managed.allowedPolicyMembers --organization=ORGANIZATION_ID --effective",
     "gcloud org-policies describe iam.allowedPolicyMemberDomains --organization=ORGANIZATION_ID --effective",
   ]
-  risk = "A role can be granted to any Google account, a personal one included, so access to the organisation's resources leaves its own identity control."
+  risk = "A role can be granted to any Google account, a personal one included, so access to the organization's resources leaves its own identity control."
 }
 
 claim "cis-gcp" "4.0" "1.4" implements {
@@ -809,7 +809,7 @@ claim "cis-gcp" "4.0" "1.4" implements {
     "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation",
     "google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload",
   ]
-  interpretation = "User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys."
+  interpretation = "User-managed service account keys can neither be created nor uploaded organization-wide, leaving only Google-managed keys."
   gcloud = [
     """cat > policy.yaml <<'EOF'
 name: organizations/ORGANIZATION_ID/policies/iam.managed.disableServiceAccountKeyCreation
@@ -833,7 +833,7 @@ EOF""",
     "gcloud org-policies describe iam.managed.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID --effective",
     "gcloud iam service-accounts keys list --iam-account=SERVICE_ACCOUNT --managed-by=user",
   ]
-  risk = "A user-managed service account key is a long-lived credential that works from anywhere once it is copied out of the platform."
+  risk = "A user-managed service account key is a long-lived secret that works from anywhere once it is copied out of the platform."
 }
 claim "cis-gcp" "5.0" "1.5" implements {
   resources = [
@@ -864,7 +864,7 @@ EOF""",
     "gcloud org-policies describe iam.managed.disableServiceAccountKeyUpload --organization=ORGANIZATION_ID --effective",
     "gcloud iam service-accounts keys list --iam-account=SERVICE_ACCOUNT --managed-by=user",
   ]
-  risk = "A user-managed service account key is a long-lived credential that works from anywhere once it is copied out of the platform."
+  risk = "A user-managed service account key is a long-lived secret that works from anywhere once it is copied out of the platform."
 }
 
 claim "cis-gcp" "4.0" "1.5" implements {
@@ -962,7 +962,7 @@ EOF""",
     "gcloud org-policies describe essentialcontacts.managed.allowedContactDomains --organization=ORGANIZATION_ID --effective",
     "gcloud essential-contacts list --organization=ORGANIZATION_ID",
   ]
-  risk = "An address outside the organisation's domains can be set as an essential contact and receives Google's security and legal notices about it."
+  risk = "An address outside the organization's domains can be set as an essential contact and receives Google's security and legal notices about it."
 }
 claim "cis-gcp" "5.0" "1.17" contributes {
   resources      = ["google_org_policy_policy.essentialcontacts_managed_allowedContactDomains"]
@@ -984,7 +984,7 @@ EOF""",
     "gcloud org-policies describe essentialcontacts.managed.allowedContactDomains --organization=ORGANIZATION_ID --effective",
     "gcloud essential-contacts list --organization=ORGANIZATION_ID",
   ]
-  risk = "An address outside the organisation's domains can be set as an essential contact and receives Google's security and legal notices about it."
+  risk = "An address outside the organization's domains can be set as an essential contact and receives Google's security and legal notices about it."
 }
 
 claim "cis-gcp" "4.0" "2.1" contributes {
@@ -1044,7 +1044,7 @@ EOF""",
   risk = "A principal can be exempted from audit logging, and Cloud Storage audit entries carry no request and response detail."
 }
 
-// The one control in this pack whose witness is not an org policy, and not the pack's
+// The one control in this pack whose witness is not an organization policy, and not the pack's
 // own resource either: the SCAFFOLD enables the Cloud Asset API in every estate's
 // infrastructure project (`project_service` on `google_project.infra`), so the estate
 // already satisfies 5.0 §2.14 and said nothing about it — the last technical control of
@@ -1064,14 +1064,14 @@ claim "cis-gcp" "5.0" "2.14" implements {
   resources = [
     "google_project_service.infra_cloudasset_googleapis_com",
   ]
-  interpretation = "The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organisation's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live."
+  interpretation = "The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organization's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live."
   gcloud = [
     "gcloud services enable cloudasset.googleapis.com --project=PROJECT_ID",
   ]
   gcloud_check = [
     "gcloud services list --enabled --project=PROJECT_ID --filter='config.name=cloudasset.googleapis.com'",
   ]
-  risk = "Without Cloud Asset Inventory there is no queryable record of the organisation's resources and of how their configuration changed."
+  risk = "Without Cloud Asset Inventory there is no queryable record of the organization's resources and of how their configuration changed."
 }
 
 claim "cis-gcp" "4.0" "3.1" implements {
@@ -1194,7 +1194,7 @@ EOF""",
 claim "cis-gcp" "4.0" "4.4" implements {
   resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation    = "OS Login is required, so VM SSH access is governed by IAM rather than metadata keys."
-  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an organization with running VMs."
   gcloud = [
     """cat > policy.yaml <<'EOF'
 name: organizations/ORGANIZATION_ID/policies/compute.managed.requireOsLogin
@@ -1214,7 +1214,7 @@ EOF""",
 claim "cis-gcp" "5.0" "4.4" implements {
   resources         = ["google_org_policy_policy.compute_managed_requireOsLogin"]
   interpretation    = "As for 4.0 §4.4 (5.0 §4.4, unchanged)."
-  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs."
+  duty_existing_vms = "Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an organization with running VMs."
   gcloud = [
     """cat > policy.yaml <<'EOF'
 name: organizations/ORGANIZATION_ID/policies/compute.managed.requireOsLogin
@@ -1235,7 +1235,7 @@ EOF""",
 claim "cis-gcp" "4.0" "4.6" implements {
   resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
   interpretation  = "Instances may not enable IP forwarding."
-  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the organization policy."
   gcloud = [
     """cat > policy.yaml <<'EOF'
 name: organizations/ORGANIZATION_ID/policies/compute.managed.vmCanIpForward
@@ -1254,7 +1254,7 @@ EOF""",
 claim "cis-gcp" "5.0" "4.6" implements {
   resources       = ["google_org_policy_policy.compute_managed_vmCanIpForward"]
   interpretation  = "As for 4.0 §4.6 (5.0 §4.6, unchanged)."
-  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy."
+  duty_appliances = "NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the organization policy."
   gcloud = [
     """cat > policy.yaml <<'EOF'
 name: organizations/ORGANIZATION_ID/policies/compute.managed.vmCanIpForward

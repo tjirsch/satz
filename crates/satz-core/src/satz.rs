@@ -126,7 +126,7 @@ pub struct Suppression {
 }
 
 /// `hcl { … }` — raw Terraform/HCL passed through verbatim. Rust-`unsafe`-style:
-/// it composes and deploys, but the proof layer cannot see inside it, so nothing
+/// it composes and creates, but the proof layer cannot see inside it, so nothing
 /// in here can carry a claim. Warns on every transpile unless the block states a
 /// reason with `hcl trust "<why>" { … }`. Never interpolated — params reach raw
 /// HCL as ordinary Terraform variables (`var.<param>`).
@@ -141,11 +141,11 @@ pub struct HclBlock {
 
 /// `action "<name>" { … }` — a deployment step that has no provider resource.
 ///
-/// Satz never runs one while compiling: an action is inert until `satz run-actions`
-/// is invoked. It emits nothing, never enters the fold or the emission manifest, and
+/// Satz never runs one while transpiling: an action is inert until `satz run-actions`
+/// is invoked. It writes nothing, never enters the fold or the emission manifest, and
 /// can carry no claim — the same opacity `hcl { … }` has, with execution on top. That
 /// is why `reason` is mandatory and why the warning an action raises cannot be
-/// downgraded the way `hcl trust` downgrades its own: HCL only deploys, an action runs.
+/// downgraded the way `hcl trust` downgrades its own: HCL only creates, an action runs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActionDecl {
     /// Unique across the estate; a duplicate is an error naming both files.
@@ -177,7 +177,7 @@ pub enum Reversal {
     Recreate,
 }
 
-/// What changing an answer costs the RUNNING organisation. Orthogonal to
+/// What changing an answer costs the RUNNING organization. Orthogonal to
 /// `Reversal`, and conflating the two is the mistake this design exists to
 /// avoid: enforcing OS Login is one boolean to reverse (edit) and cuts every
 /// existing SSH path (high).
@@ -260,7 +260,7 @@ pub struct QuestionDecl {
     pub ask_when: Option<String>,
     /// `oneof` only: exactly one option must be true, rather than at most one.
     pub required: bool,
-    /// What an empty answer MEANS (`empty = "the organisation"`). With it, `""` is an
+    /// What an empty answer MEANS (`empty = "the organization"`). With it, `""` is an
     /// answer like any other — offered, accepted and counted; without it, an empty
     /// value is one nobody has given yet.
     pub empty: Option<String>,
@@ -275,7 +275,7 @@ pub struct QuestionDecl {
 /// (the entry's position in the file) are written. What a pack needs from another
 /// pack is mostly visible in the packs themselves — a param default that reads
 /// another pack's param — and `satz preset-graph` derives that; `requires` and
-/// `excludes` declare only what the packs cannot show. Emits nothing: the compile
+/// `excludes` declare only what the packs cannot show. Writes nothing: the transpile
 /// never reads an entry, so it is inert in an estate's fold.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OffersDecl {
@@ -316,15 +316,15 @@ pub fn contribution_target(name: &str) -> Option<&str> {
 /// How much a pack-declared message holds back, declared by the pack that says it.
 ///
 /// The pack sets the floor: a reader may silence an `Info` or a `Warning`, never an
-/// `Error`. The compile says every open message either way; what the severity decides is
-/// what a command that WRITES to the organisation does about it.
+/// `Error`. The transpile says every open message either way; what the severity decides is
+/// what a command that WRITES to the organization does about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
-    /// every command that writes to the organisation refuses while the message is open
+    /// every command that writes to the organization refuses while the message is open
     Error,
     /// those commands print it and go on
     Warning,
-    /// the compile says it, and nothing waits for it
+    /// the transpile says it, and nothing waits for it
     Info,
 }
 
@@ -365,12 +365,12 @@ impl Default for Severity {
 /// `notice <param> { text run severity }` — what to run once the pack is switched on.
 ///
 /// A pack that needs one step after it goes in — the CIS org-policy packs need `satz
-/// adopt`, because Google sets some of their policies on every new organisation and the
+/// adopt`, because Google sets some of their policies on every new organization and the
 /// first apply stops on `409` for each — names that step here. satz shows the notice when
 /// the pack is switched on and until the estate acknowledges it by binding `<param> =
-/// true`; with `severity = error`, every command that writes to the organisation refuses
+/// true`; with `severity = error`, every command that writes to the organization refuses
 /// while it is open. The param is the pack's own, declared `false` in the same file, and
-/// read by nothing: it is an acknowledgement, not configuration, so it is never emitted.
+/// read by nothing: it is an acknowledgement, not configuration, so it is never written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NoticeDecl {
     /// the param the estate binds `true` to acknowledge the notice
@@ -385,13 +385,13 @@ pub struct NoticeDecl {
 }
 
 /// `export "<name>" = <value> [description "…"]` — one value the estate publishes to
-/// the projects beside it — estates with their own repository, config, state and pipeline.
+/// the workload estates beside it — each with its own repository, config, state and pipeline.
 ///
 /// An export at the top level of a file is a CORE export: a value of every interface
 /// under `interfaces/outgoing/`. One inside `interface "<name>" { … }` belongs to that
-/// interface alone. Every export is also an output of the root module's
+/// interface alone. Every export is also an output of the HCL code's
 /// `outputs.tf`. The value is a param, a literal, or a string that carries
-/// `${{type.label.attr}}` references to what the estate emits; the compile decides per
+/// `${{type.label.attr}}` references to what the estate writes; the transpile decides per
 /// reference whether the value is known now (a literal output) or only in the cloud (a
 /// `data` source the project's plan reads). An export is a statement and no resource:
 /// it never enters the fold, and two files that export one name with different values
@@ -417,7 +417,7 @@ pub struct ExportDecl {
 /// description = "…" }`: what a team may add to a list param through a contribution
 /// (ADR 0051), and the shape of each entry — a field `patterns` names holds a value the
 /// whole of which the regular expression matches (ADR 0075). Checked against every entry
-/// at every compile, and by `satz check-request` against a team's file before it is
+/// at every transpile, and by `satz check-request` against a team's file before it is
 /// vendored.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestDecl {
@@ -429,7 +429,7 @@ pub struct RequestDecl {
     /// per field, the regular expression its whole value matches, as written
     pub patterns: Vec<(String, String)>,
     /// per field, the value an entry that does not carry the field takes, as written —
-    /// resolved against the params when the request point is read, so every reader of
+    /// resolved against the params when the list is read, so every reader of
     /// the list (an `each`, the request check, the interface, tfvars) sees it filled in
     pub defaults: Vec<(String, Value, usize)>,
     pub description: Option<String>,
@@ -450,12 +450,12 @@ pub enum ExportValue {
     /// a param, a literal, a list of them, or a string over `${{type.label.attr}}`
     Value(Value),
     /// `all <resource type>`: a map keyed by resource label, one entry per resource of
-    /// the type the estate emits and does not mark `private`
+    /// the type the estate writes and does not mark `private`
     All(String),
 }
 
 /// An export name is an output name a consumer writes as `module.satz.<name>`. `__` is
-/// the separator of the root module's `<interface>__<export>`, so no export name holds it.
+/// the separator of the HCL code's `<interface>__<export>`, so no export name holds it.
 pub fn valid_export_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
@@ -492,7 +492,7 @@ pub struct InterfaceDecl {
     /// `use interface "<name>"` / `use interface ["<a>", "<b>"]` lines, in file order
     pub uses: Vec<InterfaceUse>,
     /// written inside `each <list> by <field> { … }` at the top level of a file: one
-    /// interface per entry of the list, expanded by the compile once params are resolved
+    /// interface per entry of the list, expanded by the transpile once params are resolved
     pub each: Option<EachInterface>,
     pub line: usize,
 }
@@ -524,8 +524,8 @@ pub struct InterfaceUse {
 }
 
 /// A generated interface file, `interfaces/outgoing/<project>/<name>/satz/interface.satz`: the
-/// header `interface "<name>"` alone on its line, then data only — what the central estate
-/// publishes to a project written in Satz. satz writes it on every transpile of the central
+/// header `interface "<name>"` alone on its line, then data only — what the organization's estate
+/// publishes to a project written in Satz. satz writes it on every transpile of the organization's
 /// estate; a workload estate `use`s it and reads a value as `${{interface.<folder>.<value>}}`.
 ///
 /// ```text
@@ -561,9 +561,9 @@ pub struct InterfaceUse {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InterfaceFile {
     pub name: String,
-    /// the central estate's name
+    /// the name of the organization's estate
     pub estate: String,
-    /// the organisations the central estate manages, `organizations/<id>`
+    /// the organizations the organization's estate manages, `organizations/<id>`
     pub organizations: Vec<String>,
     pub outputs: Vec<OfferedOutput>,
     pub lookups: Vec<OfferedLookup>,
@@ -580,18 +580,18 @@ pub struct OfferedOutput {
     pub description: Option<String>,
     /// the attachment resource types a project may create against it
     pub attach: Vec<String>,
-    /// the central estate's resources the value names, by address
+    /// the resources of the organization's estate the value names, by address
     pub targets: Vec<String>,
     pub line: usize,
 }
 
-/// A `data` block a value reads: emitted once into the project's root module when a value
+/// A `data` block a value reads: written once into the project's HCL code when a value
 /// the project reads needs it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OfferedLookup {
     /// `data.<data source>.<label>`
     pub address: String,
-    /// the central estate's resource it reads back
+    /// the resource of the organization's estate it reads back
     pub reads: String,
     pub permission: String,
     /// argument → text, `${…}` where it reads another lookup
@@ -607,7 +607,7 @@ impl OfferedLookup {
     }
 }
 
-/// A resource the central estate declares, as far as a project's compile needs to tell it
+/// A resource the organization's estate declares, as far as a project's transpile needs to tell it
 /// apart: the identities it carries and the natural keys the interface reads it by.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ManagedFact {
@@ -759,7 +759,7 @@ fn err<T>(line: usize, msg: impl Into<String>) -> Result<T, SatzError> {
 
 /// A string that must not interpolate. Used where a value has to be readable in a
 /// warning exactly as it is written in the file.
-/// A request point's pattern as the regular expression it is matched by: the whole value.
+/// A list's pattern as the regular expression it is matched by: the whole value.
 pub fn whole(pattern: &str) -> String {
     format!("^(?:{})$", pattern)
 }
@@ -1260,7 +1260,7 @@ impl P {
         let mut out = Vec::new();
         // (key, name) → first line. A key that repeats inside ONE body is an error
         // naming both lines (`lifecycle_rule { A } lifecycle_rule { B }` would
-        // otherwise emit only B). Resource-type maps
+        // otherwise write only B). Resource-type maps
         // (`google_…`) may repeat — two `google_org_policy_policy { … }` groups
         // in one file are the same map, folded by address.
         let mut seen: Vec<(String, Option<String>, usize)> = Vec::new();
@@ -1486,7 +1486,7 @@ impl P {
                     if k == "gcloud" { decl.gcloud = cmds } else { decl.gcloud_check = cmds }
                 }
                 Entry::Map { key: Key::Ident(k), name: Some(Key::Str(_)), .. } if k == "duty" => {
-                    // the block form `duty "id" { text = "..." }` is refused in favour of the attribute
+                    // the block form `duty "id" { text = "..." }` is refused in favor of the attribute
                     return err(line, "duty: write it as an attribute, `duty_<id> = \"text\"`");
                 }
                 Entry::Attr { key: Key::Str(_), .. } => {
@@ -1648,7 +1648,7 @@ impl P {
             line,
             msg: format!(
                 "question {}: blast = none | low | high is required (what changing the answer costs \
-                 the running organisation — orthogonal to reversal)", subject),
+                 the running organization — orthogonal to reversal)", subject),
         })?;
         // Where satz will refuse or warn, it must be able to quote the pack's own
         // sentence. Same rule as `claim … deviates` requiring a reason.
@@ -1799,7 +1799,7 @@ impl P {
                 }
                 // `before = apply` said the same thing and said it as a phase. The
                 // severity says it once, for every command that writes to the
-                // organisation rather than for two named ones.
+                // organization rather than for two named ones.
                 Entry::Attr { key: Key::Ident(k), line: l, .. } if k == "before" => {
                     return err(l, format!("notice {}: `before` is no notice key — write `severity = error`", param))
                 }
@@ -2118,7 +2118,7 @@ impl P {
 
     /// `interface "<name>" [common] { … }`, after `interface`. Inside a top-level `each`
     /// (`each` is `(list, key, line of each)`) the name reads the entry, `"{each.<field>}"`,
-    /// and is judged once the compile has expanded it.
+    /// and is judged once the transpile has expanded it.
     fn interface_stmt(&mut self, line: usize, each: Option<(&str, &str, usize)>) -> Result<InterfaceDecl, SatzError> {
         let parts = match self.next() {
             Some(Tok::Str(parts)) => parts,
@@ -2347,7 +2347,7 @@ fn note_key(seen: &mut Vec<(String, Option<String>, usize)>, key: &Key, name: Op
 }
 
 /// Satz text as the language reads it: a CRLF line ending is a line ending. A file
-/// checked out on Windows compiles to exactly what its LF twin does — without this, a
+/// checked out on Windows transpiles to exactly what its LF twin does — without this, a
 /// `\r` survived inside `"""` strings and `hcl { }` bodies and moved the emission.
 pub fn lf(src: &str) -> std::borrow::Cow<'_, str> {
     if src.contains('\r') {
@@ -2358,7 +2358,7 @@ pub fn lf(src: &str) -> std::borrow::Cow<'_, str> {
 }
 
 /// A statement the block parser meets inside `{ … }` in a shape it cannot read as an
-/// entry — `hcl { … }`, which the lexer hands over whole, and `suppress <type> "…"` or
+/// entry — `hcl { … }`, which the lexer passes on whole, and `suppress <type> "…"` or
 /// `claim "…" "…" "…"`, whose third word is no `{`. The shapes it CAN read as an entry
 /// (`params { … }`, `question x { … }`) are refused by the walk, which knows the position.
 fn statement_in_a_block(keyword: &str) -> String {
@@ -2908,7 +2908,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
         return err(
             header,
             format!(
-                "interface \"{}\": an interface file satz generates holds `central`, `output`, `lookup` and `managed` blocks, and this one holds {} — regenerate it with `satz transpile` of the central estate",
+                "interface \"{}\": an interface file satz generates holds `central`, `output`, `lookup` and `managed` blocks, and this one holds {} — regenerate it with `satz transpile` of the organization's estate",
                 iface.name, what
             ),
         );
@@ -3174,7 +3174,7 @@ pub fn canonical(file: &File) -> String {
 /// The questions of a file, canonically — a THIRD product beside `canonical_parts`,
 /// deliberately not folded into `canonical.body`.
 ///
-/// `canonical` means "what this file emits". A pack whose questions changed emits
+/// `canonical` means "what this file writes". A pack whose questions changed writes
 /// byte-identical HCL, so putting them in the body would auto-fork every estate that
 /// uses the pack over a prompt typo, and report it as "N resource line(s) differ" —
 /// which is a lie. Leaving them out of everything would be worse: a
@@ -3210,7 +3210,7 @@ pub fn canonical_questions(file: &File) -> String {
 
 /// The `offers` entries of a file, canonically, in file order (the order is the
 /// adoption order, so it is meaning). A FOURTH product, beside the questions and
-/// for the same reason: an entry emits nothing, so a changed entry is reported and
+/// for the same reason: an entry writes nothing, so a changed entry is reported and
 /// never forks the map the way an emission change would.
 pub fn canonical_offers(file: &File) -> String {
     let mut out = String::new();
@@ -3230,7 +3230,7 @@ pub fn canonical_offers(file: &File) -> String {
 }
 
 /// The notices of a file, canonically, by param. A FIFTH product, for the reason the
-/// questions are one: a notice emits nothing, so a changed wording is reported and never
+/// questions are one: a notice writes nothing, so a changed wording is reported and never
 /// forks an estate that uses the pack.
 pub fn canonical_notices(file: &File) -> String {
     let mut ns: Vec<&NoticeDecl> = file.notices.iter().collect();
@@ -3241,7 +3241,7 @@ pub fn canonical_notices(file: &File) -> String {
 /// The measure texts of a file's claims — `gcloud`, `gcloud_check` and `risk` —
 /// canonically, in file order. A SIXTH product, for the reason the notices are one: they
 /// tell a reader how the control is met without satz and what its absence costs, they
-/// emit nothing and decide no verdict, so a changed command is reported and never forks
+/// write nothing and decide no verdict, so a changed command is reported and never forks
 /// an estate that uses the pack. `canonical_parts` leaves them out for the same reason.
 pub fn canonical_measures(file: &File) -> String {
     file.claims
@@ -3263,8 +3263,8 @@ pub fn canonical_measures(file: &File) -> String {
 }
 
 pub fn canonical_parts(file: &File) -> Canonical {
-    // A notice's param is an acknowledgement and never emitted, so it belongs to the
-    // notice's canonical form: a pack gaining a notice does not change what it emits.
+    // A notice's param is an acknowledgement and never written, so it belongs to the
+    // notice's canonical form: a pack gaining a notice does not change what it writes.
     let params = file
         .params
         .iter()
@@ -3353,7 +3353,7 @@ pub fn canonical_parts(file: &File) -> Canonical {
             a.phase
         ));
     }
-    // An export changes what the estate emits (an output), so it belongs to the body.
+    // An export changes what the estate writes (an output), so it belongs to the body.
     // The order of the statements means nothing: by name.
     let mut exports: Vec<(&str, &ExportDecl)> = file.exports.iter().map(|x| (CORE_INTERFACE, x)).collect();
     for i in &file.interfaces {
@@ -3382,7 +3382,7 @@ pub fn canonical_parts(file: &File) -> Canonical {
     uses.sort();
     uses.into_iter().for_each(|u| body.push_str(&u));
     // Where an interface is written — the library or one project's folder — is part of
-    // what the estate emits.
+    // what the estate writes.
     let mut common: Vec<&str> = file.interfaces.iter().filter(|i| i.common).map(|i| i.name.as_str()).collect();
     common.sort();
     common.dedup();
@@ -3841,11 +3841,11 @@ action "scc-services" {
     /// drift check called the two versions identical.
     #[test]
     fn an_export_is_a_name_a_value_and_an_optional_description() {
-        let f = parse("estate e\nexport \"org_id\" = customer_organization_id description \"The organisation\"\nexport \"folder\" = \"${{google_folder.a.name}}\"\nexport \"regions\" = [\"a\", \"b\"]\n").unwrap();
+        let f = parse("estate e\nexport \"org_id\" = customer_organization_id description \"The organization\"\nexport \"folder\" = \"${{google_folder.a.name}}\"\nexport \"regions\" = [\"a\", \"b\"]\n").unwrap();
         assert_eq!(f.exports.len(), 3);
         assert_eq!(f.exports[0].name, "org_id");
         assert_eq!(f.exports[0].value, ExportValue::Value(Value::Ref("customer_organization_id".into())));
-        assert_eq!(f.exports[0].description.as_deref(), Some("The organisation"));
+        assert_eq!(f.exports[0].description.as_deref(), Some("The organization"));
         assert_eq!(f.exports[1].value, ExportValue::Value(Value::Str(vec![StrPart::Lit("${google_folder.a.name}".into())])));
         assert_eq!(f.exports[1].description, None);
         assert!(matches!(f.exports[2].value, ExportValue::Value(Value::List(_))));
@@ -3949,7 +3949,7 @@ action "scc-services" {
             ("interface \"pay\"\n", "`central { estate = \"…\" }` block is missing"),
             ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\ngoogle_folder {\n}\n", "`google_folder`"),
             ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\noutput \"x\" {\n  value = x\n}\n", "never a param"),
-            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\noutput \"x\" {\n  value = 1\n  colour = \"r\"\n}\n", "`colour` is no field"),
+            ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\noutput \"x\" {\n  value = 1\n  color = \"r\"\n}\n", "`color` is no field"),
             ("interface \"pay\"\ncentral {\n  estate = \"c\"\n}\nlookup \"google_x.y\" {\n  reads = \"r\"\n  permission = \"p\"\n}\n", "data.<data source>.<label>"),
             ("interface \"pay\" x\n", "alone on its line"),
         ] {
@@ -4224,10 +4224,10 @@ mod inputs_tests {
     /// also a param are refused naming both lines.
     #[test]
     fn inputs_parse_like_params_with_the_comment_as_the_description() {
-        let f = parse("estate t\n\ninputs {\n  // the four-digit cost centre\n  // the project is billed to\n  cost_centre = \"4711\"\n  stage       = \"dev\"\n  retention   = 7\n  regions     = [\"europe-west3\"]\n}\n").unwrap();
+        let f = parse("estate t\n\ninputs {\n  // the four-digit cost center\n  // the project is billed to\n  cost_centre = \"4711\"\n  stage       = \"dev\"\n  retention   = 7\n  regions     = [\"europe-west3\"]\n}\n").unwrap();
         let names: Vec<&str> = f.inputs.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(names, ["cost_centre", "stage", "retention", "regions"]);
-        assert_eq!(f.inputs[0].description.as_deref(), Some("the four-digit cost centre the project is billed to"));
+        assert_eq!(f.inputs[0].description.as_deref(), Some("the four-digit cost center the project is billed to"));
         assert_eq!(f.inputs[1].description, None, "a blank or code line above is no description");
         assert_eq!(f.inputs[0].line, 6);
         let e = parse("estate t\ninputs {\n  x = { a = 1 }\n}\n").unwrap_err();
@@ -4256,7 +4256,7 @@ mod statement_set_tests {
 
     /// The keywords the dispatch in `parse` matches on, read out of this file's own
     /// source between the two markers: every `id == "…"` guard, plus `hcl`, whose block
-    /// the lexer hands over as one token. The dispatch binds the keyword as `id` and
+    /// the lexer passes on as one token. The dispatch binds the keyword as `id` and
     /// nothing else in it does — the header's `version` binds `m`, because it opens no
     /// statement.
     fn dispatched_keywords() -> std::collections::BTreeSet<String> {
@@ -4361,7 +4361,7 @@ mod review_2026_08_29_tests {
         // the order is the adoption order: swapping two entries is a change
         let swapped = map.replacen("presets/a.satz\" {", "presets/c.satz\" {", 1);
         assert_ne!(canonical_offers(&f), canonical_offers(&parse(&swapped).unwrap()));
-        assert_eq!(canonical(&f), canonical(&parse(&swapped).unwrap()), "an entry emits nothing");
+        assert_eq!(canonical(&f), canonical(&parse(&swapped).unwrap()), "an entry writes nothing");
         // anywhere but the map it is refused
         let e = parse("pack other version \"1.0\"\n\noffers \"presets/a.satz\" {\n  when = x\n}\n").unwrap_err();
         assert!(e.msg.contains("belongs in the map"), "{}", e.msg);
@@ -4387,9 +4387,9 @@ mod review_2026_08_29_tests {
         let n = &f.notices[0];
         assert_eq!((n.param.as_str(), n.severity), ("p_adopted", Severity::Error));
         assert!(f.items.is_empty(), "a notice is no resource map");
-        // the notice and its param are outside what the pack emits
+        // the notice and its param are outside what the pack writes
         let bare = parse("pack p version \"1.0\"\n").unwrap();
-        assert_eq!(canonical(&f), canonical(&bare), "a notice emits nothing");
+        assert_eq!(canonical(&f), canonical(&bare), "a notice writes nothing");
         let reworded = parse(&pack.replace("Adopt what exists.", "Adopt it.")).unwrap();
         assert_ne!(canonical_notices(&f), canonical_notices(&reworded));
         // the param: declared here, `false`, asked by no question

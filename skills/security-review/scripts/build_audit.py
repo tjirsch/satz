@@ -310,7 +310,7 @@ def build_model(scope, catalog, findings, satz_rows, require):
     req_by = {c["id"]: c for c in (require or {}).get("controls", [])}
     compute_scanned = any(check_of(f).startswith("compute_") for f in findings)
     luecke = dict(scope.get("luecke") or {})
-    # automatic LÜCKE: the sink-lock rows without an org sink, and every compute-backed control if compute never ran
+    # automatic LÜCKE: the sink-lock rows without an organisation sink, and every compute-backed control if compute never ran
     for cid, txt in (
         (
             "2.3",

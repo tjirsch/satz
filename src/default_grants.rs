@@ -1,12 +1,12 @@
-//! The two grants a new organisation carries by default — `roles/resourcemanager.projectCreator`
+//! The two grants a new organization carries by default — `roles/resourcemanager.projectCreator`
 //! and `roles/billing.creator` on `domain:<customer domain>`, every user in the directory —
-//! removed by `apply`, once every holder the estate declares for that role on the organisation
+//! removed by `apply`, once every holder the estate declares for that role on the organization
 //! is live.
 //!
 //! Terraform has no resource that says a member is absent, and an authoritative binding would
 //! replace the role's whole member list — every grant a customer made by hand, every holder an
-//! organisation that pre-dates satz already carries (ADR 0081). So this step knows exactly one
-//! member on exactly two roles and touches nothing else: it reads the organisation's IAM policy,
+//! organization that pre-dates satz already carries (ADR 0081). So this step knows exactly one
+//! member on exactly two roles and touches nothing else: it reads the organization's IAM policy,
 //! takes the domain out of the unconditional binding of each role whose declared holders are all
 //! in it, writes the policy back under its etag, and prints each removal with the command that
 //! restores it. `plan` reads and says what `apply` would do; only `apply` writes. A role the
@@ -19,12 +19,12 @@ use std::collections::BTreeMap;
 use crate::gcp::{same_member, ErrorClass};
 use crate::manifest::Manifest;
 
-/// The roles a new organisation grants to its whole domain.
+/// The roles a new organization grants to its whole domain.
 pub(crate) const ROLES: [&str; 2] = ["roles/resourcemanager.projectCreator", "roles/billing.creator"];
 
-/// The unconditional holders the estate declares on the organisation, per role of `ROLES`
-/// that has any. `org_id` is the organisation's number, as `main.tf` writes it; a grant
-/// whose `org_id` is a literal naming another organisation is not one of these.
+/// The unconditional holders the estate declares on the organization, per role of `ROLES`
+/// that has any. `org_id` is the organization's number, as `main.tf` writes it; a grant
+/// whose `org_id` is a literal naming another organization is not one of these.
 pub(crate) fn declared_holders(manifest: &Manifest, org_id: &str) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for r in manifest.of_type("google_organization_iam_member") {
@@ -39,7 +39,7 @@ pub(crate) fn declared_holders(manifest: &Manifest, org_id: &str) -> BTreeMap<St
     out
 }
 
-/// What the organisation's policy says about one role, read against the declared holders.
+/// What the organization's policy says about one role, read against the declared holders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Finding {
     /// the domain does not hold the role: nothing to do
@@ -111,7 +111,7 @@ pub(crate) fn judge(policy: &serde_json::Value, role: &str, domain: &str, declar
 /// What one run read and did, one finding per declared role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Report {
-    /// the organisation's number
+    /// the organization's number
     pub org_id: String,
     /// `domain:<customer domain>`
     pub domain: String,
@@ -126,7 +126,7 @@ pub(crate) fn restore_command(org_id: &str, domain: &str, role: &str) -> String 
 }
 
 impl Report {
-    /// One line for the organisation, then one per declared role saying what was found and done.
+    /// One line for the organization, then one per declared role saying what was found and done.
     pub fn render(&self) -> String {
         let mut out = format!("default grants on organizations/{}:\n", self.org_id);
         for f in &self.findings {
@@ -159,7 +159,7 @@ impl Report {
     }
 }
 
-/// Read the organisation's policy and judge each declared role; on `write`, take the domain
+/// Read the organization's policy and judge each declared role; on `write`, take the domain
 /// out of every removable role in one `setIamPolicy` under the policy's etag, re-reading and
 /// re-judging on a concurrent change, three attempts.
 pub(crate) async fn reconcile(
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn declared_holders_reads_the_unconditional_grants_of_the_two_roles_on_the_organisation() {
+    fn declared_holders_reads_the_unconditional_grants_of_the_two_roles_on_the_organization() {
         let main_tf = r#"
 resource "google_organization_iam_member" "a" {
   org_id = "123456789012"
@@ -317,7 +317,7 @@ resource "google_organization_iam_member" "e" {
         let manifest = Manifest::from_blocks(body.blocks());
         let holders = declared_holders(&manifest, "123456789012");
         assert_eq!(holders.get(PC), Some(&vec!["group:gcp-organization-admins@example.com".to_string()]), "the conditional grant is not a holder");
-        assert_eq!(holders.get(BC), Some(&vec!["user:admin@example.com".to_string()]), "another organisation's grant is not one either");
+        assert_eq!(holders.get(BC), Some(&vec!["user:admin@example.com".to_string()]), "another organization's grant is not one either");
         assert_eq!(holders.len(), 2);
     }
 }

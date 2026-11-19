@@ -1,4 +1,4 @@
-//! Workload packs: the packs a workload's estate takes one at a time into its
+//! Workload packs: the packs a workload estate takes one at a time into its
 //! `packs_dir`, beside the packs it wrote itself (ADR 0083).
 //!
 //! A workload pack is one `.satz` file with a `pack <id> version "…"` header. Its id

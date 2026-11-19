@@ -227,7 +227,7 @@ pub(crate) enum Wrote {
 
 /// A JSON document as the file holds it: every object keeps its keys in the order
 /// they were written. `serde_json::Value` sorts them (the crate's `preserve_order`
-/// feature would change that for every JSON satz emits), and a file a person keeps
+/// feature would change that for every JSON satz writes), and a file a person keeps
 /// by hand is written back in their order, not alphabetised.
 #[derive(Debug, Clone, PartialEq)]
 enum Doc {

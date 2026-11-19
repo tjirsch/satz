@@ -4,7 +4,7 @@ Date: 2026-08-22. Source: `GoogleCloudPlatform/cloud-foundation-fabric` @ master
 `fast/stages/0-org-setup/datasets/classic` (the full reference dataset).
 Purpose: bound the content debt vs Google's Fabric FAST and generate interview
 questions. This is an **audit, not an adoption plan** — FAST is greenfield
-landing-zone tooling; satz is CIS-mapped, brownfield-importing org
+landing-zone tooling; satz is CIS-mapped, brownfield-importing organization
 foundation. The deltas below are classified accordingly.
 
 ## FAST has been restructured (finding 0)
@@ -13,7 +13,7 @@ The old `0-bootstrap` + `1-resman` pair is gone. Current stages:
 
 | Stage | Scope |
 |---|---|
-| `0-org-setup` | org policies, hierarchy, IAM, logging, billing export, automation projects, CI/CD — **all YAML-factory-driven** |
+| `0-org-setup` | organization policies, hierarchy, IAM, logging, billing export, automation projects, CI/CD — **all YAML-factory-driven** |
 | `1-vpcsc` | VPC Service Controls perimeters (optional) |
 | `2-networking` | shared VPC, hub-and-spoke/VPN/NVA designs, DNS, hierarchical firewall |
 | `2-security` | KMS keyrings/keys, Certificate Authority Service, per-env security projects |
@@ -44,11 +44,11 @@ iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts.
 
 **FAST only (~22)**, grouped by adoption class:
 
-- *Cheap org-level hardening, candidate CIS-pack/hardening-pack adds (5):*
+- *Cheap organization-level hardening, candidate CIS-pack/hardening-pack adds (5):*
   `iam.serviceAccountKeyExposureResponse = DISABLE_KEY` (reactive control,
   enforce-and-forget), `iam.managed.disableServiceAccountApiKeyCreation`,
   `iam.workloadIdentityPoolAwsAccounts` deny-all + `…PoolProviders` deny-all
-  (WIF supply-chain lock — needs interview gate: breaks orgs using WIF),
+  (WIF supply-chain lock — needs interview gate: breaks organizations using WIF),
   `storage.secureHttpTransport`.
 - *Workload-scoped — bite only when the service is used; belong in **optional
   workload packs** gated by interview questions, not in the foundation pack
@@ -67,10 +67,10 @@ iam.managed.preventPrivilegedBasicRolesForDefaultServiceAccounts.
 ## The pattern worth stealing: tag-conditional escape hatches
 
 FAST's domain lock is a **dual-rule policy**: rule 1 allows only
-`is:${customer_id}` *unless* the resource carries the org tag
+`is:${customer_id}` *unless* the resource carries the organization tag
 `org-policies/allowed-policy-member-domains-all`; rule 2 allows all *when* it
 does. Same for essentialcontacts.allowedContactDomains. The default stays
-enforced org-wide; exemption is per-subtree tagging, no lift-and-retighten
+enforced organization-wide; exemption is per-subtree tagging, no lift-and-retighten
 window.
 
 This is directly relevant to **task #12 (SCC activation)** and the DRS
@@ -107,7 +107,7 @@ adopting: confirm a CIS auditor accepts conditional enforcement as compliant
   gcp-organization-admins to pre-exist). Role sets are near-identical —
   independent confirmation of the s1 role model.
 - Managed-constraint twins (iam.managed.allowedPolicyMembers etc.).
-- Org budget preset with threshold rules (FAST does budgets only per-project in
+- Organization budget preset with threshold rules (FAST does budgets only per-project in
   the project factory).
 
 ## Content-debt bound & recommendation
@@ -139,14 +139,14 @@ Concrete follow-ups, in value order:
 3. Any workload identity federation / external CI? Which platform? → WIF
    deny-all vs configured providers; automation model (owner-run vs CI).
 4. Escape-hatch policy: are tag-based per-subtree exemptions acceptable to
-   your auditors, or hard org-wide enforcement only?
+   your auditors, or hard organization-wide enforcement only?
 5. Folder hierarchy shape and environment split (dev/prod folders?).
 6. Billing export to BigQuery wanted? Budget thresholds?
 7. Trusted image sources (Google-only allowlist vs custom image projects)?
 
 ## Kill-check (same date)
 
-Question: does anyone ship CIS/OSCAL-mapped, brownfield-importing GCP org
+Question: does anyone ship CIS/OSCAL-mapped, brownfield-importing GCP organization
 presets? **Verdict: no kill — but the category now has a Google entrant.**
 
 - **`GoogleCloudPlatform/gcp-hardening-toolkit` (GHT)** — the closest thing,
@@ -161,13 +161,13 @@ presets? **Verdict: no kill — but the category now has a Google entrant.**
   module enablement) and is silent on the §1.1 lock collision we documented.
 - **FAST**: greenfield-only, no control mapping (see above).
 - **compliance.tf**: paid CIS-enforced module library — **AWS-only**,
-  module-level, no org foundation, no import.
+  module-level, no organization foundation, no import.
 - **OSCAL世界** (iac2oscal, ScaleSec writings, awesome-oscal): mapping
-  examples and GRC tooling, nothing that *provisions* GCP org foundations.
+  examples and GRC tooling, nothing that *provisions* GCP organization foundations.
 
 Reading: the thesis is validated — Google itself just created the
 "brownfield GCP hardening via interactive agent" category — and nobody
-occupies our exact square: **deterministic** compile (interview → derive →
+occupies our exact square: **deterministic** transpile (interview → derive →
 folded-IR check, reproducible, auditable) + CIS-mapped claims with live
 evidence (`require` / `report-compliance`) + brownfield **import into an
 ongoing managed estate** rather than one-off remediation blueprints. GHT is

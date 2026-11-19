@@ -8,7 +8,7 @@ Source: `presets/monitoring/organization-cis-log-alerts-central.satz`
 Centralized log-based alerting for CIS 2.5-2.12 in 5.0 numbering, 2.4-2.11 in
 4.0.
 
-One logging bucket + second org sink + 8 bucket-scoped metrics + 8 alert
+One logging bucket + second organization sink + 8 bucket-scoped metrics + 8 alert
 policies + email channel. Estate wiring: nothing to set when the audit logsink
 pack is used — the alert project defaults to ITS project. Without that pack,
 set cis_central_bucket_project.
@@ -62,7 +62,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `cis_central_email` | The address the organisation's security alerts are sent to (a group, never a person) | edit | high | — |
+| `cis_central_email` | The address the organization's security alerts are sent to (a group, never a person) | edit | high | — |
 | `cis_central_bucket_project` | The project that hosts the alerting bucket, the metrics and the alert policies | recreate | low | — |
 
 **cis_central_email** — Monitoring sends from alerting-noreply@google.com, so the mailbox must exist and accept external mail; a group whose members have no mailboxes drops every alert silently, and nothing in the estate can detect that. People leave; groups have owners.
@@ -86,7 +86,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | framework | control | title | kind | witnesses | interpretation |
 |---|---|---|---|---|---|
-| cis-gcp 4.0 | 2.4 | Project ownership change alerts | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | Central metrics pipeline: org-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on. |
+| cis-gcp 4.0 | 2.4 | Project ownership change alerts | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | Central metrics pipeline: organization-level sink into the metrics bucket plus a notification channel — the substrate all per-control alerts build on. |
 | cis-gcp 5.0 | 2.5 | Project ownership change alerts | contributes | `google_logging_organization_sink.cis_central_metrics_sink`<br>`google_monitoring_notification_channel.cis_central_alerts` | As for 4.0 §2.4 (5.0 §2.5): the substrate every alert stands on. |
 | cis-gcp 4.0 | 2.4 | Project ownership change alerts | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |
 | cis-gcp 5.0 | 2.5 | Project ownership change alerts | implements | `google_logging_metric.cis_central_2_5_project_ownership`<br>`google_monitoring_alert_policy.cis_central_2_5_project_ownership` |  |

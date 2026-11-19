@@ -359,13 +359,13 @@ pub(crate) fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-/// Ordering of two dotted numeric versions. A component that is not a number
+/// Ordering of two dotted numeric versions. A part that is not a number
 /// (`0.46.15-rc1`, a malformed tag) is an error — read as 0 it would call a
 /// newer release "older" and print "you are on the latest version".
 pub(crate) fn compare_versions(v1: &str, v2: &str) -> Result<i32, String> {
     let parse_version = |v: &str| -> Result<Vec<u32>, String> {
         v.split('.')
-            .map(|s| s.parse::<u32>().map_err(|_| format!("version `{}` has a non-numeric component `{}`", v, s)))
+            .map(|s| s.parse::<u32>().map_err(|_| format!("version `{}` has a non-numeric part `{}`", v, s)))
             .collect()
     };
     let v1_parts = parse_version(v1)?;

@@ -3,7 +3,7 @@
 // input is the whole value, inside a template where text holds it; the provider alias of a
 // project whose id reads one reads it too. `variables.tf` declares each input by its name
 // with the comment above it as its description; `terraform.tfvars` carries the bound value.
-// A body that reads an input and a central estate's value carries both renderings: the
+// A body that reads an input and a value of an organization's estate carries both renderings: the
 // project below stands under the interface's folder. Snapshot-gated.
 
 estate corpus_inputs
@@ -22,7 +22,7 @@ inputs {
   workload    = "shop"
   // dev, test or prod
   stage       = "dev"
-  // the four-digit cost centre the project is billed to
+  // the four-digit cost center the project is billed to
   cost_centre = "4711"
   // how many days a topic keeps a message
   retention   = 7

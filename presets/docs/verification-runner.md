@@ -5,28 +5,28 @@ Source: `presets/ci/verification-runner.satz`
 
 ## Purpose
 
-Watches an estate's repository: every push must still compile, every night the
-live organisation must still match.
+Watches an estate's repository: every push must still transpile, every night the
+live organization must still match.
 
 Two Cloud Build triggers and a scheduler, in the project that HOSTS the runner:
 
 satz-check       on every push to main — `satz transpile --check <estate>`.
-A satz release that no longer compiles the estate fails
+A satz release that no longer transpiles the estate fails
 the estate's next push.
 satz-compliance  nightly, via Cloud Scheduler — `satz report-compliance
 --format markdown --out <file> --fail-on <statuses>`. An
-org policy widened in the console fails the next nightly run.
+organization policy widened in the console fails the next nightly run.
 
 The runner is a service account of its own. It holds nothing about the
 estate: satz's first act inside the build is to exchange the runner's identity
-for the ESTATE's IaC service account, exactly as it does on a workstation. The
+for the estate account, exactly as it does on a workstation. The
 grant that permits that lives on the estate's account and is the companion
 pack, `ci/verification-runner-grant.satz` — separate because in the hosted
 shape the two resources belong to two different parties.
 
 Where it runs decides who it is for:
 
-customer-hosted   ci_runner_project = the estate's own infra project; use
+customer-hosted   ci_runner_project = the estate's own infrastructure project; use
 this pack AND the grant pack in the same estate.
 MSP-hosted        ci_runner_project = the MSP's project, which must be the
 Cloud Source Repositories project the estate repo lives in
@@ -35,7 +35,7 @@ the MSP's estate uses THIS pack — with ci_repo_name,
 ci_estate_file and ci_target_infra_project naming the
 customer's — and the customer's estate uses the grant pack
 with ci_runner_service_account set to the MSP runner's
-email. No credential crosses; one IAM binding does.
+email. No key crosses; one IAM binding does.
 
 The build steps are INLINE in the trigger, not a cloudbuild.yaml in the
 watched repository. Whoever controls the build file controls what runs as the
@@ -46,8 +46,8 @@ The runner reports through the build's exit code and log. It writes no
 evidence back into the repository: that needs write access to a repository
 the runner may not own.
 
-Requires the estate's IaC service account to exist (post-init), and, for the
-live nightly run, Cloud Asset Inventory enabled on the estate's infra project
+Requires the estate account to exist (post-init), and, for the
+live nightly run, Cloud Asset Inventory enabled on the estate's infrastructure project
 with an asset-viewer role at organization level — the same two read
 dependencies `report-compliance` needs from a workstation.
 
@@ -113,7 +113,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 **ci_repo_name** — The default is the convention `<shortname>-<customer id>`; a repository named otherwise is watched by nothing, and the check that never runs looks exactly like a check that passes.
 
 
-**ci_estate_file** — The push trigger compiles this file and the nightly run judges it. A wrong name fails on the first push — loudly, which is the good case.
+**ci_estate_file** — The push trigger transpiles this file and the nightly run judges it. A wrong name fails on the first push — loudly, which is the good case.
 
 
 ## Contributes

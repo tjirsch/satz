@@ -27,7 +27,7 @@ THE EXPORT ACCOUNT. Google writes the export as
 `billing-export-bigquery@system.gserviceaccount.com`, a Google-owned account in a
 Google-owned domain, the same for every customer. Two things follow, and this pack
 does both: it holds `roles/bigquery.dataEditor` on the dataset, and — because it lives
-outside the customer's organisation — it is CONTRIBUTED to the CIS baseline's
+outside the customer's organization — it is CONTRIBUTED to the CIS baseline's
 `allowed_policy_member_subjects`, so domain-restricted sharing lets the grant through.
 Switch this pack off and the entry goes with it.
 
@@ -78,17 +78,17 @@ What to ask before this pack is configured, and what changing the answer costs.
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
 | `billing_export_project_id` | The project that holds the billing export | recreate | high | — |
-| `billing_export_project_folder` | The folder the billing-export project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | — |
+| `billing_export_project_folder` | The folder the billing-export project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | — |
 | `billing_export_dataset_id` | The dataset the billing export writes into | recreate | high | — |
 | `billing_export_location` | Where the billing dataset lives (a BigQuery location, e.g. europe-west3 or EU) | recreate | high | — |
 
 **billing_export_project_id** — A project id is immutable. Changing it later creates a second project and abandons the first, with the billing history inside it — and the console export has to be pointed at the new dataset by hand.
 
 
-**billing_export_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits.
+**billing_export_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits.
 
 
-**billing_export_dataset_id** — Whoever can read it reads what every project in the organisation costs. A dataset id cannot be renamed: a new one is a new dataset the console export has to be pointed at, and the history stays in the old one.
+**billing_export_dataset_id** — Whoever can read it reads what every project in the organization costs. A dataset id cannot be renamed: a new one is a new dataset the console export has to be pointed at, and the history stays in the old one.
 
 
 **billing_export_location** — A dataset's location cannot change: moving it means a new dataset and no history. Where the CIS pack enforces allowed resource locations, a location outside that list is refused. The default follows the estate's own default region.
@@ -96,7 +96,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|

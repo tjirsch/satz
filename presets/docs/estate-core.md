@@ -5,7 +5,7 @@ Source: `presets/estate-core.satz`
 
 ## Purpose
 
-The questions every estate has to answer on day 0, with the params they answer.
+The questions every estate has to answer before the bootstrap, with the params they answer.
 
 `satz init` writes these params — from its flags where it has one, from
 its defaults otherwise; an INTERVIEW asks for
@@ -15,7 +15,7 @@ default is offered where one exists and a value is required where none is
 possible.
 
 Two kinds of param, and the interview treats them differently. Seven have NO
-POSSIBLE DEFAULT — the directory customer id, the organisation id, the domain,
+POSSIBLE DEFAULT — the directory customer id, the organization id, the domain,
 the short name, the display name, the first admin, the billing account: the
 pack cannot know the answer, so these block until a value is typed. The rest have a DERIVED OR CONVENTIONAL default — project and bucket
 names built from the short name, the folder name, the service account names,
@@ -23,19 +23,19 @@ the region — and accepting one is an answer, recorded by writing it. A derived
 default is offered only once what it derives from is answered.
 
 Which packs make up the estate — the security-group model included — is the
-next pack, estate-map.satz: this one is the day-0 params and nothing else.
+next pack, estate-map.satz: this one is the bootstrap params and nothing else.
 
-This pack declares no resource. It publishes the day-0 answers every project beside
-the estate needs as the estate's core exports — values of every interface under
+This pack declares no resource. It publishes the bootstrap answers every workload estate beside
+it needs as the estate's core exports — values of every interface under
 interfaces/outgoing/, which a project's own HCL or Satz reads them from — so an estate has
 them without writing an `export` of its own. Apart from those outputs, an estate that uses it and answers
-everything compiles to exactly what `satz init` would have written.
+everything transpiles to exactly what `satz init` would have written.
 
 `workload_folder_name` is the folder where the customer's and the projects' folders live,
 named like `infra_folder_name`. It may be empty — the default — which is the
-organisation itself, and nothing is created for it; its question says so (`empty`), so
+organization itself, and nothing is created for it; its question says so (`empty`), so
 "" is an answer the interview offers and the gate counts. Its export, `workload_folder`,
-is not here: it is the organisation, a static value, or a folder the estate declares,
+is not here: it is the organization, a static value, or a folder the estate declares,
 whose number is looked up, so the estate carries that section — `satz init` writes it
 from `--workload-folder-name`, an interview when the question is answered. The folder's
 parent is where its block stands in the estate, like any folder's.
@@ -98,7 +98,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
 | `customer_id` | The Google Workspace / Cloud Identity directory customer id (C0…) | recreate | high | — |
-| `customer_organization_id` | The organisation id (the number, not the domain) | recreate | high | — |
+| `customer_organization_id` | The organization id (the number, not the domain) | recreate | high | — |
 | `customer_domain` | The customer's primary domain | recreate | high | — |
 | `customer_shortname` | A short name for this customer — lowercase, no spaces | recreate | high | — |
 | `customer_longname` | The customer's display name, as it should appear in descriptions | edit | none | — |
@@ -108,9 +108,9 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `workload_folder_name` | Display name of the folder that holds the customer's and the projects' folders | state_surgery | high | — |
 | `infra_project_name` | The infrastructure project id | recreate | high | — |
 | `infra_bucket_name` | The state bucket name (globally unique) | recreate | high | — |
-| `svc_iac_account` | Account id of the IaC service account (the part before @) | recreate | high | — |
-| `svc_iac_users_group` | The group whose members may impersonate the IaC service account | recreate | low | — |
-| `deployment_engine` | Which tool applies the emitted HCL: tofu or terraform | edit | none | `"tofu"` |
+| `svc_iac_account` | Account id of the estate account (the part before @) | recreate | high | — |
+| `svc_iac_users_group` | The estate account user group, whose members may impersonate the estate account | recreate | low | — |
+| `deployment_engine` | Which tool applies the transpiled HCL code: tofu or terraform | edit | none | `"tofu"` |
 | `deployment_mode` | Where the state lives: local while bootstrapping, cloud once the bucket exists | state_surgery | low | `"local"` |
 | `default_region` | The default region for regional resources | recreate | high | `"europe-west3"` |
 | `default_zone` | The default zone, inside that region | edit | low | — |
@@ -119,7 +119,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 **customer_id** — Every group in the estate is created under this customer. There is no changing it afterwards; a different id is a different estate.
 
 
-**customer_organization_id** — Every org policy, org grant and sink is scoped to it. A different organisation is a different estate.
+**customer_organization_id** — Every organization policy, organization grant and sink is scoped to it. A different organization is a different estate.
 
 
 **customer_domain** — Group addresses and the first admin are composed from it, and the Essential Contacts constraint allows it. Changing it renames every group.
@@ -128,30 +128,30 @@ What to ask before this pack is configured, and what changing the answer costs.
 **customer_shortname** — Project ids, the state bucket and group prefixes derive from it, and those ids are globally unique and immutable once created.
 
 
-**first_admin** — This is the human satz bootstraps as, and the first member of the IaC users group — the one account that can act before any service account exists.
+**first_admin** — This is the human satz bootstraps as, and the first member of the estate account user group — the one account that can act before the estate account exists.
 
 
 **billing_account_infra** — Relinking a project's billing is an update, but a project with no valid billing account cannot enable a single API — the bootstrap stops there.
 
 
-**workload_folder_name** — Every project's folder takes it as its parent, through the core export `workload_folder`. Empty is the organisation itself, and nothing is created. A name declares the folder directly under the organisation; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the projects created under it.
+**workload_folder_name** — Every project's folder takes it as its parent, through the core export `workload_folder`. Empty is the organization itself, and nothing is created. A name declares the folder directly under the organization; a folder the customer already has by that name is imported with `satz adopt`, because Google refuses a second one. Moving between the two later moves every folder the projects created under it.
 
-An empty answer, `""`, is an answer: the organisation itself; no folder is created.
+An empty answer, `""`, is an answer: the organization itself; no folder is created.
 
 
 **infra_project_name** — A project id is immutable. Changing it creates a second project and abandons the first, with the state bucket inside it.
 
 
-**infra_bucket_name** — The bucket holds the Terraform state for the whole estate. Renaming it means migrating state by hand and re-initialising every checkout.
+**infra_bucket_name** — The bucket holds the Terraform state for the whole estate. Renaming it means migrating state by hand and re-initializing every checkout.
 
 
-**svc_iac_account** — Everything after init runs as this account and every provider block impersonates it. A different name is a new account, new grants, and a re-initialised backend.
+**svc_iac_account** — Everything after init runs as this account and every provider block impersonates it. A different name is a new account, new grants, and a re-initialized backend.
 
 
 **svc_iac_users_group** — Membership of this group is what lets a human operate the estate. Renaming it moves every member.
 
 
-**deployment_mode** — `satz migrate --mode cloud` moves it and re-initialises the backend; starting in cloud mode needs a bucket that does not exist yet.
+**deployment_mode** — `satz migrate --mode cloud` moves it and re-initializes the backend; starting in cloud mode needs a bucket that does not exist yet.
 
 
 **default_region** — Regional resources — the alerting bucket, sinks with a location — cannot move regions; a change recreates them.
@@ -166,11 +166,11 @@ _No resources — params and claims only._
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|
-| `core` | `organization_id` | `customer_organization_id` | The organisation id |
+| `core` | `organization_id` | `customer_organization_id` | The organization id |
 | `core` | `customer_domain` | `customer_domain` | The customer's primary domain |
 | `core` | `customer_shortname` | `customer_shortname` | The short name project ids, bucket names and group prefixes derive from |
 | `core` | `default_region` | `default_region` | The default region for regional resources |

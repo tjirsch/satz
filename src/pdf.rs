@@ -6,7 +6,7 @@
 //! likely to be handed was the one format that depended on two tools the operator
 //! had to install, and it failed on a machine that had neither.
 //!
-//! Typst is a typesetting engine written in Rust, so satz compiles the report
+//! Typst is a typesetting engine written in Rust, so satz typesets the report
 //! itself: markdown in, PDF bytes out, no process, no PATH, nothing to install. The
 //! fonts are embedded too — `assets/fonts/`, Libertinus Serif for text and DejaVu
 //! Sans Mono for code and the status glyphs a compliance table is full of — because
@@ -45,11 +45,11 @@ const PREAMBLE: &str = r#"#set page(paper: "a4", margin: (x: 1.8cm, y: 2cm), num
 /// an emphasised span is italic, and both at once is bold italic; a code span takes
 /// the weight and slant of whatever it sits in, so `` `code` `` inside a heading is
 /// bold monospace. A style whose face is absent is typeset in the nearest one that
-/// is present, with no diagnostic — so the square is complete rather than trimmed to
+/// is present, with no warning — so the square is complete rather than trimmed to
 /// what today's reports happen to reach.
 ///
 /// The files are the `typst-assets` crate's own, committed under `assets/fonts/`
-/// with the licence texts the OFL and the Bitstream licence ask a redistributor to
+/// with the license texts the OFL and the Bitstream license ask a redistributor to
 /// carry. What is left out is New Computer Modern, text and math: 7.3 MB of the
 /// 9.7 MB that crate bundles, and nothing a compliance report sets.
 const FACES: [(&str, &[u8]); 8] = [
@@ -63,7 +63,7 @@ const FACES: [(&str, &[u8]); 8] = [
     ("DejaVuSansMono-BoldOblique.ttf", include_bytes!("../assets/fonts/DejaVuSansMono-BoldOblique.ttf")),
 ];
 
-/// One Typst source, compiled with the fonts satz carries.
+/// One Typst source, transpiled with the fonts satz carries.
 struct Report {
     library: LazyHash<Library>,
     book: LazyHash<FontBook>,
@@ -161,7 +161,7 @@ fn first_error(errors: &[typst::diag::SourceDiagnostic]) -> String {
 /// Typst reads `#`, `*`, `_`, `` ` ``, `$`, `<`, `@` and the brackets as syntax, so
 /// text that carries them has to say so — otherwise a control id like `1.4` is
 /// fine but a member string like `serviceAccount:x@y` becomes a label reference and
-/// the document stops compiling.
+/// the document stops transpiling.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -511,7 +511,7 @@ mod tests {
 
     /// Typst syntax inside report text is text, not syntax: an estate is full of
     /// `serviceAccount:x@y`, `#` and `*`, and each of them would otherwise be a
-    /// function call, a label reference or emphasis — and usually a compile error.
+    /// function call, a label reference or emphasis — and usually a transpile error.
     #[test]
     fn typst_syntax_inside_the_text_is_escaped() {
         let t = markup("A member serviceAccount:svc-iac-001@acme-infra-001.iam.gserviceaccount.com and a #hash and 2 * 3 and a <tag>.\n");
@@ -586,7 +586,7 @@ mod tests {
         }
     }
 
-    /// The text a compiled page carries, with the face each run was set in, so a
+    /// The text a transpiled page carries, with the face each run was set in, so a
     /// header that is not repeated or not bold is caught where it happens — in the
     /// laid-out document, not in the markup.
     fn words(frame: &typst::layout::Frame, into: &mut Vec<(String, typst::text::FontWeight)>) {
@@ -614,11 +614,11 @@ mod tests {
             md.push_str(&format!(
                 "| ✓ | the question number {i} this estate has to answer before it is applied | `answer-{i}` | \
                  chosen for this estate | the resource is destroyed and made again and the running \
-                 organisation feels it |\n"
+                 organization feels it |\n"
             ));
         }
         let world = Report::new(format!("{}\n{}", PREAMBLE, markup(&md)));
-        let document = typst::compile::<PagedDocument>(&world).output.expect("the decisions sheet compiles");
+        let document = typst::compile::<PagedDocument>(&world).output.expect("the decisions sheet transpiles");
         assert!(document.pages().len() > 1, "one page: the table has to break for this to prove anything");
         for (n, page) in document.pages().iter().enumerate() {
             let size = page.frame.size();
@@ -638,7 +638,7 @@ mod tests {
     fn a_report_renders_to_a_pdf_without_anything_installed() {
         let md = "# satz evidence report\n\nCIS GCP 4.0, verified 2026-09-15.\n\n\
                   | control | verdict | witness | framework | scope |\n|---|---|---|---|---|\n\
-                  | 1.4 | ✓ satisfied | `google_org_policy_policy.sa_key` | CIS GCP 4.0 | the organisation |\n\
+                  | 1.4 | ✓ satisfied | `google_org_policy_policy.sa_key` | CIS GCP 4.0 | the organization |\n\
                   | 2.13 | ○ unmet | — | CIS GCP 4.0 | every project |\n\n\
                   - a list item with a `#` and an @ in it\n";
         let bytes = render(md).expect("renders");

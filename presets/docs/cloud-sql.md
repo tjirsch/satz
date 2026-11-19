@@ -13,7 +13,7 @@ first. Note the renumbering: public IP is §6.6 in 4.0 and §6.7 in 5.0, while
 authorized networks stays §6.5 in both.
 
 The constraint name and its shape were verified against a live
-organisation's OrgPolicy `ListConstraints`, not transcribed.
+organization's OrgPolicy `ListConstraints`, not transcribed.
 
 ## Use it
 
@@ -37,11 +37,11 @@ _None — the pack takes everything from the estate's params._
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_cloud_sql_hardening_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_cloud_sql_hardening_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 

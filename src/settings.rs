@@ -19,8 +19,8 @@ pub struct ToolConfig {
     pub yaml_dir: String,
     #[serde(default = "default_hcl_dir")]
     pub hcl_dir: String,
-    /// Where the estate's interfaces are written for the projects beside it: `common/`,
-    /// and one folder per project. satz rewrites it whole on every transpile.
+    /// Where the estate's interfaces are written for the workload estates beside it: `common/`,
+    /// and one folder per interface. satz rewrites it whole on every transpile.
     #[serde(default = "default_interfaces_dir")]
     pub interfaces_dir: String,
     #[serde(default = "default_include_dirs")]
@@ -438,7 +438,7 @@ mod path_resolution_tests {
 /// config resolves against the config's own directory, so either form makes the command
 /// location-independent. Without `--config`, `./config.toml` is it. The match below decides
 /// what happens when neither exists, and it has no wildcard arm on purpose: a new command
-/// does not compile until it says whether it can run outside an estate.
+/// does not transpile until it says whether it can run outside an estate.
 pub(crate) fn config_file_path(
     config: Option<&PathBuf>,
     cmd_choice: &Commands,

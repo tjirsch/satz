@@ -11,7 +11,7 @@ The other answer to "who gets told", for a customer whose security team works in
 Microsoft Sentinel, Defender for Cloud, Splunk or QRadar rather than in a mailbox.
 
 NEEDS `presets/scc/scc-notifications.satz`: this fragment attaches to the topic
-that pack creates and takes the same project. Used without it, the compile stops
+that pack creates and takes the same project. Used without it, the transpile stops
 with `unknown param 'scc_notification_project'`.
 
 TWO RESOURCES, AND THE SECOND IS THE ONE THAT IS FORGOTTEN. A pull subscription
@@ -70,7 +70,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `scc_siem_subscriber` | Which identity does the SIEM read findings as (a full IAM member, e.g. serviceAccount:sentinel-service-account@PROJECT.iam.gserviceaccount.com)? | edit | high | — |
 
-**scc_siem_subscriber** — Whoever holds this reads every finding in the organisation. For Microsoft Sentinel it is the service account the Sentinel pack creates; for Defender for Cloud the one its onboarding script names; for another SIEM whatever its connector authenticates as. There is no default, because a wrong one is a subscription the connector cannot read and findings that pile up until they expire.
+**scc_siem_subscriber** — Whoever holds this reads every finding in the organization. For Microsoft Sentinel it is the service account the Sentinel pack creates; for Defender for Cloud the one its onboarding script names; for another SIEM whatever its connector authenticates as. There is no default, because a wrong one is a subscription the connector cannot read and findings that pile up until they expire.
 
 
 ## Contributes

@@ -1,6 +1,6 @@
 // The smoke estate: one of everything the commands touch — the shipped CIS
 // and contacts packs, the monitoring packs at the top level, a group with a
-// member, org grants, a project with services and a bucket. Example values
+// member, organization grants, a project with services and a bucket. Example values
 // only (docs/examples.md).
 
 estate smoke
@@ -103,7 +103,7 @@ google_folder {
         billing_account = billing_account_infra
         project_service = [
           // The CIS pack claims CIS 5.0 §2.14 against this one, and `report-compliance`
-          // reads the organisation through it — `satz init` puts it in every estate.
+          // reads the organization through it — `satz init` puts it in every estate.
           "cloudasset.googleapis.com",
           "cloudbilling.googleapis.com",
           "cloudidentity.googleapis.com",
@@ -139,7 +139,7 @@ google_folder {
 use "presets/monitoring/organization-audit-logsink.satz"
 use "presets/monitoring/organization-cis-log-alerts-central.satz"
 
-// The IaC service account's roles for this estate's resource types (`satz update-prerequisites`).
+// The estate account's roles for this estate's resource types (`satz update-prerequisites`).
 google_billing_account_iam_member {
   billing_account_id = billing_account_infra
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [

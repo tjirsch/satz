@@ -8,7 +8,7 @@
 // authorized networks stays §6.5 in both.
 //
 // The constraint name and its shape were verified against a live
-// organisation's OrgPolicy `ListConstraints`, not transcribed.
+// organization's OrgPolicy `ListConstraints`, not transcribed.
 
 pack cis_extensions.cloud_sql version "1.4"
 params {
@@ -17,7 +17,7 @@ params {
 }
 
 notice cis_cloud_sql_hardening_adopted {
-  text     = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  text     = "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }

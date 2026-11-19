@@ -122,7 +122,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
         let role = if o.path == map_path {
             Role::Map
         } else if o.path == core_path {
-            findings.push(finding(1, format!("{}: the day-0 pack is no offer — every estate starts with it", at_map(o.line))));
+            findings.push(finding(1, format!("{}: the bootstrap pack is no offer — every estate starts with it", at_map(o.line))));
             continue;
         } else {
             Role::Pack
@@ -136,7 +136,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             )),
             (None, Role::Pack) => findings.push(finding(
                 2,
-                format!("{}: `{}` has no `when` — every offered pack is gated, so that a no never deploys", at_map(o.line), o.path),
+                format!("{}: `{}` has no `when` — every offered pack is gated, so that a no never creates anything", at_map(o.line), o.path),
             )),
             (Some(g), _) => match declared.get(g.as_str()).map(|d| d.as_slice()).unwrap_or_default() {
                 [] => findings.push(finding(
@@ -330,7 +330,7 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
 /// Check 9: a notice sits on a gated pack the map offers — it is shown when that pack is
 /// switched on — and its param is the notice's alone: declared by that pack only, asked
 /// by no question, no gate, and read by no file, because an acknowledgement is never
-/// emitted and binding it must change nothing a pack builds.
+/// written and binding it must change nothing a pack builds.
 fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BTreeMap<&str, Vec<(&str, usize, &Value)>>) -> Vec<Finding> {
     let mut out = Vec::new();
     // every param a library file reads, with the first file and line that reads it
@@ -371,7 +371,7 @@ fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BT
                 out.push(finding(9, format!("{} — its param is a pack's gate", at)));
             }
             if let Some(site) = reads.get(&x.param) {
-                out.push(finding(9, format!("{} — {} reads its param; an acknowledgement is never emitted, so nothing may read it", at, site)));
+                out.push(finding(9, format!("{} — {} reads its param; an acknowledgement is never written, so nothing may read it", at, site)));
             }
         }
     }
@@ -498,7 +498,7 @@ fn check(g: &PackGraph, contributed: &BTreeSet<(String, String)>) -> Vec<Finding
             out.push(finding(
                 6,
                 format!(
-                    "`{}` {} from {}, and its line comes before theirs — answering it yes stops the compile with `unknown param`",
+                    "`{}` {} from {}, and its line comes before theirs — answering it yes stops the transpile with `unknown param`",
                     consumer,
                     why,
                     placed.iter().map(|(p, _)| format!("`{}`", p)).collect::<Vec<_>>().join(", ")
@@ -598,7 +598,7 @@ fn kind(k: EdgeKind) -> &'static str {
 /// Check 5: the provider of every `data` or `gate` edge is an ancestor of its
 /// consumer in the interview — every question the provider's is asked under
 /// (`asks`, transitively) is one the consumer's is asked under too. A consumer asked
-/// where its provider cannot be would take a yes that stops the compile, since the
+/// where its provider cannot be would take a yes that stops the transpile, since the
 /// hidden provider stays off.
 fn provider_is_ancestor(g: &PackGraph) -> Vec<Finding> {
     let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
@@ -639,7 +639,7 @@ fn provider_is_ancestor(g: &PackGraph) -> Vec<Finding> {
     out
 }
 
-/// The pack graph an estate's presets arrived with, as the compile reads it: the menu-
+/// The pack graph an estate's presets arrived with, as the transpile reads it: the menu-
 /// dependent checks run over `Graph`, and the other two are one finding each.
 pub(crate) enum Shipped {
     /// the graph, and the presets folder it came from — the library files the pack logic
@@ -665,7 +665,7 @@ pub(crate) fn read(presets_dir: &Path) -> Result<Option<PackGraph>, BoxErr> {
         .map_err(|e| format!("{}: not a pack graph this satz reads ({}) — `satz self-update`, then `satz get-presets`", path.display(), e).into())
 }
 
-/// [`read`], for the compile: never an error, so the menu never stops a compile.
+/// [`read`], for the transpile: never an error, so the menu never stops a transpile.
 pub(crate) fn shipped(presets_dir: &Path) -> Shipped {
     match read(presets_dir) {
         Ok(Some(g)) => Shipped::Graph(g, presets_dir.to_path_buf()),
@@ -877,7 +877,7 @@ mod tests {
         let c = "pack c version \"1.0\"\n\nparams {\n  a_adopted = false\n}\n";
         let m3 = map("  use_a = true\n  use_c = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/c.satz\" {\n  when = use_c\n}\n");
         assert!(checks(&[("estate-map.satz", &m3), ("a.satz", a), ("c.satz", c)]).contains(&9));
-        // on the day-0 pack, which nothing switches on
+        // on the bootstrap pack, which nothing switches on
         let core = "pack estate_core version \"1.0\"\n\nparams {\n  x_adopted = false\n}\n\nnotice x_adopted {\n  text = \"t\"\n  run  = \"r\"\n}\n";
         assert_eq!(checks(&[("estate-map.satz", &map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n")), ("a.satz", A), ("estate-core.satz", core)]), vec![9]);
     }

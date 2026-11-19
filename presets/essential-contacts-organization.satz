@@ -15,7 +15,7 @@
 pack essential_contacts_organization version "1.4"
 
 params {
-  // The org-wide contact address receiving ALL Google notifications.
+  // The organization-wide contact address receiving ALL Google notifications.
   essential_contacts_email = "essential-contacts-all@{customer_domain}"
 
   // Per-category addresses for the commented contacts below. Defaults are
@@ -30,7 +30,7 @@ params {
 }
 
 question essential_contacts_email {
-  prompt   = "The address that receives every Google notification for the organisation (a group, never a person)"
+  prompt   = "The address that receives every Google notification for the organization (a group, never a person)"
   why      = "Suspension notices, security advisories and legal notices go here and nowhere else. The mailbox must exist and accept external mail; a wrong address means Google's warnings are read by nobody until the consequence arrives."
   reversal = edit
   blast    = high
@@ -66,7 +66,7 @@ all {
 // }
 //
 // SECURITY — urgent security and privacy issues affecting resources or the
-// account (abuse reports, leaked credentials, vulnerability notices).
+// account (abuse reports, leaked keys, vulnerability notices).
 // security {
 //   parent = "organizations/{customer_organization_id}"
 //   email = essential_contacts_security_email
@@ -92,7 +92,7 @@ all {
 // }
 //
 // PRODUCT_UPDATES — changes to Google Cloud products and services
-// (deprecations, feature launches). Low urgency; often the platform team.
+// (deprecations, feature launches). Low urgency; often the organization's team.
 // product_updates {
 //   parent = "organizations/{customer_organization_id}"
 //   email = essential_contacts_product_email

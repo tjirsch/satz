@@ -4,7 +4,7 @@
 //! number of project Y" — both live here, as do the two creations bootstrap
 //! performs. Folder listing is paginated: `folders.list` returns at most 300
 //! per page, and the first version of `bootstrap` read only the first page, so
-//! an org with many folders under one parent could miss an existing folder and
+//! an organization with many folders under one parent could miss an existing folder and
 //! fall through to creating it.
 
 use super::ApiError;
@@ -121,12 +121,12 @@ pub(crate) async fn get_project_number(
     Ok(project.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
 }
 
-/// The organisation a folder or a project hangs under, `organizations/<n>`, read
+/// The organization a folder or a project hangs under, `organizations/<n>`, read
 /// by walking `parent` up one `folders.get` / `projects.get` at a time. A
-/// resource with no organisation above it, a chain deeper than Resource Manager
+/// resource with no organization above it, a chain deeper than Resource Manager
 /// allows, and every failed read are errors naming where the walk stopped.
 pub(crate) async fn organization_of(client: &reqwest::Client, token: &str, name: &str) -> Result<String, String> {
-    // ten folder levels, the project, and the organisation
+    // ten folder levels, the project, and the organization
     const MAX_HOPS: usize = 12;
     let mut at = name.to_string();
     for _ in 0..MAX_HOPS {
@@ -134,7 +134,7 @@ pub(crate) async fn organization_of(client: &reqwest::Client, token: &str, name:
             return Ok(at);
         }
         if !(at.starts_with("folders/") || at.starts_with("projects/")) {
-            return Err(format!("{} is neither a folder, a project nor an organisation", at));
+            return Err(format!("{} is neither a folder, a project nor an organization", at));
         }
         let res = client.get(format!("{}/{}", BASE, at)).bearer_auth(token).send().await.map_err(|e| format!("{}: {}", at, e))?;
         if !res.status().is_success() {
@@ -143,10 +143,10 @@ pub(crate) async fn organization_of(client: &reqwest::Client, token: &str, name:
         let body: serde_json::Value = res.json().await.map_err(|e| format!("{}: {}", at, e))?;
         at = match body.get("parent").and_then(|v| v.as_str()).filter(|p| !p.is_empty()) {
             Some(parent) => parent.to_string(),
-            None => return Err(format!("{} has no parent: it belongs to no organisation", at)),
+            None => return Err(format!("{} has no parent: it belongs to no organization", at)),
         };
     }
-    Err(format!("{}: no organisation within {} levels above it", name, MAX_HOPS))
+    Err(format!("{}: no organization within {} levels above it", name, MAX_HOPS))
 }
 
 /// Poll a long-running operation until it reports `done`, or the deadline

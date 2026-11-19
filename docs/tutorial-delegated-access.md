@@ -1,57 +1,59 @@
 # Delegated access: the procedure for both sides
 
-**Delegated access** gives a team access to a part of the organisation's resources — a
-folder, a project — with scoped permissions: an account of its own that holds roles there
-and nowhere else, and cannot widen them.
+**Delegated access** gives a team access to a part of the organization's resources — a
+folder, a project — with scoped permissions: an estate account of its own that holds roles
+there and nowhere else, and cannot widen them.
 
-Two teams meet here. The **organisation team** owns the organisation's estate and may
-change it. The **workload team** builds something beside it — in its own repository, with
-its own state — and must never run as the organisation's account. This page is the
-process between them, step by step and by side: what the workload team asks for, what the
-organisation team decides and creates, what is handed over, and what each does next.
+Two teams meet here. The **organization's team** owns the organization's estate and may
+change it. The **workload's team** builds something beside it — in its own repository, with
+its own state — and must never run as the organization's estate account. This page is the
+process between them, step by step and by side: what the workload's team asks for, what the
+organization's team decides and creates, what is copied to the workload's team, and what
+each does next.
 
 It is a procedure to follow, not a walk through the language.
-[Projects beside the organisation](tutorial-projects.md) explains the packs and shows
+[Workload estates beside the organization](tutorial-projects.md) explains the packs and shows
 every file; the [library](../presets/README.md#delegationsatz) lists every field. The
 example is Acme Corp. of [`docs/examples.md`](examples.md) and its teams `shop` and
 `payments`.
 
 ## The process
 
-![Two lanes, the organisation team and the workload team, and nine steps: the workload team asks; the organisation team decides, writes the entries, plans and applies, and hands over the interface folders; the workload team sets up its estate, compiles, joins the group and logs in, then plans and applies as its own account. A dashed arrow leads from the compile back to the decision: something is not delegated, ask for it](delegated-access-first.svg)
+![Two lanes, the organization's team and the workload's team, and nine steps: the workload's team asks; the organization's team decides, writes the entries, plans and applies, and copies the interface folders to the workload's team; the workload's team sets up its workload estate, transpiles, joins the estate account user group and signs in, then plans and applies as its own estate account. A dashed arrow leads from the transpile back to the decision: something is not delegated, ask for it](delegated-access-first.svg)
 
-A dashed box is a step people do: a conversation, a decision, a hand-over. A solid box is
+A dashed box is a step people do: a conversation, a decision, copying folders. A solid box is
 a step done with satz. The numbers are the sections below.
 
 Three things are true throughout:
 
-- **Nothing secret changes hands.** No key, no password. What is handed over is a few
-  folders of generated files that hold names and what was granted.
-- **The right to act as the account comes from a group.** The organisation's estate names
-  the group; who is in it is decided in the directory, not in satz.
+- **Nothing secret changes hands.** No key, no password. What is copied is a few
+  interface folders that hold names and what was granted.
+- **The right to act as the estate account comes from a group.** The organization's estate
+  names the estate account user group; who is in it is decided in the directory, not in satz.
 - **The account cannot widen what it was given.** What it lacks, the team asks for.
 
 ## What a delegation is
 
-A **delegation** is one identity for one team, and the places that identity works in. It
-has two parts, and each is an entry in a list of the organisation's estate.
+A **delegation** is one account for one team, and the delegated resources that account
+works in. It has two parts, and each is an entry in a list of the organization's estate.
 
 | part | list, pack | one entry creates |
 |---|---|---|
-| the base: the identity | `delegations`, [`presets/delegation.satz`](../presets/README.md#delegationsatz) | an infrastructure project `acme-deploy-<name>`, in it the account `svc-deploy-<name>` and the state bucket `acme-deploy-<name>-state`, and the right of one group to act as the account |
-| a target: a folder | `delegated_folders`, [`presets/delegated-folders.satz`](../presets/README.md#delegated-folderssatz) | a folder the account may create folders and projects in |
-| a target: a project | `delegated_projects`, [`presets/delegated-projects.satz`](../presets/README.md#delegated-projectssatz) | a Google project `acme-<name>-001` the account may fill |
+| the base: the estate account | `delegations`, [`presets/delegation.satz`](../presets/README.md#delegationsatz) | an infrastructure project `acme-deploy-<name>`, in it the estate account `svc-deploy-<name>` and the state bucket `acme-deploy-<name>-state`, and the right of its estate account user group to act as the estate account |
 
-Every target entry names its base: `delegation = "<name>"`. One base has any number of
-targets, of either kind.
+| a delegated resource: a delegated folder | `delegated_folders`, [`presets/delegated-folders.satz`](../presets/README.md#delegated-folderssatz) | a folder the account may create folders and projects in |
+| a delegated resource: a delegated project | `delegated_projects`, [`presets/delegated-projects.satz`](../presets/README.md#delegated-projectssatz) | a Google project `acme-<name>-001` the account may fill |
+
+Every entry of a delegated resource names its base: `delegation = "<name>"`. One base has
+any number of delegated resources, of either kind.
 
 **Every delegation has an infrastructure project of its own.** The account and the state
 bucket stand in it, never in a project the team fills. A delegated project holds no
 account, no state bucket and no group: it is worked by the account of the delegation its
 entry names. Two things follow for the team:
 
-- **The team's calls are billed to the infrastructure project.** Every call the team's
-  plan makes to a Google API is counted against `acme-deploy-<name>`, so the API has to
+- **The account's calls are billed to the delegation's infrastructure project.** Every call
+  the workload estate's plan makes to a Google API is counted against `acme-deploy-<name>`, so the API has to
   be enabled there. The team does not own that project. An API its calls need beyond the
   standard six is asked for (step 1) and written into `apis` of the delegation's entry.
 - **An API a resource needs inside a delegated project the team enables there itself**,
@@ -59,40 +61,40 @@ entry names. Two things follow for the team:
 
 The three cases of this page:
 
-| the workload team | the organisation writes | what the team gets |
+| the workload's team | the organization writes | what the team gets |
 |---|---|---|
-| rolls out its own projects, as many as it needs | one entry in `delegations`, one in `delegated_folders` per folder | an account, a state bucket, and one or more folders it may create projects in |
+| creates its own projects, as many as it needs | one entry in `delegations`, one in `delegated_folders` per folder | an estate account, a state bucket, and one or more folders it may create projects in |
 | works in one project it is given | one entry in `delegations`, one in `delegated_projects` | an account, a state bucket, and the project |
 | works in several projects with one account | one entry in `delegations`, one in `delegated_projects` per project | an account, a state bucket, and the projects |
 
-A delegation and one of its targets may share a name: the project `payments` of the
-delegation `payments`. Two targets may not: a folder and a project of one name would be
-one hand-over folder.
+A delegation and one of its delegated resources may share a name: the project `payments`
+of the delegation `payments`. Two delegated resources may not: a folder and a project of one name would be
+one interface folder.
 
-## 1. Workload team: ask
+## 1. Workload's team: ask
 
-Bring this to the conversation. Everything on it ends up in the organisation's estate,
+Bring this to the conversation. Everything on it ends up in the organization's estate,
 so the clearer it is, the fewer rounds.
 
 | what | example | why it is asked |
 |---|---|---|
 | a name for the delegation | `shop` | it names the account `svc-deploy-shop`, its infrastructure project and its bucket: lowercase letters, digits and `-`, starting with a letter |
-| the group that may act as the account | `gcp-shop-admins@example.com` | its members run the plans; it must exist in the directory |
+| the estate account user group, whose members may act as the estate account | `gcp-shop-admins@example.com` | its members run the plans; it must exist in the directory |
 | the folders it works in, or the projects it needs | one folder `shop` under `Workloads` | the account gets its rights there and nowhere else |
 | APIs its calls need beyond the standard six | `pubsub.googleapis.com`, `billingbudgets.googleapis.com` | the calls are billed to the delegation's infrastructure project, and the team cannot enable an API on a project it does not own |
 | a budget for its own project or folder | `budgets = true` | the team cannot grant itself anything on the billing account; this gives it budgets for its own scope and nothing else |
 | billing roles beyond linking a project | rarely: `roles/billing.costsManager` covers every project's budgets and costs | prefer `budgets = true` above |
 
 The standard six APIs are `cloudbilling`, `cloudresourcemanager`, `iam`, `iamcredentials`,
-`serviceusage` and `storage`, each `.googleapis.com`. Every resource type the team's
+`serviceusage` and `storage`, each `.googleapis.com`. Every resource type the workload
 estate declares calls one API; that API is one of the six, or it is asked for.
 
 If the team does not know the last three yet, it asks without them. Step 7 names exactly
 what is missing, and the second diagram below is the round that adds it.
 
-## 2. Organisation team: decide
+## 2. Organization's team: decide
 
-- **Which targets**, by the table above: folders, projects, or both.
+- **Which delegated resources**, by the table above: folders, projects, or both.
 - **Where the folders or projects go.** A folder is created under the workload folder
   unless the entry names another parent. A delegation's folders need no common root.
   Every delegated project is created in one folder, `delegated_projects_folder`.
@@ -101,7 +103,7 @@ what is missing, and the second diagram below is the round that adds it.
 - **Whether the extra APIs and billing roles are justified.** They are the only things
   that go beyond the packs' defaults.
 - **What should hold inside a folder.** The account may create projects and set their
-  access there. Limits inside the folder are organisation policies the organisation's
+  access there. Limits inside the folder are organization policies the organization's
   estate sets on that folder.
 
 What the account will and will not be able to do is in the packs' reference:
@@ -109,7 +111,7 @@ What the account will and will not be able to do is in the packs' reference:
 [`delegated-folders`](../presets/README.md#delegated-folderssatz),
 [`delegated-projects`](../presets/README.md#delegated-projectssatz).
 
-## 3. Organisation team: write the entries
+## 3. Organization's team: write the entries
 
 Once per estate, the library copy and the packs' switches:
 
@@ -130,7 +132,7 @@ projects are created in.
 Then the entries. `satz add-entry <estate> <list> <field>=<value>…` adds one entry to a
 list: it checks the fields and their patterns against the pack's declaration, refuses a
 name the list already holds, writes the entry into `params { }` of the estate, and keeps
-it only when the estate compiles. Below each command is what it writes, for a reader who
+it only when the estate transpiles. Below each command is what it writes, for a reader who
 edits the file instead. Pick the case.
 
 **A team with folders.** The delegation `shop` and one folder:
@@ -186,7 +188,7 @@ params {
 ```
 
 An entry that names a delegation no entry of `delegations` declares is refused by the
-compile, which lists the accounts that exist. A delegation needs no folder: an account
+transpile, which lists the accounts that exist. A delegation needs no folder: an account
 that works in projects only has entries in `delegated_projects` and none in
 `delegated_folders`.
 
@@ -232,7 +234,7 @@ satz add-entry C0example.satz delegated_projects name=payments delegation=paymen
 `add-entry` adds an entry. Changing one — an API more on a delegation that exists — or
 removing one is an edit of the estate file.
 
-## 4. Organisation team: plan, read, apply
+## 4. Organization's team: plan, read, apply
 
 ```bash
 satz transpile C0example.satz --plan
@@ -243,14 +245,15 @@ Read the plan before the apply. For the delegation `shop` with one folder it sho
 
 | in the plan | what it is |
 |---|---|
-| a Google project `acme-deploy-shop`, a service account `svc-deploy-shop`, a bucket `acme-deploy-shop-state` | the delegation's infrastructure project: where the team's calls are billed, what its plans run as, where its state lives |
+| a Google project `acme-deploy-shop`, a service account `svc-deploy-shop`, a bucket `acme-deploy-shop-state` | the delegation's infrastructure project: where the account's calls are billed, what the workload estate's plans run as, where its state lives |
 | a folder `Shop` | where the team builds |
 | six role grants on the folder `Shop`, and none on `Workloads` | project and folder creation, project access, APIs — on its own folder only |
-| one grant on the billing account, one on the organisation (`roles/browser`) | linking a new project; looking a folder up by its name |
-| grants for the group on the account and on the infrastructure project | the members may act as the account, and read its project |
+| one grant on the billing account, one on the organization (`roles/browser`) | linking a new project; looking a folder up by its name |
+| grants for the estate account user group on the estate account and on the infrastructure project | the members may act as the estate account, and read its project |
+
 
 For the delegation `payments` with one project the first, fourth and fifth rows are the
-same with `payments` in the names, and the target is:
+same with `payments` in the names, and the delegated project is:
 
 | in the plan | what it is |
 |---|---|
@@ -260,9 +263,10 @@ same with `payments` in the names, and the target is:
 A grant on a folder the teams share, or a role that sets a folder's access, is not in
 that plan. If one is, stop: something other than the packs wrote it.
 
-## 5. Organisation team: hand over
+## 5. Organization's team: copy the interface folders
 
-Every transpile writes `interfaces/outgoing/` beside the estate. Hand over these folders, whole:
+Every transpile writes `interfaces/outgoing/` beside the estate. Copy these folders, whole, to
+the workload's team:
 
 | case | folders |
 |---|---|
@@ -270,40 +274,41 @@ Every transpile writes `interfaces/outgoing/` beside the estate. Hand over these
 | a team with one project | `interfaces/outgoing/delegation-payments/` and `interfaces/outgoing/payments/` |
 | one account working in several projects | `interfaces/outgoing/delegation-data/` and one per project, `interfaces/outgoing/data-lake/` and `interfaces/outgoing/data-mart/` |
 
-`delegation-<name>/` is the delegation's own folder: the account, the infrastructure
-project, the state bucket, the group. Each other folder is one target. A copy is enough;
-so is read access to the organisation's repository at a tag.
+`delegation-<name>/` is the delegation's own folder: the estate account, the infrastructure
+project, the state bucket, the estate account user group. Each other folder is one delegated resource. A copy is enough;
+so is read access to the organization's repository at a tag.
 
 The two halves of `interfaces/` are the two directions: `outgoing/` is what an estate
 publishes, removed and written whole by every transpile; `incoming/` is what it was
-given, and no transpile writes there. The organisation's
-`interfaces/outgoing/payments/` is the team's `interfaces/incoming/payments/`. The team
-needs nothing else of the organisation's: not its estate file, not its library, not its
+given, and no transpile writes there. The organization's
+`interfaces/outgoing/payments/` is the workload repository's
+`interfaces/incoming/payments/`. The workload's team needs nothing else of the organization's: not its estate file, not its library, not its
 state.
 
 **The folders explain themselves.** Each has a `README.md` that satz writes for the team
 that receives it. In the delegation's own folder, "Delegated access: what you were given"
-says which account the team's estate runs as, which group's members may act as it and
-what that group holds on the account, which project its calls are billed to, where the
+says which estate account the workload estate runs as, which estate account user group's
+members may act as it and what that group holds on the account, which infrastructure project its calls are billed to, where the
 state lives, which billing account a new project is linked to, what the account holds on
-the billing account, and which APIs are on. In a target's folder it says which folder or
-project to build in and what the account holds there. Under "What to do with it" each
+the billing account, and which APIs are on. In a delegated resource's folder it says which delegated
+folder or delegated project to build in and what the account holds there. Under "What to do with it" each
 lists the team's next steps, and the first is the command of step 6. Nothing else has to
-be written down for the hand-over.
+be written down to copy the folders.
+
 
 Say one thing with it: the folders are taken again after every change of the
-organisation.
+organization.
 
-## 6. Workload team: set up the estate
+## 6. Workload's team: set up the estate
 
-In the team's own repository, which is empty, with the folders of step 5 within reach:
+In the workload repository, which is empty, with the folders of step 5 within reach:
 
 ```bash
-satz init --from <the organisation>/interfaces/outgoing/delegation-shop <the organisation>/interfaces/outgoing/shop
+satz init --from <the organization>/interfaces/outgoing/delegation-shop <the organization>/interfaces/outgoing/shop
 ```
 
 `init --from` takes the delegation's own interface folder and the interface folder of
-every place the estate works in. Exactly one of the folders is a delegation's own: an
+every delegated resource the estate works in. Exactly one of the folders is a delegation's own: an
 estate runs as one account. It copies each folder into `interfaces/incoming/` unless it
 stands there already, fetches the provider schemas, and writes the workload estate under
 the delegation's name:
@@ -340,7 +345,7 @@ use "interfaces/incoming/shop/shop/satz/interface.satz"
 ```
 
 Below these it writes the `gcs` backend on the bucket and the providers on the
-infrastructure project, and at the end, as a comment, the read for each place: `folder_id
+infrastructure project, and at the end, as a comment, the read for each delegated resource: `folder_id
 = "${{interface.shop.delegated_folder}}"`. The team adds what it builds:
 
 ```
@@ -358,10 +363,10 @@ google_project {
 **A value is read by the name of its interface folder**,
 `${{interface.<folder>.<value>}}`: the delegated folder from `shop`, the billing account
 from `delegation-shop`. The name is the folder's name under `interfaces/incoming/`.
-`customer_shortname` is written without a folder's name because the organisation says it
+`customer_shortname` is written without a folder's name because the organization says it
 once: every interface folder carries it with the same content, and such a value — the
 short name, the domain, the default region — is read as `${{interface.<value>}}`
-([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-workload-estates-beside-it)).
 
 Everything a team with a folder creates stands under
 `${{interface.shop.delegated_folder}}`.
@@ -369,23 +374,24 @@ Everything a team with a folder creates stands under
 **A team with one project** names its two folders the same way:
 
 ```bash
-satz init --from <the organisation>/interfaces/outgoing/delegation-payments <the organisation>/interfaces/outgoing/payments
+satz init --from <the organization>/interfaces/outgoing/delegation-payments <the organization>/interfaces/outgoing/payments
 ```
 
 Its resources name the project as `project = "${{interface.payments.project_id}}"`, and
 an API a resource needs inside the project is a `google_project_service` there.
 
-**One account, several places.** One estate works in any number of delegated folders and
-projects: `init --from` takes the delegation's own interface folder and one per place.
+**One account, several delegated resources.** One estate works in any number of delegated
+folders and projects: `init --from` takes the delegation's own interface folder and one
+per delegated resource.
 The delegation `data` with the projects `data-lake` and `data-mart`:
 
 ```bash
-satz init --from <the organisation>/interfaces/outgoing/delegation-data <the organisation>/interfaces/outgoing/data-lake <the organisation>/interfaces/outgoing/data-mart
+satz init --from <the organization>/interfaces/outgoing/delegation-data <the organization>/interfaces/outgoing/data-lake <the organization>/interfaces/outgoing/data-mart
 ```
 
 This writes `satz/data.satz` with three `use` lines. It runs as `svc-deploy-data` and
 keeps its state under `data/state` in the delegation's bucket. Its last lines are the
-read for each place:
+read for each delegated resource:
 
 ```
 use "interfaces/incoming/delegation-data/delegation-data/satz/interface.satz"
@@ -393,8 +399,8 @@ use "interfaces/incoming/data-lake/data-lake/satz/interface.satz"
 use "interfaces/incoming/data-mart/data-mart/satz/interface.satz"
 
 // The estate's own resources. A value is read by the name of its interface folder:
-//   in the project `data-lake`:    project   = "${{interface.data-lake.project_id}}"
-//   in the project `data-mart`:    project   = "${{interface.data-mart.project_id}}"
+//   in the delegated project `data-lake`:    project   = "${{interface.data-lake.project_id}}"
+//   in the delegated project `data-mart`:    project   = "${{interface.data-mart.project_id}}"
 ```
 
 Each resource says which project it stands in by the folder's name:
@@ -423,21 +429,21 @@ estate, written by its own `init --from`; `--name` names an estate, which otherw
 the delegation's name, and two estates of one delegation keep their states apart in the
 delegation's bucket, each under its own name.
 
-## 7. Workload team: compile
+## 7. Workload's team: transpile
 
 ```bash
 satz transpile shop.satz --check
 ```
 
-The compile judges the estate against what was delegated. It is quiet when everything
-the estate needs was handed over. Otherwise each line says who closes it:
+The transpile judges the estate against what was delegated. It is quiet when everything
+the estate needs was delegated. Otherwise each line says who closes it:
 
 | the line says | who acts | what to do |
 |---|---|---|
-| `… on the delegated folders` | organisation team | ask for the role; it is added to the folder roles, `delegated_folders_roles` |
-| `… on the billing account` | organisation team | ask for it in `billing_roles` of the delegation's entry |
-| `… API(s) … not enabled on …, the project its calls are billed to` | organisation team | ask for it in `apis` of the delegation's entry: the project is the delegation's infrastructure project |
-| `… on the project — to grant in this estate` | workload team | write the grant in this estate (below) |
+| `… on the delegated folders` | organization's team | ask for the role; it is added to the folder roles, `delegated_folders_roles` |
+| `… on the billing account` | organization's team | ask for it in `billing_roles` of the delegation's entry |
+| `… API(s) … not enabled on …, the project its calls are billed to` | organization's team | ask for it in `apis` of the delegation's entry: the project is the delegation's infrastructure project |
+| `… on the project — to grant in this estate` | workload's team | write the grant in this estate (below) |
 | `… outside the project` | nobody: this account does not get it | build it another way, or ask for a folder |
 
 The one gap a team closes itself is a role on a project it was given, because its account
@@ -452,18 +458,18 @@ google_project_iam_member {
 }
 ```
 
-**An estate with several places.** The compile does not judge which place a resource
-stands in. A role counts as delegated when it was delegated on every place of its kind —
+**An estate with several delegated resources.** The transpile does not judge which of them
+a resource stands in. A role counts as delegated when it was delegated on every one of its kind —
 on every delegated project the estate uses, on every delegated folder — and budgets count
 as delegated when every interface folder that speaks of budgets says yes. A role the
 account holds on one project and lacks on another is reported.
 
 `satz update-prerequisites shop.satz --report-only` prints the same as a list, with what
-was delegated. Nothing at the organisation is ever proposed, and `satz update-prerequisites`
-writes no grant for a team's estate. `--apply` is refused while an API is missing.
+was delegated. Nothing at the organization is ever proposed, and `satz update-prerequisites`
+writes no grant for a workload estate. `--apply` is refused while an API is missing.
 
-A note `presets/pack-graph.json is not here` is about the organisation's pack library,
-which a team's repository does not hold. It asks nothing of the team.
+A note `presets/pack-graph.json is not here` is about the organization's preset library,
+which a workload repository does not hold. It asks nothing of the team.
 
 **Workload packs.** What a team builds can come as a pack: `satz packs --format text --out -`
 lists the ones the satz repository holds and says what each needs — a delegated folder or
@@ -479,15 +485,15 @@ satz get-pack project-budget
 use "packs/project-budget.satz"
 ```
 
-**A pack may switch on the APIs it adds.** The organisation switched on the standard ones
-(the hand-over folder lists them); a pack declares the others in the project itself, and
-the account's role on its project allows it. Declaring one the organisation already
+**A pack may switch on the APIs it adds.** The organization switched on the standard ones
+(the interface folder lists them); a pack declares the others in the project itself, and
+the account's role on its project allows it. Declaring one the organization already
 switched on is reported: two estates would own one switch.
 
-## 8. Workload team: be in the group, and log in
+## 8. Workload's team: be in the group, and sign in
 
-Whoever runs the plan is a member of the group from step 1 — added in the directory, by
-whoever administers it — and logged in:
+Whoever runs the plan is a member of the estate account user group from step 1 — added in
+the directory, by whoever administers it — and signed in:
 
 ```bash
 gcloud auth application-default login
@@ -501,7 +507,7 @@ A workload that creates Google groups needs one more thing no satz file grants: 
 Admin role for its account, assigned in the Google admin console by a directory
 administrator.
 
-## 9. Workload team: plan, read, apply
+## 9. Workload's team: plan, read, apply
 
 ```bash
 satz transpile shop.satz --plan
@@ -509,35 +515,36 @@ satz transpile shop.satz --apply
 ```
 
 The plan looks the folder up live, creates `acme-shop-dev` in it and links the billing
-account. The team's account is the owner of every project it creates.
+account. The delegation's account is the owner of every project it creates.
 
 ## Afterwards
 
-![Two lanes and two cases. A, the team needs more: the compile names the gap, the team asks for it, the organisation team edits the entry, plans and applies and hands the folders over again, the team takes them again and compiles. B, the organisation changed: an apply changes a published value and satz writes CHANGES.md into the interface folder, the organisation team tells the teams or lets the change notice do it, the team takes the folders again, reads CHANGES.md, compiles and plans](delegated-access-later.svg)
+![Two lanes and two cases. A, the team needs more: the transpile names the gap, the team asks for it, the organization's team edits the entry, plans and applies and copies the folders to the team again, the team takes them again and transpiles. B, the organization changed: an apply changes an export and satz writes CHANGES.md into the interface folder, the organization's team tells the teams or lets the change notice do it, the team takes the folders again, reads CHANGES.md, transpiles and plans](delegated-access-later.svg)
 
-**A. The team needs more.** The compile says what, and which list takes it (step 7). The
-organisation team edits the delegation's entry — an API, a billing role — or adds one
+**A. The team needs more.** The transpile says what, and which list takes it (step 7). The
+organization's team edits the delegation's entry — an API, a billing role — or adds one
 more folder or project with `satz add-entry`, plans, applies, and hands the folders over
-again. The team replaces its copies under `interfaces/incoming/` and compiles: the line
-is gone. A further target is a further folder to take and a further estate (step 6).
+again. The team replaces its copies under `interfaces/incoming/` and transpiles: the line
+is gone. A further delegated resource is a further interface folder to take and a further estate (step 6).
 
-**B. The organisation changed.** A transpile that changes a published value writes
+**B. The organization changed.** A transpile that changes an export writes
+
 `CHANGES.md` into the interface folder, with what a reader does about it. The team takes
-the folders again, reads it, compiles and plans. The organisation team tells the teams, or
+the folders again, reads it, transpiles and plans. The organization's team tells the teams, or
 switches on the change notice that does
 ([`presets/interface-notice.satz`](../presets/README.md#interface-noticesatz)).
 
-**Taking a delegation away** is the organisation team's, and it is not an edit like the
+**Taking a delegation away** is for the organization's team, and it is not an edit like the
 others: removing an entry destroys what the pack created for it — for a delegation the
 infrastructure project with the account and the state bucket with every state in it, for
-a target the project, or the folder once it is empty. The team removes what it built
+a delegated resource the project, or the folder once it is empty. The team removes what it built
 first.
 
 ## The written route
 
-Steps 1 to 3 can be done in writing instead. The workload team puts its entries into a
-small file of its own, checks it against the organisation's estate, and sends it as a pull
-request to the organisation's repository; merging it is the decision of step 2.
+Steps 1 to 3 can be done in writing instead. The workload's team puts its entries into a
+small file of its own, checks it against the organization's estate, and sends it as a pull
+request to the organization's repository; merging it is the decision of step 2.
 
 ```
 pack shop_request version "1.0"
@@ -553,18 +560,19 @@ satz check-request shop_request.satz C0example.satz
 ```
 
 A project is asked for the same way, as `contributes_delegated_projects`. Nothing takes
-effect before the organisation team merges and applies. Steps 4 to 9 are the same.
+effect before the organization's team merges and applies. Steps 4 to 9 are the same.
 
 ## Who does what
 
-| | organisation team | workload team |
+| | organization's team | workload's team |
 |---|---|---|
-| decides what an account can reach | yes | asks |
-| creates the delegation's infrastructure project, its account and bucket, and the folders or projects | yes, with the packs | no |
-| names the group that may act as the account | yes | proposes it |
+| decides what an estate account can reach | yes | asks |
+| creates the delegation's infrastructure project, its estate account and bucket, and the folders or projects | yes, with the packs | no |
+| names the estate account user group | yes | proposes it |
 | puts people into that group | whoever administers the directory | whoever administers the directory |
-| hands over | the interface folders, after every change; their READMEs are the instructions | — |
-| writes the team's estate | no | yes, with `satz init --from` |
+| copies to the workload's team | the interface folders,
+ after every change; their READMEs are the instructions | — |
+| writes the workload estate | no | yes, with `satz init --from` |
 | creates projects in a delegated folder | no | yes |
 | grants roles on a project the team was given | no | yes, in its own estate |
 | adds an API on the infrastructure project, a billing role, a folder, a project, `budgets = true` | yes, on request | asks |

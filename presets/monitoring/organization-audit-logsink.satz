@@ -11,7 +11,7 @@ params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"
   logsink_project_id           = "{customer_shortname}-log-infra-001"
   // The folder the archive project is created in. Empty says nothing and the
-  // project is created under the organisation. A folder the estate declares is
+  // project is created under the organization. A folder the estate declares is
   // named by reference, `google_folder.<label>.name`; one that already exists by
   // its id, `"123456789012"`.
   logsink_project_folder       = ""
@@ -39,16 +39,16 @@ question logsink_project_id {
 }
 
 question logsink_project_folder {
-  prompt   = "The folder the audit-archive project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
-  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
+  prompt   = "The folder the audit-archive project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization"
+  why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone; an estate `satz init` wrote has its infrastructure folder as `google_folder.infra_folder.name`. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
   reversal = edit
   blast    = low
-  empty    = "the organisation itself; the project is created directly under it"
+  empty    = "the organization itself; the project is created directly under it"
 }
 
 question logsink_bucket_name {
   prompt   = "The archive bucket's name (globally unique)"
-  why      = "The bucket holds the organisation's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence."
+  why      = "The bucket holds the organization's audit history. Renaming it means a new bucket and copying the archive by hand, or losing continuity of the evidence."
   reversal = recreate
   blast    = high
 }
@@ -68,7 +68,7 @@ question logsink_retention_days {
 }
 
 // 0) The destination project. `logsink_project_folder` says the folder it is
-//    created in; left empty, it is created under the organisation.
+//    created in; left empty, it is created under the organization.
 google_project {
   logsink_project {
     project_id      = logsink_project_id
@@ -83,7 +83,7 @@ google_project {
   }
 }
 
-// 1) Data Access audit logs, org-wide, all services.
+// 1) Data Access audit logs, organization-wide, all services.
 google_organization_iam_audit_config {
   org_all_services {
     org_id  = customer_organization_id
@@ -148,7 +148,7 @@ claim "cis-gcp" "4.0" "2.1" implements {
   gcloud_check = [
     "gcloud organizations get-iam-policy ORGANIZATION_ID --format='yaml(auditConfigs)'",
   ]
-  risk = "Data Access audit logs are off by default, so reads and writes of the organisation's data leave no record."
+  risk = "Data Access audit logs are off by default, so reads and writes of the organization's data leave no record."
 }
 claim "cis-gcp" "5.0" "2.1" implements {
   resources      = ["google_organization_iam_audit_config.org_all_services"]
@@ -161,7 +161,7 @@ claim "cis-gcp" "5.0" "2.1" implements {
   gcloud_check = [
     "gcloud organizations get-iam-policy ORGANIZATION_ID --format='yaml(auditConfigs)'",
   ]
-  risk = "Data Access audit logs are off by default, so reads and writes of the organisation's data leave no record."
+  risk = "Data Access audit logs are off by default, so reads and writes of the organization's data leave no record."
 }
 
 claim "cis-gcp" "4.0" "2.2" implements {
@@ -170,7 +170,7 @@ claim "cis-gcp" "4.0" "2.2" implements {
     "google_storage_bucket.org_audit_logs",
     "google_storage_bucket_iam_member.org_audit_sink_writer",
   ]
-  interpretation = "Aggregated org sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only."
+  interpretation = "Aggregated organization sink (include_children) routes all Cloud Audit Logs to a central GCS bucket project owners cannot bypass; writer identity holds objectCreator only."
   gcloud = [
     "gcloud storage buckets create gs://BUCKET_NAME --project=LOG_PROJECT_ID --location=REGION --default-storage-class=NEARLINE --uniform-bucket-level-access --public-access-prevention",
     "gcloud logging sinks create SINK_NAME storage.googleapis.com/BUCKET_NAME --organization=ORGANIZATION_ID --include-children --log-filter='log_id(\"cloudaudit.googleapis.com/activity\") OR log_id(\"cloudaudit.googleapis.com/data_access\") OR log_id(\"cloudaudit.googleapis.com/system_event\") OR log_id(\"cloudaudit.googleapis.com/policy\")'",

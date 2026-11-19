@@ -9,7 +9,7 @@ Budgets on the infrastructure billing account with alert thresholds: one for the
 account, and one per entry of `budgets` for a set of projects or folders.
 
 WHAT AN ENTRY IS. `{ name amount }`, and optionally `projects`, `folders`, `email` and
-`import_id`. The first entry of `budgets` is the organisation's budget, `global-budget`,
+`import_id`. The first entry of `budgets` is the organization's budget, `global-budget`,
 built from `budget_amount` and `budget_notification_email`. Binding `budgets` in the
 estate replaces the whole list, so an estate that adds budgets writes that entry too;
 a project asks for its own with `contributes_budgets`, checked by `satz check-request`.
@@ -77,7 +77,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `budget_amount` | The organisation budget's amount per calendar month, in whole units of the billing account's currency | edit | none | — |
+| `budget_amount` | The organization budget's amount per calendar month, in whole units of the billing account's currency | edit | none | — |
 | `budget_currency` | The billing account's currency (ISO 4217, for example EUR or USD) | edit | none | — |
 | `budget_notification_email` | An address that gets the budget alerts beside the billing account's administrators — a group's address, never a person's | edit | none | — |
 | `budget_default_recipients_off` | Stop mailing the billing account's administrators and users for the budgets that have an address of their own? | edit | none | — |

@@ -18,7 +18,7 @@
 //! - `Tree`   — no merge; folder/project compose by grafting at a path
 //!
 //! Composition `⊕` is pointwise merge on address maps. Laws, up to observational
-//! equivalence (same emitted output or same conflict set):
+//! equivalence (same written output or same conflict set):
 //!
 //! ```text
 //! (F ⊕ G) ⊕ H ≈ F ⊕ (G ⊕ H)     associativity
@@ -29,7 +29,7 @@
 //! ```
 //!
 //! Merge is **total**: a conflict is a value `⊥{addr, (v₁, span₁), (v₂, span₂)}`, not
-//! an early error — compilation fails iff the folded result contains any ⊥, which
+//! an early error — transpile fails iff the folded result contains any ⊥, which
 //! reports *all* conflicts at once, each with both origins.
 //!
 //! **Parameter layer.** Bindings are `(name -> (priority, value, span))` with
@@ -40,7 +40,7 @@
 //! depth-derived priorities, and simultaneously obsolete.
 //!
 //! **Scope is a typing judgment.** `cloud_identity_group : scope Customer`,
-//! `organization_iam_member : scope Org`. Evaluation at a tree position computes
+//! `organization_iam_member : scope Organization`. Evaluation at a tree position computes
 //! scope from the type; for intrinsic scopes the position is discarded into
 //! provenance. *Relocation theorem*: fragments of intrinsic scope produce identical
 //! output at any tree position — hoisting is this theorem, not a pass.
@@ -76,7 +76,7 @@ pub struct Span {
     pub line: u32,
 }
 
-/// The Terraform-level identity of a resource: one address, emitted once — a law,
+/// The Terraform-level identity of a resource: one address, written once — a law,
 /// not a guard.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Address {

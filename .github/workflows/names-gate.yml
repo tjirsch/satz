@@ -30,6 +30,8 @@ jobs:
           fetch-depth: 0
       - name: whole tree
         run: bash scripts/check-names.sh
+      - name: one word for one thing (docs/glossary.md)
+        run: bash scripts/check-wording.sh
       - name: commit identities and messages in this pull request / push to main
         # Only the commits this event ADDS are judged — never history that
         # predates the rule. A pull request: what it adds over its base, however

@@ -1,5 +1,5 @@
-// Central log sink for the organisation, written against the author's own
-// organisation before its values became params.
+// Central log sink for the organization, written against the author's own
+// organization before its values became params.
 pack central_logs version "1.0"
 
 google_logging_organization_sink {

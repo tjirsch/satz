@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # satz side of the evidence: report-compliance (live, read-only, + Checkov on hcl/), triage, require —
-# then every workload beside the estate: its compile, its consumer check, Checkov over its HCL.
+# then every workload beside the estate: its transpile, its consumer check, Checkov over its HCL.
 #   satz_evidence.sh --repo <estate-repo> --estate <file.satz> --ocsf <merged.ocsf.json> --out <evidence-dir> \
 #                    [--workloads "<name>:<kind>:<folder> ..."] [--framework cis-gcp-5.0] [--no-live]
-# Runs as the estate's IaC service account (satz binds it from the estate; operator ADC must be
-# allowed to impersonate — check `satz whoami` first). report-compliance only READS (Cloud Asset
+# Runs as the estate account (satz binds it from the estate; the signed-in operator must be
+# allowed to impersonate it — check `satz whoami` first). report-compliance only READS (Cloud Asset
 # Inventory); Checkov runs locally over the transpiled HCL.
 # --workloads takes the `workloads_arg=` line discover_scope.py prints (kind `satz` or `hcl`, the
 # folder relative to the customer folder — the parent of --repo). Per workload, offline:
 #   satz  → `satz --config <folder> transpile <name>.satz --check`, then
-#           `satz --config <repo> check-consumer <folder>/<hcl_dir> <estate>` over its generated HCL
+#           `satz --config <repo> check-consumer <folder>/<hcl_dir> <estate>` over its generated HCL code
 #   hcl   → `satz --config <repo> check-consumer <folder> <estate>`
 #   both  → `checkov -d <hcl> --framework terraform -o json` → checkov-<name>.json
 # Everything lands in consumer-<name>.txt, one `== step` block each, closed by `exit: <code>`

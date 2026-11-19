@@ -1,6 +1,6 @@
 # satz — working rules
 
-Rust tool (bin `satz`, crate `crates/satz-core`) that compiles estates written in **Satz** — a language whose
+Rust tool (bin `satz`, crate `crates/satz-core`) that transpiles estates written in **Satz** — a language whose
 resource types and attributes are the Terraform provider's, to the underscore —
 to OpenTofu/Terraform HCL, with a compliance plane on top: claims → catalogs →
 `require` (goal view, declared) → `report-compliance` (evidence, verified live,
@@ -52,7 +52,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   is for, and what review is for.
 - **A skill an agent runs beside satz lives in `skills/<name>/` (2026-09-27).** The
   security review (`skills/security-review/`) reads satz's compliance report, its packs and its
-  control catalogue and writes the two audit deliverables; the estate documentation
+  control catalog and writes the two audit deliverables; the estate documentation
   (`skills/estate-documentation/`) writes a customer's documentation package from the estate,
   the decisions workbook and the review's documents. Both read satz's output, so they version
   with it here; satz's binary writes no document (ADR 0003: satz states facts, an agent judges
@@ -83,10 +83,10 @@ and in the maintainer's notes. Nothing in this file names a customer.
   on the current version. Release without asking when a discussed solution is releasable (tests +
   clippy green, docs updated). After the release, stop — no polling of the
   GitHub API (unauthenticated: 60 req/h, shared with users' `self-update`).
-- **satz owns no credential.** No OAuth client, no token on disk, no per-estate
-  credential store: the Application Default Credentials are gcloud's and satz
-  only reads them. What satz owns is the IDENTITY — post-init, anything that
-  reads or writes a customer's estate runs as that estate's IaC service
+- **satz stores no sign-in.** No OAuth client, no token on disk, no per-estate
+  token store: the sign-in is gcloud's and satz
+  only reads it. What satz owns is the IDENTITY — post-init, anything that
+  reads or writes a customer's estate runs as that estate's estate
   account, derived from `svc_iac_account` + `infra_project_name` exactly as the
   emitter derives the provider's `impersonate_service_account`. The exceptions
   are bare `whoami` and bare `import` (given an estate — `whoami <estate>`,
@@ -112,27 +112,27 @@ and in the maintainer's notes. Nothing in this file names a customer.
   overwritable / `X.local.satz` the user's fork, never touched by updates /
   `X.diff.satz` the current adoption delta, rewritten on every merge. A preset
   an estate INCLUDES never changes silently: a semantic upstream change
-  (compiled canonical form differs) auto-forks and repoints the estate with a
+  (transpiled canonical form differs) auto-forks and repoints the estate with a
   transpile-identity proof; comment/format churn upgrades silently. Pack
   versions live IN-FILE; filenames carry only framework versions. Never
   `.local.<n>.satz`.
 - **One form of a constraint, never two.** Where Google replaces a legacy
   org-policy constraint with a managed one, a pack runs the replacement ALONE
   and declares the legacy twin off (`spec { reset = true }`) — absence is not
-  enough, because a policy already set on an organisation is invisible to an
+  enough, because a policy already set on an organization is invisible to an
   apply that does not declare it. The pairing is data
-  (`presets/managed-constraint-equivalents.txt`, refreshed from a live org by
+  (`presets/managed-constraint-equivalents.txt`, refreshed from a live organization by
   `scripts/update_constraint_equivalents.py`, never by hand) and the rule is a
-  test that compiles every corpus case against it.
+  test that transpiles every corpus case against it.
 - **Memberships stay OUT of presets** — presets define groups, humans grant
   membership.
-- **The IaC service account holds named roles, never `roles/owner`** (ADR 0009). A
-  pack that emits a resource type the prerequisite table in `src/prerequisites.rs`
+- **The estate account holds named roles, never `roles/owner`** (ADR 0009). A
+  pack that writes a resource type the prerequisite table in `src/prerequisites.rs`
   has no row for — the roles it needs AND the API that serves it — adds the row in the
   same PR, verified with `scripts/check_prerequisites.py`; a new pack
   gets a line in one of the `tests/iac/` cases. `prerequisites_gate` fails on either
   omission.
-- **80% of customisation via params, the rest via `.local` forks** — no
+- **80% of customization via params, the rest via `.local` forks** — no
   variable explosion. Names that must be globally unique derive from
   `customer_shortname`.
 - **Everyone is on the CURRENT version.** A release IS the migration: a
@@ -168,6 +168,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
   formatted), `write_edited_satz` (a splice; the author's layout stays, a formatted
   file stays formatted), `write_verbatim` (bytes satz copies). `fsx::write` refuses a
   `.satz` path and `clippy.toml` disallows `std::fs::write` outside that module.
+- **One word for one thing (ADR 0095).** `docs/glossary.md` names each thing satz,
+  its docs, satz-studio and the texts satz writes talk about. A term it defines is used
+  for its thing; where an entry allows a second word, one of the two is used and no
+  third; a word it defines is used for no other meaning. That holds for prose, command
+  help, messages, labels and comments, in American spelling. Names in the format keep
+  their words (the glossary lists them). `scripts/check-wording.sh` finds what a pattern
+  can — the hooks and `names-gate.yml` run it; the third rule is review's.
 - **Docs ship with the change, in two renderings.** A change to the language,
   a command, a flag or a pack updates `README.md`, `docs/*.md` and
   `presets/README.md` in the same PR (the language reference cites
@@ -178,7 +185,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `SITE_DOCS_EXCLUDED` (with its reason), and the build fails naming any doc in
   neither, so a page reaching the public site is a decision and so is a page not
   reaching it. The MENU is the same kind of decision: `NAV_ORDER` names every
-  page in reading order — `satz`, `tutorials`, `language`, `library`, `changelog`,
+  page in reading order — `satz`, `tutorials`, `glossary`, `language`, `library`, `changelog`,
   `workflows`, `interview`, `mcp`, `examples`, `housekeeping`, `competitive`,
   `llms` — and a
   page it does not name fails the build rather than being appended
@@ -215,7 +222,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   successor named. These pages are not on the site: `build-site.py` reads
   `docs/*.md` only, so a record implies no navigation decision.
 - **Docs are derived from the parser, not from intent.** Every example in
-  `docs/language.md` compiles; where the doc and the parser disagree, the
+  `docs/language.md` transpiles; where the doc and the parser disagree, the
   parser is right and the doc is a bug.
 - **Docs say what satz does, now (2026-09-11).** Facts in the present
   tense: what a command, statement or pack does and what it refuses. No history —
@@ -227,13 +234,13 @@ and in the maintainer's notes. Nothing in this file names a customer.
   reason — never under a label ("the quota-project trap"), and without
   rhetoric ("on purpose", "deliberately", "silently fails", "the point").
   The single exception is `## Breaking changes` in `presets/CHANGELOG.md`: per
-  release, newest first, what satz now refuses that it compiled before and the
+  release, newest first, what satz now refuses that it transpiled before and the
   edit that satisfies it, written so an operator can act with no context. A
   change that refuses a form an estate may hold adds its entry there in the
   same PR.
 - **`Satz` is the language; `satz` is everything else** — the binary, the
   project, the repository. "written in Satz", "a Satz estate", "a Satz
-  abstraction"; "satz compiles", "a satz command", "the satz repository". Page
+  abstraction"; "satz transpiles", "a satz command", "the satz repository". Page
   titles are the one exception: they stay lowercase (`# satz language`), being
   the site's identity line rather than prose.
 
@@ -261,7 +268,7 @@ and in the maintainer's notes. Nothing in this file names a customer.
   language. `adopt-org-policies` is an alias.
 - Compliance plane: `require` is text only and judges the DECLARED estate;
   `report-compliance` verifies witnesses through Cloud Asset Inventory and
-  compares org policies by VALUE — a policy that exists but is switched off
+  compares organization policies by VALUE — a policy that exists but is switched off
   reads NOT ENFORCED, which outranks DRIFTED. `--prowler` reads the OCSF export
   of Prowler 5 only — check id from `metadata.event_code`, project from
   `cloud.account.uid`, the version from `metadata.product.version`, which is

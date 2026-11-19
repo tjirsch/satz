@@ -1,7 +1,7 @@
 //! `satz interfaces`: what the estate publishes, as a report — every export with the
 //! interface it stands in, whether a project reads it as a literal, a lookup or a map, what
 //! it names and what may be attached to it, and every interface with what it uses. It is
-//! read off the same compile `transpile` runs, so it says what the next transpile writes to
+//! read off the same transpile `transpile` runs, so it says what the next transpile writes to
 //! `interfaces/outgoing/`. satz-studio reads the json form.
 
 use serde::Serialize;
@@ -81,7 +81,7 @@ pub(crate) struct InterfaceRow {
     pub line: usize,
 }
 
-/// The report of a compiled estate. `interface` is `None` when the estate exports nothing.
+/// The report of a transpiled estate. `interface` is `None` when the estate exports nothing.
 pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[ResolvedExport], interfaces: &[ResolvedInterface], requests: &[ResolvedRequest]) -> InterfacesReport {
     let at = |i: &Option<String>, name: &str| declared.iter().find(|d| &d.interface == i && d.name == name).map(|d| (d.file.clone(), d.line)).unwrap_or_default();
     let exports = interface
@@ -140,7 +140,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
 }
 
 /// The README section every interface of the estate carries: what a project may ask the
-/// estate for, and how. Empty when the estate declares no request point.
+/// estate for, and how. Empty when the estate declares no list.
 pub(crate) fn requests_readme(requests: &[ResolvedRequest]) -> String {
     if requests.is_empty() {
         return String::new();
@@ -163,8 +163,8 @@ pub(crate) fn requests_readme(requests: &[ResolvedRequest]) -> String {
     s
 }
 
-/// A request point's fields as a markdown table cell, each with the pattern its value
-/// matches when the request point sets one.
+/// A list's fields as a markdown table cell, each with the pattern its value
+/// matches when the list sets one.
 pub(crate) fn fields_cell(fields: &[String], patterns: &[(String, String)]) -> String {
     fields
         .iter()

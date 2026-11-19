@@ -34,7 +34,7 @@ params {
     "storage.googleapis.com",
   ]
   // A list of objects the `each` over `google_pubsub_topic` below writes one topic for,
-  // labelled by `name`. `billing` leaves `retention` out and takes the request point's
+  // labelled by `name`. `billing` leaves `retention` out and takes the list's
   // default; only `orders` carries a `subscription`, so only it gets one.
   event_topics = [
     { name = "orders" retention = "86400s" subscription = "orders-audit" },
@@ -43,7 +43,7 @@ params {
 }
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting
-// it wrong costs. Metadata: they emit nothing, and a question must be declared
+// it wrong costs. Metadata: they write nothing, and a question must be declared
 // in the file that declares its param (a question gating a pack cannot live in
 // the gated pack, because questions are absorbed after the `use … when` guard).
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ question oneof optional_extras {
   option want_optional { label = "The optional pack — one more bucket" }
 }
 
-// --- Estate configuration blocks: emitted as providers.tf / the backend. -----
+// --- Estate configuration blocks: written as providers.tf / the backend. -----
 terraform {
   backend {
     local { path = "terraform.tfstate" }
@@ -148,7 +148,7 @@ google_cloud_identity_group {
 // --- IAM grants: member → roles; a role is a string or a conditional object. --
 google_organization_iam_member {
   "group:gcp-auditors@{customer_domain}" = [
-    "roles/browser", // suppressed above — never emitted
+    "roles/browser", // suppressed above — never written
     "roles/iam.securityReviewer",
     {
       role = "roles/storage.objectViewer"
@@ -201,7 +201,7 @@ google_folder {
           }
         }
         // …and the same grant as a MEMBER MAP. A type whose scope is neither the
-        // organisation nor the folder/project it sits in writes that scope in
+        // organization nor the folder/project it sits in writes that scope in
         // the map (`bucket = …`); every other key is a member. The scope
         // namespaces the grant, so a second map for a second bucket is a second
         // grant even with the same member and role.
@@ -224,7 +224,7 @@ google_folder {
 // --- A project whose parent is SAID, not nested. `folder_id` takes a reference
 //     to a folder the estate declares, or the id of one that already exists; an
 //     empty value says nothing and the node the block stands in decides. A pack
-//     carries its own parent this way, so it emits the same project wherever its
+//     carries its own parent this way, so it writes the same project wherever its
 //     `use` line stands.
 google_project {
   archive {
@@ -236,7 +236,7 @@ google_project {
 }
 
 // --- `request`: what a project may add to a list, and each entry's shape — checked at
-//     every compile, and by `satz check-request` on a project's file before it is used.
+//     every transpile, and by `satz check-request` on a project's file before it is used.
 //     `defaults` fills a field an entry leaves out, before anything reads the list.
 request event_topics {
   key         = "name"
@@ -307,9 +307,9 @@ google_pubsub_topic_iam_member {
   }
 }
 
-// --- `export`: what the estate publishes to the projects beside it — estates with
+// --- `export`: what the estate publishes to the workload estates beside it — each with
 //     their own repository, config, state and pipeline, written in HCL or in Satz.
-//     Each one is an output of the root module and a value of the generated
+//     Each one is an output of the HCL code and a value of the generated
 //     interfaces under interfaces/outgoing/. A param, a literal, or an attribute satz writes
 //     is known now and is a literal; an attribute only the cloud knows is a lookup,
 //     a `data` source the project's plan reads. An export outside every `interface`
@@ -318,12 +318,12 @@ export "customer_domain"      = customer_domain description "The customer's prim
 export "default_region"       = default_region description "The region the estate builds in"
 export "infra_project_id"     = "${{google_project.infra.project_id}}" description "The infrastructure project"
 export "infra_folder"         = "${{google_folder.infra.name}}" description "The infrastructure folder, folders/<number>"
-export "workload_folder"      = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live: the organisation"
+export "workload_folder"      = "organizations/{customer_organization_id}" description "Where the customer's and the projects' folders live: the organization"
 export "infra_project_number" = "${{google_project.infra.number}}"
 export "audit_bucket_url"     = "${{google_storage_bucket.audit_logs.url}}"
 export "regions"              = [default_region, "europe-west4"]
 
-// --- `all <type>`: every resource of one type the estate emits, as one map keyed by
+// --- `all <type>`: every resource of one type the estate writes, as one map keyed by
 //     the resource's label — a folder's `folders/<number>`, a bucket's name. `under`
 //     keeps the ones placed under one folder or project. A resource marked private —
 //     `private = true` in its body, or the statement below for a pack's — is left out.
@@ -373,7 +373,7 @@ hcl trust "reviewed 2026-08-30: static address until the provider gap closes" {
 
 // --- `action`: a deployment step that has no provider resource. --------------
 // The real case is SCC service enablement: the provider carries no binding for
-// it, so it cannot be written as a resource in any language satz compiles.
+// it, so it cannot be written as a resource in any language satz transpiles.
 // An action is inert until `satz run-actions` is invoked — nothing here runs at
 // transpile time — and no claim can cover it. `reason` is mandatory, because it
 // is what the warning quotes to whoever is about to run the script.
@@ -400,7 +400,7 @@ action "showcase-python-step" {
 claim "cis-gcp" "4.0" "5.1" implements {
   resources         = ["google_storage_bucket.audit_logs"]
   interpretation    = "Uniform bucket-level access on the audit bucket; no ACL-granted public access is possible."
-  duty_public_check = "Confirm public_access_prevention is enforced at the org level."
+  duty_public_check = "Confirm public_access_prevention is enforced at the organization level."
   gcloud = [
     "gcloud storage buckets update gs://BUCKET_NAME --uniform-bucket-level-access",
   ]

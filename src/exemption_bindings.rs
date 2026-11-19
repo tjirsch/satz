@@ -64,16 +64,16 @@ impl Vocabulary {
 pub(crate) fn vocabulary(manifest: &Manifest, org_id: Option<&str>) -> Result<Option<Vocabulary>, String> {
     let Some(key) = manifest.resources.get(EXEMPTION_KEY) else { return Ok(None) };
     let short = literal(key, "short_name").ok_or_else(|| {
-        format!("{} has no literal `short_name`, so its bindings cannot be recognised live", EXEMPTION_KEY)
+        format!("{} has no literal `short_name`, so its bindings cannot be recognized live", EXEMPTION_KEY)
     })?;
     let org = match literal(key, "parent") {
         Some(p) => p
             .strip_prefix("organizations/")
             .map(str::to_string)
-            .ok_or_else(|| format!("{} is parented under `{}`, not an organisation", EXEMPTION_KEY, p))?,
+            .ok_or_else(|| format!("{} is parented under `{}`, not an organization", EXEMPTION_KEY, p))?,
         None => org_id
             .map(str::to_string)
-            .ok_or_else(|| format!("{} names no organisation, and neither does the estate", EXEMPTION_KEY))?,
+            .ok_or_else(|| format!("{} names no organization, and neither does the estate", EXEMPTION_KEY))?,
     };
     let key_name = format!("{}/{}", org, short);
     let parent_refs = [format!("{}.name", EXEMPTION_KEY), format!("{}.id", EXEMPTION_KEY)];
@@ -206,7 +206,7 @@ pub(crate) struct Comparison {
 
 /// Subtract the declared bindings from the live ones.
 ///
-/// `live` is the resource data of every `TagBinding` asset of the organisation. A
+/// `live` is the resource data of every `TagBinding` asset of the organization. A
 /// binding of another key is ignored. A live binding matches a declared one when both
 /// the value (namespaced name, or `tagValues/<id>`) and the target (as written, or with
 /// its project id replaced by the number) agree.
@@ -290,7 +290,7 @@ pub(crate) fn conditioned_values(policy: &EmittedResource, v: &Vocabulary) -> BT
     out
 }
 
-/// Every `TagBinding` asset of the organisation, as its resource data.
+/// Every `TagBinding` asset of the organization, as its resource data.
 pub(crate) async fn live_tag_bindings(org_id: &str) -> Result<Vec<serde_json::Value>, String> {
     let types = BTreeSet::from([(TAG_BINDING_ASSET.to_string(), crate::compliance::LiveContent::Resource)]);
     let inventory = crate::compliance::live_inventory(org_id, &types).await.map_err(|e| e.to_string())?;
@@ -319,7 +319,7 @@ pub(crate) async fn project_numbers(ids: &BTreeSet<String>) -> Result<BTreeMap<S
 pub(crate) enum Outcome {
     /// `--no-live`
     Skipped,
-    /// the estate names no organisation to list bindings in
+    /// the estate names no organization to list bindings in
     NoOrganizationId,
     /// the estate's vocabulary or the live read failed (the reason) — never "none"
     Unavailable(String),
@@ -431,8 +431,8 @@ pub(crate) async fn check(manifest: &Manifest, org_id: Option<&str>, no_live: bo
     .await
 }
 
-/// The check over a given live read — `read(org, project ids)` answers the declared
-/// targets' project numbers and every `TagBinding` asset of the organisation. A read
+/// The check over a given live read — `read(organization, project ids)` answers the declared
+/// targets' project numbers and every `TagBinding` asset of the organization. A read
 /// that fails makes the check `Unavailable`, never an empty list.
 async fn check_with<F, Fut>(manifest: &Manifest, org_id: Option<&str>, no_live: bool, read: F) -> Option<Check>
 where
@@ -495,7 +495,7 @@ mod tests {
     use super::*;
 
     /// The estate: the exemption pack's key with two values, a CIS-shaped policy whose
-    /// conditional rule names one of them, a declared binding of it on the infra
+    /// conditional rule names one of them, a declared binding of it on the infrastructure
     /// project, and a key of another kind with a binding of its own.
     fn estate() -> Manifest {
         Manifest::parse(
@@ -549,7 +549,7 @@ resource "google_org_policy_policy" "sa_keys" {
     }
 
     /// The asset Cloud Asset Inventory returned for a binding on a project, recorded
-    /// on a test organisation and rewritten to the example values.
+    /// on a test organization and rewritten to the example values.
     fn recorded(value: &str, value_id: &str, target: &str) -> serde_json::Value {
         serde_json::json!({
             "tagKey": "tagKeys/281480000000001",
@@ -753,16 +753,16 @@ resource "google_tags_tag_binding" "b" {
         assert!(c.render().contains("| `123456789012/acme-exemption/public-storage` | `//storage.googleapis.com/projects/_/buckets/acme-public-site` |"));
     }
 
-    /// `--no-live` and a missing organisation read nothing and say so; an estate
+    /// `--no-live` and a missing organization read nothing and say so; an estate
     /// without the key has no section at all.
     #[test]
-    fn nothing_is_read_without_live_or_an_organisation() {
+    fn nothing_is_read_without_live_or_an_organization() {
         let never = |_: String, _: BTreeSet<String>| async { panic!("nothing may be read") };
         let skipped = block_on(check_with(&estate(), Some("123456789012"), true, never)).unwrap();
         assert_eq!(skipped.to_json()["status"], "skipped");
         let no_org_estate = Manifest::parse(r#"resource "google_tags_tag_key" "exemption" { short_name = "acme-exemption" }"#);
         let c = block_on(check_with(&no_org_estate, None, false, never)).unwrap();
-        assert!(matches!(c.outcome, Outcome::Unavailable(_)), "the key names no organisation: {:?}", c.outcome);
+        assert!(matches!(c.outcome, Outcome::Unavailable(_)), "the key names no organization: {:?}", c.outcome);
         let c = block_on(check_with(&estate(), None, false, never)).unwrap();
         assert_eq!(c.outcome, Outcome::NoOrganizationId);
         let none = Manifest::parse(r#"resource "google_tags_tag_key" "env" { short_name = "env" }"#);

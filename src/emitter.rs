@@ -68,7 +68,7 @@ fn scope_pin_of(prefix: &str) -> Option<(String, String)> {
 
 /// The attributes of an `*_iam_member` type that could name its scope —
 /// everything but the three every such type carries. Used to make a mistyped
-/// scope attribute a compile error that names the alternatives.
+/// scope attribute a transpile error that names the alternatives.
 fn scope_attr_candidates(schema: &crate::schema::ResourceSchema) -> Vec<String> {
     let mut v: Vec<String> = schema
         .block
@@ -122,22 +122,22 @@ fn res_ctx(path: &[String], ctx: &EmitCtx, folded: &Folded) -> crate::emit_share
 pub(crate) struct EmitOut {
     pub main_tf: String,
     pub imports_tf: String,
-    /// What a project estate read from the central estate's interface, as
+    /// What a workload estate read from the interface of the organization's estate, as
     /// `local.interface.<export>` with the lookups those values need (`interface_tf`);
-    /// empty for every other estate. The compile fills it after the emission.
+    /// empty for every other estate. The transpile fills it after the emission.
     pub interface_tf: String,
     /// What the references in the written `providers.tf` stand for (`local.interface.<x>`
     /// → the static value), for the check that reads the project each provider bills to.
-    /// The compile fills it with `interface_tf`.
+    /// The transpile fills it with `interface_tf`.
     pub names: crate::prerequisites::Names,
-    /// The emitted resources as structure — built from the same blocks
+    /// The written resources as structure — built from the same blocks
     /// `main_tf` renders, so consumers never parse the text back.
     pub manifest: crate::manifest::Manifest,
-    /// Per emitted resource that lacks one: the arguments and blocks its schema
-    /// requires and the emitted block does not carry. Checked on what is
-    /// emitted, after every derived attribute is in.
+    /// Per written resource that lacks one: the arguments and blocks its schema
+    /// requires and the written block does not carry. Checked on what is
+    /// written, after every derived attribute is in.
     pub missing_required: Vec<MissingRequired>,
-    /// Per emitted attribute the provider will refuse by its shape.
+    /// Per written attribute the provider will refuse by its shape.
     pub wrong_shapes: Vec<WrongShape>,
     /// Per resource declared outside the project or folder its type is scoped to, which
     /// sets none itself.
@@ -165,10 +165,10 @@ pub(crate) struct MissingRequired {
     pub origin: Option<(String, u32)>,
 }
 
-/// An emitted attribute whose value the provider refuses by its SHAPE: a string where
+/// An written attribute whose value the provider refuses by its SHAPE: a string where
 /// the schema types a set, a list where it types a string. Found on a customer estate —
 /// a list param answered with one address became `notification_emails = "…"`, and
-/// nothing said so until `tofu apply`, naming a line of generated HCL.
+/// nothing said so until `tofu apply`, naming a line of the generated HCL code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WrongShape {
     pub address: String,
@@ -176,13 +176,13 @@ pub(crate) struct WrongShape {
     pub attribute: String,
     /// the schema's type, as `set(string)`, `number`
     pub expected: String,
-    /// the emitted value's shape: `string`, `number`, `bool`, `list`, `map`
+    /// the written value's shape: `string`, `number`, `bool`, `list`, `map`
     pub got: &'static str,
     /// where the declaring block starts
     pub origin: Option<(String, u32)>,
 }
 
-/// The shape of an emitted literal; `None` for anything Terraform only knows at plan
+/// The shape of an written literal; `None` for anything Terraform only knows at plan
 /// time — a reference, an interpolation, a function call.
 fn literal_shape(expr: &hcl::Expression) -> Option<(&'static str, Option<&str>)> {
     match expr {
@@ -228,7 +228,7 @@ fn shape_fits(t: &serde_json::Value, shape: &str, text: Option<&str>) -> bool {
 }
 
 /// Every attribute of `block`, nested blocks included, whose literal the schema's type
-/// refuses: `(attribute path, expected type, emitted shape)`. Empty for a type the
+/// refuses: `(attribute path, expected type, written shape)`. Empty for a type the
 /// registry does not know.
 pub(crate) fn wrong_shapes(block: &hcl::Block, registry: &crate::schema::ResourceRegistry) -> Vec<(String, String, &'static str)> {
     fn walk(body: &hcl::Body, schema: &crate::schema::BlockSchema, prefix: &str, out: &mut Vec<(String, String, &'static str)>) {
@@ -282,10 +282,10 @@ pub(crate) fn missing_required(block: &hcl::Block, registry: &crate::schema::Res
 }
 
 /// A conditional grant edge carries its condition as canonical YAML text. Parse
-/// it back so the emitted label hashes EXACTLY what the walk hashed (the label
+/// it back so the written label hashes EXACTLY what the walk hashed (the label
 /// is the Terraform address — it must not move for existing state), and so the
 /// `condition { … }` block renders identically. A condition that does not parse
-/// is an error, never `None`: dropping it would emit the grant unconditional and
+/// is an error, never `None`: dropping it would write the grant unconditional and
 /// move its address in the same stroke.
 fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Result<Option<serde_yaml::Value>, String> {
     if edge.condition.is_empty() {
@@ -293,7 +293,7 @@ fn edge_condition(edge: &satz_core::algebra::GrantEdge) -> Result<Option<serde_y
     }
     serde_yaml::from_str(&edge.condition).map(Some).map_err(|e| {
         format!(
-            "grant {} → {}: its condition is not readable ({}); refusing to emit the binding without it",
+            "grant {} → {}: its condition is not readable ({}); refusing to write the binding without it",
             edge.member, edge.role, e
         )
     })
@@ -343,7 +343,7 @@ fn order_after_service_accounts(blocks: &mut [hcl::Block]) {
 /// A grant on a group the estate declares names it by its email string
 /// (`group:<key>@<domain>`), so tofu would create the grant beside the group:
 /// the IAM API refuses a member that does not exist yet, and on a fresh
-/// organisation the first refusal stops the groups still queued from ever
+/// organization the first refusal stops the groups still queued from ever
 /// being created. Each such grant — and a membership whose member key names
 /// such a group — gets a `depends_on` on the group, the way a grant on a
 /// declared service account does; on destroy the grant then goes before the
@@ -393,18 +393,18 @@ fn order_after_custom_constraints(blocks: &mut [hcl::Block]) {
     }
 }
 
-/// The Org Policy API serialises the writes to one parent's policies, and refuses a
+/// The Organization Policy API serializes the writes to one parent's policies, and refuses a
 /// second one that arrives while the first is in flight: `409 Creating policy failed.
 /// Please retry the request … reason: CONCURRENT_POLICY_CHANGES`. tofu writes ten
 /// resources at a time, and the CIS baseline alone puts thirty policies on one
-/// organisation with nothing ordering them, so a fresh apply collides with itself by
+/// organization with nothing ordering them, so a fresh apply collides with itself by
 /// construction — and a retry clears it, which is why it read as a fluke.
 ///
 /// The collision is a property of the PARENT, not of a pack: the baseline's policies,
-/// its extensions' and the estate's own all land on the same organisation, and only
+/// its extensions' and the estate's own all land on the same organization, and only
 /// the emitter sees all of them. So the policies on one parent are chained, each
 /// waiting for the one before it in address order. `depends_on` changes no plan; it
-/// serialises the policy writes on that parent and nothing else — policies on
+/// serializes the policy writes on that parent and nothing else — policies on
 /// different parents, and every other resource, still apply in parallel.
 fn order_org_policies_per_parent(blocks: &mut [hcl::Block]) {
     let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
@@ -437,20 +437,20 @@ fn order_org_policies_per_parent(blocks: &mut [hcl::Block]) {
 /// A resource whose API is not on yet fails the apply, and `google_project_service`
 /// carries no ordering of its own: inside one apply Terraform can create the
 /// resource before the service that enables it. Bootstrap escapes that race by
-/// enabling the day-0 APIs imperatively before `tofu` runs, but a pack adopted on
-/// day 40 has no bootstrap pass — its service block and the resources that need it
+/// enabling the bootstrap's APIs imperatively before `tofu` runs, but a pack adopted
+/// weeks later has no bootstrap pass — its service block and the resources that need it
 /// land in the same apply, unordered, and it passes or fails on scheduling luck.
 ///
 /// Every resource whose type the prerequisite table knows gets a `depends_on` on
 /// the services that enable its APIs, bounded to the two projects that can matter:
 /// the project the resource lives in — which is also the project its calls are
-/// billed to when a per-project alias serves it — and the infra project the
+/// billed to when a per-project alias serves it — and the infrastructure project the
 /// default provider bills to (`user_project_override` + `billing_project`). A
 /// service on a third project is nothing to it.
 ///
 /// No edge is added into a service block's own dependency closure, and a service
 /// is never ordered after a service. That is what keeps the graph acyclic: the
-/// infra project references nothing, but the services on it reference IT, and the
+/// infrastructure project references nothing, but the services on it reference IT, and the
 /// folder that contains it is reached through the project — so both would
 /// otherwise wait for a service that waits for them.
 fn order_after_project_services(blocks: &mut [hcl::Block], infra_project: &str) {
@@ -499,7 +499,7 @@ fn order_after_project_services(blocks: &mut [hcl::Block], infra_project: &str) 
 /// the policy created in one apply, unordered, land the network on scheduling luck. Every
 /// `google_project_service` enabling Compute gets a `depends_on` on each policy the estate
 /// declares enforcing that constraint — a graph edge, no plan change — so the policy is
-/// live before Compute is on. The `plan`/`apply` preflight and `bootstrap` keep the same
+/// live before Compute is on. The `plan`/`apply` API prerequisites check and `bootstrap` keep the same
 /// order outside the apply (`prerequisites::compute_deferral`). (ADR 0080)
 fn order_compute_after_skip_default_network(blocks: &mut [hcl::Block]) {
     let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
@@ -614,8 +614,8 @@ struct Built {
     private: Vec<String>,
 }
 
-/// Whether any entity is written other than it is judged: a project estate that read a
-/// central estate's value through its interface.
+/// Whether any entity is written other than it is judged: a workload estate that read a
+/// value of the organization's estate through its interface.
 pub(crate) fn has_rendering(folded: &Folded) -> bool {
     folded.slots.values().any(|s| match s {
         Slot::Ok(e) => e.rendering.is_some() || matches!(&e.body, Body::Grant(edges) if edges.iter().any(|x| !x.rendered_member.is_empty() || !x.rendered_role.is_empty())),
@@ -627,7 +627,7 @@ pub(crate) fn has_rendering(folded: &Folded) -> bool {
 /// fold judged — the manifest, the findings and `imports.tf` read those — and, where an
 /// entity carries a rendering, built once more from it for the text: the same addresses in
 /// the same order, with the real pass's `depends_on`, and `local.interface.<export>` where a
-/// value came from a central estate's interface.
+/// value came from the interface of an organization's estate.
 pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     let Built { mut blocks, imports, origins, unscoped, private } = build(folded, ctx, false)?;
 
@@ -639,7 +639,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
         if let Some(a) = block_address(b) {
             if !seen.insert(a.clone()) {
                 return Err(format!(
-                    "two resources emit the same address `{}` — one would silently overwrite the other in main.tf",
+                    "two resources write the same address `{}` — one would silently overwrite the other in main.tf",
                     a
                 ));
             }
@@ -811,7 +811,7 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
                         ))
                     }
                     // a top-level folder says its parent: the id of a folder or an
-                    // organisation outside this estate (a partial import), or a folder
+                    // organization outside this estate (a partial import), or a folder
                     // this estate declares, by reference — which is how a pack creates a
                     // folder under one the estate names in a param (ADR 0085)
                     (None, Some(p)) => match pick("parent") {
@@ -852,7 +852,7 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
             // written as judged in both passes: a value it read from an interface is
             // its literal in main.tf.
             ("google_cloud_identity_group", Body::Attrs(serde_yaml::Value::Mapping(attrs))) => {
-                // Hoisted to customer scope: the walk emits these with the root alias.
+                // Hoisted to customer scope: the walk writes these with the root alias.
                 if let Some(id) = attr_import(attrs) {
                     imports.push(import_block(
                         &crate::emit_shared::group_resource_address(&addr.label),
@@ -899,7 +899,7 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
                     }
                 }
             }
-            (BILLING_ID_TYPE, _) => {} // consumed below, never emitted
+            (BILLING_ID_TYPE, _) => {} // consumed below, never written
             ("google_billing_account_iam_member", Body::Grant(edges)) => {
                 // Explicit pin from a fragment wins; else the conventional variable.
                 let pin_entity = folded
@@ -976,7 +976,7 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
                     ("folder", rc.folder_ref.clone())
                 } else {
                     // a bucket / service-account / … scoped grant has no scope
-                    // to inherit from the node path; the map form used to emit
+                    // to inherit from the node path; the map form used to write
                     // an `id = ""` block that could never plan
                     return Err(format!(
                         "{}: the member map form (`\"member\" = [roles…]`) needs the scope written in the map for this type; \
@@ -1069,9 +1069,9 @@ fn written_role(e: &satz_core::algebra::GrantEdge, rendered: bool) -> &str {
 }
 
 /// `main.tf` as text: the blocks as `hcl` renders a body of them, one blank line
-/// apart, with a comment above each org policy declared reset.
+/// apart, with a comment above each organization policy declared reset.
 ///
-/// The HCL is handed over, and whoever applies it without satz meets what `run_tf`
+/// The HCL code may be applied without satz, and whoever does so meets what `run_tf`
 /// answers for `satz plan` and `satz apply` (ADR 0011): while the state holds the
 /// policy's rules, the API refuses the in-place update, and only a replace switches it
 /// to reset. The comment names that replace. It is decided from the manifest, the
@@ -1093,7 +1093,7 @@ fn render_main_tf(blocks: Vec<hcl::Block>, manifest: &crate::manifest::Manifest)
     Ok(out)
 }
 
-/// The two lines above an org policy declared reset: why a bare apply can be refused
+/// The two lines above an organization policy declared reset: why a bare apply can be refused
 /// on it, and the `-replace` that applies it.
 fn reset_replace_comment(address: &str) -> String {
     format!(
@@ -1164,11 +1164,11 @@ fn emit_project(
             b = b.add_attribute(hcl::Attribute::new("billing_account", val));
         }
     }
-    // The project's parent, stated or inherited. A `folder_id`, `org_id` or `org`
+    // The project's parent, stated or inherited. A `folder_id`, `org_id` or `organization`
     // whose value is EMPTY is not stated: the enclosing node decides, exactly as
     // if the key were absent. That is what lets a pack carry its own parent in a
     // param — the default says nothing, and a value names the folder, so the pack
-    // emits the same project wherever its `use` stands.
+    // writes the same project wherever its `use` stands.
     let stated = |k: &str| get(k).filter(|v| v.as_str() != Some(""));
     let has_org = stated("org_id").is_some() || stated("org").is_some() || stated("folder_id").is_some();
     // A parent stated by hand is written as declared, and it is written the way an
@@ -1285,7 +1285,7 @@ fn static_rooted(v: &serde_yaml::Value) -> serde_yaml::Value {
 ///
 /// `cloud` is refused, naming what is missing, when `svc_iac_account` or
 /// `infra_project_name` has no value: cloud mode runs as the account the two name, and
-/// without them it would run as whoever is logged in.
+/// without them it would run as whoever is signed in.
 pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
     match env.get("deployment_mode") {
         None => Ok("local"),
@@ -1315,7 +1315,7 @@ pub(crate) fn deployment_mode(env: &Env) -> Result<&'static str, String> {
             };
             Err(format!(
                 "`deployment_mode = {}`: the mode is \"local\" (the state in a file) or \"cloud\" \
-                 (the state in the gcs bucket), and no backend is emitted for anything else",
+                 (the state in the gcs bucket), and no backend is written for anything else",
                 given
             ))
         }
@@ -1342,10 +1342,10 @@ fn google_provider_region(
 
 /// providers.tf from the estate config + folded projects: terraform block
 /// (mode-matched backend, required_providers), root providers, one alias per
-/// project — the same shapes the walk emits, from the same shared builders.
+/// project — the same shapes the walk writes, from the same shared builders.
 ///
 /// `rendering` is the pass that writes the file: the `providers` block's rendering, when
-/// a central estate's value was spliced into it, and each project's rendering for its
+/// a value of an organization's estate was spliced into it, and each project's rendering for its
 /// alias. `None` builds the text from the judged values, which the prerequisite check
 /// reads.
 pub(crate) fn emit_providers(
@@ -1545,14 +1545,14 @@ pub(crate) fn emit_variables(
     hcl::to_string(&body.build()).unwrap_or_default()
 }
 
-/// `interface.tf` of a project estate: what it read from the central estate's interface,
+/// `interface.tf` of a workload estate: what it read from the interface of the organization's estate,
 /// as `locals { interface = { <export> = … } }` — a literal, or a reference to the `data`
 /// block that reads the value back — and then the `data` blocks those values need, once
 /// each, in the order the lookups need one another: the same data sources the HCL form of
 /// the interface reads, through the provider the estate's top-level resources are written
-/// with. Each carries the resource of the central estate it reads back and the read
+/// with. Each carries the resource of the organization's estate it reads back and the read
 /// permission the project's plan needs. `main.tf` and `providers.tf` read the local; a
-/// copy of the file with another organisation's values re-targets them.
+/// copy of the file with another organization's values re-targets them.
 pub(crate) fn interface_tf(locals: &satz_core::pipeline::InterfaceLocals, files: &[satz_core::pipeline::UsedInterfaceFile]) -> String {
     use satz_core::pipeline::{INTERFACE_LOCAL, INTERFACE_STATIC_LOCAL};
     if locals.values.is_empty() {
@@ -1561,7 +1561,7 @@ pub(crate) fn interface_tf(locals: &satz_core::pipeline::InterfaceLocals, files:
     let mut out = String::new();
     let from: Vec<String> = files.iter().map(|f| format!("`{}` ({})", f.interface.estate, f.file)).collect();
     out.push_str(&format!(
-        "# The values this estate reads from the central estate {}, as `{}.<export>`.\n\
+        "# The values this estate reads from the organization's estate {}, as `{}.<export>`.\n\
          # `{}` holds the ones satz knows, which the providers read: a provider is\n\
          # configured before any data source is read. A value only the cloud knows is read back by the\n\
          # `data` blocks below and reaches `{}` alone.\n",
@@ -1705,7 +1705,7 @@ mod backend_identity_tests {
             &HashMap::new(),
             None,
         )
-        .expect("providers.tf emits")
+        .expect("providers.tf writes")
     }
 
     #[test]
@@ -1766,7 +1766,7 @@ mod backend_identity_tests {
     }
 
     /// `local`, `cloud`, or nothing bound — which is `local`. Every other value, a string
-    /// or not, is refused naming what was bound, and `providers.tf` is not emitted
+    /// or not, is refused naming what was bound, and `providers.tf` is not written
     /// without the backend it would have selected.
     #[test]
     fn the_mode_is_local_or_cloud_and_nothing_else() {
@@ -1796,8 +1796,8 @@ mod backend_identity_tests {
     }
 
     /// Cloud mode without the two params that name the account has no identity to run
-    /// as — it would run as whoever is logged in — so it is refused naming what is
-    /// missing, and `providers.tf` is not emitted. An empty value names nothing either.
+    /// as — it would run as whoever is signed in — so it is refused naming what is
+    /// missing, and `providers.tf` is not written. An empty value names nothing either.
     #[test]
     fn cloud_mode_without_the_params_is_refused() {
         let cloud = |pairs: &[(&str, &str)]| -> Env {
@@ -1838,9 +1838,9 @@ mod project_alias_tests {
     //! project node.
     //!
     //! It used to carry `region = "europe-west3"` as a literal and
-    //! `billing_project = <infra project>`: an estate working in another region
+    //! `billing_project = <infrastructure project>`: an estate working in another region
     //! created its regional resources in Frankfurt, and a resource whose own
-    //! project had its API on was refused with a 403 naming the infra project,
+    //! project had its API on was refused with a 403 naming the infrastructure project,
     //! whose API was off. `providers.tf` is in no corpus snapshot, so these
     //! tests are its gate.
 
@@ -1848,7 +1848,7 @@ mod project_alias_tests {
     use std::collections::{BTreeMap, HashMap};
 
     /// An estate: the backend, a `google` provider working in `region`, and one
-    /// project entity beside the infra project.
+    /// project entity beside the infrastructure project.
     fn config(region: &str) -> BTreeMap<String, serde_yaml::Value> {
         let tf: serde_yaml::Value =
             serde_yaml::from_str("backend:\n  local:\n    path: terraform.tfstate\n").expect("valid test YAML");
@@ -1890,12 +1890,12 @@ mod project_alias_tests {
 
     fn providers_tf(region: &str, projects: &[(&str, &str)]) -> String {
         emit_providers(&config(region), &folded_projects(projects), &env(), &HashMap::new(), &HashMap::new(), None)
-            .expect("providers.tf emits")
+            .expect("providers.tf writes")
     }
 
     /// The alias block, by its alias, as its lines.
     fn alias_block(out: &str, alias: &str) -> Vec<String> {
-        let body = hcl::parse(out).expect("emitted providers.tf parses");
+        let body = hcl::parse(out).expect("written providers.tf parses");
         for b in body.blocks() {
             if b.identifier() != "provider" || b.labels().first().map(|l| l.as_str()) != Some("google") {
                 continue;
@@ -1954,7 +1954,7 @@ mod project_alias_tests {
             &HashMap::new(),
             None,
         )
-        .expect("providers.tf emits");
+        .expect("providers.tf writes");
         assert!(
             !alias_block(&out, "project_data").iter().any(|l| l.starts_with("region =")),
             "an alias invented a region:\n{}",
@@ -1963,7 +1963,7 @@ mod project_alias_tests {
     }
 
     /// The quota project of a project's alias is that project. Billing it to the
-    /// infra project asks Google for the API on a project the resource has
+    /// infrastructure project asks Google for the API on a project the resource has
     /// nothing to do with, and the create is refused with a 403 naming it.
     #[test]
     fn a_projects_alias_bills_to_that_project() {
@@ -1979,15 +1979,15 @@ mod project_alias_tests {
             out
         );
         // the estate's own default provider is untouched: org-scoped calls have
-        // no project of their own and are billed to the infra project
+        // no project of their own and are billed to the infrastructure project
         assert!(
             alias_block(&out, "google").contains(&"billing_project = \"corp-infra-001\"".to_string()),
-            "the default provider stopped billing to the infra project:\n{}",
+            "the default provider stopped billing to the infrastructure project:\n{}",
             out
         );
     }
 
-    /// Cloud mode: the alias acts as the estate's IaC service account, like
+    /// Cloud mode: the alias acts as the estate account, like
     /// every other block in the file.
     #[test]
     fn an_alias_impersonates_the_estates_service_account() {
@@ -2002,12 +2002,12 @@ mod project_alias_tests {
             &HashMap::new(),
             None,
         )
-        .expect("providers.tf emits");
+        .expect("providers.tf writes");
         assert!(
             alias_block(&out, "project_data").contains(
                 &"impersonate_service_account = \"svc-iac-001@corp-infra-001.iam.gserviceaccount.com\"".to_string()
             ),
-            "the alias runs as whoever is logged in:\n{}",
+            "the alias runs as whoever is signed in:\n{}",
             out
         );
     }
@@ -2015,7 +2015,7 @@ mod project_alias_tests {
 
 #[cfg(test)]
 mod default_network_order_tests {
-    //! Seen on a customer's new organisation: the infrastructure project's Compute
+    //! Seen on a customer's new organization: the infrastructure project's Compute
     //! service and the CIS pack's `compute.skipDefaultNetworkCreation` went into the
     //! first apply with no edge between them, and the project came out with a
     //! `default` network. Google tests the policy when Compute is switched on.
@@ -2075,7 +2075,7 @@ resource "google_folder" "workloads" {
 "#;
 
     /// The Compute service waits for every enforcing declaration of the constraint,
-    /// on the organisation and on a folder alike; another service, another policy
+    /// on the organization and on a folder alike; another service, another policy
     /// and the policies themselves are left alone.
     #[test]
     fn the_compute_service_waits_for_every_enforcing_skip_policy() {
@@ -2106,10 +2106,10 @@ resource "google_folder" "workloads" {
         assert!(bs.iter().all(|b| depends_on(b).is_none()), "a reset policy enforces nothing");
     }
 
-    /// The preflight's reading of the same estate: the organisation's policy is the
+    /// The API prerequisites check's reading of the same estate: the organization's policy is the
     /// one whose enforcement can be read, so it is the one named.
     #[test]
-    fn the_deferral_names_the_organisations_policy() {
+    fn the_deferral_names_the_organizations_policy() {
         let manifest = crate::manifest::Manifest::from_blocks(blocks(ESTATE).iter());
         let d = crate::prerequisites::compute_deferral(&manifest).expect("the estate declares the policy");
         assert_eq!(d.policy, "google_org_policy_policy.compute_skipDefaultNetworkCreation");
@@ -2127,7 +2127,7 @@ resource "google_folder" "workloads" {
         assert!(crate::prerequisites::compute_deferral(&manifest).is_none(), "nothing enforces, nothing is deferred");
     }
 
-    /// What the preflight prints beside the API it left alone, per what it read.
+    /// What the API prerequisites check prints beside the API it left alone, per what it read.
     #[test]
     fn the_reason_says_what_was_read() {
         let d = crate::prerequisites::ComputeDeferral {
@@ -2170,7 +2170,7 @@ mod service_account_order_tests {
         b.body().attributes().find(|a| a.key() == "depends_on").map(|a| hcl::format::to_string(a.expr()).unwrap().split_whitespace().collect())
     }
 
-    /// Found applying the CIS baseline to a customer organisation: `409
+    /// Found applying the CIS baseline to a customer organization: `409
     /// CONCURRENT_POLICY_CHANGES` on one of twenty-eight unordered policies.
     #[test]
     fn the_policies_on_one_parent_apply_one_at_a_time() {
@@ -2241,13 +2241,13 @@ resource "google_storage_bucket" "state" {
         order_after_project_services(&mut bs, "acme-infra-001");
         let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
         // the budget hangs off the billing account and still waits for the API on
-        // the infra project — every call the provider makes is billed there
+        // the infrastructure project — every call the provider makes is billed there
         assert_eq!(
             depends_on(by("global_budget")).as_deref(),
             Some("[google_project_service.infra_billingbudgets_googleapis_com]")
         );
         assert_eq!(depends_on(by("audit")).as_deref(), Some("[google_project_service.infra_logging_googleapis_com]"));
-        // an API the estate declares nowhere orders nothing: the compile reports it
+        // an API the estate declares nowhere orders nothing: the transpile reports it
         assert_eq!(depends_on(by("state")), None);
     }
 
@@ -2316,7 +2316,7 @@ resource "google_storage_bucket" "elsewhere" {
         );
         order_after_project_services(&mut bs, "acme-infra-001");
         let by = |label: &str| bs.iter().find(|b| b.labels()[1].as_str() == label).unwrap();
-        // its own project's service AND the infra project's, both and no more
+        // its own project's service AND the infrastructure project's, both and no more
         assert_eq!(
             depends_on(by("elsewhere")).as_deref(),
             Some("[google_project_service.infra_storage_googleapis_com,google_project_service.other_storage_googleapis_com]")
@@ -2376,7 +2376,7 @@ resource "google_cloud_identity_group_membership" "owner" {
 
     #[test]
     fn grants_and_memberships_naming_a_declared_group_wait_for_it() {
-        // a grant names its group by email; on a fresh organisation the grant
+        // a grant names its group by email; on a fresh organization the grant
         // used to run beside the group's creation and the first refusal
         // stopped the groups still queued
         let mut bs = blocks(
@@ -2452,8 +2452,8 @@ resource "google_org_policy_policy" "managed" {
 #[cfg(test)]
 mod required_argument_tests {
     //! A converted estate carried a custom role with no `role_id`: the provider
-    //! requires it, nothing in the compile said so, and `tofu plan` was the first
-    //! to refuse. The check reads what is emitted, so derived arguments count.
+    //! requires it, nothing in the transpile said so, and `tofu plan` was the first
+    //! to refuse. The check reads what is written, so derived arguments count.
     use super::*;
 
     fn registry() -> crate::schema::ResourceRegistry {
@@ -2529,7 +2529,7 @@ resource "google_storage_bucket" "a_list_for_a_string" {
 
 #[cfg(test)]
 mod grant_condition_tests {
-    //! A conditional grant is emitted with its condition or not at all. The
+    //! A conditional grant is written with its condition or not at all. The
     //! condition is part of the binding's identity and of its scope: losing it
     //! would widen the grant and move its address in one stroke.
 
@@ -2618,7 +2618,7 @@ mod billing_grant_tests {
 
 #[cfg(test)]
 mod reset_comment_tests {
-    //! `satz plan` and `satz apply` replace an org policy the state holds with rules
+    //! `satz plan` and `satz apply` replace an organization policy the state holds with rules
     //! while the estate declares it reset (ADR 0011). A bare `tofu apply` of the
     //! handed-over HCL does not, so `main.tf` names the replace above the policy.
 
@@ -2670,11 +2670,11 @@ mod inputs_emission_tests {
         env.insert("cost_centre".into(), serde_yaml::Value::String("4711".into()));
         env.insert("retention_days".into(), serde_yaml::Value::Number(7.into()));
         env.insert("customer_domain".into(), serde_yaml::Value::String("example.com".into()));
-        let inputs = vec![input("cost_centre", serde_yaml::Value::String("4711".into()), Some("the cost centre")), input("retention_days", serde_yaml::Value::Number(7.into()), None)];
+        let inputs = vec![input("cost_centre", serde_yaml::Value::String("4711".into()), Some("the cost center")), input("retention_days", serde_yaml::Value::Number(7.into()), None)];
         let mut descriptions = std::collections::BTreeMap::new();
         descriptions.insert("customer_domain".to_string(), "The domain".to_string());
         let vars = super::emit_variables(&env, &descriptions, &inputs);
-        assert!(vars.contains("variable \"cost_centre\" {\n  type = string\n  description = \"the cost centre\"\n}"), "{}", vars);
+        assert!(vars.contains("variable \"cost_centre\" {\n  type = string\n  description = \"the cost center\"\n}"), "{}", vars);
         assert!(vars.contains("variable \"retention_days\" {\n  type = number\n}"), "{}", vars);
         assert!(vars.contains("variable \"customer-domain\" {\n  type = string\n  description = \"The domain\"\n}"), "{}", vars);
         let tfvars = super::emit_tfvars(&env, &inputs);

@@ -9,7 +9,7 @@ Security Command Center findings, delivered to a mailbox — the answer to "who
 gets told", for a customer who has no SIEM reading the topic.
 
 NEEDS `presets/scc/scc-notifications.satz`: this fragment attaches to the topic
-that pack creates and takes the same project. Used without it, the compile stops
+that pack creates and takes the same project. Used without it, the transpile stops
 with `unknown param 'scc_notification_project'`.
 
 WHAT THE MAIL SAYS. "Security Command Center published findings", with the count
@@ -73,7 +73,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `scc_findings_email` | Where should Security Command Center findings be delivered — the mailbox that is told a finding arrived | edit | high | — |
 
-**scc_findings_email** — The mail says findings were published and links to them; the finding itself stays in the topic, the console and the export. The mailbox must exist and accept mail from alerting-noreply@google.com — a group whose members have no mailbox drops every alert silently. A group, never a person. The default is the address the organisation's CIS alerts already go to.
+**scc_findings_email** — The mail says findings were published and links to them; the finding itself stays in the topic, the console and the export. The mailbox must exist and accept mail from alerting-noreply@google.com — a group whose members have no mailbox drops every alert silently. A group, never a person. The default is the address the organization's CIS alerts already go to.
 
 
 ## Contributes

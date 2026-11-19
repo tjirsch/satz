@@ -1,4 +1,4 @@
-// Organisation, folder and project numbers that are no example value.
+// Organization, folder and project numbers that are no example value.
 customer_organization_id = "98765%%4321098"
 folder = "folders/5550%%1234567"
 number = 7654%%321098765

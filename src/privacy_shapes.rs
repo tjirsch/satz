@@ -1,17 +1,17 @@
 //! The privacy shapes, judged by satz: every token in a text that is SHAPED like
-//! private data — a directory id, an organisation number, a billing account, a GUID,
+//! private data — a directory id, an organization number, a billing account, a GUID,
 //! an e-mail address, a domain, a project id, a repository URL — and is not one of
 //! the documented example values.
 //!
 //! The rules are the content rules of `scripts/check-names.sh`, the repository's
 //! privacy gate, in a second implementation (ADR 0050). The script stays the gate: it
-//! runs where there is no toolchain and on a tree that does not compile. This copy is
+//! runs where there is no toolchain and on a tree that does not transpile. This copy is
 //! what `satz review-preset` judges a pack with, because a pack written against its
-//! author's own organisation carries exactly these shapes, and each one must become a
+//! author's own organization carries exactly these shapes, and each one must become a
 //! param before the pack goes upstream.
 //!
 //! Two copies, one proof: the allow-lists are ONE file both read
-//! (`scripts/check-names-allow.txt`, compiled in below), and the corpus test at the
+//! (`scripts/check-names-allow.txt`, built in below), and the corpus test at the
 //! bottom runs the script and this module over the same fixtures
 //! (`tests/privacy-shapes/`) and fails on any token one of them flags and the other
 //! does not.
@@ -82,7 +82,7 @@ impl Shape {
     pub(crate) fn describe(self) -> &'static str {
         match self {
             Shape::DirectoryId => "a Google Workspace directory id",
-            Shape::Number => "an organisation, folder or project number",
+            Shape::Number => "an organization, folder or project number",
             Shape::BillingAccount => "a billing account id",
             Shape::Email => "an e-mail address outside the reserved and vendor domains",
             Shape::Domain => "a domain that is neither IANA-reserved nor a known vendor host",
@@ -392,7 +392,7 @@ mod tests {
         }
     }
 
-    /// Every list the script reads is in the file, and every entry compiles here too.
+    /// Every list the script reads is in the file, and every entry transpiles here too.
     #[test]
     fn every_allow_list_is_in_the_one_file() {
         for name in ["dir", "num", "bill", "domain", "guid", "guid32", "project"] {

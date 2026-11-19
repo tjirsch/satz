@@ -20,20 +20,20 @@
 //! alias travels with the resource; `depends_on` is not one, because satz
 //! derives a plan's ordering from the estate itself, so the edge is dropped and
 //! reported — and only to a block this import carries. Positional types are placed: a
-//! folder whose `parent` is the organisation goes to the top, one whose parent
+//! folder whose `parent` is the organization goes to the top, one whose parent
 //! references another folder nests under it; a project nests under the folder
 //! its `folder_id` references (or sits at the top when its `org_id` is the
-//! organisation); a project's services, IAM grants and project-scoped
+//! organization); a project's services, IAM grants and project-scoped
 //! resources that reference it by `project` move inside it; folder and
-//! organisation grants likewise. A variable used as the organisation (`org_id
+//! organization grants likewise. A variable used as the organization (`org_id
 //! = var.x`, `parent = "organizations/${var.x}"`) is bound to
-//! `customer_organization_id` — to the organisation `--organization` names
+//! `customer_organization_id` — to the organization `--organization` names
 //! when it has no default. A `count = length(<promoted list>)` whose entry is
 //! read as `<list>[count.index]` or `element(<list>, count.index)` expands into
 //! one resource per distinct entry.
 //!
 //! **The default provider.** A translated resource that names no provider is
-//! emitted with the estate's own, so what it took from the source's default
+//! written with the estate's own, so what it took from the source's default
 //! `google` provider is carried: the default project as placement (into the
 //! imported project of that id, the id folded through params and templates) or
 //! as the resource's own `project`, the region and zone into the estate's
@@ -41,7 +41,7 @@
 //! relied on it, naming it.
 //!
 //! **Wrap**: everything else is carried verbatim as
-//! `hcl trust "imported from <file>:<line>" { … }` — it deploys exactly as
+//! `hcl trust "imported from <file>:<line>" { … }` — it is applied exactly as
 //! written, the compliance plane cannot see into it, the fold cannot compose
 //! it — and the report says why. A block whose parent is wrapped is wrapped
 //! too (closure by dependency), its reason naming the block that started the
@@ -55,7 +55,7 @@
 //! An import may be partial, never silent. Note that *translated* is not
 //! *proven*: a `${…}` reference is opaque to the compliance plane.
 //!
-//! A translated resource may reference only another TRANSLATED one. satz emits
+//! A translated resource may reference only another TRANSLATED one. satz writes
 //! no address for a verbatim block — `hcl trust` is text, and the emission
 //! manifest does not hold it — so a `${…}` that crosses from a translated block
 //! to a wrapped one, or out of the import altogether, is an estate
@@ -182,7 +182,7 @@ const UNEXPRESSIBLE_META_ATTRS: &[&str] = &["count", "for_each"];
 /// still translate. `base_estate_declares_the_default_provider` proves the two
 /// agree.
 const DEFAULT_PROVIDER: &str = "google.google";
-/// The param an estate names its organisation by.
+/// The param an estate names its organization by.
 const ORGANIZATION_PARAM: &str = "customer_organization_id";
 /// Why a `terraform` block, or a `provider` block nothing still uses, is dropped.
 const TERRAFORM_DROPPED: &str = "the emitter writes providers.tf from the estate's `terraform` and `providers` blocks";
@@ -193,7 +193,7 @@ const COUNT_REASON: &str = "uses `count`";
 /// Where a translated resource lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Place {
-    /// top level (the organisation)
+    /// top level (the organization)
     Top,
     Folder(String),
     Project(String),
@@ -252,7 +252,7 @@ struct Const {
     /// the expression as written — a `variable`'s default, a local's value —
     /// which [`Consts::eval`] folds to a plain string where it can
     expr: Option<Expression>,
-    /// the organisation this name stands for: a variable used as an `org_id`
+    /// the organization this name stands for: a variable used as an `org_id`
     /// or an `organizations/…` parent ([`bind_organization_variables`]). Its
     /// param is written as `customer_organization_id`, and a placement reads
     /// it as this number.
@@ -376,9 +376,9 @@ type Reasons = BTreeMap<(String, usize), String>;
 /// Import every file. `wrap_all` carries the input verbatim and promotes
 /// nothing — a param is a translation, and under that flag none happens.
 ///
-/// `organization` is `--organization <n>`: the organisation the estate is bound
+/// `organization` is `--organization <n>`: the organization the estate is bound
 /// to when the configuration names none, and a check on the one it names. An
-/// estate is written bound to exactly one organisation or not at all
+/// estate is written bound to exactly one organization or not at all
 /// ([`bound_organization`]).
 pub fn import(
     inputs: &[Input],
@@ -683,8 +683,8 @@ fn one_pass(
     // closure by dependency: a resource under a wrapped container is wrapped
     let mut wrapped_idx = closure(&mut resources);
 
-    // a translated resource whose EMITTED label is derived cannot be referenced
-    // by a verbatim block — wrap it too rather than emit a dangling reference
+    // a translated resource whose WRITTEN label is derived cannot be referenced
+    // by a verbatim block — wrap it too rather than write a dangling reference
     loop {
         let referenced: BTreeSet<String> = resources
             .iter()
@@ -701,7 +701,7 @@ fn one_pass(
             let addr = format!("{}.{}", r.tf_type, r.label);
             if referenced.contains(&addr) {
                 r.reason = Some(format!(
-                    "a verbatim block references `{}`, whose emitted label a translated {} does not keep",
+                    "a verbatim block references `{}`, whose written label a translated {} does not keep",
                     addr, r.tf_type
                 ));
                 changed = true;
@@ -725,10 +725,10 @@ fn one_pass(
     }
 
     // A `provider` block stays in the estate, verbatim, when something the
-    // estate emits still uses it: a block that stays verbatim and names no
+    // estate writes still uses it: a block that stays verbatim and names no
     // provider (or names this one), or a translated resource naming it. The
     // emitter's own providers are all aliased, so without it those blocks would
-    // deploy with an unconfigured default provider.
+    // be applied with an unconfigured default provider.
     let mut used: BTreeSet<String> = verbatim_providers;
     for (i, r) in resources.iter().enumerate() {
         let names_one = r.body.as_ref().is_some_and(|b| b.contains_key(serde_yaml::Value::String("provider".into())));
@@ -816,8 +816,8 @@ fn one_pass(
             (None, false) => Action::Promoted(describe_promotion(d, &consts)),
         };
         if d.carry || d.reason.is_some() || d.promoted.is_empty() {
-            // a variable bound to the organisation, carried because a verbatim
-            // block reads it, is carried with that organisation as its default:
+            // a variable bound to the organization, carried because a verbatim
+            // block reads it, is carried with that organization as its default:
             // the source asked for it, and the estate knows it
             let org = d.promoted.iter().find_map(|n| {
                 consts.by_name.get(n).filter(|c| c.origin == Origin::VarRequired).and_then(|c| c.organization.clone())
@@ -869,7 +869,7 @@ fn one_pass(
         }
     }
 
-    // params: the inferred organisation id, then every promoted constant
+    // params: the inferred organization id, then every promoted constant
     let mut params: Vec<(String, String)> = Vec::new();
     let mut required: Vec<String> = Vec::new();
     for (hcl_name, c) in &consts.by_name {
@@ -890,7 +890,7 @@ fn one_pass(
         "Imported from existing Terraform. `variable` and `locals` became params; resource".to_string(),
         "blocks whose values are literals, params or `${…}` references are Satz resources,".to_string(),
         "placed by the folder/project they reference. Everything else is carried verbatim".to_string(),
-        "inside `hcl trust` (it deploys as written; the compliance plane cannot see into it)".to_string(),
+        "inside `hcl trust` (it is applied as written; the compliance plane cannot see into it)".to_string(),
         "— the import report says why, per block. `satz transpile`, then `tofu plan` against".to_string(),
         "the source's state must show no changes; `satz adopt` resolves the import ids after.".to_string(),
         "A `${…}` reference is opaque to the compliance plane: translated is not proven.".to_string(),
@@ -925,7 +925,7 @@ fn one_pass(
                     o.line,
                     reasons.get(&(o.file.clone(), o.line)).cloned().unwrap_or_default()
                 ),
-                Some(_) => ", which this estate does not emit under that address".to_string(),
+                Some(_) => ", which this estate does not write under that address".to_string(),
                 None if declared.contains(address) => {
                     ", which `count` expands into one resource per entry, so that address is gone".to_string()
                 }
@@ -940,7 +940,7 @@ fn one_pass(
     if !crossings.is_empty() {
         crossings.sort();
         return Err(format!(
-            "the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not emit.\n{}\nEither make the referenced block translatable (its reason is above), import the file that declares it too, or carry everything verbatim with `--wrap-all`.",
+            "the import would write an estate `satz transpile` refuses, so nothing was written: a translated resource references an address this estate does not write.\n{}\nEither make the referenced block translatable (its reason is above), import the file that declares it too, or carry everything verbatim with `--wrap-all`.",
             crossings.join("\n")
         ));
     }
@@ -954,7 +954,7 @@ fn one_pass(
         ));
     }
 
-    // the organisation last among the refusals: a reference across the verbatim
+    // the organization last among the refusals: a reference across the verbatim
     // boundary says more about the input than a missing `--organization` does
     let org = bound_organization(&org_ids, organization)?;
     params.insert(
@@ -965,8 +965,8 @@ fn one_pass(
     Ok(Pass::Done(Box::new(Imported { satz, rows, notes, ordering_dropped: dropped_edges })))
 }
 
-/// The organisation an imported estate is bound to: the one the configuration
-/// names (a literal `organizations/<n>` parent or `org_id`, an org policy's
+/// The organization an imported estate is bound to: the one the configuration
+/// names (a literal `organizations/<n>` parent or `org_id`, an organization policy's
 /// parent), or `--organization` when it names none — never both disagreeing, never
 /// two, never none. The same refusals as the state shape's: an estate written
 /// without one carries `organizations/` and `""` where an id belongs.
@@ -974,7 +974,7 @@ fn bound_organization(found: &BTreeSet<String>, flag: Option<&str>) -> Result<St
     let named: Vec<&String> = found.iter().collect();
     match (named.as_slice(), flag) {
         ([], None) => Err("import: no organization id — nothing in the configuration names one (a literal \
-             `organizations/<n>` parent, an `org_id`, an org policy's parent), and a folder's parent and an \
+             `organizations/<n>` parent, an `org_id`, an organization policy's parent), and a folder's parent and an \
              organization grant's `org_id` are written from `customer_organization_id`. Nothing written. Name it \
              with `--organization <n>`."
             .to_string()),
@@ -986,7 +986,7 @@ fn bound_organization(found: &BTreeSet<String>, flag: Option<&str>) -> Result<St
             flag, one
         )),
         (many, _) => Err(format!(
-            "import: the configuration names {} organizations ({}), and an estate is bound to one — import each organisation's files on their own. Nothing written.",
+            "import: the configuration names {} organizations ({}), and an estate is bound to one — import each organization's files on their own. Nothing written.",
             many.len(),
             many.iter().map(|o| o.as_str()).collect::<Vec<_>>().join(", ")
         )),
@@ -1022,7 +1022,7 @@ fn render(
 
 /// `--wrap-all`: every block verbatim except the two the emitter owns.
 fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&str>) -> Result<Imported, String> {
-    // nothing is translated, so nothing names an organisation but the flag
+    // nothing is translated, so nothing names an organization but the flag
     let org = organization.ok_or(
         "import: no organization id — --wrap-all translates nothing, so nothing in the configuration names one, and every \
          estate is bound to one: a folder's parent and an organization grant's `org_id` are written from \
@@ -1034,7 +1034,7 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
     )];
     let mut rows = Vec::new();
     let mut verbatim = Vec::new();
-    // what the estate deploys differently from the source
+    // what the estate creates differently from the source
     let mut changed: Vec<String> = Vec::new();
     for (input, body) in parsed {
         for s in body.iter() {
@@ -1078,13 +1078,13 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
     let mut header = vec![
         "Imported from existing Terraform with --wrap-all: every block is carried verbatim".to_string(),
         "inside `hcl trust`, its `provider` blocks included, nothing is translated and no".to_string(),
-        "params are promoted beyond the organisation `--organization` names. The emitter".to_string(),
+        "params are promoted beyond the organization `--organization` names. The emitter".to_string(),
         "writes the `terraform` block.".to_string(),
     ];
     if changed.is_empty() {
-        header.push("It deploys as written; `tofu plan` against the source's state must show no changes.".to_string());
+        header.push("It is applied as written; `tofu plan` against the source's state must show no changes.".to_string());
     } else {
-        header.push("It deploys as written except where a `provider` block is not carried:".to_string());
+        header.push("It is applied as written except where a `provider` block is not carried:".to_string());
         header.extend(changed.iter().map(|c| format!("  {}", c)));
     }
     let satz = render(&base_estate()?, name, &params, &header, &verbatim)?;
@@ -1191,15 +1191,15 @@ fn describe_promotion(d: &Decl, consts: &Consts) -> String {
                 migrate::param_value(v).unwrap_or_else(|_| "…".into()),
                 match (origin, organization) {
                     (Origin::VarRequired, Some(_)) => {
-                        "variable without a default, used as the organisation: bound to the one `--organization` names"
+                        "variable without a default, used as the organization: bound to the one `--organization` names"
                     }
-                    (_, Some(_)) => "used as the organisation, which its value names",
+                    (_, Some(_)) => "used as the organization, which its value names",
                     (Origin::VarDefault, None) => "variable default",
                     (Origin::Local, None) => "locals",
                     (Origin::VarRequired, None) => "variable",
                 }
             ),
-            _ => format!("param {} (variable without a default — bind it before deploying)", migrate::param_name(n)),
+            _ => format!("param {} (variable without a default — bind it before applying)", migrate::param_name(n)),
         }
     } else {
         format!(
@@ -1593,13 +1593,13 @@ fn carry_provider_defaults(
     carried
 }
 
-/// Bind every constant the configuration uses as the organisation — `org_id =
+/// Bind every constant the configuration uses as the organization — `org_id =
 /// var.x` on any resource, `parent = "organizations/${var.x}"` — to the
-/// organisation the estate is bound to: a variable declared without a default
+/// organization the estate is bound to: a variable declared without a default
 /// to the one `--organization` names, any other constant to the number it
 /// folds to. Its param is then written as `customer_organization_id`, so the
-/// estate names the organisation once, and a placement reads the number.
-/// Returns the organisations a constant's own value names, which bind the
+/// estate names the organization once, and a placement reads the number.
+/// Returns the organizations a constant's own value names, which bind the
 /// estate the way a literal `org_id` does.
 fn bind_organization_variables(
     parsed: &[(&Input, Body)],
@@ -1708,7 +1708,7 @@ impl Reads {
     }
 
     /// Parse a verbatim block's own text and collect what it reads. The text is
-    /// exactly what will be emitted, so this is the honest question to ask.
+    /// exactly what will be written, so this is the honest question to ask.
     fn scan_text(&mut self, text: &str) {
         if let Ok(body) = parse_body(text) {
             visit::visit_body(self, &body);
@@ -1778,7 +1778,7 @@ fn verbatim_reads(parsed: &[(&Input, Body)]) -> Reads {
 
 fn place_name(p: &Place) -> String {
     match p {
-        Place::Top => "the organisation".into(),
+        Place::Top => "the organization".into(),
         Place::Folder(l) => format!("google_folder.{}", l),
         Place::Project(l) => format!("google_project.{}", l),
     }
@@ -1950,7 +1950,7 @@ fn count_expansion(block: &Block, consts: &Consts) -> Option<Result<(String, Vec
 /// The label one expanded copy takes: the element when it can be a Satz
 /// identifier (`roles/viewer` -> `viewer`, `europe-west3` -> `europe_west3`),
 /// else the index — a label is a name in the estate, and a reader should
-/// recognise which entry it is.
+/// recognize which entry it is.
 fn expanded_label(base: &str, element: &serde_yaml::Value, i: usize) -> String {
     let raw = match element {
         serde_yaml::Value::String(s) => s.rsplit('/').next().unwrap_or(s).to_string(),
@@ -1977,7 +1977,7 @@ fn wrapped(reason: String) -> Classified {
 /// `provider = google.beta` / `provider = google-beta` as the alias Satz writes
 /// in the body. Only the reference forms: the quoted one is Terraform's pre-0.12
 /// legacy spelling, and rewriting it into a reference would change what the
-/// block emits.
+/// block writes.
 fn provider_reference(e: &Expression) -> Result<String, String> {
     let (root, segs) = match e {
         Expression::Variable(v) => (v.as_str().to_string(), Vec::new()),
@@ -2234,7 +2234,7 @@ fn classify(
     if let Some(ScopeRef::Unbound(attr, name)) = &scope {
         return wrapped(if attr == "org_id" || (attr == "parent" && tf_type == "google_folder") {
             format!(
-                "`{}` = {}, a variable declared without a default — name the organisation with `--organization <n>` and it binds to `{}`",
+                "`{}` = {}, a variable declared without a default — name the organization with `--organization <n>` and it binds to `{}`",
                 attr, name, ORGANIZATION_PARAM
             )
         } else {
@@ -2273,7 +2273,7 @@ fn classify(
                 org_ids.insert(o);
                 Place::Top
             }
-            _ => return wrapped("an organisation grant needs a literal `org_id`".into()),
+            _ => return wrapped("an organization grant needs a literal `org_id`".into()),
         },
         "google_folder_iam_member" => match scope {
             Some(ScopeRef::Folder(f)) => Place::Folder(f),
@@ -2297,7 +2297,7 @@ fn classify(
             }
             None => Place::Top,
             // a scope written as an expression satz cannot place — dropping it
-            // would move the resource to the organisation
+            // would move the resource to the organization
             Some(other) => return wrapped(format!("scope attribute = {} cannot be placed", other.describe())),
         },
     };
@@ -2360,7 +2360,7 @@ fn scope_from_string(key: &str, v: &str) -> ScopeRef {
     }
 }
 
-/// The scope attribute's meaning: the organisation, a folder or project of this
+/// The scope attribute's meaning: the organization, a folder or project of this
 /// input (by identity reference), a literal, or something else.
 fn scope_attr_value(tf_type: &str, block: &Block, consts: &Consts) -> Option<ScopeRef> {
     for s in block.body.iter() {
@@ -2426,7 +2426,7 @@ struct Uses {
 /// can never contain a bare `${` here: `literal` refuses it.
 enum Part {
     Text(String),
-    /// the constant's HCL name; the printer applies the `_` normalisation
+    /// the constant's HCL name; the printer applies the `_` normalization
     Param(String),
 }
 
@@ -2710,10 +2710,10 @@ fn wrap_block(path: &str, line: usize, text: &str) -> String {
     format!("hcl trust \"imported from {}:{}\" {{\n{}\n}}\n\n", path, line, indent(text))
 }
 
-/// A label a Satz resource can be written under, emitted back under the same
+/// A label a Satz resource can be written under, written back under the same
 /// name. The emitter's label is the Satz one with `-` replaced by `_`
 /// (`emit_shared::single_resource_block`), so a label already spelled with `_`
-/// survives unchanged — including the mixed case satz itself emits for an org
+/// survives unchanged — including the mixed case satz itself writes for an organization
 /// policy (`compute_managed_requireOsLogin`) and for a grant's hashed label.
 fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
@@ -3068,7 +3068,7 @@ module "vpc" {
         );
         let satz_part = squash(&s[..s.find("hcl trust").unwrap_or(s.len())]);
         assert!(!satz_part.contains("project=\"acme-infra-001\""), "the project reference became placement, not an attribute:\n{}", s);
-        // the verbatim blocks deploy with the source's default provider, which
+        // the verbatim blocks are applied with the source's default provider, which
         // the emitter's aliased providers are not
         assert!(c.contains("hcltrust\"importedfrommain.tf:7\"{provider\"google\"{project=\"acme-infra-001\"}}"), "{}", s);
         assert!(
@@ -3109,15 +3109,15 @@ module "vpc" {
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Wrapped(_))).count(), 15);
         assert_eq!(imported.rows.iter().filter(|r| matches!(r.action, Action::Dropped(_))).count(), 1, "the terraform block");
         assert!(imported.satz.contains("provider \"google\" {\n    project = \"acme-infra-001\""), "{}", imported.satz);
-        assert!(imported.satz.contains("It deploys as written;"), "{}", imported.satz);
+        assert!(imported.satz.contains("It is applied as written;"), "{}", imported.satz);
         satz_core::satz::parse(&imported.satz).unwrap();
     }
 
-    /// An estate is bound to one organisation. The hcl shape writes one only when
+    /// An estate is bound to one organization. The hcl shape writes one only when
     /// it knows which: named by the configuration, or by `--organization` — the
     /// flag filling what the configuration does not say, never overruling it.
     #[test]
-    fn the_estate_is_written_bound_to_one_organisation_or_not_at_all() {
+    fn the_estate_is_written_bound_to_one_organization_or_not_at_all() {
         let no_org = "resource \"google_storage_bucket\" \"b\" {\n  name     = \"corp-logs-001\"\n  location = \"EU\"\n}\n";
         let e = import(&one(no_org), "e", false, None, &Known).unwrap_err();
         assert!(e.contains("no organization id") && e.contains("--organization <n>"), "{e}");
@@ -3132,7 +3132,7 @@ module "vpc" {
         import(&one(named), "e", false, None, &Known).expect("the configuration names it");
         let e = import(&one(named), "e", false, Some("222222222222"), &Known).unwrap_err();
         assert!(e.contains("--organization 222222222222") && e.contains("names organization 123456789012"), "{e}");
-        // two organisations are two estates
+        // two organizations are two estates
         let two = format!("{}resource \"google_folder\" \"g\" {{\n  display_name = \"Other\"\n  parent       = \"organizations/222222222222\"\n}}\n", named);
         let e = import(&one(&two), "e", false, None, &Known).unwrap_err();
         assert!(e.contains("names 2 organizations") && e.contains("222222222222"), "{e}");
@@ -3303,7 +3303,7 @@ resource "google_project" "infra" {
         // promoted, with values
         assert!(s.contains("pid = \"acme-infra-001\""), "{}", s);
         assert!(s.contains("pretty = \"Infra\""), "{}", s);
-        // the org id also lands as the inferred customer_organization_id
+        // the organization id also lands as the inferred customer_organization_id
         assert!(s.contains("customer_organization_id = \"123456789012\""), "{}", s);
         // a variable without a default is NOT given a value; it is named in the header
         assert!(!s.contains("billing = \"\""), "a shimmed empty default:\n{}", s);
@@ -3520,7 +3520,7 @@ resource "google_service_account" "sa" {
         satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
     }
 
-    /// satz puts `provider` and `depends_on` on nearly every resource it emits,
+    /// satz puts `provider` and `depends_on` on nearly every resource it writes,
     /// so refusing both is refusing satz's own output. `provider` is a Satz body
     /// key; `depends_on` is ordering the emitter derives from the estate.
     #[test]
@@ -3630,7 +3630,7 @@ resource "google_storage_bucket" "c" {
         );
     }
 
-    /// `hcl trust` is text: satz emits no address for it, so a `${…}` from a
+    /// `hcl trust` is text: satz writes no address for it, so a `${…}` from a
     /// translated block to a wrapped one is an estate `satz transpile` refuses
     /// with `written-reference`. The import refuses first and writes nothing.
     #[test]
@@ -3684,7 +3684,7 @@ resource "google_storage_bucket" "b" {
         assert!(e.contains("references `google_project.elsewhere`, which no block in this import declares"), "{}", e);
     }
 
-    /// The label satz itself emits for an org policy is mixed case
+    /// The label satz itself writes for an organization policy is mixed case
     /// (`compute_managed_requireOsLogin`), and a grant's is the hashed one. Both
     /// are Satz labels, and the emitter writes them back unchanged.
     #[test]
@@ -3734,13 +3734,13 @@ resource "google_service_account" "sa" {
         );
     }
 
-    /// Vendor-generated onboarding asks for the organisation as a variable with no
+    /// Vendor-generated onboarding asks for the organization as a variable with no
     /// default and uses it as the project's `org_id`. `--organization` names that
-    /// organisation, so the variable is bound to `customer_organization_id` —
+    /// organization, so the variable is bound to `customer_organization_id` —
     /// rather than wrapping the project and, through the reference closure,
     /// refusing the whole input.
     #[test]
-    fn an_unbound_organisation_variable_binds_to_the_organisation_the_flag_names() {
+    fn an_unbound_organization_variable_binds_to_the_organization_the_flag_names() {
         let tf = r#"
 variable "org_id" { type = string }
 resource "google_project" "p" {
@@ -3767,7 +3767,7 @@ resource "google_organization_iam_binding" "viewer" {
         let s = &imported.satz;
         let by = by_what(&imported);
         assert_eq!(by["resource \"google_project\" \"p\""], &Action::Translated, "{:?}", imported.rows);
-        assert!(squash(s).contains("org_id=customer_organization_id"), "the variable names the organisation param:\n{}", s);
+        assert!(squash(s).contains("org_id=customer_organization_id"), "the variable names the organization param:\n{}", s);
         assert!(!s.contains("Bind these"), "a bound variable is not asked for:\n{}", s);
         assert!(
             matches!(by["variable \"org_id\""], Action::Promoted(d) if d.contains("bound to the one `--organization` names")),
@@ -3775,12 +3775,12 @@ resource "google_organization_iam_binding" "viewer" {
             by["variable \"org_id\""]
         );
         // the verbatim grant still reads `var.org_id`, so the declaration is
-        // carried — with the organisation as its default
+        // carried — with the organization as its default
         assert!(s.contains("variable \"org_id\" {\n    type = string\n    default = \"123456789012\"\n  }"), "{}", s);
         satz_core::satz::parse(s).unwrap_or_else(|e| panic!("{}\n---\n{}", e, s));
 
-        // a default that is the organisation binds the same way; one that is
-        // another organisation is refused like a literal
+        // a default that is the organization binds the same way; one that is
+        // another organization is refused like a literal
         let with_default = tf.replace("variable \"org_id\" { type = string }", "variable \"org_id\" { default = \"123456789012\" }");
         let s = import(&one(&with_default), "acme", false, Some("123456789012"), &Known).unwrap().satz;
         assert!(squash(&s).contains("org_id=customer_organization_id"), "{}", s);
@@ -3818,7 +3818,7 @@ resource "google_storage_bucket" "b" {
 }
 "#;
         let e = import(&one(tf), "acme", false, None, &Known).unwrap_err();
-        let root = "`org_id` = var.org_id, a variable declared without a default — name the organisation with `--organization <n>`";
+        let root = "`org_id` = var.org_id, a variable declared without a default — name the organization with `--organization <n>`";
         assert!(e.contains(&format!("its parent resource \"google_project\" \"p\" is wrapped: {}", root)), "{e}");
         assert!(!e.contains("folder number"), "{e}");
 
@@ -3892,7 +3892,7 @@ resource "google_service_account" "sa" {
 
     /// No imported project has the default's id: each resource that relied on
     /// it is given it as its own `project`. A default satz cannot write wraps
-    /// each of them, naming it — never a resource emitted without a project.
+    /// each of them, naming it — never a resource written without a project.
     #[test]
     fn a_provider_default_is_written_on_the_resource_or_wraps_it() {
         let tf = r#"
@@ -3929,7 +3929,7 @@ resource "google_service_account" "sa" {
             "{:?}",
             by["resource \"google_service_account\" \"sa\""]
         );
-        // it deploys as written: with the provider it relied on
+        // it is applied as written: with the provider it relied on
         assert!(matches!(by["provider \"google\""], Action::Wrapped(r) if r.starts_with("carried verbatim")), "{:?}", by["provider \"google\""]);
         assert!(imported.satz.contains("provider \"google\" {\n    project = data.google_project.current.project_id"), "{}", imported.satz);
     }
@@ -3955,7 +3955,7 @@ resource "google_service_account" "sa" {
         let imported = import(&one(tf), "acme", true, Some("123456789012"), &Known).unwrap();
         let s = &imported.satz;
         assert!(s.contains("provider \"google\" {\n    project = \"acme-infra-001\"\n    region  = \"europe-west3\""), "{}", s);
-        assert!(!s.contains("It deploys as written;"), "{}", s);
+        assert!(!s.contains("It is applied as written;"), "{}", s);
         assert!(s.contains("except where a `provider` block is not carried"), "{}", s);
         assert!(s.contains("`google-beta.google-beta`") && s.contains("`project`"), "the header names the block and its setting:\n{}", s);
         assert!(imported.notes.iter().any(|n| n.starts_with("not carried: ")), "{:?}", imported.notes);

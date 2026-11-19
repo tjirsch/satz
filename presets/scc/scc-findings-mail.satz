@@ -4,7 +4,7 @@
 //   use "presets/scc/scc-findings-mail.satz"
 //
 // NEEDS `presets/scc/scc-notifications.satz`: this fragment attaches to the topic
-// that pack creates and takes the same project. Used without it, the compile stops
+// that pack creates and takes the same project. Used without it, the transpile stops
 // with `unknown param 'scc_notification_project'`.
 //
 // WHAT THE MAIL SAYS. "Security Command Center published findings", with the count
@@ -32,9 +32,9 @@
 pack scc_findings_mail version "1.0"
 
 params {
-  // The organisation's security mailbox, BY REFERENCE from the central alert pack —
+  // The organization's security mailbox, BY REFERENCE from the central alert pack —
   // one address for the CIS alerts and for the findings, so a change lands in both.
-  // Without that pack the compile stops with `unknown param 'cis_central_email'`,
+  // Without that pack the transpile stops with `unknown param 'cis_central_email'`,
   // which is the right failure: the recipient is then genuinely undecided, and a
   // literal default is how an estate ends up mailing an address nobody reads.
   scc_findings_email             = cis_central_email
@@ -51,7 +51,7 @@ params {
 
 question scc_findings_email {
   prompt   = "Where should Security Command Center findings be delivered — the mailbox that is told a finding arrived"
-  why      = "The mail says findings were published and links to them; the finding itself stays in the topic, the console and the export. The mailbox must exist and accept mail from alerting-noreply@google.com — a group whose members have no mailbox drops every alert silently. A group, never a person. The default is the address the organisation's CIS alerts already go to."
+  why      = "The mail says findings were published and links to them; the finding itself stays in the topic, the console and the export. The mailbox must exist and accept mail from alerting-noreply@google.com — a group whose members have no mailbox drops every alert silently. A group, never a person. The default is the address the organization's CIS alerts already go to."
   reversal = edit
   blast    = high
 }

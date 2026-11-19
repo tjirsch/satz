@@ -1,7 +1,7 @@
 # satz interview
 
 The interview asks the questions an estate's packs declare, one at a time, writes each
-answer into the estate as it is given, and keeps the estate off the organisation until
+answer into the estate as it is given, and keeps the estate off the organization until
 no question is open.
 
 There are three ways to start an estate, and they end at the same file:
@@ -12,8 +12,8 @@ There are three ways to start an estate, and they end at the same file:
 | `satz interview <estate> [--create]` | a person at a terminal | one question at a time, the default in brackets, Enter accepts it |
 | `satz_interview` over MCP | a customer, through an agent | the agent asks in its own words, the human decides, the agent writes the param or passes it as an `answer` |
 
-`init` takes ten of the day-0 values as flags and writes the rest from its
-defaults. The other two ask for every day-0 value, and also ask every question a pack
+`init` takes ten of the bootstrap values as flags and writes the rest from its
+defaults. The other two ask for every bootstrap value, and also ask every question a pack
 adds, which `init` has no flag for.
 
 ## What a question is, and what an answer is
@@ -65,15 +65,15 @@ Ask in the pack's order and the derived names arrive as offers.
 ## The gate
 
 **Every applicable question must be answered before the estate touches an
-organisation.** `bootstrap` and `transpile --apply` refuse while one is open, naming
+organization.** `bootstrap` and `transpile --apply` refuse while one is open, naming
 it; `bootstrap --dry-run` and `transpile --plan` warn instead. An estate can be
 transpiled, checked and revised any number of times; the gate is on the step that
-changes the organisation.
+changes the organization.
 
 ```
 bootstrap refused: 3 question(s) unanswered — customer_id (needs a value),
 billing_account_infra (needs a value), default_region. Every question must be
-answered before the estate touches an organisation. `satz questions C0example.satz
+answered before the estate touches an organization. `satz questions C0example.satz
 --unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into
 the estate's params.
 ```
@@ -86,10 +86,10 @@ switched on — the CIS org-policy packs name `satz adopt`
 ([§6.15](language.md#615-notice--the-command-a-pack-asks-for-once-it-is-on)). The
 interview prints it when a yes switches the pack on, `satz_interview` returns it in
 `notices`, and the estate acknowledges it by binding the notice's param `true` — over
-MCP, as an answer to that param. Until then the compile warns, and `transpile --apply`
+MCP, as an answer to that param. Until then the transpile warns, and `transpile --apply`
 and `bootstrap` refuse while a `severity = error` notice is open.
 
-## The path: day-0 params, then the map, then the packs
+## The path: bootstrap params, then the map, then the packs
 
 An interview follows the estate file's order, and the skeleton is written so that
 order is a path:
@@ -97,11 +97,11 @@ order is a path:
 1. **`presets/estate-core.satz`** — the params `init` writes,
    each with its question. Seven have no possible default and block until typed; the
    rest offer one, the two derived names once the short name is in.
-   `workload_folder_name` offers `""`, the organisation — its question declares what
+   `workload_folder_name` offers `""`, the organization — its question declares what
    an empty answer means (`empty`), so Enter and `--accept-defaults` take it. Answering
    it also writes the section that publishes `workload_folder`, as `init` does; an
    answer whose form differs from the section the estate already carries is refused,
-   because the projects' folders sit under it. The pack emits
+   because the projects' folders sit under it. The pack writes
    nothing. An estate `init` wrote with its flags has every one of them answered;
    `init --interview` switches the pack on and asks the rest, and an estate written
    without `--interview` carries the line commented out — `satz interview` offers to
@@ -109,8 +109,8 @@ order is a path:
    carries.
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
    first is the CIS baseline (`use_cis_baseline`, on by default): the estate exists
-   for its thirty organisation policies, and it is asked because they reach the
-   organisation in one apply. Then the security-group model (S1, or S2 with a
+   for its thirty organization policies, and it is asked because they reach the
+   organization in one apply. Then the security-group model (S1, or S2 with a
    separate network-admins group) as a `question oneof`, and one boolean per optional
    pack, each with what the pack is for and what turning it off later destroys. Four
    more are on by default — the audit-log archive, the central CIS alerts, the billing
@@ -156,7 +156,7 @@ google_folder {
 ```
 
 Every line stands at the top level, in the order the map offers the packs, bar a pack
-that is a bare list of labelled bodies: its line is the content of the map of its type.
+that is a bare list of labeled bodies: its line is the content of the map of its type.
 The folder holds the estate's own resources and takes no `use`; a pack that creates a
 project names the folder it is created in with a param of its own, which `satz init`
 binds for the audit archive.
@@ -176,26 +176,26 @@ satz interview satz/new-customer.satz --create
 ```
 
 `--create` writes the estate first when it does not exist: an empty `params {}`, the same
-day-0 resources `init` writes — the folder, the project, the state bucket, the IaC group and
-service account — and every pack's `use` line **commented out**, under the phase that has to
+bootstrap resources `init` writes — the folder, the project, the state bucket, the estate
+account user group and the estate account — and every pack's `use` line **commented out**, under the phase that has to
 be finished before that pack can go in. Every line stands at the top level but the essential
 contact's, whose block is the infrastructure folder; Sentinel, its two log paths and the findings mail read their
 params, so their lines follow the folder: a param is known from the line that declares it on,
-and a line above the folder that reads one stops the compile with `unknown param` once it is
+and a line above the folder that reads one stops the transpile with `unknown param` once it is
 uncommented.
 
-That is why a fresh estate asks eighteen questions and not fifty-seven: day 0 is the scaffold
-alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the identity
-move to the service account, and only then does a pack go in — one at a time, each with its
+That is why a fresh estate asks eighteen questions and not fifty-seven: the bootstrap is the
+scaffold alone. Bootstrap it, apply it, `satz migrate --mode cloud` so the state and the
+identity move to the estate account, and only then does a pack go in — one at a time, each with its
 own plan. Answering a pack's question `true` switches its line on — uncommented, or written
 where the pack graph places it; `satz add-preset` does the same by the pack's gate or path. Both
 refuse while a pack it needs is off, naming it, and both refuse a commented line that stands
 inside a folder's or a project's body, naming the move to the top level; an answer that would
 leave an estate satz refuses is refused and nothing is written; `satz merge-presets` writes the line for a pack the
-library has gained since; and the compile reports a question **this estate** has answered
+library has gained since; and the transpile reports a question **this estate** has answered
 `true` whose line is still commented or missing, so they never drift apart. An answer is a
 binding in the estate's own `params {}`; a default in the map or in a pack is what the
-library proposes, so a skeleton that has answered nothing compiles clean at every
+library proposes, so a skeleton that has answered nothing transpiles clean at every
 validation level. `satz presets` lists every pack with its answer, the library's default,
 its line and what it needs.
 
@@ -214,7 +214,7 @@ Accept all defaults now and answer only those 9? [Y/n] — n goes through every 
   accepted 7 default(s).
 
 ── estate_core ──
-The questions every estate has to answer on day 0, with the params they answer.
+The questions every estate has to answer before the bootstrap, with the params they answer.
 
 customer_id — The Google Workspace / Cloud Identity directory customer id (C0…)
   Every group in the estate is created under this customer. There is no changing it afterwards; a different id is a different estate.
@@ -278,7 +278,7 @@ The report's `core` says what the call did about a commented-out
 The loop an agent runs:
 
 1. `satz_interview {create: true}` on a new name → every open question of the path —
-   the day-0 ones, the baseline's and the packs the defaults switch on — eighteen, nine of
+   the bootstrap ones, the baseline's and the packs the defaults switch on — eighteen, nine of
    them `blocking` until their inputs land, each with `pack_description`, `prompt`, `why`, `reversal`, `blast`,
    and `default` where one is usable.
 2. Ask the human, in whatever order and words fit the conversation. Offer the
@@ -288,14 +288,14 @@ The loop an agent runs:
 3. Write what was decided: `satz_interview {answers: {customer_shortname: "acme",
    security_model: "security_model_s2"}, accept_defaults: true}`. The response is the
    report as it now stands — fewer open, and the derived defaults resolved.
-4. Repeat until `summary.complete`. Then `satz_transpile_check`, and hand over.
+4. Repeat until `summary.complete`. Then `satz_transpile_check`, and give the estate to the human.
 
 An agent with a filesystem may write the params itself instead; `answers` exists so a
 client with only MCP can close the loop. Either way the record is the estate file.
 
 ## The decisions sheet
 
-Before an organisation is touched, the customer sees what was decided:
+Before an organization is touched, the customer sees what was decided:
 
 ```bash
 satz questions C0example.satz --format markdown --out decisions.md
@@ -305,11 +305,11 @@ One table per pack, opened by the pack's description: the question, the answer t
 estate carries (or the default it would accept, or **needs a value**), and what
 changing it later costs.
 
-### The catalog a customer keeps
+### What the customer keeps
 
 `satz questions <estate> --format markdown --out <file>` is the decisions sheet (`--format pdf`
 typesets it), and it is also the
-document handed over afterwards: every question grouped by pack, with the answer the estate
+document the customer keeps afterwards: every question grouped by pack, with the answer the estate
 carries, whether that answer was **chosen for this estate** or is the **same as the pack's
 default**, WHY the question is asked at all — the pack's own sentence — and what changing it
 later costs in words rather than two enum names.
@@ -334,7 +334,8 @@ and every question says what it costs to be wrong about. The rules, from the
 - A question lives **in the file that declares its param**. Questions are absorbed
   after the `use … when` guard, so a question that gates a pack cannot live in the
   gated pack — put it in the estate, or in a pack the estate always uses
-  (`estate-core` is that pack for the day-0 choices).
+  (`estate-core` is that pack for the bootstrap choices).
+
 - A choice between packs is **two booleans and a `question oneof`**, with the packs
   behind `use … when`. The pack's `= true` option is the default the interview
   offers; the estate's binding is the answer.

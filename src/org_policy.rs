@@ -1,10 +1,10 @@
-//! Organization Policy alignment: export / diff / report, plus the Org Policy
+//! Organization Policy alignment: export / diff / report, plus the Organization Policy
 //! client `satz adopt` uses to activate managed constraints and check which
 //! policies are live.
 //!
 //! These subcommands manage GCP Organization Policies (`google_org_policy_policy`,
-//! Org Policy API v2) end-to-end. The hard part is GCP **managed constraints**
-//! (constraint name contains `.managed.`): depending on the org state they must be
+//! Organization Policy API v2) end-to-end. The hard part is GCP **managed constraints**
+//! (constraint name contains `.managed.`): depending on the organization state they must be
 //! *activated*, then *imported as-is*, and only then *modified*. `adopt` sequences
 //! the first two; `tofu apply` does the third.
 //!
@@ -65,7 +65,7 @@ pub fn normalize_parent(raw: &str) -> String {
 /// and `projects/X` pass through; a bare project id (never all digits) is
 /// prefixed `projects/`; a bare NUMBER is refused — it could be an
 /// organization or a folder, and `normalize_parent`'s organization guess is
-/// exactly how a folder number once became an org-level lookup.
+/// exactly how a folder number once became an organization-level lookup.
 pub(crate) fn qualify_parent(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -94,7 +94,7 @@ pub fn constraint_to_key(constraint: &str) -> String {
 // Spec normalization (canonical form for equality)
 // ---------------------------------------------------------------------------
 
-/// Canonicalize an Org Policy `spec` (or `dry_run_spec`) into a stable JSON shape so
+/// Canonicalize an Organization Policy `spec` (or `dry_run_spec`) into a stable JSON shape so
 /// that a live policy (camelCase, `enforce: true`, `parameters` object) and a desired
 /// policy (snake_case, `enforce: "TRUE"`, `parameters` JSON string) compare equal when
 /// they are semantically the same.
@@ -187,7 +187,7 @@ fn normalize_rule(rule: &Value) -> Value {
             // strings come only from the estate and are validated when the
             // desired set is built (`desired_from_bodies`); the API sends objects
             Value::String(s) => serde_json::from_str::<Value>(s)
-                .unwrap_or_else(|e| panic!("org policy rule `parameters` is not JSON ({}) — validated at the desired-set boundary: {}", e, s)),
+                .unwrap_or_else(|e| panic!("organization policy rule `parameters` is not JSON ({}) — validated at the desired-set boundary: {}", e, s)),
             other => other.clone(),
         };
         out.insert("parameters".to_string(), canonical_json(&parsed));
@@ -480,7 +480,7 @@ fn action_label(a: &PlannedAction) -> &'static str {
 pub fn render_console(report: &DiffReport) -> String {
     let mut s = String::new();
     s.push_str(&format!(
-        "Org Policy diff — parent: {}  preset: {}\n",
+        "Organization Policy diff — parent: {}  preset: {}\n",
         report.parent, report.preset
     ));
     s.push_str(&format!(
@@ -514,7 +514,7 @@ fn summary_line(report: &DiffReport) -> String {
 
 pub fn render_markdown(report: &DiffReport) -> String {
     let mut s = String::new();
-    s.push_str("# Org Policy Diff Report\n\n");
+    s.push_str("# Organization Policy Diff Report\n\n");
     s.push_str(&format!("- **Parent:** `{}`\n", report.parent));
     s.push_str(&format!("- **Preset:** `{}`\n", report.preset));
     s.push_str(&format!("- **Generated:** {}\n\n", report.generated_at));
@@ -565,7 +565,7 @@ pub fn render_markdown(report: &DiffReport) -> String {
 
 pub fn render_report(report: &DiffReport, format: crate::OutFormat) -> String {
     match format {
-        crate::OutFormat::Json => serde_json::to_string_pretty(report).expect("a DiffReport serialises"),
+        crate::OutFormat::Json => serde_json::to_string_pretty(report).expect("a DiffReport serializes"),
         crate::OutFormat::Markdown => render_markdown(report),
         _ => render_console(report),
     }
@@ -585,7 +585,7 @@ pub(crate) fn resolve_config_vars(
     include_paths: &[PathBuf],
 ) -> Result<HashMap<String, serde_yaml::Value>, BoxErr> {
     // The estate is read as Satz: the fragment pipeline's parameter table is
-    // the one `transpile` emits tfvars from, so these commands and the emitted
+    // the one `transpile` writes tfvars from, so these commands and the written
     // HCL cannot disagree about what a param resolves to.
     if config_path.extension().and_then(|e| e.to_str()) != Some("satz") {
         return Err(format!(
@@ -632,7 +632,7 @@ fn yaml_scalar_to_string(v: &serde_yaml::Value) -> Option<String> {
 }
 
 /// `parent|constraint`: a policy is identified by WHERE it is set as much as
-/// by its constraint — an estate declares `requireOsLogin` on the org and
+/// by its constraint — an estate declares `requireOsLogin` on the organization and
 /// again, differently, on a sandbox folder, and a diff keyed by the bare
 /// constraint kept only one of them and compared it against the wrong live
 /// policy.
@@ -641,7 +641,7 @@ pub(crate) fn policy_key(parent: &str, constraint: &str) -> String {
 }
 
 /// The desired policies of an estate from (label, body) pairs, keyed by
-/// `policy_key(parent, constraint)`. The parent is the body's own, normalised;
+/// `policy_key(parent, constraint)`. The parent is the body's own, normalized;
 /// empty when the body has none (the report parent applies then).
 fn desired_from_bodies(
     bodies: Vec<(String, serde_yaml::Value)>,
@@ -683,8 +683,8 @@ fn desired_from_bodies(
 }
 
 /// The desired policy set for `diff`/`report`: every `google_org_policy_policy`
-/// the estate emits, read off the folded IR — what the emitter writes. (The
-/// old `--preset <pack>` form compiled a pack standalone through the YAML twin;
+/// the estate writes, read off the folded IR — what the emitter writes. (The
+/// old `--preset <pack>` form transpiled a pack standalone through the YAML twin;
 /// a Satz estate `use`s its pack, so the estate's own set is the desired set.)
 fn resolve_desired(
     config_path: &Path,
@@ -780,12 +780,12 @@ async fn prepare_recursive(
 }
 
 // ---------------------------------------------------------------------------
-// Org Policy REST client (Org Policy API v2)
+// Organization Policy REST client (Organization Policy API v2)
 // ---------------------------------------------------------------------------
 
 const ORGPOLICY_HOST: &str = "https://orgpolicy.googleapis.com";
 
-/// Locate the Application Default Credentials JSON file.
+/// Locate the sign-in file (gcloud's application-default JSON).
 pub(crate) fn adc_file_path() -> Option<PathBuf> {
     #[cfg(windows)]
     let root = std::env::var("APPDATA").ok();
@@ -797,7 +797,7 @@ pub(crate) fn adc_file_path() -> Option<PathBuf> {
 /// The resolution itself: AIP-4110's environment variable, then AIP-4113's
 /// well-known path, and **nothing else**.
 ///
-/// This function only REPORTS the credential; the token is minted by
+/// This function only REPORTS the sign-in; the token is minted by
 /// `google-cloud-auth`, whose own `adc_path()` resolves exactly these two. So an
 /// extra rule here does not widen where satz looks — it makes `satz whoami` name
 /// a file satz does not use.
@@ -805,7 +805,7 @@ pub(crate) fn adc_file_path() -> Option<PathBuf> {
 /// `CLOUDSDK_CONFIG` used to sit in between, and it was precisely that bug.
 /// gcloud reads it; the auth crate does not, and neither does the Go SDK behind
 /// `tofu`. An operator who set it got a three-way split: satz reported one
-/// credential while satz and tofu both minted from another. Pointing all three
+/// sign-in while satz and tofu both minted from another. Pointing all three
 /// at another gcloud configuration is done by naming its file —
 /// `GOOGLE_APPLICATION_CREDENTIALS=<dir>/application_default_credentials.json`.
 fn adc_file_path_from(explicit: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
@@ -823,7 +823,7 @@ fn adc_file_path_from(explicit: Option<&str>, home: Option<&str>) -> Option<Path
 }
 
 /// Resolve the quota/billing project: the project a live import given an estate
-/// bills its reads to (`gcp::bill_reads_to`), then the env vars, then the ADC
+/// bills its reads to (`gcp::bill_reads_to`), then the env vars, then the sign-in
 /// file's `quota_project_id` (written by `gcloud auth application-default
 /// set-quota-project`).
 pub(crate) fn resolve_quota_project() -> Option<String> {
@@ -882,7 +882,7 @@ pub struct OrgPolicyClient {
     http: reqwest::Client,
     token: String,
     /// Billing/quota project sent as `x-goog-user-project`. The orgpolicy.googleapis.com
-    /// API requires this when authenticating with user ADC; without it GCP bills the
+    /// API requires this when authenticating with a user's sign-in; without it GCP bills the
     /// request to gcloud's shared default project and returns 403 (SERVICE_DISABLED).
     quota_project: Option<String>,
 }
@@ -894,14 +894,14 @@ impl OrgPolicyClient {
 
     /// Build a client. `quota_override` (e.g. a `--quota-project` flag) wins; otherwise the
     /// quota project is resolved from `GOOGLE_CLOUD_QUOTA_PROJECT`/`GOOGLE_CLOUD_PROJECT`
-    /// or the Application Default Credentials file's `quota_project_id`.
+    /// or the sign-in file's `quota_project_id`.
     pub async fn with_quota_project(quota_override: Option<String>) -> Result<Self, BoxErr> {
         let token = crate::gcp::access_token().await?;
 
         let quota_project = quota_override
             .filter(|s| !s.trim().is_empty())
             .or_else(resolve_quota_project);
-        // The credential line printed at token acquisition already names the
+        // The sign-in line printed at token acquisition already names the
         // quota project; only its absence needs a warning here.
         if quota_project.is_none() {
             eprintln!(
@@ -1036,7 +1036,7 @@ pub(crate) async fn fetch_current(
 // Conversions for export / activation
 // ---------------------------------------------------------------------------
 
-/// The DECLARED `spec` of an org policy (the estate's folded body: snake_case
+/// The DECLARED `spec` of an organization policy (the estate's folded body: snake_case
 /// keys, `enforce = "TRUE"`, `parameters` as a JSON string or a structured
 /// object) converted to the API shape `create_policy` posts. Activation used
 /// to synthesize `{"rules":[{"enforce":bool}]}`, which parameterized managed
@@ -1044,7 +1044,7 @@ pub(crate) async fn fetch_current(
 /// their rules REQUIRE `parameters`. An unknown key is an error: a spec the
 /// converter does not understand must never activate as something else.
 pub(crate) fn declared_spec_to_api(spec: &serde_yaml::Value) -> Result<Value, String> {
-    let spec: Value = serde_json::to_value(spec).map_err(|e| format!("declared spec is not serialisable: {}", e))?;
+    let spec: Value = serde_json::to_value(spec).map_err(|e| format!("declared spec is not serializable: {}", e))?;
     let obj = spec.as_object().ok_or("declared spec is not a mapping")?;
     let as_bool = |v: &Value, what: &str| -> Result<Value, String> {
         match v {
@@ -1184,7 +1184,7 @@ fn json_to_yaml(v: &Value) -> serde_yaml::Value {
 }
 
 
-/// Default output base name `<Cxxxx>` from `customer-id` var, falling back to org id.
+/// Default output base name `<Cxxxx>` from `customer-id` var, falling back to organization id.
 fn output_basename(parent: &str, vars: &HashMap<String, serde_yaml::Value>) -> String {
     vars.get("customer_id")
         .and_then(yaml_scalar_to_string)
@@ -1210,13 +1210,13 @@ pub async fn export_org_policies(
     let (parent, vars) =
         resolve_org_and_vars(&config_path, &include_paths, org_id_override.as_deref())?;
 
-    println!("Exporting org policies for {}...", parent);
+    println!("Exporting organization policies for {}...", parent);
     let client = OrgPolicyClient::new().await?;
     let current = fetch_current(&client, &parent).await?;
 
     let basename = output_basename(&parent, &vars);
     let header = vec![
-        format!("Org policies exported from {} ({}).", parent, now_stamp()),
+        format!("Organization policies exported from {} ({}).", parent, now_stamp()),
         "A pack: `use` it from the estate (inside a `google_org_policy_policy { … }` block),".to_string(),
         "diff with diff-organizational-policies, or adopt with `satz adopt`.".to_string(),
     ];
@@ -1240,7 +1240,7 @@ pub async fn export_org_policies(
 
 /// The live policy set as a Satz pack: one quoted block per constraint, the
 /// shape the shipped CIS packs use. `parent` is written as
-/// `"organizations/{customer_organization_id}"` when it is the org itself, so
+/// `"organizations/{customer_organization_id}"` when it is the organization itself, so
 /// the pack carries no customer number and is portable between estates.
 fn exported_pack_satz(
     parent: &str,
@@ -1339,8 +1339,8 @@ pub async fn report_org_policies(
         resolve_org_and_vars(&config_path, &include_paths, org_id_override.as_deref())?;
 
     // Recursive: one CAI sweep replaces the per-parent policy fetch; constraint
-    // descriptions still come from the one org-level list_constraints call. The
-    // "available but not set" scope only makes sense org-wide, so scope handling
+    // descriptions still come from the one organization-level list_constraints call. The
+    // "available but not set" scope only makes sense organization-wide, so scope handling
     // stays a root-level concern (documented in the flag help).
     if recursive {
         let tree = crate::policy_tree::sweep_and_assemble(&parent).await?;
@@ -1484,7 +1484,7 @@ mod tests {
         serde_json::from_str(s).unwrap()
     }
 
-    // --- where the credential lives ------------------------------------------
+    // --- where the sign-in lives ------------------------------------------
 
     /// AIP-4110: the environment variable wins, and an empty one is not a value.
     #[test]
@@ -1500,7 +1500,7 @@ mod tests {
         );
     }
 
-    /// AIP-4113: the well-known path, and no credential at all without a home.
+    /// AIP-4113: the well-known path, and no sign-in at all without a home.
     #[cfg(not(windows))]
     #[test]
     fn the_well_known_path_is_the_only_fallback() {
@@ -1524,7 +1524,7 @@ mod tests {
         assert_eq!(adc_file_path_from(None, None), None);
     }
 
-    /// The regression this replaced: satz honoured `CLOUDSDK_CONFIG` while the
+    /// The regression this replaced: satz honored `CLOUDSDK_CONFIG` while the
     /// auth crate and tofu's Go SDK did not, so `satz whoami` named one file
     /// while every token came from another. Resolution takes exactly two inputs
     /// now, and the signature is what keeps a third from creeping back.
@@ -1552,7 +1552,7 @@ mod tests {
         assert_eq!(normalize_parent("folders/9"), "folders/9");
 
         // qualify_parent: what adoption asks the API with — a bare project id
-        // gets its prefix, a bare number is refused (org OR folder?), never guessed.
+        // gets its prefix, a bare number is refused (organization OR folder?), never guessed.
         assert_eq!(qualify_parent("acme-infra-001").unwrap(), "projects/acme-infra-001");
         assert_eq!(qualify_parent("projects/acme-infra-001").unwrap(), "projects/acme-infra-001");
         assert_eq!(qualify_parent("folders/9").unwrap(), "folders/9");
@@ -1636,8 +1636,8 @@ mod tests {
     }
 
     /// The review found the diff keyed by BARE constraint: an estate declaring
-    /// `compute.x` on the org AND, differently, on a folder kept one of them,
-    /// and the merged live set let the folder's policy answer for the org's.
+    /// `compute.x` on the organization AND, differently, on a folder kept one of them,
+    /// and the merged live set let the folder's policy answer for the organization's.
     #[test]
     fn the_same_constraint_on_two_parents_is_two_policies() {
         let mut current = BTreeMap::new();
@@ -1658,7 +1658,7 @@ mod tests {
         let org = r.entries.iter().find(|e| e.constraint == "compute.x" && e.parent == "organizations/1").unwrap();
         let folder = r.entries.iter().find(|e| e.constraint == "compute.x" && e.parent == "folders/2").unwrap();
         assert_eq!(org.classification, Classification::PresentMatches);
-        assert_eq!(folder.classification, Classification::PresentDiffers, "the folder's own live policy is compared, not the org's");
+        assert_eq!(folder.classification, Classification::PresentDiffers, "the folder's own live policy is compared, not the organization's");
         assert!(r.entries.iter().all(|e| e.classification != Classification::CurrentOnly), "{:?}", r.entries.iter().map(|e| (&e.parent, &e.constraint, &e.classification)).collect::<Vec<_>>());
     }
 
@@ -1713,7 +1713,7 @@ mod tests {
         assert!(text.contains("dry_run_spec {"), "{}", text);
         assert!(text.contains(r#"deny_all = "TRUE""#), "{}", text);
         assert!(text.contains(r#"allow_all = "FALSE""#), "{}", text);
-        assert!(!text.contains("123456789"), "the pack must not carry the org number:\n{}", text);
+        assert!(!text.contains("123456789"), "the pack must not carry the organization number:\n{}", text);
         let f = satz_core::satz::parse(&text).expect("parses");
         assert!(f.is_pack);
     }
@@ -1746,7 +1746,7 @@ mod tests {
         cfg.schema_dir = root.join("tests/schemas").to_string_lossy().into_owned();
         cfg.include_dirs = vec![root.to_string_lossy().into_owned()];
 
-        let bodies = crate::satz_org_policy_bodies(&estate, &cfg).expect("CIS pack should compile");
+        let bodies = crate::satz_org_policy_bodies(&estate, &cfg).expect("CIS pack should transpile");
         let desired = desired_from_bodies(bodies).unwrap();
         let _ = std::fs::remove_dir_all(&tmp);
 
@@ -1779,7 +1779,7 @@ mod tests {
     #[test]
     fn current_only_parent_derived_from_policy_name() {
         // A live policy fetched from a folder must be attributed to that folder, not to
-        // the report-level parent (previously every current-only entry claimed the org).
+        // the report-level parent (previously every current-only entry claimed the organization).
         let mut current = BTreeMap::new();
         current.insert(
             "compute.requireOsLogin".to_string(),

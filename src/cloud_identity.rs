@@ -6,11 +6,11 @@
 //! name, and a membership its `groups/<id>/memberships/<id>`. Historically that
 //! meant looking each one up in the admin console and pasting the id into an
 //! `"import-id"` line. `GroupResolver` does the lookup over the Cloud Identity
-//! API instead — by group email and member email, the keys the emitted HCL
+//! API instead — by group email and member email, the keys the transpiled HCL code
 //! carries — so an estate stays free of tenant-specific ids until `adopt`
 //! writes the verified ones in.
 //!
-//! Groups are simpler than org policies: there is no "managed constraint"
+//! Groups are simpler than organization policies: there is no "managed constraint"
 //! activation step. A group either exists (import it) or does not (leave it for
 //! `tofu apply` to create). One subtlety survives: a refused `groups:lookup`
 //! (403) is ambiguous in some tenants — permission problem or "does not
@@ -118,7 +118,7 @@ impl CloudIdentityClient {
     pub(crate) async fn new() -> Result<Self, BoxErr> {
         // `cloud-platform` covers cloudidentity.googleapis.com — the shared
         // `gcp::access_token()` requests exactly that scope. Deliberately not the
-        // narrower cloud-identity.groups scopes: user ADC refresh tokens are minted
+        // narrower cloud-identity.groups scopes: a signed-in user's refresh tokens are minted
         // pre-scoped by `gcloud auth application-default login` and ignore what is
         // asked for here, while a service account that was never granted the narrow
         // scopes would start failing.

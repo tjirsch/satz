@@ -1,6 +1,6 @@
-// A project beside the showcase estate: its own repository, config, state and
+// A workload estate beside the showcase estate: its own repository, config, state and
 // pipeline. It takes the folder interfaces/outgoing/archive/ of the showcase whole — here
-// interfaces/incoming/archive/ — and reads the central estate's values as
+// interfaces/incoming/archive/ — and reads the values of the organization's estate as
 // `${{interface.<folder>.<value>}}`. A static value becomes its literal; a looked-up one
 // becomes the same `data` source the HCL module reads, written once into hcl/.
 
@@ -30,7 +30,7 @@ providers {
 
 use "interfaces/incoming/archive/archive/satz/interface.satz"
 
-// A Google project of the project's own, under the central estate's folder.
+// A Google project of the project's own, under the folder of the organization's estate.
 google_project {
   archive_work {
     name            = "corp-archive-work"
@@ -43,7 +43,7 @@ google_project {
   }
 }
 
-// A grant on the central estate's Google project, at its attach point.
+// A grant on the Google project of the organization's estate, at its attach point.
 google_project_iam_member {
   archive_readers {
     project = "${{interface.archive.archive_project_id}}"
@@ -52,7 +52,7 @@ google_project_iam_member {
   }
 }
 
-// A folder of the project's own under the central estate's folder: its parent is the
+// A folder of the project's own under the folder of the organization's estate: its parent is the
 // same lookup the Google project above reads.
 google_folder {
   archive_team {

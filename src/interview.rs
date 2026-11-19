@@ -148,9 +148,9 @@ pub(crate) fn bound_literal(src: &str, name: &str) -> Result<Option<String>, Str
 /// param lands here — `init`, the interview and `satz_interview`, `add-preset` and
 /// `remove-preset`, the notice `adopt --execute --import` acknowledges, `migrate`'s
 /// deployment mode, the greenfield write-back — so no two of them can leave a subject
-/// bound twice, which satz refuses to compile.
+/// bound twice, which satz refuses to transpile.
 ///
-/// Text surgery rather than a re-emit, so the comments and the ordering of a
+/// Text surgery rather than a re-write, so the comments and the ordering of a
 /// hand-edited file survive the write — the VALUE alone is replaced, and the line
 /// keeps its indentation and its trailing comment. When the binding is APPENDED, the
 /// `params` block is re-aligned by the formatter's own rule, because a new
@@ -246,9 +246,9 @@ pub(crate) fn answer(
     pack_lines(&out, &row.subject, value, graph)
 }
 
-/// The day-0 scaffold's one answer-shaped section: answering estate-core's
+/// The bootstrap scaffold's one answer-shaped section: answering estate-core's
 /// `workload_folder_name` writes the section that publishes `workload_folder` — the
-/// organisation for "", the folder for a name — as `satz init` does from its flag, so an
+/// organization for "", the folder for a name — as `satz init` does from its flag, so an
 /// estate an interview started ends where an init estate does. A section of the other
 /// form is refused by [`crate::template::with_workload_folder`], never rewritten.
 fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> Result<String, String> {
@@ -260,14 +260,14 @@ fn workload_folder(src: &str, row: &QuestionRow, value: &serde_yaml::Value) -> R
     }
 }
 
-/// A pack's `use` line is written commented out, so a day-0 estate applies before any pack
+/// A pack's `use` line is written commented out, so a scaffold-only estate applies before any pack
 /// exists. Answering its question YES is what puts the pack in the estate: the line of
 /// every pack on that gate is switched on as `satz add-preset` switches it — uncommented, or
 /// written where the pack graph places it — for the interview and for `satz_interview`
 /// alike, since both land here.
 ///
 /// Only a yes moves a line. Answering `false` leaves the line where it is: `use … when
-/// <param>` already emits nothing while the param is false, and deleting a pack line from
+/// <param>` already writes nothing while the param is false, and deleting a pack line from
 /// someone's estate is not a thing an answer should do.
 fn pack_lines(src: &str, gate: &str, value: &serde_yaml::Value, graph: Option<&PackGraph>) -> Result<String, String> {
     match (value.as_bool(), graph) {
@@ -306,7 +306,7 @@ pub(crate) fn parse_answer(text: &str, like: Option<&serde_yaml::Value>, shape: 
 
 /// Refuse an answer whose shape contradicts the one the pack declares: a string where
 /// the pack declares a list, `"true"` where it declares a bool. The provider refuses
-/// that value at `tofu apply`, naming an attribute in generated HCL; here the question
+/// that value at `tofu apply`, naming an attribute in generated HCL code; here the question
 /// names the param. A number or a bool for a string is a string Terraform converts, and
 /// passes.
 pub(crate) fn check_shape(row: &QuestionRow, value: &serde_yaml::Value) -> Result<(), String> {
@@ -373,7 +373,7 @@ fn refuse_unmet(
 /// resolve and every line stands where it may — and restore `before` when it does not:
 /// an answer that leaves an estate satz refuses is refused, with the file as it was (the
 /// rule `satz add-preset` follows, ADR 0023). The questions report is the proof rather than
-/// the whole compile, because it needs no provider schema: an estate is answered on day
+/// the whole transpile, because it needs no provider schema: an estate is answered on day
 /// 0, before `satz update-schema` has run.
 fn write_proven(estate: &Path, runtime: &ToolConfig, before: &str, after: &str) -> Result<(), String> {
     crate::fsx::write_edited_satz(estate, before, after).map_err(|e| e.to_string())?;
@@ -395,7 +395,7 @@ fn restored(estate: &Path, before: &str, why: &str) -> String {
 /// Bind a set of answers, each validated against a question the estate asks, and
 /// with `accept_defaults` every default the report offers. Returns how many params
 /// were written. Nothing is written when any answer is refused, when a yes switches on
-/// a pack whose requirements are off, or when the result does not compile.
+/// a pack whose requirements are off, or when the result does not transpile.
 pub(crate) fn apply(
     estate: &Path,
     runtime: &ToolConfig,
@@ -498,7 +498,7 @@ pub(crate) fn run(
         )?;
     }
     // An estate `init` wrote without `--interview` carries the core line commented out:
-    // the day-0 questions and the core exports are not in use. The run offers to switch it
+    // the bootstrap questions and the core exports are not in use. The run offers to switch it
     // on once the library is here, and does so without asking under --accept-defaults or
     // when the input has ended, because then there is nobody to ask.
     let src = crate::fsx::read_to_string(estate).map_err(|e| e.to_string())?;
@@ -519,7 +519,7 @@ pub(crate) fn run(
                 w(
                     out,
                     &format!(
-                        "\n`use \"presets/estate-core.satz\"` — the day-0 params with their questions, and the core \
+                        "\n`use \"presets/estate-core.satz\"` — the bootstrap params with their questions, and the core \
                          exports every interface carries — is commented out (line {}).\nSwitch it on? [Y/n]\n> ",
                         line
                     ),
@@ -538,7 +538,7 @@ pub(crate) fn run(
                 w(out, &format!("  switched on `use \"presets/estate-core.satz\"` in {} (line {})\n", estate.display(), line))?;
                 report = questions_report(estate, runtime).map_err(|e| e.to_string())?;
             } else {
-                w(out, "  left commented out: the day-0 questions and the core exports stay out of the estate\n")?;
+                w(out, "  left commented out: the bootstrap questions and the core exports stay out of the estate\n")?;
             }
         }
     }
@@ -823,7 +823,7 @@ mod tests {
 
     /// Found on a live estate: `cis_baseline_adopted = true` stood twice in one
     /// `params {}` — a writer had appended beside a binding that was already there,
-    /// and satz refuses to compile what it wrote. Whatever the shape of the block, a
+    /// and satz refuses to transpile what it wrote. Whatever the shape of the block, a
     /// subject that is bound is REPLACED.
     #[test]
     fn a_subject_that_is_already_bound_is_replaced_never_appended_beside() {
@@ -859,9 +859,9 @@ mod tests {
     /// same bytes it was.
     #[test]
     fn a_replaced_value_is_the_only_byte_that_moves() {
-        let src = "estate e\n\nparams {\n  a                    = 1\n  cis_baseline_adopted = false // day 0\n  z                    = \"x\"\n}\n\ngoogle_folder {\n  f {\n    display_name =  \"F\"\n  }\n}\n";
+        let src = "estate e\n\nparams {\n  a                    = 1\n  cis_baseline_adopted = false // bootstrap\n  z                    = \"x\"\n}\n\ngoogle_folder {\n  f {\n    display_name =  \"F\"\n  }\n}\n";
         let out = bind(src, "cis_baseline_adopted", &serde_yaml::Value::Bool(true)).unwrap();
-        assert_eq!(out, src.replace("= false // day 0", "= true // day 0"));
+        assert_eq!(out, src.replace("= false // bootstrap", "= true // bootstrap"));
     }
 
     #[test]
@@ -893,7 +893,7 @@ google_folder {
         assert!(out.contains("\nuse \"presets/integrations/microsoft-sentinel.satz\" when use_sentinel\n"));
         assert!(out.contains("// use \"presets/integrations/microsoft-sentinel-auditlogs.satz\""), "{}", out);
 
-        // answering no changes nothing — a `use … when` already emits nothing, and deleting
+        // answering no changes nothing — a `use … when` already writes nothing, and deleting
         // somebody's pack line is not what an answer does
         assert_eq!(pack_lines(src, "use_budget", &no, g).unwrap(), src);
 
@@ -1081,7 +1081,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("asks.satz"),
-            "pack asks version \"1.0\"\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nquestion folder { prompt = \"Folder\" reversal = edit blast = none empty = \"the organisation\" }\nquestion label { prompt = \"Label\" reversal = edit blast = none }\n",
+            "pack asks version \"1.0\"\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nquestion folder { prompt = \"Folder\" reversal = edit blast = none empty = \"the organization\" }\nquestion label { prompt = \"Label\" reversal = edit blast = none }\n",
         )
         .unwrap();
         let estate = dir.join("e.satz");
@@ -1092,7 +1092,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         let by = |r: &QuestionsReport, s: &str| r.questions.iter().find(|q| q.subject == s).unwrap().clone();
         assert_eq!(by(&r, "folder").default, Some(yaml("")), "\"\" is offered");
         assert!(!by(&r, "folder").blocking);
-        assert!(present(&by(&r, "folder")).contains("[\"\" (the organisation)]"), "{}", present(&by(&r, "folder")));
+        assert!(present(&by(&r, "folder")).contains("[\"\" (the organization)]"), "{}", present(&by(&r, "folder")));
         assert!(by(&r, "label").blocking, "without `empty`, \"\" is no default");
         // accepting the defaults binds "" for the question that means something by it
         assert_eq!(apply(&estate, &cfg, &BTreeMap::new(), true).unwrap(), 1);
@@ -1163,11 +1163,11 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
     /// interview that eats it is an interview nobody runs twice.
     #[test]
     fn binding_keeps_the_trailing_comment_and_the_alignment() {
-        let src = "estate e\n\nparams {\n  audit_retention_days     = 400 # a number\n  customer_shortname       = \"old\"  // typed on day 0\n}\n";
+        let src = "estate e\n\nparams {\n  audit_retention_days     = 400 # a number\n  customer_shortname       = \"old\"  // typed at the bootstrap\n}\n";
         let out = bind(src, "audit_retention_days", &yaml_num(30)).unwrap();
         assert!(out.contains("  audit_retention_days     = 30 # a number\n"), "{out}");
         let out = bind(&out, "customer_shortname", &yaml("acme")).unwrap();
-        assert!(out.contains("  customer_shortname       = \"acme\"  // typed on day 0\n"), "{out}");
+        assert!(out.contains("  customer_shortname       = \"acme\"  // typed at the bootstrap\n"), "{out}");
     }
 
     #[test]
@@ -1203,7 +1203,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
     }
 
     /// An estate `init` wrote without `--interview`: the core line commented out, the
-    /// library beside it. One question in the pack stands for the day-0 ones.
+    /// library beside it. One question in the pack stands for the bootstrap ones.
     fn init_written(name: &str, with_library: bool) -> (PathBuf, ToolConfig) {
         let dir = std::env::temp_dir().join(format!("satz-iv-core-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1211,7 +1211,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         if with_library {
             std::fs::write(
                 dir.join("presets/estate-core.satz"),
-                "// The day-0 questions.\npack estate_core version \"1.0\"\n\nparams {\n  customer_longname = \"\"\n}\n\n\
+                "// The bootstrap questions.\npack estate_core version \"1.0\"\n\nparams {\n  customer_longname = \"\"\n}\n\n\
                  question customer_longname { prompt = \"Display name\" reversal = edit blast = none }\n",
             )
             .unwrap();

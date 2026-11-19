@@ -1,6 +1,6 @@
-//! The emission manifest: what the emitter emitted, as structure.
+//! The emission manifest: what the emitter written, as structure.
 //!
-//! Every consumer that needs to know "which resources does this estate emit, and
+//! Every consumer that needs to know "which resources does this estate write, and
 //! with which attributes" — the compliance plane's witness matching, org-policy
 //! adoption — used to re-parse the rendered `main.tf` with its own line scanner.
 //! Four scanners, four opinions about HCL, and one shared blind spot: the raw
@@ -8,12 +8,12 @@
 //! scan counted resources the proof layer is documented as unable to see.
 //!
 //! The manifest is built from the `hcl::Block`s the emitter constructs, before
-//! they are rendered. Same compile, same blocks, no text — and the passthrough
+//! they are rendered. Same transpile, same blocks, no text — and the passthrough
 //! never enters it, because it never was a block.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// One emitted `resource` block, reduced to what the consumers match on.
+/// One written `resource` block, reduced to what the consumers match on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EmittedResource {
     pub tf_type: String,
@@ -42,7 +42,7 @@ pub(crate) struct EmittedResource {
     /// one. Several, none, or a list constraint yield `None`: no verdict is better
     /// than a wrong one. A `dry_run_spec` is not read here — see `dry_run`.
     pub enforce: Option<bool>,
-    /// An org policy whose `spec` declares `reset = true`: the constraint is
+    /// An organization policy whose `spec` declares `reset = true`: the constraint is
     /// declared off, back to Google's default.
     pub reset: bool,
     /// The policy declares a `dry_run_spec`: Google evaluates the rule, writes a
@@ -59,7 +59,7 @@ pub(crate) struct EmittedResource {
     /// policy conditions on is read from these: a live binding of such a value is an
     /// exemption from this policy.
     pub condition_expressions: Vec<String>,
-    /// The `import { to id }` block emitted for this resource, if any — i.e.
+    /// The `import { to id }` block written for this resource, if any — i.e.
     /// the estate already adopted it.
     pub import_id: Option<String>,
     /// Where the declaring block starts in the source: (file, 1-based line of
@@ -80,7 +80,7 @@ impl EmittedResource {
     }
 }
 
-/// Every emitted resource, keyed by Terraform address.
+/// Every written resource, keyed by Terraform address.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Manifest {
     pub resources: BTreeMap<String, EmittedResource>,
@@ -92,12 +92,12 @@ pub(crate) struct Manifest {
 impl Manifest {
     /// The project id a resource belongs to: its literal `project`, else the
     /// `project_id` of the `google_project` its `project` reference names. `None`
-    /// when it has neither — an organisation-, folder- or billing-scoped resource —
+    /// when it has neither — an organization-, folder- or billing-scoped resource —
     /// or when the reference resolves to nothing satz can read.
     /// Give every resource whose `project` reads a name — `local.interface.project_id`
     /// of a delegated project, `var.<input>` — the project that name stands for, as its
-    /// literal. A manifest rebuilt from emitted files holds the reference; the compile's
-    /// own holds the literal already. Without this the API preflight finds no project
+    /// literal. A manifest rebuilt from written files holds the reference; the transpile's
+    /// own holds the literal already. Without this the API prerequisites check finds no project
     /// for a service a delegated estate switches on, and switches nothing on ahead.
     pub fn resolve_projects(&mut self, names: &std::collections::BTreeMap<String, String>) {
         for r in self.resources.values_mut() {
@@ -121,7 +121,7 @@ impl Manifest {
 
     /// The folder or project a resource is placed in, by address: the reference its
     /// `folder_id`, `parent` or `project` writes, or the project whose `project_id` its
-    /// literal `project` is. `None` at the organisation, and where the parent is a literal
+    /// literal `project` is. `None` at the organization, and where the parent is a literal
     /// satz does not declare.
     pub fn placed_in(&self, r: &EmittedResource) -> Option<String> {
         for key in ["folder_id", "parent", "project"] {
@@ -231,7 +231,7 @@ impl Manifest {
     }
 
     /// Per address, the references it carries — placement traversals the walk
-    /// emitted and whole-value `${…}` references the author wrote. Read by the
+    /// written and whole-value `${…}` references the author wrote. Read by the
     /// gate that holds the manifest to what the old text scanners produced.
     #[cfg(test)]
     pub fn witness_refs(&self) -> BTreeMap<String, BTreeMap<String, String>> {
@@ -251,7 +251,7 @@ impl Manifest {
         self.resources.values().filter(move |r| r.tf_type == tf_type)
     }
 
-    /// The org policies the estate declares ENFORCING `constraint`: the `name` ends in
+    /// The organization policies the estate declares ENFORCING `constraint`: the `name` ends in
     /// `/policies/<constraint>`, the one unconditional rule is `enforce = "TRUE"`, and
     /// the spec is not `reset`. A policy declared off is not one of them — nothing
     /// waits for a policy that does nothing.
@@ -278,7 +278,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     let mut refs = BTreeMap::new();
     for a in b.body().attributes() {
         // A value that is NOTHING BUT one interpolation is a reference, the
-        // same as the bare traversal the walk emits for placement — it just
+        // same as the bare traversal the walk writes for placement — it just
         // reached HCL through a Satz `${{…}}`. Consumers follow `refs`; left in
         // `attrs` it would be read as the literal text `${…}` and matched
         // against live state, which never matches (R9).
@@ -315,7 +315,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
     // is bound" — and is not a second opinion about the control. Counting it would
     // leave two `enforce` values and no verdict at all, so a policy would go blind to
     // the compliance plane the moment it let one resource out. This is the same rule
-    // `live_enforcement` applies to a policy read back from the organisation, so the
+    // `live_enforcement` applies to a policy read back from the organization, so the
     // declared and the live side now answer the question the same way.
     let (mut found, conditional, condition_expressions) = spec_rules(b.body());
     let enforce = match found.as_mut_slice() {
@@ -373,8 +373,8 @@ fn whole_value_ref(expr: &hcl::Expression) -> Option<String> {
 }
 
 /// A plain string, or a template string rendered back to its `${…}` text —
-/// the two shapes an identifier attribute takes (an org policy under a folder
-/// emits `name = "${google_folder.x.name}/policies/…"`).
+/// the two shapes an identifier attribute takes (an organization policy under a folder
+/// writes `name = "${google_folder.x.name}/policies/…"`).
 /// A string, number or bool as the text an import id spells it with: `1000`,
 /// `true`. Anything else is not a scalar and has no such text.
 fn scalar_text(expr: &hcl::Expression) -> Option<String> {
@@ -396,12 +396,12 @@ fn string_value(expr: &hcl::Expression) -> Option<String> {
     }
 }
 
-/// The `spec` rules of an org policy, split into what decides the verdict and what
+/// The `spec` rules of an organization policy, split into what decides the verdict and what
 /// does not: the unconditional rules' `enforce` values, one line per conditional
 /// rule saying what it exempts, and each conditional rule's expression.
 ///
 /// A conditional rule's line prefers its `title`, then its `expression`, mirroring
-/// what `live_enforcement` renders for a policy read back from the organisation — the
+/// what `live_enforcement` renders for a policy read back from the organization — the
 /// two sides of the same question should read the same way.
 fn spec_rules(body: &hcl::Body) -> (Vec<bool>, Vec<String>, Vec<String>) {
     let (mut unconditional, mut conditional, mut expressions) = (Vec::new(), Vec::new(), Vec::new());
