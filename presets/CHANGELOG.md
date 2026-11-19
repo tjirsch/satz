@@ -13,6 +13,47 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.103.0
+
+**Workload packs come from named pack sources, kept in `config.toml`; `--from` is gone and
+an origin record names its source with its repository and commit or its folder** (ADR 0097). A source is the
+built-in `satz` or a `[[pack_source]]` table — `name`, and `github = "owner/repository"`
+(optional `ref`, `path`) or `dir = "<folder relative to config.toml>"` — which `satz
+pack-source add|list|remove` writes. One `[preset_library]` table replaces satz's preset
+library for `get-presets`, `merge-presets` and `check-presets`.
+
+| before | now | where |
+|---|---|---|
+| `satz packs --from <dir>`, `satz get-pack <id> --from <dir>` | `satz pack-source add <name> --dir <dir>` once, then `--source <name>` | scripts, CI |
+| `satz update-pack … --from <dir>` | `satz update-pack …` — each pack is read from the source its row names | scripts, CI |
+| `source = "github:tjirsch/satz"` in `packs_dir/origin.toml` | `source = "satz"`, `github = "tjirsch/satz"` and `commit = "<sha>"`, the satz commit the file was read at | `packs_dir/origin.toml` |
+| `source = "dir"` in `packs_dir/origin.toml` | `source = "<name>"` of a `[[pack_source]]` and `dir = "<folder>"`, the folder as `config.toml` writes it | `packs_dir/origin.toml` |
+| MCP `from` of `satz_packs`, `satz_get_pack`, `satz_update_pack` | `source`, a name `satz_pack_sources` lists | an agent's calls |
+
+**What is refused:** `--from` by clap as an unknown argument; a row of either old form, by
+its value, with the edit; a row whose source `config.toml` does not name, with `satz
+pack-source add`; a row whose repository, folder of the repository or folder differs from
+what `config.toml` names for its source, with the edit; a `[[pack_source]]` or `[preset_library]` table that names both or
+neither of `github` and `dir`, a name used twice, `satz`, or a name that is not a
+lowercase letter followed by lowercase letters, digits and `-`.
+
+**How to find it:** `grep -rn -- "--from" <scripts>` and `grep -n '^source = ' packs/origin.toml`
+(the `packs_dir` of each workload repository).
+
+**The edit:**
+
+1. For a row `source = "dir"`: `satz pack-source add <name> --dir <folder the pack came
+   from>`, then write `source = "<name>"` and `dir = "<folder>"` — as `config.toml` now
+   writes it — in the row.
+2. For a row `source = "github:tjirsch/satz"`: write `source = "satz"`,
+   `github = "tjirsch/satz"` and `commit = "<sha>"`. The commit is the one of the commits
+   `git log --format=%H -- packs/<id>.satz` lists in a satz checkout for which
+   `git show <commit>:packs/<id>.satz | shasum -a 256` prints the row's `sha256`.
+3. Replace `--from <dir>` in scripts with `--source <name>`, and drop it from
+   `update-pack`.
+
+**What moves in the plan:** nothing; no estate file changes.
+
 ### v0.102.0
 
 **The last names before 1.0: four names of delegated access, one bootstrap param and one

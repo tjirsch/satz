@@ -67,6 +67,13 @@ pub struct ToolConfig {
     /// the scalars, and `save` serializes in this order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) silence: Vec<crate::silence::Rule>,
+    /// Where workload packs are fetched from besides the satz repository: `[[pack_source]]`
+    /// tables, each a name and a GitHub repository or a folder (`satz pack-source`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pack_source: Vec<crate::pack_sources::PackSourceEntry>,
+    /// The preset library that replaces satz's: `[preset_library]` with `github` or `dir`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) preset_library: Option<crate::pack_sources::PresetLibraryEntry>,
     /// The directory the config was read from, set by `resolved_config` — never read
     /// from the file and never written back. It is what makes a finding's `file`
     /// estate-relative, so the CLI, the editor and an agent name the same path.
@@ -262,11 +269,15 @@ pub(crate) fn parse_tool_config(path: &Path) -> Result<ToolConfig, String> {
             inputs: Vec::new(),
             import_config: None,
             silence: Vec::new(),
+            pack_source: Vec::new(),
+            preset_library: None,
             dir: None,
         });
     }
     let content = fsx::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
-    toml::from_str(&content).map_err(|e| describe_toml_error(path, &content, &e))
+    let config: ToolConfig = toml::from_str(&content).map_err(|e| describe_toml_error(path, &content, &e))?;
+    crate::pack_sources::validate(&config).map_err(|e| format!("{}: {}", path.display(), e))?;
+    Ok(config)
 }
 
 /// The same config with every relative path resolved against the config's own
@@ -378,7 +389,8 @@ mod config_error_tests {
                    schema_dir = \"schemas\"\npresets_dir = \"presets\"\npacks_dir = \"packs\"\ntf_tool = \"tofu\"\n\
                    google_providers = [\"google\"]\naws_providers = []\nazure_providers = []\nalibaba_providers = []\n\
                    provider_version = \"7.14.1\"\nauto_explode = []\nvalidation_level = \"warn\"\nimport_config = \"x.yaml\"\n\
-                   [[silence]]\nkind = \"action\"\nreason = \"seen\"\n";
+                   [[silence]]\nkind = \"action\"\nreason = \"seen\"\n\
+                   [[pack_source]]\nname = \"local\"\ndir = \"../packs\"\n[preset_library]\ngithub = \"acme/presets\"\nref = \"v1\"\n";
         toml::from_str::<super::ToolConfig>(all).expect("every documented key parses");
     }
 
@@ -475,7 +487,7 @@ pub(crate) fn config_file_path(
                 | Commands::Presets { .. } | Commands::AddPreset { .. } | Commands::AddEntry { .. } | Commands::Interfaces { .. } | Commands::CheckRequest { .. } | Commands::RemovePreset { .. } | Commands::CheckConsumer { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPreset { .. }
-                | Commands::Packs { .. } | Commands::GetPack { .. } | Commands::UpdatePack { .. } | Commands::DetachPack { .. } | Commands::ReviewPack { .. }
+                | Commands::Packs { .. } | Commands::GetPack { .. } | Commands::UpdatePack { .. } | Commands::DetachPack { .. } | Commands::PackSource { .. } | Commands::ReviewPack { .. }
                 | Commands::PresetGraph { presets_dir: None, .. }
                 // the estate tier lives in the estate's config.toml. `--machine` needs
                 // none, and a bare `list` says what this machine silences from anywhere

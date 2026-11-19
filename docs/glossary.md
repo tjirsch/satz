@@ -60,7 +60,7 @@ The spelling is American English.
 | **preset** | | A pack of the preset library, kept current for everyone. An organization's estate is built from presets; they are switched on and off per estate. | `presets/`; `satz add-preset`; satz-studio Presets |
 | **preset library** | | All presets together, as one release of satz ships them, with the estate map, the changelog and the compliance catalogs. | `satz get-presets`, `satz merge-presets` |
 | **workload pack** | pack, where only this kind can be meant | A pack added to a workload estate — or to an organization's estate — to build a part of it: a RAG store, a budget. Taken once from a pack source as a template, then owned by the repository that took it. | `packs/`; `satz get-pack`; satz-studio Packs |
-| **pack source** | | Where a workload pack is fetched from: the satz repository, a pack repository, or a folder. | `satz get-pack --from` |
+| **pack source** | | Where a workload pack is fetched from: the satz repository, a pack repository, or a folder. Each has a name, which the origin record writes. | `[[pack_source]]` in `config.toml`; `satz pack-source`; `satz get-pack --source` |
 | **estate map** | | The preset that holds the questions which decide which other presets an organization's estate switches on. | `presets/estate-map.satz` |
 | **create** | | What a switched-on pack does with the resources it defines: the preset creates a log bucket and a sink. They exist in the cloud once the plan is applied. | `satz presets`, column "Creates" |
 | **switch on, switch off** | | To make a preset part of an estate, or take it out; satz writes the line. | `satz add-preset`, `satz remove-preset` |
