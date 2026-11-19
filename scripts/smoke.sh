@@ -527,6 +527,42 @@ done
 # the example organisation's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organisation does not transpile after the delegated-projects step"
 
+step "add-entry: one entry added to a list a pack declares, checked against the declaration, the estate kept only when it compiles (ADR 0093)"
+cp tmp/pw-org.satz tmp/ae-org.satz
+ae() { "$satz" --config "$ex" add-entry "$PWD/tmp/ae-org.satz" "$@"; }
+ae delegations name=billing owner_group=billing-team@example.com > tmp/ae.txt 2>&1 || fail "add-entry could not add a delegation:\n$(cat tmp/ae.txt)"
+grep -q 'added `billing` to `delegations`' tmp/ae.txt && grep -q '{ name = "billing" owner_group = "billing-team@example.com" }' tmp/ae-org.satz || fail "the delegation is not in the estate as an entry:\n$(cat tmp/ae.txt)\n$(grep -n delegations tmp/ae-org.satz)"
+# fields in any order, a yes or no and a list as the declaration types them, written in its order
+ae delegated_projects budgets=false apis=run.googleapis.com,iam.googleapis.com delegation=billing name=billing-reports > tmp/ae.txt 2>&1 || fail "add-entry could not add a project:\n$(cat tmp/ae.txt)"
+grep -q '{ name = "billing-reports" delegation = "billing" apis = \["run.googleapis.com", "iam.googleapis.com"\] budgets = false }' tmp/ae-org.satz || fail "the project's entry is not written in the declaration's order with its kinds:\n$(grep -n delegated_projects tmp/ae-org.satz)"
+"$satz" --config "$ex" transpile "$PWD/tmp/ae-org.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/ae-check.txt 2>&1 || fail "the estate with the added entries does not compile:\n$(cat tmp/ae-check.txt)"
+"$satz" --config "$ex" interfaces "$PWD/tmp/ae-org.satz" --format json --out tmp/ae-interfaces.json >/dev/null 2>&1 || fail "satz interfaces failed on the estate with the added entries"
+python3 - tmp/ae-interfaces.json <<'PY2' || fail "the interfaces report does not carry the entries and the defaults of a list:\n$(cat tmp/ae-interfaces.json)"
+import json, sys
+r = json.load(open(sys.argv[1]))
+q = {x["param"]: x for x in r["requests"]}
+p = q["delegated_projects"]
+assert p["entries"] == len(p["rows"]) == 4, p
+row = [x for x in p["rows"] if x["name"] == "billing-reports"][0]
+assert row["delegation"] == "billing" and row["budgets"] is False and row["apis"] == ["run.googleapis.com", "iam.googleapis.com"], row
+assert p["defaults"]["budgets"] is False and "iam.googleapis.com" in p["defaults"]["apis"], p["defaults"]
+assert [x["name"] for x in q["delegations"]["rows"]] == ["shop", "payments", "billing"], q["delegations"]["rows"]
+PY2
+# what it refuses, each with the file as it was
+cp tmp/ae-org.satz tmp/ae-before.satz
+refused() { # <what the refusal says> <args…>
+  local says="$1"; shift
+  ae "$@" > tmp/ae-bad.txt 2>&1 && fail "add-entry accepted: $*"
+  grep -q "$says" tmp/ae-bad.txt || fail "the refusal of [$*] does not say [$says]:\n$(cat tmp/ae-bad.txt)"
+  cmp -s tmp/ae-org.satz tmp/ae-before.satz || fail "a refused entry changed the estate: $*"
+}
+refused 'is no list a pack of this estate declares' no_such_list name=x
+refused '`labels` is no field of an entry of `delegations`' delegations name=x owner_group=x@example.com labels=y
+refused 'holds an entry `billing` already' delegations name=billing owner_group=other@example.com
+refused 'owner_group' delegations name=lake owner_group=not-an-address
+refused 'is named by its `name`' delegated_projects delegation=billing
+refused 'google_service_account.deploy_ghost' delegated_projects name=orphan delegation=ghost
+
 step "delegated budgets: the role on the project that asked, the budget pack in the team's estate, and what a pack needs (ADR 0091, ADR 0093)"
 python3 - "$ex/satz/C0example.satz" tmp/bud-org.satz <<'PY2'
 import sys
@@ -2318,7 +2354,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_whoami", "satz_open", "satz_estates", "satz_scan_checkov",
                       "satz_remediation_items", "satz_remediation_annotate", "satz_adopt", "satz_get_presets",
                       "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_preset", "satz_fmt",
-                      "satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer",
+                      "satz_presets", "satz_add_preset", "satz_add_entry", "satz_remove_preset", "satz_check_consumer",
                       "satz_packs", "satz_get_pack", "satz_update_pack", "satz_detach_pack", "satz_review_pack"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
@@ -2344,7 +2380,7 @@ for name in ("satz_require", "satz_questions", "satz_interview", "satz_triage", 
              "satz_transpile_check", "satz_transpile", "satz_report_compliance",
              "satz_whoami", "satz_scan_checkov", "satz_remediation_items", "satz_remediation_annotate",
              "satz_adopt", "satz_get_presets", "satz_update_prerequisites", "satz_merge_presets",
-             "satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer"):
+             "satz_presets", "satz_add_preset", "satz_add_entry", "satz_remove_preset", "satz_check_consumer"):
     assert tools[name].get("outputSchema"), f"{name} publishes no output schema"
     ann = tools[name].get("annotations") or {}
     assert "readOnlyHint" in ann, f"{name} carries no annotations: {ann}"

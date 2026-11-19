@@ -10,6 +10,7 @@ mod emitter;
 mod interface;
 mod interface_changes;
 mod project;
+mod entries;
 mod interface_report;
 mod consumer;
 mod manifest;
@@ -142,7 +143,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "interfaces", "check-request"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
     ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "review-pack"]),
@@ -783,6 +784,23 @@ pub(crate) enum Commands {
         /// Switch on what the pack needs too, where the pack graph names one pack for it
         #[arg(long)]
         with_requirements: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Add one entry to a list a pack declares with `request` — a delegation, a delegated
+    /// folder or project, a subnet, a budget: `satz add-entry <estate> delegated_projects
+    /// name=rag delegation=rag budgets=true`. Checked against the declaration (its fields,
+    /// their patterns, the key new), written into the estate's params, and the estate is
+    /// compiled and restored when it does not compile. `satz interfaces` lists the lists.
+    AddEntry {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The list param, as the pack's `request` names it
+        list: String,
+        /// The entry's fields, each `<field>=<value>`; a list's values are separated by commas
+        #[arg(required = true, value_name = "FIELD=VALUE")]
+        fields: Vec<String>,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
@@ -2492,6 +2510,16 @@ Thumbs.db
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
                 _ => print!("{}", crate::preset_lines::render_change(&change)),
+            }
+            Ok(())
+        }
+        Commands::AddEntry { input, list, fields, format } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let pairs = fields.iter().map(|f| crate::entries::pair(f)).collect::<Result<Vec<_>, _>>()?;
+            let added = crate::entries::add(&input_path, &tool_config, &runtime_config, &list, &pairs).map_err(|e| format!("add-entry {}: nothing changed.\n\n{}", list, e))?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&added)?),
+                _ => println!("added `{}` to `{}` in {} — {} entr{} now:\n  {}", added.key, added.list, added.estate, added.entries, if added.entries == 1 { "y" } else { "ies" }, added.entry),
             }
             Ok(())
         }
@@ -6403,6 +6431,7 @@ mod command_groups {
         ("presets", Identity::NoGoogleApi),
         ("check-consumer", Identity::NoGoogleApi),
         ("add-preset", Identity::NoGoogleApi),
+        ("add-entry", Identity::NoGoogleApi),
         ("remove-preset", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
         ("triage", Identity::NoGoogleApi),

@@ -167,6 +167,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("presets", Parity::Tools(&["satz_presets"])),
     ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
     ("add-preset", Parity::Tools(&["satz_add_preset"])),
+    ("add-entry", Parity::Tools(&["satz_add_entry"])),
     ("check-request", Parity::Off("a project's pipeline runs it on the pull request that vendors the file, before the estate's owner reviews it; the interface plane has no tools")),
     ("interfaces", Parity::Off("satz-studio reads its json form through the CLI, and an agent reads the interface READMEs the transpile writes; the interface plane has no tools")),
     ("remove-preset", Parity::Tools(&["satz_remove_preset"])),
@@ -763,6 +764,18 @@ pub(crate) struct AddPackArgs {
     /// Without it, a pack that needs one that is off is refused and the refusal names it
     #[serde(default)]
     pub with_requirements: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AddEntryArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// The list param, as the pack's `request` names it: `delegations`, `delegated_projects`, …
+    pub list: String,
+    /// The entry's fields, each as text: `{"name": "rag", "delegation": "rag", "budgets": "true"}`;
+    /// a list's values are separated by commas
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1664,6 +1677,36 @@ impl SatzMcp {
         match crate::preset_lines::add(&estate, &open.tool, &open.runtime, &args.pack, args.with_requirements) {
             Ok(c) => Ok(Ok(Json(c))),
             Err(e) => Ok(Err(refused(format!("add-preset: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_add_entry",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::entries::EntryAdded>(),
+        description = "Add one entry to a list a pack declares with `request`, as `satz add-entry` does: a \
+                       delegation, a delegated folder or project, a subnet, a budget. The entry is checked \
+                       against the declaration — every field declared, each value matching its pattern, the \
+                       key not yet in the list — and written into the estate's params; the edited estate is \
+                       compiled and restored when it does not compile. The lists an estate declares, with \
+                       their fields, patterns and defaults, are in `satz interfaces`. Needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn add_entry(
+        &self,
+        Parameters(args): Parameters<AddEntryArgs>,
+    ) -> Result<Result<Json<crate::entries::EntryAdded>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("add-entry");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let pairs: Vec<(String, String)> = args.fields.into_iter().collect();
+        match crate::entries::add(&estate, &open.tool, &open.runtime, &args.list, &pairs) {
+            Ok(added) => Ok(Ok(Json(added))),
+            Err(e) => Ok(Err(refused(format!("add-entry: {}", e)))),
         }
     }
 

@@ -34,6 +34,11 @@ pub(crate) struct RequestRow {
     pub description: Option<String>,
     /// the entries the list holds now
     pub entries: usize,
+    /// those entries, each with its fields — the defaults filled in, contributions included
+    pub rows: Vec<serde_json::Value>,
+    /// per field, the value an entry without it takes
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub defaults: std::collections::BTreeMap<String, serde_json::Value>,
     pub file: String,
     pub line: usize,
 }
@@ -125,6 +130,8 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             patterns: r.patterns.iter().cloned().collect(),
             description: r.description.clone(),
             entries: r.entries.len(),
+            rows: r.entries.iter().filter_map(|e| serde_json::to_value(e).ok()).collect(),
+            defaults: r.defaults.iter().filter_map(|(f, v)| serde_json::to_value(v).ok().map(|v| (f.clone(), v))).collect(),
             file: r.file.clone(),
             line: r.line,
         })
