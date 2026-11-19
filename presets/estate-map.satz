@@ -27,7 +27,7 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organisation.
 
-pack estate_map version "4.2"
+pack estate_map version "5.0"
 
 params {
   // ---- what the estate is for ---------------------------------------------
@@ -47,8 +47,9 @@ params {
   use_budget                    = false
   use_billing_export            = false
   use_shared_network            = false
-  use_project_workload          = false
-  use_folder_workload           = false
+  use_delegation                = false
+  use_delegated_folders         = false
+  use_delegated_projects        = false
   use_delegated_budgets         = false
   use_project_cis_log_alerts    = false
   use_scc_enablement            = false
@@ -134,11 +135,19 @@ question use_shared_network {
   blast    = high
 }
 
-question use_project_workload {
-  prompt   = "Delegate access to projects — create the Google projects that teams work in from estates of their own: per project either its own service account and state bucket, or the account of a workload that works in several, and the interface the project's estate reads?"
-  why      = "A project — a team's estate beside this one, in its own repository — is then one entry of `project_workload_projects` (its own account) or of `project_workload_shared_projects` (a workload's account), requested by pull request; the account holds the project's IAM and services on that project alone. Turning it off later destroys every such Google project, with everything the team built in it."
+question use_delegation {
+  prompt   = "Delegate access — give a team that works from an estate of its own, beside this one, an identity: an infrastructure project with the service account its pipelines run as and the bucket its states live in, and the group whose members may act as that account?"
+  why      = "A team then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds only what the estate delegates to it. This is the base every delegation has; what is delegated — folders, projects — is its own pack, each entry naming its delegation. Turning it off later destroys every delegation's infrastructure project, its account and its states, and with them every team's way in."
   reversal = recreate
   blast    = high
+}
+
+question use_delegated_projects {
+  prompt   = "Delegate access to projects — create the Google projects a delegation's account works in, with its roles on each project alone, and the interface the team's estate reads?"
+  why      = "A project is then one entry of `delegated_projects` that names its delegation; the account holds the project's IAM and services on that project and nowhere else, and one account may work in several. Turning it off later destroys every such project and everything in it."
+  reversal = recreate
+  blast    = high
+  ask_when = use_delegation
 }
 
 question use_delegated_budgets {
@@ -148,11 +157,12 @@ question use_delegated_budgets {
   blast    = low
 }
 
-question use_folder_workload {
-  prompt   = "Delegate access to folders — give each workload that is rolled out by an estate of its own, a team's deployments or a product, its own identity and its own folders: an infrastructure project with the service account its pipelines run as and the bucket its states live in, the folders it works in, and the account's roles on those folders alone?"
-  why      = "A workload then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds what the estate delegates — roles on its own folders, on the billing account, and the one read on the organisation the interface lookups need. It holds no access control on any folder. Turning it off later destroys every workload's infrastructure project, with its state bucket and every state in it, and every workload folder that is empty."
+question use_delegated_folders {
+  prompt   = "Delegate access to folders — create the folders a delegation's account works in, with its roles on those folders alone, and the interface the team's estate reads?"
+  why      = "A folder is then one entry of `delegated_folders` that names its delegation; the account creates and manages folders and projects under it and holds no access control on any folder, its own included. Turning it off later removes the account's roles on its folders; the folders hold what the team created and are not destroyed while they hold anything."
   reversal = recreate
   blast    = high
+  ask_when = use_delegation
 }
 
 question use_billing_export {
@@ -322,14 +332,25 @@ offers "presets/billing-export.satz" {
   when = use_billing_export
 }
 
-offers "presets/project-workload.satz" {
-  when  = use_project_workload
-  phase = "once the estate runs as the service account — the projects' own estates run as their own accounts"
+offers "presets/delegation.satz" {
+  when  = use_delegation
+  phase = "once the estate runs as the service account — the teams' own estates run as their delegations' accounts"
 }
 
-offers "presets/folder-workload.satz" {
-  when  = use_folder_workload
-  phase = "once the estate runs as the service account and the workload folder exists — the workloads' folders are created under it"
+offers "presets/delegated-folders.satz" {
+  when = use_delegated_folders
+  requires = [
+    "presets/delegation.satz",
+  ]
+  phase = "once the estate runs as the service account and the workload folder exists — the delegated folders are created under it"
+}
+
+offers "presets/delegated-projects.satz" {
+  when = use_delegated_projects
+  requires = [
+    "presets/delegation.satz",
+  ]
+  phase = "once the estate runs as the service account — the delegated projects are created in the folder it names"
 }
 
 offers "presets/delegated-budget-role.satz" {

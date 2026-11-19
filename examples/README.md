@@ -56,7 +56,7 @@ satz --config examples/acme transpile C0example.satz
 
 # 2. the example takes its two interface folders whole: its identity, and its folder
 mkdir -p examples/acme/simple-project/interfaces/incoming
-cp -R examples/acme/interfaces/outgoing/workload-shop examples/acme/interfaces/outgoing/shop examples/acme/simple-project/interfaces/incoming/
+cp -R examples/acme/interfaces/outgoing/delegation-shop examples/acme/interfaces/outgoing/shop examples/acme/simple-project/interfaces/incoming/
 
 # 3. the example: writes examples/acme/simple-project/hcl/
 satz --config examples/acme/simple-project transpile simple-project.satz

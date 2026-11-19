@@ -853,6 +853,62 @@ fn works_in(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> Wo
     if folder { WorksIn::Folder } else { WorksIn::Project }
 }
 
+/// One interface file the estate uses, and what it says about who delegated: the central
+/// estate that wrote it and the identity and place it carries. Read from the file's own
+/// static values; a value the file does not carry is absent.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct DelegatedBy {
+    /// the interface file, as the estate's `use` line names it
+    pub path: String,
+    /// the interface's name
+    pub interface: String,
+    /// the name of the central estate that wrote the file
+    pub estate: String,
+    /// the organisations that estate manages, `organizations/<id>`
+    pub organizations: Vec<String>,
+    /// the organisation's short name, when the file carries the core value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub customer_shortname: Option<String>,
+    /// the account the team's estates run as: a delegation's own interface carries it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// the group whose members may act as that account
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_group: Option<String>,
+    /// the project the team's calls are billed to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deploy_project: Option<String>,
+    /// the delegated project, when the file is one's
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// the file is a delegated folder's
+    pub folder: bool,
+}
+
+/// What each used interface file says about who delegated, in the order the estate uses them.
+fn delegated_by(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> Vec<DelegatedBy> {
+    let load = crate::satz_loader(estate, &runtime.include_dirs);
+    interfaces
+        .iter()
+        .filter_map(|u| {
+            let file = load(&u.path).ok().and_then(|t| satz_core::satz::parse(&t).ok()).and_then(|f| f.interface_file)?;
+            let text = |name: &str| file.outputs.iter().find(|o| o.name == name).and_then(|o| crate::interface::static_text(&o.value));
+            Some(DelegatedBy {
+                path: u.path.clone(),
+                interface: file.name.clone(),
+                estate: file.estate.clone(),
+                organizations: file.organizations.clone(),
+                customer_shortname: text("customer_shortname"),
+                account: text("iac_account"),
+                account_group: text("account_group"),
+                deploy_project: text("deploy_project_id"),
+                project: text("project_id"),
+                folder: file.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PacksReport {
     pub estate: String,
@@ -867,6 +923,9 @@ pub(crate) struct PacksReport {
     /// the interface files of central estates the estate reads — no pack, and no pack
     /// graph's business
     pub interfaces: Vec<Unmanaged>,
+    /// per used interface file, who delegated and what it carries: the central estate, the
+    /// organisation, the account, the place
+    pub delegated_by: Vec<DelegatedBy>,
     /// the compile's pack findings, as `transpile --check` prints them
     pub findings: Vec<Finding>,
 }
@@ -897,7 +956,8 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         let s = scan(&src);
         let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect());
         let works_in = works_in(estate, runtime, &interfaces);
-        return Ok(PacksReport { estate: label, works_in, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, findings: Vec::new() });
+        let delegated_by = delegated_by(estate, runtime, &interfaces);
+        return Ok(PacksReport { estate: label, works_in, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, delegated_by, findings: Vec::new() });
     };
     let lib = Library::load(&graph, &dir)?;
     let view = View::new(&graph, &lib, &src).map_err(|e| format!("{}: {}", label, e))?;
@@ -912,6 +972,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         note: None,
         packs: nodes.iter().map(|n| view.row(n, &found)).collect(),
         unmanaged,
+        delegated_by: delegated_by(estate, runtime, &interfaces),
         interfaces,
         // as the compile reports them: the pack is the subject, the file is relative to
         // the estate's directory
@@ -936,6 +997,19 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
         WorksIn::Folder => "  works in: a delegated folder\n",
         WorksIn::Project => "  works in: a delegated project\n",
     });
+    for d in &r.delegated_by {
+        let mut said = vec![format!("the estate `{}`", d.estate)];
+        if let Some(a) = &d.account {
+            said.push(format!("account {}", a));
+        }
+        if let Some(p) = &d.project {
+            said.push(format!("project {}", p));
+        }
+        if d.folder {
+            said.push("a folder".to_string());
+        }
+        s.push_str(&format!("  delegated by {} through `{}`\n", said.join(", "), d.interface));
+    }
     if let Some(n) = &r.note {
         s.push_str(&format!("  {}\n", n));
     }

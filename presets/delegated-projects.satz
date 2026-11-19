@@ -1,0 +1,128 @@
+// Delegated access to projects: the Google projects a delegation's account works in, and its
+// roles on those projects alone. A project is a Google project this estate creates; the
+// team's own estate, in its own repository, fills it. The account is the base's
+// (`presets/delegation.satz`): each entry here names the delegation whose account works in
+// the project.
+//
+//   use "presets/delegated-projects.satz" when use_delegated_projects
+//
+// ONE LIST. One entry of `delegated_projects`,
+//   { name = "payments"      delegation = "payments" }
+//   { name = "shop-backend"  delegation = "shop" }
+//   { name = "shop-frontend" delegation = "shop" }
+// is one Google project `{customer_shortname}-<name>-001`. One account works in as many
+// projects as name its delegation. The grant names the account by reference, so an entry
+// that names a delegation no entry of `delegations` declares is refused by the compile,
+// which lists the accounts that exist. Entries are bound in the estate, added with
+// `satz add-entry`, or requested by the team as `contributes_delegated_projects`.
+//
+// WHAT AN ACCOUNT HOLDS ON ITS PROJECT. `delegated_projects_roles` — the project's IAM and
+// its services — on that project and nowhere else: it creates no project and reaches none
+// beside its own. What its estate's resource types need beyond that it grants its own
+// account in its estate, on the project (`google_project_iam_member`, which the interface
+// allows). `budgets = true` adds the organisation's budget role on the project
+// (`presets/delegated-budget-role.satz`).
+//
+// THE PROJECT. Billed to the infrastructure billing account and created in
+// `delegated_projects_folder`: empty is the organisation; the workload folder `satz init
+// --workload-folder-name` writes is `google_folder.workload_folder.name`. Its `apis` are
+// the five below unless the entry states its own list, whole. The team's CALLS are billed
+// to the delegation's infrastructure project, not to this one: an API a call needs is
+// asked for in the delegation's entry.
+//
+// WHAT THE TEAM'S ESTATE READS. The interface `<name>`, taken beside the delegation's own:
+// `project_id` (an attach point for `google_project_iam_member`), `project_number`,
+// `delegated_project_roles` and `delegated_budgets`, which `satz` judges the estate's
+// needs against. One estate reads one project's interface: an account that works in two
+// projects is rolled out by two estates that run as the same account. A project's name is
+// an interface's name: no folder of `presets/delegated-folders.satz` may carry the same.
+//
+// MORE IN AN INTERFACE. An interface declared in two files is one interface, so the estate
+// adds to a project's interface by writing a block of the same name in its own file:
+// `interface "payments" { use interface "network" }`.
+//
+// NO CLAIM. A delegated project is a workload's, not a control: this pack witnesses nothing.
+
+pack delegated_projects version "1.0"
+
+params {
+  // One entry per project, `{ name delegation apis budgets }`: the name, the delegation
+  // whose account works in it, the APIs enabled on it (the defaults of the request below
+  // when left out), and whether the account may manage a budget for it.
+  delegated_projects        = []
+  // The folder the projects are created in. Empty is the organisation. A folder the
+  // estate declares is named by reference, `google_folder.<label>.name`; one that already
+  // exists by its id.
+  delegated_projects_folder = ""
+  // What an account holds on each of its projects: its IAM and its services.
+  delegated_projects_roles = [
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+  ]
+}
+
+// ---- what a customer decides, asked -------------------------------------------------
+
+question delegated_projects_folder {
+  prompt   = "The folder the delegated projects are created in — the workload folder as `google_folder.workload_folder.name`, another folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation"
+  why      = "It decides the policies and the grants every project inherits. Changing it afterwards moves every live project between parents."
+  reversal = edit
+  blast    = low
+}
+
+// ---- what a team may ask for ----------------------------------------------------------
+
+request delegated_projects {
+  key      = "name"
+  fields   = ["name", "delegation", "apis", "budgets"]
+  patterns = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" }
+  defaults = {
+    apis = [
+      "cloudresourcemanager.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "serviceusage.googleapis.com",
+      "storage.googleapis.com",
+    ]
+    budgets = false
+  }
+  description = "A project a delegation's account works in: its name, which is its interface's, the delegation's name, the APIs enabled on it, and whether a budget is delegated for it"
+}
+
+// ---- per project: the project, and no account of its own --------------------------------
+
+google_project {
+  each delegated_projects by name {
+    name            = "{each.name}"
+    project_id      = "{customer_shortname}-{each.name}-001"
+    folder_id       = delegated_projects_folder
+    billing_account = billing_account_infra
+    project_service = each.apis
+  }
+}
+
+// The delegation's account on each of its projects. At the top level with the project
+// named: one account on several projects is several grants, told apart by their project.
+google_project_iam_member {
+  each delegated_projects by name {
+    project                                                                     = "${{google_project.{each.name}.project_id}}"
+    "serviceAccount:${{google_service_account.deploy_{each.delegation}.email}}" = delegated_projects_roles
+  }
+  // Budgets, for the entries that ask: the organisation's role for it, on that project
+  // alone (`presets/delegated-budget-role.satz`, which the estate switches on).
+  each delegated_projects by name when budgets {
+    project                                                                     = "${{google_project.{each.name}.project_id}}"
+    "serviceAccount:${{google_service_account.deploy_{each.delegation}.email}}" = ["${{google_organization_iam_custom_role.delegated_budgets.name}}"]
+  }
+}
+
+// ---- what the team's estate reads -------------------------------------------------------
+
+each delegated_projects by name {
+  interface "{each.name}" {
+    export "project_id"              = "${{google_project.{each.name}.project_id}}" attach ["google_project_iam_member"] description "The project's Google project"
+    export "project_number"          = "${{google_project.{each.name}.number}}" description "Its number, looked up"
+    export "delegated_project_roles" = delegated_projects_roles description "The roles the delegation's account holds on the project"
+    export "delegated_budgets"       = each.budgets description "Whether the account may manage budgets for this project"
+  }
+}

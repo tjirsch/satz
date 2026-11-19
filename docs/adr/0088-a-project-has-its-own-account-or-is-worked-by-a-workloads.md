@@ -1,6 +1,6 @@
 # 0088 — a project has its own account, or is worked by a workload's
 
-- **Status:** accepted
+- **Status:** superseded by [ADR 0093](0093-delegation-is-a-base-and-its-targets-and-entries-are-added-by-one-writer.md): every delegated project is worked by a delegation's account, and none has its own
 - **Date:** 2026-11-12
 
 ## Context

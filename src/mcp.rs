@@ -167,6 +167,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("presets", Parity::Tools(&["satz_presets"])),
     ("check-consumer", Parity::Tools(&["satz_check_consumer"])),
     ("add-preset", Parity::Tools(&["satz_add_preset"])),
+    ("add-entry", Parity::Tools(&["satz_add_entry"])),
     ("check-request", Parity::Off("a project's pipeline runs it on the pull request that vendors the file, before the estate's owner reviews it; the interface plane has no tools")),
     ("interfaces", Parity::Off("satz-studio reads its json form through the CLI, and an agent reads the interface READMEs the transpile writes; the interface plane has no tools")),
     ("remove-preset", Parity::Tools(&["satz_remove_preset"])),
@@ -763,6 +764,18 @@ pub(crate) struct AddPackArgs {
     /// Without it, a pack that needs one that is off is refused and the refusal names it
     #[serde(default)]
     pub with_requirements: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct AddEntryArgs {
+    /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// The list param, as the pack's `request` names it: `delegations`, `delegated_projects`, …
+    pub list: String,
+    /// The entry's fields, each as text: `{"name": "rag", "delegation": "rag", "budgets": "true"}`;
+    /// a list's values are separated by commas
+    pub fields: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1668,6 +1681,36 @@ impl SatzMcp {
     }
 
     #[tool(
+        name = "satz_add_entry",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::entries::EntryAdded>(),
+        description = "Add one entry to a list a pack declares with `request`, as `satz add-entry` does: a \
+                       delegation, a delegated folder or project, a subnet, a budget. The entry is checked \
+                       against the declaration — every field declared, each value matching its pattern, the \
+                       key not yet in the list — and written into the estate's params; the edited estate is \
+                       compiled and restored when it does not compile. The lists an estate declares, with \
+                       their fields, patterns and defaults, are in `satz interfaces`. Needs 'write'.",
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn add_entry(
+        &self,
+        Parameters(args): Parameters<AddEntryArgs>,
+    ) -> Result<Result<Json<crate::entries::EntryAdded>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("add-entry");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
+            return Ok(Err(r));
+        }
+        let (open, estate) = match self.target(args.estate.as_deref()) {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let pairs: Vec<(String, String)> = args.fields.into_iter().collect();
+        match crate::entries::add(&estate, &open.tool, &open.runtime, &args.list, &pairs) {
+            Ok(added) => Ok(Ok(Json(added))),
+            Err(e) => Ok(Err(refused(format!("add-entry: {}", e)))),
+        }
+    }
+
+    #[tool(
         name = "satz_remove_preset",
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::preset_lines::PackChange>(),
         description = "Switch a pack off, as `satz remove-preset` does: bind its gate false and leave its line — a \
@@ -2497,7 +2540,7 @@ impl SatzMcp {
         // missing", and the caller has to be told whom to ask.
         if !args.report_only && report.writable_gap() == 0 && !report.request.is_empty() {
             return Ok(Err(refused(format!(
-                "update-prerequisites: {} prerequisite(s) are not delegated to {} — the organisation's estate adds what it lacks (`presets/folder-workload.satz` or `presets/project-workload.satz`), a role on a project it was given the estate grants itself, and nothing is written for them:\n  {}",
+                "update-prerequisites: {} prerequisite(s) are not delegated to {} — the organisation's estate adds what it lacks (`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz`), a role on a project it was given the estate grants itself, and nothing is written for them:\n  {}",
                 report.request.len(),
                 report.service_account,
                 report.request.join("\n  ")

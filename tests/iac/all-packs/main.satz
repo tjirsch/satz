@@ -35,10 +35,9 @@ params {
   sentinel_project_number             = "123456789012"
   scc_siem_subscriber                 = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"
   access_approval_notification_emails = ["security@example.com"]
-  project_workload_projects           = [{ name = "payments" owner_group = "payments-owners@example.com" budgets = true }]
-  project_workload_shared_projects    = [{ name = "platform-tools" workload = "platform" budgets = true }, { name = "platform-portal" workload = "platform" }]
-  folder_workloads                    = [{ name = "platform" group = "gcp-project-admins@example.com" }]
-  folder_workload_folders             = [{ name = "platform-apps" workload = "platform" budgets = true }, { name = "platform-data" workload = "platform" display_name = "Platform data" }]
+  delegations                         = [{ name = "platform" owner_group = "gcp-project-admins@example.com" }, { name = "payments" owner_group = "payments-owners@example.com" }]
+  delegated_projects                  = [{ name = "payments" delegation = "payments" budgets = true }, { name = "platform-tools" delegation = "platform" budgets = true }, { name = "platform-portal" delegation = "platform" }]
+  delegated_folders                   = [{ name = "platform-apps" delegation = "platform" budgets = true }, { name = "platform-data" delegation = "platform" display_name = "Platform data" }]
 }
 
 terraform {
@@ -108,8 +107,9 @@ use "presets/scc/scc-findings-siem.satz"
 use "presets/scc/scc-export.satz"
 use "presets/billing-export.satz"
 use "presets/shared-network.satz"
-use "presets/project-workload.satz"
-use "presets/folder-workload.satz"
+use "presets/delegation.satz"
+use "presets/delegated-folders.satz"
+use "presets/delegated-projects.satz"
 use "presets/delegated-budget-role.satz"
 
 use "presets/integrations/microsoft-defender-for-cloud.satz"

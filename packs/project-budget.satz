@@ -5,7 +5,7 @@
 // A workload pack: an estate that works in a delegated project takes it with
 // `satz get-pack project-budget` and answers the two questions below. It needs the
 // organisation to have delegated budgets for that project — `budgets = true` on the
-// project's entry of `presets/project-workload.satz` — and nothing on the billing account:
+// project's entry of `presets/delegated-projects.satz` — and nothing on the billing account:
 // with that delegation the account manages budgets for its own project alone, and sees no
 // other project's costs.
 //

@@ -158,8 +158,13 @@ pub(crate) fn bound_literal(src: &str, name: &str) -> Result<Option<String>, Str
 /// replaced value changes no width and touches nothing but itself. Everything outside
 /// the block stays as the author laid it out.
 pub(crate) fn bind(src: &str, name: &str, value: &serde_yaml::Value) -> Result<String, String> {
+    bind_literal(src, name, &literal(value))
+}
+
+/// [`bind`] with the value already written as Satz: what `add-entry` binds, a list of
+/// entries, which is no value an answer carries.
+pub(crate) fn bind_literal(src: &str, name: &str, lit: &str) -> Result<String, String> {
     let params = params_of(src)?;
-    let lit = literal(value);
     if let Some((from, to)) = params.value_of(name) {
         return Ok(format!("{}{}{}", &src[..from], lit, &src[to..]));
     }

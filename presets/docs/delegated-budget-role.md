@@ -16,8 +16,8 @@ on the billing account — it sees no other project's costs and no account-wide 
 Google's predefined roles carry these three only inside Owner and Editor, which is why
 this is a custom role.
 
-WHO GETS IT. An entry of `presets/project-workload.satz` or a folder entry of
-`presets/folder-workload.satz` that says `budgets = true`. On a folder the role is
+WHO GETS IT. An entry of `presets/delegated-projects.satz` or of
+`presets/delegated-folders.satz` that says `budgets = true`. On a folder the role is
 inherited by the projects in it. An entry that asks while this pack is off is refused by
 the compile: its grant names a role the estate does not declare.
 

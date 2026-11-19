@@ -1,0 +1,102 @@
+// Delegated access to folders: the folders a delegation's account works in, and its roles on
+// those folders alone. The account is the base's (`presets/delegation.satz`): each entry
+// here names the delegation whose account works in the folder.
+//
+//   use "presets/delegated-folders.satz" when use_delegated_folders
+//
+// ONE LIST. One entry of `delegated_folders` is one folder the pack creates:
+//   { name = "shop-frontend" delegation = "shop" }
+//   { name = "shop-data"     delegation = "shop" parent = "google_folder.data.name" }
+// A delegation works in as many folders as name it, and they need no common root: `parent`
+// is `google_folder.workload_folder.name` unless the entry names another folder the estate
+// declares (`google_folder.<label>.name`) or one that already exists (`folders/<id>`). The
+// grant names the account by reference, so an entry that names a delegation no entry of
+// `delegations` declares is refused by the compile, which lists the accounts that exist.
+// Entries are bound in the estate, added with `satz add-entry`, or requested by the team
+// as `contributes_delegated_folders`.
+//
+// PER FOLDER. The folder `<name>` (shown as `display_name` when the entry has one), and
+// `delegated_folders_roles` for the delegation's account on it: create and manage folders
+// and Google projects under it, set the IAM of its projects and enable their APIs. NOT
+// granted: access control on a folder, organisation policies, tags, billing administration
+// — so an account cannot grant itself anything on a folder, its own included, and reaches
+// nothing beside the folders it was given. A folder that already exists is declared as an
+// entry and taken over once with `satz adopt`, which finds it by its display name under
+// its parent. `budgets = true` adds the organisation's budget role on the folder
+// (`presets/delegated-budget-role.satz`).
+//
+// WHAT THE TEAM'S ESTATE READS. The interface `<name>`, taken beside the delegation's own:
+// `delegated_folder`, the parent of everything the estate creates, `delegated_folder_roles`
+// and `delegated_budgets`. One estate reads one folder's interface: a delegation with two
+// folders is rolled out by two estates that run as the same account. A folder's name is an
+// interface's name: no project of `presets/delegated-projects.satz` may carry the same.
+//
+// NO CLAIM. A delegated folder is a workload's, not a control: this pack witnesses nothing.
+
+pack delegated_folders version "1.0"
+
+params {
+  // One entry per folder, `{ name delegation display_name parent budgets }`: the folder's
+  // name, the delegation whose account works in it, the name it is shown under (the
+  // entry's name when left out), its parent (the workload folder when left out), and
+  // whether the account may manage budgets for the projects in it.
+  delegated_folders = []
+  // What an account holds on each of its folders: folders and Google projects under it,
+  // the IAM of its projects, and the APIs it enables on them. No role here carries
+  // `resourcemanager.folders.setIamPolicy`.
+  delegated_folders_roles = [
+    "roles/resourcemanager.folderCreator",
+    "roles/resourcemanager.folderEditor",
+    "roles/resourcemanager.projectCreator",
+    "roles/resourcemanager.projectDeleter",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/serviceusage.serviceUsageAdmin",
+  ]
+}
+
+// ---- what a team may ask for ----------------------------------------------------------
+
+request delegated_folders {
+  key         = "name"
+  fields      = ["name", "delegation", "display_name", "parent", "budgets"]
+  patterns    = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" }
+  defaults    = { parent = "google_folder.workload_folder.name" budgets = false }
+  description = "A folder a delegation's account works in: the folder's name, the delegation's name, the name the folder is shown under, its parent, and whether budgets are delegated for it"
+}
+
+// ---- per folder: the folder, and the delegation's account on it and on nothing above it -
+
+google_folder {
+  each delegated_folders by name when display_name {
+    display_name = "{each.display_name}"
+    parent       = "{each.parent}"
+  }
+  each delegated_folders by name when not display_name {
+    display_name = "{each.name}"
+    parent       = "{each.parent}"
+  }
+}
+
+google_folder_iam_member {
+  each delegated_folders by name {
+    folder                                                                      = "${{google_folder.{each.name}.name}}"
+    "serviceAccount:${{google_service_account.deploy_{each.delegation}.email}}" = delegated_folders_roles
+  }
+  // Budgets, for the folders that ask: the organisation's role for it, on that folder and
+  // so on the projects in it (`presets/delegated-budget-role.satz`, which the estate
+  // switches on).
+  each delegated_folders by name when budgets {
+    folder                                                                      = "${{google_folder.{each.name}.name}}"
+    "serviceAccount:${{google_service_account.deploy_{each.delegation}.email}}" = ["${{google_organization_iam_custom_role.delegated_budgets.name}}"]
+  }
+}
+
+// ---- what the team's estate reads -------------------------------------------------------
+
+each delegated_folders by name {
+  interface "{each.name}" {
+    export "delegated_folder"       = "${{google_folder.{each.name}.name}}" description "The folder the delegation's account works in: the parent of what its estate creates"
+    export "delegated_folder_roles" = delegated_folders_roles description "The roles the account holds on this folder"
+    export "delegated_budgets"      = each.budgets description "Whether the account may manage budgets for the projects in this folder"
+  }
+}

@@ -1,6 +1,6 @@
 # 0086 — a workload's account is granted on folders the pack creates for it
 
-- **Status:** accepted
+- **Status:** accepted; the pack is `presets/delegated-folders.satz` and the account is a delegation's since [ADR 0093](0093-delegation-is-a-base-and-its-targets-and-entries-are-added-by-one-writer.md)
 - **Date:** 2026-11-11
 
 ## Context

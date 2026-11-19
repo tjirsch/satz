@@ -10,6 +10,7 @@ mod emitter;
 mod interface;
 mod interface_changes;
 mod project;
+mod entries;
 mod interface_report;
 mod consumer;
 mod manifest;
@@ -142,7 +143,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "interfaces", "check-request"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
     ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "review-pack"]),
@@ -281,15 +282,17 @@ pub(crate) enum Commands {
         /// customer's and the projects' folders. Without it they live at the organisation
         #[arg(long)]
         workload_folder_name: Option<String>,
-        /// Write a PROJECT estate instead: the estate of the project of this name, which
-        /// reads the central estate through the interface file `--interface` names and runs
-        /// as the project's own IaC service account
-        #[arg(long, requires = "interface")]
-        project: Option<String>,
-        /// With `--project`: the project's `interfaces/outgoing/<project>/<project>/satz/interface.satz`,
-        /// as the central estate wrote it for an entry of `project_workload_projects` (`presets/project-workload.satz`)
-        #[arg(long, requires = "project")]
-        interface: Option<PathBuf>,
+        /// Write a TEAM's estate instead, from the hand-over folders a central estate wrote
+        /// for a delegation: the delegation's own folder of its `interfaces/outgoing/`,
+        /// `delegation-<name>`, and that of the one folder or project this estate works in
+        /// (`presets/delegation.satz`, `presets/delegated-folders.satz`,
+        /// `presets/delegated-projects.satz`). Each is copied to `interfaces/incoming/`
+        /// here, unless it is already there, and the estate runs as the delegation's account
+        #[arg(long, num_args = 1.., value_name = "FOLDER")]
+        from: Vec<PathBuf>,
+        /// With `--from`: the estate's name. Without it the delegation's
+        #[arg(long, requires = "from")]
+        name: Option<String>,
         /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
@@ -781,6 +784,23 @@ pub(crate) enum Commands {
         /// Switch on what the pack needs too, where the pack graph names one pack for it
         #[arg(long)]
         with_requirements: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Add one entry to a list a pack declares with `request` — a delegation, a delegated
+    /// folder or project, a subnet, a budget: `satz add-entry <estate> delegated_projects
+    /// name=rag delegation=rag budgets=true`. Checked against the declaration (its fields,
+    /// their patterns, the key new), written into the estate's params, and the estate is
+    /// compiled and restored when it does not compile. `satz interfaces` lists the lists.
+    AddEntry {
+        /// Estate file (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The list param, as the pack's `request` names it
+        list: String,
+        /// The entry's fields, each `<field>=<value>`; a list's values are separated by commas
+        #[arg(required = true, value_name = "FIELD=VALUE")]
+        fields: Vec<String>,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
@@ -1351,8 +1371,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             infra_bucket_name,
             iac_user,
             workload_folder_name,
-            project,
-            interface,
+            from,
+            name,
             from_live,
             force,
             interview,
@@ -1460,37 +1480,33 @@ Thumbs.db
                 println!("Created {}", gitignore_path.display());
             }
 
-            if let Some(project) = project.as_deref() {
-                // A project estate: written from the interface file — `project_id`, `iac_account`,
-                // `state_bucket` and the core export `default_region` — so nothing is derived from
-                // the credentials: the central estate answered it all.
-                let interface_path = interface.ok_or("init --project: `--interface <path>` names the project's interface file, `interfaces/outgoing/<project>/<project>/satz/interface.satz` of the central estate, or your copy of it under `interfaces/incoming/`")?;
-                let text = fsx::read_to_string(&interface_path).map_err(|e| format!("{}: {}", interface_path.display(), e))?;
-                let file = satz_core::satz::parse(&text)
-                    .map_err(|e| format!("{}:{}: {}", interface_path.display(), e.line, e.msg))?
-                    .interface_file
-                    .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/outgoing/", interface_path.display()))?;
-                // the path the estate `use`s: relative to the config directory when it is under it
-                // `./config.toml` has the empty path for its directory, which is the current one
-                let absolute = fsx::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
+            if !from.is_empty() {
+                // A team's estate: written from the hand-over folders — the delegation's
+                // account, infrastructure project and state bucket, and the core export
+                // `default_region` — so nothing is derived from the credentials: the central
+                // estate answered it all.
                 let base = if config_dir.as_os_str().is_empty() { Path::new(".") } else { config_dir.as_path() };
-                let use_path = match fsx::canonicalize(base).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
-                    Some(rel) => fsx::slash(&rel),
-                    None => fsx::slash(&absolute),
+                let incoming = PathBuf::from(&runtime_config.interfaces_dir).join(crate::interface::INCOMING);
+                let mut files = Vec::new();
+                for folder in &from {
+                    let (use_path, file) = take_interface(folder, &incoming, base)?;
+                    files.push((use_path, file));
+                }
+                let name = match name {
+                    Some(n) => n,
+                    None => crate::project::default_name(&files).ok_or("init --from: none of the folders is a delegation's own (`delegation-<name>`), so the estate has no name to take — take that folder too, or give `--name`")?,
                 };
-                let src = crate::project::estate(project, &file, &use_path)?;
-                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", crate::project::label(project)));
+                let src = crate::project::estate(&name, &files)?;
+                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", crate::project::label(&name)));
                 if yaml_path.exists() && !force {
                     return Err(format!("{} exists — `--force` rewrites it", yaml_path.display()).into());
                 }
                 fsx::write_generated_satz(&yaml_path, &src)?;
                 println!(
-                    "Generated project estate: {} — the project `{}` of the central estate `{}`, read through {}; next: `satz transpile {}.satz`",
+                    "Generated the team's estate: {} — read through {}; next: `satz transpile {}.satz`",
                     yaml_path.display(),
-                    project,
-                    file.estate,
-                    use_path,
-                    crate::project::label(project)
+                    files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", "),
+                    crate::project::label(&name)
                 );
             } else {
                 // 3b. What the operator TYPED, before anything is derived: a re-run
@@ -2494,6 +2510,16 @@ Thumbs.db
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
                 _ => print!("{}", crate::preset_lines::render_change(&change)),
+            }
+            Ok(())
+        }
+        Commands::AddEntry { input, list, fields, format } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            let pairs = fields.iter().map(|f| crate::entries::pair(f)).collect::<Result<Vec<_>, _>>()?;
+            let added = crate::entries::add(&input_path, &tool_config, &runtime_config, &list, &pairs).map_err(|e| format!("add-entry {}: nothing changed.\n\n{}", list, e))?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&added)?),
+                _ => println!("added `{}` to `{}` in {} — {} entr{} now:\n  {}", added.key, added.list, added.estate, added.entries, if added.entries == 1 { "y" } else { "ies" }, added.entry),
             }
             Ok(())
         }
@@ -3706,7 +3732,7 @@ struct Reads {
 }
 
 /// Where a workload's account gets what it lacks: the lists of the pack that created it.
-const ASK_THE_ORGANISATION: &str = "`presets/folder-workload.satz` or `presets/project-workload.satz` in the organisation's estate";
+const ASK_THE_ORGANISATION: &str = "`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz` in the organisation's estate";
 
 /// The API half of [`prerequisite_findings`].
 fn api_findings(
@@ -3754,8 +3780,7 @@ fn api_findings(
             format!(
                 "{} API(s) this estate's resources need are not enabled on {}, the project its calls are \
                  billed to. That project is the organisation's estate's: ask for each to be added to the \
-                 `apis` of the entry that created it — the workload's in `folder_workloads`, or the \
-                 project's in `project_workload_projects` ({}); the interface `{}` says what is \
+                 `apis` of the delegation's entry in `delegations` ({}); the interface `{}` says what is \
                  delegated:\n  {}",
                 not_delegated.len(),
                 billing.default_project().unwrap_or_default(),
@@ -3861,8 +3886,8 @@ fn prerequisite_role_findings(
                          what the interface `{}` says and can grant itself nothing above its own projects: \
                          a role on a project it was given it grants itself in this estate \
                          (`google_project_iam_member` on the interface's `project_id`); ask for a role on \
-                         the workload's folders to be added to `folder_workload_roles`, and for one on the \
-                         billing account to `billing_roles` of the workload's entry in `folder_workloads` \
+                         the delegated folders to be added to `delegated_folders_roles`, and for one on the \
+                         billing account to `billing_roles` of the delegation's entry in `delegations` \
                          ({}):\n  {}",
                         sa,
                         d.interface,
@@ -4502,6 +4527,63 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     }
     written.extend(write_interface(out.interface.as_ref(), &out.manifest, &out.requests, dir, interfaces_dir, estate)?);
     Ok(written)
+}
+
+/// One hand-over folder taken for a team's estate: `folder` is a folder a central estate
+/// wrote under its `interfaces/outgoing/` — or a copy of one — named after its interface,
+/// with that interface's file at `<name>/satz/interface.satz` inside. It is copied whole to
+/// `incoming/<name>/`, replacing an earlier copy, unless that is where it already stands.
+/// Returns the path the estate `use`s, relative to the config directory, and the interface.
+fn take_interface(folder: &Path, incoming: &Path, config_dir: &Path) -> Result<(String, satz_core::satz::InterfaceFile), Box<dyn std::error::Error>> {
+    use crate::interface::{SATZ_DIR, SATZ_FILE};
+    let folder = fsx::canonicalize(folder).map_err(|e| format!("{}: {}", folder.display(), e))?;
+    let name = folder.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: not a folder with a name", folder.display()))?.to_string();
+    let inside = Path::new(&name).join(SATZ_DIR).join(SATZ_FILE);
+    if !folder.join(&inside).is_file() {
+        return Err(format!(
+            "{}: no {} in it — a hand-over folder is one folder of a central estate's interfaces/outgoing/, named after its interface",
+            folder.display(),
+            fsx::slash(&inside)
+        )
+        .into());
+    }
+    let target = incoming.join(&name);
+    let in_place = fsx::canonicalize(&target).ok().is_some_and(|t| t == folder);
+    if !in_place {
+        if target.exists() {
+            fsx::remove_dir_all(&target)?;
+        }
+        copy_dir(&folder, &target)?;
+        println!("Took {} into {}", folder.display(), target.display());
+    }
+    let path = target.join(&inside);
+    let text = fsx::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let file = satz_core::satz::parse(&text)
+        .map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?
+        .interface_file
+        .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/outgoing/", path.display()))?;
+    // the path the estate `use`s: relative to the config directory when it is under it
+    let absolute = fsx::canonicalize(&path).unwrap_or(path);
+    let use_path = match fsx::canonicalize(config_dir).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
+        Some(rel) => fsx::slash(&rel),
+        None => fsx::slash(&absolute),
+    };
+    Ok((use_path, file))
+}
+
+/// Copy a directory with everything in it.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// The estate's interfaces: the root `outputs.tf` in `dir`, and the outgoing half of
@@ -6349,6 +6431,7 @@ mod command_groups {
         ("presets", Identity::NoGoogleApi),
         ("check-consumer", Identity::NoGoogleApi),
         ("add-preset", Identity::NoGoogleApi),
+        ("add-entry", Identity::NoGoogleApi),
         ("remove-preset", Identity::NoGoogleApi),
         ("scan", Identity::NoGoogleApi),
         ("triage", Identity::NoGoogleApi),
@@ -7760,7 +7843,7 @@ mod prerequisite_findings_speak {
         };
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
         let delegation = crate::prerequisites::Delegation {
-            interface: "workload-shop".to_string(),
+            interface: "delegation-shop".to_string(),
             folder_roles: set(&["roles/resourcemanager.projectCreator"]),
             project_roles: Default::default(),
             budgets: false,

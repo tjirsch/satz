@@ -31,7 +31,7 @@ nothing here can resolve. All numbers are visibly synthetic.
 | organisation id | `123456789012` | `222222222222` | `333333333333` | `444444444444` |
 | billing account | `012345-6789AB-CDEF01` | `0B0B0B-0B0B0B-0B0B02` | `0C0C0C-0C0C0C-0C0C03` | `0D0D0D-0D0D0D-0D0D04` |
 | infra project | `acme-infra-001` | `bolt-infra-001` | `cedar-infra-001` | `delta-infra-001` |
-| a workload's infrastructure project (`presets/folder-workload.satz`, workload `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop`, its folder `Shop` | – | – | – |
+| a delegation's infrastructure project (`presets/delegation.satz`, delegation `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop`, its folder `Shop` (`presets/delegated-folders.satz`) | – | – | – |
 | log project | `acme-log-001` | `bolt-log-001` | `cedar-log-001` | `delta-log-001` |
 | audit bucket | `acme-organization-audit-bucket` | `bolt-organization-audit-bucket` | `cedar-organization-audit-bucket` | `delta-organization-audit-bucket` |
 | folder id (for `import-id` examples) | `123456789` | `222222222` | `333333333` | `444444444` |
@@ -68,8 +68,8 @@ a fifth customer: **new examples use the four above.**
 - project ids `corp-infra-001` and `corp-log-infra-001` (the smoke estate and the
   corpus fixtures);
 - the project name `payments` (the docs' and the smoke matrix's example of a project
-  beside an estate: an entry `{ name = "payments" … }` of `presets/project-workload.satz`,
-  `satz init --project payments`);
+  beside an estate: an entry `{ name = "payments" … }` of `presets/delegated-projects.satz`,
+  worked by the delegation `payments`, `satz init --from … delegation-payments … payments`);
 - directory ids `C01234567` (README and tests) and `C0abcd123` (one test);
 - billing placeholders `A12345-B67890-C12345` and `123456-123456-123456` (README and
   a preset).

@@ -1623,58 +1623,118 @@ pub(crate) const RENAMED_PARAMS: &[(&str, &str, &str)] = &[
     ),
     (
         "use_workload_deployer",
-        "use_folder_workload",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the `use … when` line names the new param too",
+        "use_delegation",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "workload_deployers",
-        "folder_workloads",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); an entry is `{ name group }` and no longer names a `folder` — each folder is an entry of `folder_workload_folders`",
+        "delegations",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "workload_deployer_folders",
-        "folder_workload_folders",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); an entry is `{ name workload parent }`, a folder the pack CREATES under `parent`, not a grant on a folder that exists",
+        "delegated_folders",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "deployer_project_folder",
-        "folder_workload_project_folder",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+        "delegation_project_folder",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "deployer_folder_roles",
-        "folder_workload_roles",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the default no longer holds `roles/resourcemanager.folderAdmin`",
+        "delegated_folders_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "deployer_organization_roles",
-        "folder_workload_organization_roles",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+        "delegation_organization_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "deployer_group_roles",
-        "folder_workload_group_roles",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+        "delegation_group_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "deployer_billing_roles",
-        "folder_workloads",
-        "the pack is `presets/folder-workload.satz`: it creates the folders a workload works in and grants its account on those alone (`presets/CHANGELOG.md`, Breaking changes, has the steps); the roles on the billing account are the field `billing_roles` of each workload's entry",
+        "delegations",
+        "the roles a delegation's account holds on the billing account are `billing_roles` of its entry in `delegations` (`presets/delegation.satz`), `roles/billing.user` unless the entry says more (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "use_project_onboarding",
-        "use_project_workload",
-        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps); the `use … when` line names the new param too",
+        "use_delegated_projects",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "projects",
-        "project_workload_projects",
-        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps); the entries are unchanged, `{ name owner_group }`",
+        "delegated_projects",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
     (
         "project_onboarding_folder",
+        "delegated_projects_folder",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "use_folder_workload",
+        "use_delegation",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workloads",
+        "delegations",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workload_folders",
+        "delegated_folders",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workload_project_folder",
+        "delegation_project_folder",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workload_roles",
+        "delegated_folders_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workload_organization_roles",
+        "delegation_organization_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "folder_workload_group_roles",
+        "delegation_group_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "use_project_workload",
+        "use_delegated_projects",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "project_workload_projects",
+        "delegated_projects",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
         "project_workload_folder",
-        "the pack is `presets/project-workload.satz`: a project has its own account, or is worked by a workload's (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+        "delegated_projects_folder",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "project_workload_shared_projects",
+        "delegated_projects",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
+    ),
+    (
+        "project_workload_roles",
+        "delegated_projects_roles",
+        "delegated access is one base preset and one preset per kind of target: `presets/delegation.satz` (list `delegations`: the account, its infrastructure project, its state bucket and its group), `presets/delegated-folders.satz` (list `delegated_folders`) and `presets/delegated-projects.satz` (list `delegated_projects`), each entry of which names its delegation (`presets/CHANGELOG.md`, Breaking changes, has the steps)",
     ),
 ];
 
@@ -1722,15 +1782,27 @@ const MOVED_PACKS: &[MovedPack] = &[
     },
     MovedPack {
         from: "presets/workload-deployer.satz",
-        to: "presets/folder-workload.satz",
-        why: "the pack creates the folders a workload works in and grants its account on those alone, where it granted folder administration on a folder the teams share",
-        edit: "Change the path inside the quotes, rename the params the compile then names, and give each workload its folders as entries of `folder_workload_folders` — `presets/CHANGELOG.md` under Breaking changes has the steps and what the plan moves",
+        to: "presets/delegation.satz",
+        why: "delegated access is one base preset, `presets/delegation.satz`, and one preset per kind of target; the folders a delegation's account works in are `presets/delegated-folders.satz`",
+        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+    },
+    MovedPack {
+        from: "presets/folder-workload.satz",
+        to: "presets/delegation.satz",
+        why: "delegated access is one base preset, `presets/delegation.satz`, and one preset per kind of target; the folders a delegation's account works in are `presets/delegated-folders.satz`",
+        edit: "Change the path inside the quotes, add `use \"presets/delegated-folders.satz\" when use_delegated_folders` for the folders, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
     MovedPack {
         from: "presets/project-onboarding.satz",
-        to: "presets/project-workload.satz",
-        why: "the pack creates a project with its own account, as before, or one a workload's account works in",
-        edit: "Change the path inside the quotes and rename the three params the compile then names; nothing the pack deploys changes — `presets/CHANGELOG.md` under Breaking changes has the steps",
+        to: "presets/delegated-projects.satz",
+        why: "a delegated project is worked by the account of a delegation, `presets/delegation.satz`, and has none of its own",
+        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
+    },
+    MovedPack {
+        from: "presets/project-workload.satz",
+        to: "presets/delegated-projects.satz",
+        why: "a delegated project is worked by the account of a delegation, `presets/delegation.satz`, and has none of its own",
+        edit: "Change the path inside the quotes, add `use \"presets/delegation.satz\" when use_delegation` with an entry of `delegations` per account, and rename the params the compile then names — `presets/CHANGELOG.md` under Breaking changes has the steps",
     },
 ];
 
@@ -4119,48 +4191,56 @@ mod tests {
     }
 
     #[test]
-    fn the_workload_deployer_names_are_refused_and_name_the_folder_workload_ones() {
-        // The pack was replaced: its path, its params and the lists a team's request file
-        // adds to are each refused with the name that took their place.
+    fn the_names_of_the_packs_before_delegation_are_refused_and_name_the_delegation_ones() {
+        // The packs were replaced twice: every param of either generation, and the lists a
+        // team's request file adds to, are each refused with the name that holds today.
         for (from, to) in [
-            ("use_workload_deployer", "use_folder_workload"),
-            ("workload_deployers", "folder_workloads"),
-            ("workload_deployer_folders", "folder_workload_folders"),
-            ("deployer_project_folder", "folder_workload_project_folder"),
-            ("deployer_folder_roles", "folder_workload_roles"),
-            ("deployer_organization_roles", "folder_workload_organization_roles"),
-            ("deployer_group_roles", "folder_workload_group_roles"),
+            ("use_workload_deployer", "use_delegation"),
+            ("workload_deployers", "delegations"),
+            ("workload_deployer_folders", "delegated_folders"),
+            ("deployer_project_folder", "delegation_project_folder"),
+            ("deployer_folder_roles", "delegated_folders_roles"),
+            ("deployer_organization_roles", "delegation_organization_roles"),
+            ("deployer_group_roles", "delegation_group_roles"),
             ("deployer_billing_roles", "billing_roles"),
-            // the project pack, renamed in v0.97.0: left on `projects`, an estate would
-            // compile with no project and the next apply would destroy them all
-            ("use_project_onboarding", "use_project_workload"),
-            ("projects", "project_workload_projects"),
-            ("project_onboarding_folder", "project_workload_folder"),
+            ("use_project_onboarding", "use_delegated_projects"),
+            ("projects", "delegated_projects"),
+            ("project_onboarding_folder", "delegated_projects_folder"),
+            ("use_folder_workload", "use_delegation"),
+            ("folder_workloads", "delegations"),
+            ("folder_workload_folders", "delegated_folders"),
+            ("folder_workload_roles", "delegated_folders_roles"),
+            ("use_project_workload", "use_delegated_projects"),
+            ("project_workload_projects", "delegated_projects"),
+            ("project_workload_shared_projects", "delegated_projects"),
+            ("project_workload_roles", "delegated_projects_roles"),
         ] {
             let err = renamed_param(from, "e.satz", 3).unwrap_or_else(|| panic!("`{}` must be refused", from));
             assert!(err.msg.contains(to), "`{}`: the error names `{}` — got {}", from, to, err.msg);
         }
         let load = |p: &str| match p {
-            "requests/pay.satz" => Ok("pack pay_request version \"1\"\nparams {\n  contributes_workload_deployers = [\n    { name = \"pay\" },\n  ]\n}\n".to_string()),
+            "requests/pay.satz" => Ok("pack pay_request version \"1\"\nparams {\n  contributes_folder_workloads = [\n    { name = \"pay\" },\n  ]\n}\n".to_string()),
             other => Err(format!("no load: {}", other)),
         };
-        for path in ["presets/workload-deployer.satz", "presets/workload-deployer.local.satz"] {
+        for (path, now) in [
+            ("presets/workload-deployer.satz", "presets/delegation.satz"),
+            ("presets/folder-workload.satz", "presets/delegation.satz"),
+            ("presets/folder-workload.local.satz", "presets/delegation.local.satz"),
+            ("presets/project-onboarding.satz", "presets/delegated-projects.satz"),
+            ("presets/project-workload.satz", "presets/delegated-projects.satz"),
+        ] {
             let estate = format!("estate t\n\nuse \"{}\"\n", path);
             let Err(err) = compile_estate("t.satz", &estate, &Table, &load) else {
                 panic!("{}: the old path must be refused", path);
             };
-            assert!(err.msg.contains(&path.replace("workload-deployer", "folder-workload")), "{}", err.msg);
+            assert!(err.msg.contains(now), "{}: {}", path, err.msg);
         }
-        let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"presets/project-onboarding.satz\"\n", &Table, &load) else {
-            panic!("the old project pack's path must be refused");
-        };
-        assert!(err.msg.contains("presets/project-workload.satz"), "{}", err.msg);
         // a vendored request file that still adds to the old list: silent before, because a
         // contribution to a list no pack declares is how a pack that is off is skipped
         let Err(err) = compile_estate("t.satz", "estate t\n\nuse \"requests/pay.satz\"\n", &Table, &load) else {
             panic!("a contribution to a renamed list must be refused");
         };
-        assert!(err.msg.contains("contributes_folder_workloads"), "{}", err.msg);
+        assert!(err.msg.contains("contributes_delegations"), "{}", err.msg);
         assert_eq!((err.file.as_str(), err.line), ("requests/pay.satz", 3), "{}", err.msg);
     }
 
