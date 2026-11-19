@@ -12,7 +12,7 @@
 // Categories (API enum names): BILLING, LEGAL, PRODUCT_UPDATES, SECURITY,
 // SUSPENSION, TECHNICAL — and ALL.
 
-pack essential_contacts_organization version "1.4"
+pack essential_contacts_organization version "1.5"
 
 params {
   // The organization-wide contact address receiving ALL Google notifications.

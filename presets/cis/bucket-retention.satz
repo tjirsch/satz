@@ -14,7 +14,7 @@
 // configured USING BUCKET LOCK, and no organization policy locks a bucket. The
 // audit-logsink pack carries the same duty.
 
-pack cis_extensions.bucket_retention version "1.5"
+pack cis_extensions.bucket_retention version "1.6"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_bucket_retention_adopted = false

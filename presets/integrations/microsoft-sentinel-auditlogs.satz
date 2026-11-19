@@ -38,7 +38,7 @@
 // `monitoring/organization-audit-logsink.satz` is what claims those, and this sink
 // is a copy leaving the organization, not the archive.
 
-pack integrations.microsoft_sentinel_auditlogs version "1.0"
+pack integrations.microsoft_sentinel_auditlogs version "1.1"
 
 params {
   sentinel_auditlogs_topic                = "sentinel-topic"

@@ -115,7 +115,12 @@ and in the maintainer's notes. Nothing in this file names a customer.
   (transpiled canonical form differs) auto-forks and repoints the estate with a
   transpile-identity proof; comment/format churn upgrades silently. Pack
   versions live IN-FILE; filenames carry only framework versions. Never
-  `.local.<n>.satz`.
+  `.local.<n>.satz`. A pack in `presets/` or `packs/` that differs from its text
+  at the last release tag in anything but comments and layout — what it writes, a
+  question, a notice, an `offers` entry, a claim's text — carries a new version:
+  `cargo test` compares every pack with `git show <tag>:<path>` through the
+  comparison `check-presets` makes and fails naming the pack (`release_version_tests`
+  in `src/presets.rs`; CI checks out the tags for it).
 - **One form of a constraint, never two.** Where Google replaces a legacy
   org-policy constraint with a managed one, a pack runs the replacement ALONE
   and declares the legacy twin off (`spec { reset = true }`) — absence is not

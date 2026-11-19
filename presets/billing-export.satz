@@ -28,7 +28,7 @@
 //
 // NO CLAIM. No catalog control covers billing export, so this pack witnesses nothing.
 
-pack billing_export version "1.0"
+pack billing_export version "1.1"
 
 params {
   // The export's own project. Globally unique, so it derives from the short name the

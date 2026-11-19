@@ -19,7 +19,7 @@
 // The parent is the folder the estate was delegated access to, read from the interface it
 // uses (`${{interface.delegated_folder}}`, the default), or a folder id.
 
-pack workload_project version "1.1"
+pack workload_project version "1.2"
 
 params {
   // The project's id, globally unique.

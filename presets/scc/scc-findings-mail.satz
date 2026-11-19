@@ -29,7 +29,7 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing.
 
-pack scc_findings_mail version "1.0"
+pack scc_findings_mail version "1.1"
 
 params {
   // The organization's security mailbox, BY REFERENCE from the central alert pack —

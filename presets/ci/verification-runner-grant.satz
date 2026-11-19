@@ -16,7 +16,7 @@
 // — the default names its service account. With the runner elsewhere, set
 // ci_runner_service_account to that runner's email.
 
-pack ci.verification_runner_grant version "1.1"
+pack ci.verification_runner_grant version "1.2"
 
 params {
   // The runner that may become this estate's service account. Defaults to the

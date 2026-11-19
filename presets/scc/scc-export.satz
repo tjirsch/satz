@@ -36,7 +36,7 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing.
 
-pack scc_export version "1.1"
+pack scc_export version "1.2"
 
 params {
   scc_export_project     = infra_project_name

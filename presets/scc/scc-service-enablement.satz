@@ -45,7 +45,7 @@
 // report whether SCC is on; Cloud Asset Inventory does not carry it.
 //
 
-pack scc_service_enablement version "1.2"
+pack scc_service_enablement version "1.3"
 
 params {
   // The two detectors outside the baseline: WEB_SECURITY_SCANNER, which actively

@@ -33,7 +33,7 @@
 //
 // Required from the estate: customer_domain, first_admin, svc_iac_account, infra_project_name
 
-pack s2_security_groups version "1.4"
+pack s2_security_groups version "1.5"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"

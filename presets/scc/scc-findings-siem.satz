@@ -29,7 +29,7 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing.
 
-pack scc_findings_siem version "1.0"
+pack scc_findings_siem version "1.1"
 
 params {
   // No default: whose identity this is depends on which SIEM the customer runs.

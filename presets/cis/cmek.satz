@@ -10,7 +10,7 @@
 // Both constraints are plain LIST constraints, not managed booleans — verified
 // against a live organization's OrgPolicy `ListConstraints`.
 
-pack cis_extensions.cmek version "1.4"
+pack cis_extensions.cmek version "1.5"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_cmek_required_adopted = false
