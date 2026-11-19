@@ -8,11 +8,11 @@ Source: `presets/cis/confidential-computing.satz`
 CIS 4.11 — Confidential Computing.
 
 Opt-in because Confidential VMs are limited to particular machine families and cost
-more; enforcing this org-wide stops most ordinary workloads from starting.
+more; enforcing this organization-wide stops most ordinary workloads from starting.
 CIS rates it Level 2 for the same reason.
 
 The constraint name and its shape were verified against a live
-organisation's OrgPolicy `ListConstraints`, not transcribed.
+organization's OrgPolicy `ListConstraints`, not transcribed.
 
 ## Use it
 
@@ -36,11 +36,11 @@ _None — the pack takes everything from the estate's params._
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_confidential_computing_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_confidential_computing_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 

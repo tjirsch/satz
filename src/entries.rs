@@ -3,7 +3,7 @@
 //! field takes when left out — and that is all this writer knows: it adds a delegation, a
 //! delegated project, a subnet or a budget alike, and a pack that declares a new kind of
 //! entry needs nothing here (ADR 0093). The entry is written into the estate's own
-//! `params {}`, text surgery as every other writer of a param, and the estate is compiled
+//! `params {}`, text surgery as every other writer of a param, and the estate is transpiled
 //! before the file is kept.
 
 use std::path::Path;
@@ -85,7 +85,7 @@ pub(crate) fn appended(list: &str, entry: &str) -> Result<String, String> {
 /// Add one entry to `list` in the estate. Refused, with nothing written: a list no pack of
 /// the estate declares with `request`, a field the declaration does not list, a value its
 /// pattern does not match, an entry without its key, a key the list already holds, and an
-/// estate that does not compile with the entry in it.
+/// estate that does not transpile with the entry in it.
 pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, list: &str, pairs: &[(String, String)]) -> Result<EntryAdded, String> {
     let compiled = crate::pipeline_b_compile(estate, tool, runtime, crate::PrerequisiteFindings::Report, crate::FindingsOutput::Silent).map_err(|e| e.to_string())?;
     let request = compiled.requests.iter().find(|r| r.param == list).ok_or_else(|| {

@@ -46,7 +46,7 @@ controls:
     automatability: technical
   "1.2":
     title: "Corporate login credentials only"
-    paraphrase: "IAM grants are restricted to identities from the organisation's own directory; consumer accounts cannot be granted roles."
+    paraphrase: "IAM grants are restricted to identities from the organization's own directory; consumer accounts cannot be granted roles."
     automatability: technical
   "1.5":
     title: "Only GCP-managed service account keys"
@@ -57,8 +57,8 @@ controls:
     paraphrase: "Default service accounts do not receive primitive or privileged roles automatically."
     automatability: technical
   "1.17":
-    title: "Essential Contacts configured for the organisation"
-    paraphrase: "Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address."
+    title: "Essential Contacts configured for the organization"
+    paraphrase: "Organization-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address."
     automatability: technical
   "2.1":
     title: "Cloud Audit Logging on all services"
@@ -114,15 +114,15 @@ controls:
     automatability: technical
   "2.14":
     title: "Cloud Asset Inventory enabled"
-    paraphrase: "The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept."
+    paraphrase: "The Cloud Asset API is enabled so the organization's resource inventory can be queried and its history kept."
     automatability: technical
   "2.15":
     title: "Access Transparency enabled"
-    paraphrase: "Every action Google personnel take on the organisation's content is logged for the customer to read."
+    paraphrase: "Every action Google personnel take on the organization's content is logged for the customer to read."
     automatability: organizational
   "2.16":
     title: "Access Approval enabled"
-    paraphrase: "Google personnel reach the organisation's content only after someone approves the request."
+    paraphrase: "Google personnel reach the organization's content only after someone approves the request."
     automatability: partial
   "3.1":
     title: "Default network does not exist"

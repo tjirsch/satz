@@ -154,12 +154,12 @@ fn render_summary(steps: &[StepOutcome]) -> String {
 fn permission_gate(summary: &RunSummary) -> Result<(), Box<dyn std::error::Error>> {
     if summary.has_permission_failure() {
         print!("{}", render_summary(&summary.steps));
-        return Err("bootstrap stopped: the ADC identity lacks a required permission".into());
+        return Err("bootstrap stopped: the signed-in identity lacks a required permission".into());
     }
     Ok(())
 }
 
-/// True when the credentials in use are the ones the config names. Addresses are
+/// True when the sign-in in use is the one the config names. Addresses are
 /// compared case-insensitively; the local part of an email is technically
 /// case-sensitive, but no identity provider in this path treats it that way, and a
 /// spurious mismatch would block a legitimate run.
@@ -170,7 +170,7 @@ fn identity_matches(expected: &str, actual: &str) -> bool {
 /// Materialize a not-yet-existing organization. The documented trigger: an
 /// EXISTING Google Cloud user's first project (or billing account) creation
 /// auto-provisions the organization for a Workspace/Cloud Identity domain —
-/// so the infra project is created parentless, the organization is awaited,
+/// so the infrastructure project is created parentless, the organization is awaited,
 /// the project moved under it, and the id written back into the estate. A
 /// NEW user's trigger (console sign-in + accepting the terms) has no API
 /// substitute, which is what the timeout message says.
@@ -272,7 +272,7 @@ async fn resolve_greenfield_parent(
     Ok(org)
 }
 
-/// Write the organisation the greenfield run created into the estate's params.
+/// Write the organization the greenfield run created into the estate's params.
 fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), String> {
     let text = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let rewritten = fill_param(&text, param, value)?;
@@ -314,7 +314,7 @@ pub(crate) struct StateIndex {
     /// `(type, live id)` → the address managing it. Keyed by type as well as
     /// id because an id is only unique within its type.
     by_object: std::collections::BTreeMap<(String, String), String>,
-    /// Org policies whose state holds rules. Switching one of these to
+    /// Organization policies whose state holds rules. Switching one of these to
     /// `reset = true` in place is refused by the API — whatever `reset` the state
     /// records beside the rules.
     holding_rules: std::collections::BTreeSet<String>,
@@ -332,7 +332,7 @@ impl StateIndex {
         self.by_object.get(&(tf_type.to_string(), id.to_string())).map(String::as_str)
     }
 
-    /// Whether the state holds this org policy with rules.
+    /// Whether the state holds this organization policy with rules.
     pub(crate) fn holds_rules(&self, address: &str) -> bool {
         self.holding_rules.contains(address)
     }
@@ -541,7 +541,7 @@ pub async fn bootstrap(
     };
     let lookup_str = |names: &[&str]| -> Option<String> {
         lookup(names).and_then(|v| match v {
-            // Numeric ids (org, billing) are routinely written unquoted in YAML.
+            // Numeric ids (organization, billing) are routinely written unquoted in YAML.
             Value::String(s) => Some(s),
             Value::Number(n) => Some(n.to_string()),
             _ => None,
@@ -559,7 +559,7 @@ pub async fn bootstrap(
         DEFAULT_REGION.to_string()
     });
     // Empty = greenfield territory: allowed only with --greenfield, checked
-    // below before any credentials are needed.
+    // below before any sign-in is needed.
     let oid_val = lookup_str(&["customer_organization_id"]).unwrap_or_default();
     let final_proj_id = lookup_str(&["infra_project_name"]);
     let final_bucket = lookup_str(&["infra_bucket_name"]);
@@ -573,9 +573,9 @@ pub async fn bootstrap(
 
     if !org_known && !greenfield {
         return Err("no organization id in the estate: `customer_organization_id` is empty — there is no organization to install into.\n\
-             If the organization exists: `satz init --from-live` derives the id from your credentials, or fill the param.\n\
+             If the organization exists: `satz init --from-live` derives the id from your sign-in, or fill the param.\n\
              If this is a brand-new tenant (directory + billing, no organization yet), run\n\
-             `satz bootstrap <estate> --greenfield`: it creates the infra project WITHOUT a parent — the\n\
+             `satz bootstrap <estate> --greenfield`: it creates the infrastructure project WITHOUT a parent — the\n\
              documented trigger for Google's organization auto-provisioning — waits for the organization,\n\
              moves the project under it and writes the id back into the estate."
             .into());
@@ -605,10 +605,10 @@ pub async fn bootstrap(
     println!("Service Account: {}", sa_email.as_deref().unwrap_or("(the estate declares no svc_iac_account)"));
     println!("----------------------");
 
-    // The gate, before a credential is asked for: an empty or malformed param
+    // The gate, before a sign-in is asked for: an empty or malformed param
     // used to reach Google inside a URL and come back as an HTML 404, and a
-    // plausible-but-wrong organisation id used to produce an ordinary-looking
-    // pre-flight against somebody else's organisation.
+    // plausible-but-wrong organization id used to produce an ordinary-looking
+    // prerequisites check against somebody else's organization.
     if let Err(detail) = crate::day_zero::gate(&crate::day_zero::DayZero {
         shortname: &sn,
         organization_id: oid_val.trim(),
@@ -624,19 +624,19 @@ pub async fn bootstrap(
     };
 
     if dry_run {
-        println!("Dry run: nothing will be created; the identity check and permission pre-flight are read-only.");
+        println!("Dry run: nothing will be created; the identity check and the prerequisites check are read-only.");
     }
 
-    // 1. Get Authentication Token. On a dry run, missing credentials end the
+    // 1. Get Authentication Token. On a dry run, a missing sign-in ends the
     // run with a NAMED skip: the plan above is still useful offline, but a
-    // pre-flight that silently did not happen must never read as one that
+    // prerequisites check that silently did not happen must never read as one that
     // passed.
-    println!("Authenticating using Application Default Credentials...");
+    println!("Authenticating with the sign-in of this computer...");
     let token = match crate::gcp::access_token().await {
         Ok(t) => t,
         Err(e) if dry_run => {
             println!(
-                "pre-flight: SKIPPED — no usable Application Default Credentials ({}). Run `gcloud auth \
+                "prerequisites check: SKIPPED — no usable sign-in ({}). Run `gcloud auth \
                  application-default login`, then re-run --dry-run to check permissions.",
                 e
             );
@@ -648,7 +648,7 @@ pub async fn bootstrap(
     let client = reqwest::Client::new();
 
     // 1.5 Verify we are running as the admin this config expects.
-    // Every call below is made as the ADC principal, so running as anyone else either
+    // Every call below is made as the signed-in principal, so running as anyone else either
     // fails on a missing permission or, worse, succeeds against the wrong identity.
     // Check before touching anything.
     let expected_admin = match (lookup_str(&["first_admin"]), lookup_str(&["customer_domain"])) {
@@ -660,12 +660,12 @@ pub async fn bootstrap(
     };
 
     // The identity is resolved even when the config cannot be verified against
-    // it: the pre-flight needs the principal for its self-grant member string.
+    // it: the prerequisites check needs the principal for its self-grant member string.
     let resolved_identity = crate::gcp::identity::resolve_adc_identity(&client, &token).await;
     match (&expected_admin, &resolved_identity) {
         (Some(expected), None) => {
             return Err(format!(
-                "could not verify the Application Default Credentials identity, so it cannot be \
+                "could not verify the signed-in identity, so it cannot be \
                  checked against the configured admin '{expected}'.\n\n\
                  Authenticate with:  gcloud auth application-default login {expected}"
             )
@@ -674,9 +674,9 @@ pub async fn bootstrap(
         (Some(expected), Some((actual, source))) => {
             if !identity_matches(expected, actual) {
                 return Err(format!(
-                    "ADC identity '{actual}' does not match the configured admin '{expected}'.\n\
-                     The Application Default Credentials belong to '{actual}' (determined via {}), \
-                     and bootstrap performs every action as the ADC identity, so it will not continue.\n\n\
+                    "the signed-in identity '{actual}' does not match the configured admin '{expected}'.\n\
+                     The sign-in belongs to '{actual}' (determined via {}), \
+                     and bootstrap performs every action as the signed-in identity, so it will not continue.\n\n\
                      Authenticate with:  gcloud auth application-default login {expected}",
                     source.label()
                 )
@@ -687,7 +687,7 @@ pub async fn bootstrap(
         (None, _) => {
             eprintln!(
                 "Warning: this config defines no 'first-admin' / 'customer-domain', so the identity \
-                 of your Application Default Credentials cannot be verified. Continuing."
+                 of your sign-in cannot be verified. Continuing."
             );
         }
     }
@@ -704,7 +704,7 @@ pub async fn bootstrap(
             .into());
         }
         let customer_id = lookup_str(&["customer_id"]);
-        // The org-scope pre-flight needs the organization, which the parentless
+        // The organization-scope prerequisites check needs the organization, which the parentless
         // create below brings into being; the billing half does not, so it runs
         // before anything exists.
         crate::preflight::billing(&client, &token, &bid).await?;
@@ -713,14 +713,14 @@ pub async fn bootstrap(
         parent
     };
 
-    // 2. Pre-flight: the REQUIRED permissions on the scope root and the
+    // 2. Prerequisites check: the REQUIRED permissions on the scope root and the
     // billing account, tested before anything is created — and self-granted
     // where the caller holds setIamPolicy there. Read-only on a dry run.
     let infra_folder_name = lookup_str(&["infra_folder_name"]).filter(|s| !s.is_empty());
     let infra_folder_name = infra_folder_name.as_deref();
     let principal = resolved_identity.as_ref().map(|(email, _)| email.as_str());
-    // the estate binds the directory customer id as well: the pre-flight cross-checks
-    // the two, so an organisation that is not this customer's is named as that
+    // the estate binds the directory customer id as well: the prerequisites check cross-checks
+    // the two, so an organization that is not this customer's is named as that
     let estate_customer_id = lookup_str(&["customer_id"]);
     crate::preflight::run(
         &client,
@@ -850,7 +850,7 @@ pub async fn bootstrap(
     //
     // REQUIRED are the APIs bootstrap ITSELF calls before `tofu` ever runs — it
     // creates the project, links billing, impersonates a service account and
-    // writes the state bucket. Without these there is nothing to hand over, so a
+    // writes the state bucket. Without these `tofu` has nothing to start from, so a
     // permission denial here still stops the run.
     //
     // The rest are enabled because `google_project_service` carries no
@@ -957,7 +957,7 @@ pub async fn bootstrap(
     // `config_file` is already yaml_dir-joined, and transpile would join a relative
     // positional onto yaml_dir a second time. Hand it an absolute path, which transpile
     // passes through untouched. Taking `file_name()` instead discarded every directory
-    // component — defeating the absolute paths bootstrap explicitly accepts — and
+    // segment — defeating the absolute paths bootstrap explicitly accepts — and
     // panicked outright on a path ending in "..".
     let transpile_target =
         crate::fsx::canonicalize(&config_file).unwrap_or_else(|_| config_file.clone());
@@ -1009,14 +1009,14 @@ pub async fn bootstrap(
     Ok(())
 }
 
-/// What follows bootstrap, with this estate's own values, in the order the day-0 run
+/// What follows bootstrap, with this estate's own values, in the order the bootstrap run
 /// takes them. Bootstrap ends where the operator has the most choices in front of them,
-/// and the one day-0 prerequisite no check can see — Groups Admin, a Workspace role that
-/// `testIamPermissions` cannot test — belongs to the step before the service account
+/// and the one bootstrap prerequisite no check can see — Groups Admin, a Workspace role that
+/// `testIamPermissions` cannot test — belongs to the step before the estate account
 /// starts managing the estate's groups. A placeholder would be documentation; the
 /// estate's own names are the next command.
 pub(crate) fn next_steps(estate: &str, sa_email: Option<&str>, bucket: &str) -> String {
-    let sa = sa_email.unwrap_or("the IaC service account (the estate declares no svc_iac_account)");
+    let sa = sa_email.unwrap_or("the estate account (the estate declares no svc_iac_account)");
     format!(
         "\nnext, in this order:\n\
          \x20 1. satz update-prerequisites {estate}\n\
@@ -1193,7 +1193,7 @@ mod tests {
         assert!(idx.holds_rules("google_org_policy_policy.ruled"));
         assert!(!idx.holds_rules("google_org_policy_policy.reset"));
         assert!(!idx.holds_rules("google_org_policy_policy.empty"));
-        // found on a vanilla organisation: adopt imported a live policy with rules onto
+        // found on a vanilla organization: adopt imported a live policy with rules onto
         // the `-superseded` address, and the state holds `reset` AND rules — the update
         // is refused ("Cannot set PolicyRules if reset is true"), so it must be replaced
         assert!(idx.holds_rules("google_org_policy_policy.imported_superseded"));
@@ -1284,7 +1284,7 @@ mod tests {
         s.record("Project acme-iac-infra", StepStatus::Created);
         s.record(
             "API orgpolicy.googleapis.com",
-            StepStatus::Deferred("PERMISSION_DENIED on the infra project".into()),
+            StepStatus::Deferred("PERMISSION_DENIED on the infrastructure project".into()),
         );
 
         assert_eq!(s.failed(), 0, "a deferral must not make bootstrap exit non-zero");
@@ -1303,7 +1303,7 @@ mod tests {
     }
 
     /// The APIs bootstrap itself needs before tofu exists keep the hard gate:
-    /// without serviceusage or storage there is nothing to hand over.
+    /// without serviceusage or storage `tofu` has nothing to start from.
     #[test]
     fn a_required_api_still_stops_the_run() {
         let mut s = RunSummary::default();

@@ -23,7 +23,7 @@
 //! The child reads the platform the way the estate the run writes reads it: the
 //! provider block carries the quota project the estate's own `providers` block
 //! gets, `user_project_override` with it, and `impersonate_service_account` when
-//! the run is bound to an estate's IaC service account (`--as` / `--into`).
+//! the run is bound to the estate account of an estate (`--as` / `--into`).
 //!
 //! A `plan` that exits non-zero having generated SOME of the resources keeps
 //! what it generated (ADR 0065): `generated.tf` is the provider's own record of
@@ -190,8 +190,8 @@ pub(crate) fn plan(
 /// estate the run writes states in its own `providers` block.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChildProvider<'a> {
-    /// The service account the run is bound to (`--as` / `--into`), `None` on
-    /// the caller's own Application Default Credentials.
+    /// The estate account the run is bound to (`--as` / `--into`), `None` on
+    /// the caller's own sign-in.
     pub impersonate: Option<&'a str>,
     /// The project the child bills its calls to and asks for quota on: the one
     /// satz writes into the imported estate's `providers` block
@@ -207,8 +207,8 @@ pub(crate) struct ChildProvider<'a> {
 /// Every provider block is the estate's own: the quota project as `project` and
 /// `billing_project` with `user_project_override`, so the child reads each
 /// resource the way the estate satz just wrote reads it, and the impersonation
-/// so it reads as the principal the sweep above it read the organisation as
-/// rather than as whoever is logged in.
+/// so it reads as the principal the sweep above it read the organization as
+/// rather than as whoever is signed in.
 pub(crate) fn imports_tf(candidates: &[Candidate], providers: &[Provider], child: ChildProvider<'_>) -> String {
     let mut out = String::from(
         "# Written by `satz import --generate-unmapped`: one import block per live resource\n\
@@ -492,7 +492,7 @@ fn generated_addresses(generated: &str) -> BTreeSet<String> {
 
 /// The child's output cut into the blocks it prints one per problem: a block
 /// starts at a line whose text begins `Error:` — after the box-drawing prefix
-/// OpenTofu frames its diagnostics with — and runs to the next one.
+/// OpenTofu frames its error messages with — and runs to the next one.
 fn error_blocks(said: &str) -> Vec<String> {
     let starts_block = |line: &str| line.trim_start_matches(['│', '╷', '╵', ' ', '\t']).starts_with("Error:");
     let mut blocks: Vec<String> = Vec::new();
@@ -510,7 +510,7 @@ fn error_blocks(said: &str) -> Vec<String> {
     blocks.into_iter().map(|b| b.trim_end().to_string()).filter(|b| !b.is_empty()).collect()
 }
 
-/// Whether a diagnostic names this resource. The tool writes it three ways: as
+/// Whether an error OpenTofu writes names this resource. The tool writes it three ways: as
 /// the address (`with google_dns_record_set.www,`) when it is about the import,
 /// as the block header (`in resource "google_dns_record_set" "www":`) when it
 /// is about the configuration that was generated for it, and — when the
@@ -523,7 +523,7 @@ fn names_resource(block: &str, c: &Candidate) -> bool {
         || block.contains(&format!("\"{}\"", c.import_id))
 }
 
-/// Whether a diagnostic names exactly this address. `google_dns_record_set.www`
+/// Whether an error message names exactly this address. `google_dns_record_set.www`
 /// is a prefix of `google_dns_record_set.www_2`, so the character after the
 /// match has to end the identifier.
 fn names_address(block: &str, address: &str) -> bool {
@@ -664,8 +664,8 @@ mod tests {
         assert!(tf.contains("provider \"google\" {}"), "with neither an identity nor a quota project the block is empty:\n{tf}");
     }
 
-    /// Bound to an estate (`--as` / `--into`), the child reads as that estate's
-    /// IaC service account and bills where the estate bills: one command reads
+    /// Bound to an estate (`--as` / `--into`), the child reads as the estate
+    /// account of that estate and bills where the estate bills: one command reads
     /// the platform as one principal, against one quota project.
     #[test]
     fn the_child_provider_block_is_the_estates_own() {
@@ -871,7 +871,7 @@ resource \"google_cloud_asset_organization_feed\" \"estate\" {\n  billing_projec
     }
 
     /// A resource the provider fails to READ is reported by its import id alone,
-    /// with no address in the block — measured on a live organisation, where a
+    /// with no address in the block — measured on a live organization, where a
     /// Dataplex entry group in a deleted project came out "unaccounted for"
     /// beside the provider's own 403 about it. The id ties the block to it.
     #[test]
@@ -889,7 +889,7 @@ resource \"google_cloud_asset_organization_feed\" \"estate\" {\n  billing_projec
     }
 
     /// A label that is another label's prefix is not confused with it: the
-    /// diagnostic about `corp_2` says nothing about `corp`.
+    /// error about `corp_2` says nothing about `corp`.
     #[test]
     fn an_address_that_prefixes_another_is_not_confused_with_it() {
         let candidates = plan(
@@ -903,7 +903,7 @@ resource \"google_cloud_asset_organization_feed\" \"estate\" {\n  billing_projec
         .candidates;
         let said = "╷\n│ Error: Cannot import non-existent remote object\n│ \n│   with google_dns_policy.corp_2,\n╵";
         let (outcomes, _) = outcomes(&candidates, "", Some(said), &|_| vec![]);
-        assert_eq!(outcomes[0], Outcome::Unaccounted, "corp is not what the diagnostic names");
+        assert_eq!(outcomes[0], Outcome::Unaccounted, "corp is not what the error names");
         assert!(matches!(outcomes[1], Outcome::Refused(_)), "{:?}", outcomes[1]);
     }
 

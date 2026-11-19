@@ -1,9 +1,9 @@
-//! A team's estate on satz, end to end. An entry of `delegations` in
-//! `presets/delegation.satz` gives the central estate the team's identity — an
+//! A workload estate on satz, end to end. An entry of `delegations` in
+//! `presets/delegation.satz` gives the organization's estate the delegation's account — an
 //! infrastructure project, the account, its state bucket — and the interface
-//! `delegation-<name>` that publishes them; a target preset (`presets/delegated-folders.satz`,
+//! `delegation-<name>` that publishes them; a preset for a delegated resource (`presets/delegated-folders.satz`,
 //! `presets/delegated-projects.satz`) publishes what that account works in, one interface per
-//! entry. `satz init --from` takes those hand-over folders and writes the team's own estate
+//! entry. `satz init --from` takes those interface folders and writes the workload estate
 //! from them.
 
 use satz_core::satz::InterfaceFile;
@@ -41,7 +41,7 @@ fn static_output(file: &InterfaceFile, name: &str) -> Option<String> {
     file.outputs.iter().find(|o| o.name == name).and_then(|o| crate::interface::static_text(&o.value))
 }
 
-/// Whether the interface carries a delegation's identity: the three exports of the base.
+/// Whether the interface carries a delegation's account: the three exports of the base.
 fn is_base(file: &InterfaceFile) -> bool {
     [DEPLOY_PROJECT, IAC_ACCOUNT, STATE_BUCKET].iter().all(|e| static_output(file, e).is_some())
 }
@@ -55,11 +55,11 @@ pub(crate) fn default_name(files: &[(String, InterfaceFile)]) -> Option<String> 
 
 /// A workload estate, from the interface folders it was given: `files` is each folder's
 /// interface with the path the estate `use`s. Exactly one of them is a delegation's own —
-/// the identity: the estate runs as its account, in its infrastructure project, with its
+/// the account: the estate runs as it, in its infrastructure project, with its
 /// state in its bucket under the estate's name, so several estates of one delegation share
-/// the bucket. Every other is a place that account works in, any number of them: a value is
-/// read by the name of its folder. Refused when no interface, or more than one, carries an
-/// identity, or when none carries the region.
+/// the bucket. Every other is a delegated resource that account works in, any number of
+/// them: a value is read by the name of its folder. Refused when no interface, or more than
+/// one, carries an account, or when none carries the region.
 pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<String, String> {
     valid_name(name)?;
     let listed = || files.iter().map(|(_, f)| format!("`{}`", f.name)).collect::<Vec<_>>().join(", ");
@@ -68,7 +68,7 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
         [one] => *one,
         [] => {
             return Err(format!(
-                "none of the interfaces {} carries a delegation's identity — the static exports `{}`, `{}` and `{}`, which an entry of `delegations` in `presets/delegation.satz` publishes as the interface `{}<name>`: take that folder too",
+                "none of the interfaces {} carries a delegation's account — the static exports `{}`, `{}` and `{}`, which an entry of `delegations` in `presets/delegation.satz` publishes as the interface `{}<name>`: take that folder too",
                 listed(),
                 DEPLOY_PROJECT,
                 IAC_ACCOUNT,
@@ -78,7 +78,7 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
         }
         many => {
             return Err(format!(
-                "{} of the interfaces {} carry a delegation's identity ({}): an estate runs as one account — give the folders of one delegation",
+                "{} of the interfaces {} carry a delegation's account ({}): an estate runs as one account — give the folders of one delegation",
                 many.len(),
                 listed(),
                 many.iter().map(|f| format!("`{}`", f.name)).collect::<Vec<_>>().join(", ")
@@ -88,7 +88,7 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
     let read = |export: &str| static_output(base, export).expect("a base carries the three exports");
     let region = files.iter().find_map(|(_, f)| static_output(f, REGION)).ok_or_else(|| {
         format!(
-            "none of the interfaces {} publishes a static `{}` — `presets/estate-core.satz` exports it: switch its `use` line on in the central estate",
+            "none of the interfaces {} publishes a static `{}` — `presets/estate-core.satz` exports it: switch its `use` line on in the organization's estate",
             listed(),
             REGION
         )
@@ -102,20 +102,20 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
         .filter(|f| !is_base(f))
         .map(|f| {
             if f.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER) {
-                format!("//   under the folder `{0}`:  folder_id = \"${{{{interface.{0}.{1}}}}}\"\n", f.name, crate::prerequisites::DELEGATED_FOLDER)
+                format!("//   under the delegated folder `{0}`:  folder_id = \"${{{{interface.{0}.{1}}}}}\"\n", f.name, crate::prerequisites::DELEGATED_FOLDER)
             } else {
-                format!("//   in the project `{0}`:    project   = \"${{{{interface.{0}.project_id}}}}\"\n", f.name)
+                format!("//   in the delegated project `{0}`:    project   = \"${{{{interface.{0}.project_id}}}}\"\n", f.name)
             }
         })
         .collect();
-    const TEXT: &str = r#"// Generated by `satz init --from` — the estate `@NAME@` of the delegation `@BASE@`: it
-// reads the central estate `@CENTRAL@` through the interface files below and runs as the
-// delegation's own account. Every value below is a param: change it here.
+    const TEXT: &str = r#"// Generated by `satz init --from` — the workload estate `@NAME@` of the delegation `@BASE@`:
+// it reads the organization's estate `@CENTRAL@` through the interface files below and runs as
+// the delegation's account. Every value below is a param: change it here.
 
 estate @LABEL@
 
 params {
-  infra_project_name = "@PROJECT@" // the project this estate's calls are billed to, and its state is kept in
+  infra_project_name = "@PROJECT@" // the delegation's infrastructure project: this estate's calls are billed to it, and its state is kept in it
   infra_bucket_name  = "@BUCKET@"
   svc_iac_account    = "@ACCOUNT@"
   default_region     = "@REGION@"
@@ -124,10 +124,10 @@ params {
   deployment_mode    = "cloud"
 }
 
-// What the organisation's estate delegated, one interface folder each. A value is read by
+// What the organization's estate delegated, one interface folder each. A value is read by
 // the folder's name, `${{interface.<folder>.<value>}}`; the README beside each file lists
 // the values and what may be attached to, and `CHANGES.md` there, after a change of the
-// organisation's estate, what to do about it.
+// organization's estate, what to do about it.
 @USES@
 terraform {
   backend {
@@ -176,7 +176,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// The estate `satz init` writes for the example organisation, with the delegation
+    /// The estate `satz init` writes for the example organization, with the delegation
     /// packs and the entries given.
     fn central(tag: &str, folder: Option<&str>, delegations: &str, projects: &str) -> String {
         let dir = std::env::temp_dir().join(format!("satz-project-{}-{}-{}", std::process::id(), tag, folder.is_some()));
@@ -218,8 +218,8 @@ mod tests {
     const DELEGATIONS: &str = "{ name = \"payments\" owner_group = \"payments-owners@example.com\" }, { name = \"data\" owner_group = \"lake-owners@example.com\" }";
     const PROJECTS: &str = "{ name = \"payments\" delegation = \"payments\" }, { name = \"data-lake\" delegation = \"data\" }, { name = \"data-mart\" delegation = \"data\" }";
 
-    /// An owner group that is no address, and a name that is no interface name, are
-    /// refused at compile — naming the entry and the value — rather than at apply.
+    /// An estate account user group that is no address, and a name that is no interface name, are
+    /// refused at transpile — naming the entry and the value — rather than at apply.
     #[test]
     fn a_malformed_entry_is_refused_at_compile() {
         let reg = crate::corpus::registry();
@@ -231,13 +231,13 @@ mod tests {
             ("{ name = \"Payments\" owner_group = \"payments-owners@example.com\" }", "entry `Payments`"),
         ] {
             let src = central(&format!("bad-{}", says.len()), None, entry, "");
-            let e = satz_core::pipeline::compile_estate("e.satz", &src, &resolver, &presets).err().unwrap_or_else(|| panic!("{} compiled", entry));
+            let e = satz_core::pipeline::compile_estate("e.satz", &src, &resolver, &presets).err().unwrap_or_else(|| panic!("{} transpiled", entry));
             assert!(e.msg.contains(says), "{}: {}", entry, e.msg);
         }
     }
 
     /// A delegation is an identity with its own interface; a delegated project is a
-    /// Google project under the organisation or the workload folder with the delegation's
+    /// Google project under the organization or the workload folder with the delegation's
     /// account on it, and its own interface. One account works in several projects, and a
     /// project may carry its delegation's name.
     #[test]
@@ -286,10 +286,10 @@ mod tests {
     }
 
     /// `init --from` writes an estate from the delegation's interface and those of what
-    /// it works in, in the canonical layout, that compiles as the delegation's account.
+    /// it works in, in the canonical layout, that transpiles as the delegation's account.
     #[test]
     fn the_teams_estate_runs_as_the_delegations_account_and_reads_every_interface() {
-        // the interfaces the central estate published, as the files a team takes; the
+        // the interfaces the organization's estate published, as the files a team takes; the
         // region is estate-core's export, which the estate `init` writes switches on later
         let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", None, DELEGATIONS, PROJECTS));
         let (manifest, i) = compile(&src, &presets);
@@ -315,7 +315,7 @@ mod tests {
         ] {
             assert!(estate.contains(want), "{} — {}", want, estate);
         }
-        // compiled through the tail: cloud mode impersonates the delegation's account
+        // transpiled through the tail: cloud mode impersonates the delegation's account
         let reg = crate::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
         let load = |p: &str| {
@@ -336,13 +336,13 @@ mod tests {
         let providers = t.providers_tf.expect("providers.tf");
         assert!(providers.contains("impersonate_service_account = \"svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com\""), "{}", providers);
 
-        // a target alone carries no identity; two delegations are one too many
+        // a delegated resource alone carries no account; two delegations are one too many
         let alone = super::estate("data-lake", &[(project.0.clone(), project.2.clone())]).unwrap_err();
-        assert!(alone.contains("carries a delegation's identity") && alone.contains("`data-lake`") && alone.contains("presets/delegation.satz"), "{}", alone);
+        assert!(alone.contains("carries a delegation's account") && alone.contains("`data-lake`") && alone.contains("presets/delegation.satz"), "{}", alone);
         let other = taken("delegation-payments");
         let two = super::estate("x", &[(base.0.clone(), base.2.clone()), (other.0.clone(), other.2.clone())]).unwrap_err();
         assert!(two.contains("an estate runs as one account"), "{}", two);
-        // one account, several places: each is read by the name of its interface folder,
+        // one account, several delegated resources: each is read by the name of its interface folder,
         // and the estate may pass on what it read
         let second = taken("data-mart");
         let both = super::estate("data", &[(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone()), (second.0.clone(), second.2.clone())]).unwrap();

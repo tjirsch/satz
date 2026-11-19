@@ -1,6 +1,6 @@
 // IaC-roles gate: every pack in the library that can share one estate, used
-// unconditionally, compiled against the corpus schema fixture. Every resource
-// type it emits must have a row in the IaC service account's role table
+// unconditionally, transpiled against the corpus schema fixture. Every resource
+// type it writes must have a row in the estate account's role table
 // (`src/prerequisites.rs`). The alternatives that cannot share an estate with these —
 // the S1 group model, Defender's least-privilege role — are the other cases under
 // `tests/iac/`; together they use every pack.

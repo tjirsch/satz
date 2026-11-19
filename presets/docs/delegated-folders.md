@@ -16,24 +16,24 @@ A delegation works in as many folders as name it, and they need no common root: 
 is `google_folder.workload_folder.name` unless the entry names another folder the estate
 declares (`google_folder.<label>.name`) or one that already exists (`folders/<id>`). The
 grant names the account by reference, so an entry that names a delegation no entry of
-`delegations` declares is refused by the compile, which lists the accounts that exist.
+`delegations` declares is refused by the transpile, which lists the accounts that exist.
 Entries are bound in the estate, added with `satz add-entry`, or requested by the team
 as `contributes_delegated_folders`.
 
 PER FOLDER. The folder `<name>` (shown as `display_name` when the entry has one), and
 `delegated_folders_roles` for the delegation's account on it: create and manage folders
 and Google projects under it, set the IAM of its projects and enable their APIs. NOT
-granted: access control on a folder, organisation policies, tags, billing administration
+granted: access control on a folder, organization policies, tags, billing administration
 — so an account cannot grant itself anything on a folder, its own included, and reaches
 nothing beside the folders it was given. A folder that already exists is declared as an
 entry and taken over once with `satz adopt`, which finds it by its display name under
-its parent. `budgets = true` adds the organisation's budget role on the folder
+its parent. `budgets = true` adds the organization's budget role on the folder
 (`presets/delegated-budget-role.satz`).
 
-WHAT THE TEAM'S ESTATE READS. The interface `<name>`, taken beside the delegation's own:
+WHAT THE WORKLOAD ESTATE READS. The interface `<name>`, taken beside the delegation's own:
 `delegated_folder`, the parent of everything the estate creates, `delegated_folder_roles`
 and `delegated_budgets`. One estate reads one folder's interface: a delegation with two
-folders is rolled out by two estates that run as the same account. A folder's name is an
+folders is worked in by two estates that run as the same estate account. A folder's name is an
 interface's name: no project of `presets/delegated-projects.satz` may carry the same.
 
 NO CLAIM. A delegated folder is a workload's, not a control: this pack witnesses nothing.
@@ -77,7 +77,7 @@ use "presets/delegated-folders.satz" when use_delegated_folders
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

@@ -1,22 +1,22 @@
-//! Which identity the Application Default Credentials resolve to — and one
+//! Which identity the sign-in resolves to — and one
 //! line that says so before the first API call of every live command.
 //!
-//! The fleet experience this exists for: switching ADCs per customer, every
-//! wrong login surfaced only as a downstream 403 (`invalid_rapt`, a denied
+//! The fleet experience this exists for: switching sign-ins per customer, every
+//! wrong sign-in surfaced only as a downstream 403 (`invalid_rapt`, a denied
 //! `orgpolicy.policy.get`, a CAI quota error). A printed
-//! `credentials: <who> (<type>), quota project <p>` catches the wrong account
+//! `signed in as: <who> (<type>), quota project <p>` catches the wrong account
 //! before the first call; `satz whoami` is the explicit check.
 
 // schemars comes through rmcp: one version in the tree
 use rmcp::schemars;
 use google_cloud_auth::credentials::Builder;
 
-/// What kind of credential the ADC file holds.
+/// What kind of sign-in the sign-in file holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CredKind {
     /// `gcloud auth application-default login` — the file stores no identity.
     UserAdc,
-    /// `--impersonate-service-account` ADC — the target is in the file.
+    /// A sign-in made with `--impersonate-service-account` — the target is in the file.
     ImpersonatedSa,
     /// A service-account key file.
     SaKey,
@@ -31,9 +31,9 @@ pub(crate) struct CredentialInfo {
     pub(crate) quota_project: Option<String>,
 }
 
-/// What the ADC file alone says: kind, identity (absent for user ADC — that
-/// is why the online path exists), and the quota project (env overrides
-/// first, like every client). `None` when there is no parseable ADC file.
+/// What the sign-in file alone says: kind, identity (absent for a user's sign-in —
+/// that is why the online path exists), and the quota project (env overrides
+/// first, like every client). `None` when there is no parseable sign-in file.
 pub(crate) fn credential_info_offline() -> Option<CredentialInfo> {
     let path = crate::org_policy::adc_file_path()?;
     let text = std::fs::read_to_string(path).ok()?;
@@ -51,7 +51,7 @@ pub(crate) fn credential_info_offline() -> Option<CredentialInfo> {
     })
 }
 
-/// The best available picture: the ADC file first, then — only when the file
+/// The best available picture: the sign-in file first, then — only when the file
 /// carries no identity — ONE tokeninfo call on the token already in hand.
 pub(crate) async fn credential_info(token: &str) -> CredentialInfo {
     let mut info = credential_info_offline().unwrap_or(CredentialInfo {
@@ -82,22 +82,22 @@ pub(crate) async fn credential_info(token: &str) -> CredentialInfo {
 /// The one line. Pure, so its shape is pinned by tests.
 pub(crate) fn render_credential_line(info: &CredentialInfo) -> String {
     let kind = match info.kind {
-        CredKind::UserAdc => "user ADC",
+        CredKind::UserAdc => "user sign-in",
         CredKind::ImpersonatedSa => "impersonated service account",
         CredKind::SaKey => "service account key",
-        CredKind::Unknown => "unknown credential type",
+        CredKind::Unknown => "unknown sign-in type",
     };
     let who = info.email.as_deref().unwrap_or("(identity unknown)");
     match &info.quota_project {
-        Some(q) => format!("credentials: {} ({}), quota project {}", who, kind, q),
-        None => format!("credentials: {} ({}), no quota project", who, kind),
+        Some(q) => format!("signed in as: {} ({}), quota project {}", who, kind, q),
+        None => format!("signed in as: {} ({}), no quota project", who, kind),
     }
 }
 
 static ANNOUNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Which identity the line should name. With impersonation configured it is
-/// the identity the calls actually run as — the estate's IaC SA — not the
+/// the identity the calls actually run as — the estate account — not the
 /// human behind it.
 async fn announce_info(token: &str) -> CredentialInfo {
     if let Some(sa) = crate::gcp::impersonation_target() {
@@ -110,14 +110,14 @@ async fn announce_info(token: &str) -> CredentialInfo {
     credential_info(token).await
 }
 
-/// Write the credential line to `sink`. Split out from [`announce`] so a test
+/// Write the sign-in line to `sink`. Split out from [`announce`] so a test
 /// can read the line back without capturing a process stream.
 pub(crate) fn announce_to(sink: &mut impl std::io::Write, info: &CredentialInfo) {
-    // If the diagnostic stream itself is gone there is nothing to report it to.
+    // If the error stream itself is gone there is nothing to report it to.
     let _ = writeln!(sink, "{}", render_credential_line(info));
 }
 
-/// Announce the credential line — once per process, however many clients a
+/// Announce the sign-in line — once per process, however many clients a
 /// command builds. Sits behind `gcp::access_token()`, so every live command
 /// gets the line without knowing about it.
 ///
@@ -139,17 +139,17 @@ pub(crate) fn mark_announced() {
     ANNOUNCED.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// `satz whoami [--offline]`: the explicit check that the ADC is the account you
+/// `satz whoami [--offline]`: the explicit check that the sign-in is the account you
 /// think it is — the one-line answer to a fleet of per-customer logins.
 ///
-/// BOTH halves, because a live command uses both. The ADC is who you are to
-/// Google; the estate's service account is who satz then acts as, and after init
+/// BOTH halves, because a live command uses both. The sign-in is who you are to
+/// Google; the estate account is who satz then acts as, and after init
 /// that is what every read and write runs as. Reporting only the first cost a
-/// round-trip on two organisations: the answer looked right and the next command
+/// round-trip on two organizations: the answer looked right and the next command
 /// failed for a reason the line did not mention.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Credential {
-    /// Absent for a user ADC file read offline: the file stores no identity.
+    /// Absent for a user's sign-in file read offline: the file stores no identity.
     pub account: Option<String>,
     /// user-adc | impersonated-sa | sa-key | unknown
     pub kind: &'static str,
@@ -157,7 +157,7 @@ pub(crate) struct Credential {
 }
 
 /// What an estate declares about the identity its live calls use, read off its
-/// params — no credential needed, so `--offline` answers it too.
+/// params — no sign-in needed, so `--offline` answers it too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EstateDeclaration {
     /// The estate as it was named: the argument `satz migrate` takes.
@@ -172,8 +172,8 @@ pub(crate) struct EstateDeclaration {
 
 impl EstateDeclaration {
     /// From an estate's params. The mode is read by the emitter's own reader, so the
-    /// compile, the binding and `whoami` agree: `local` when the estate binds none, and a
-    /// value the compile refuses is refused here with the compile's reason.
+    /// transpile, the binding and `whoami` agree: `local` when the estate binds none, and a
+    /// value the transpile refuses is refused here with the transpile's reason.
     pub(crate) fn from_env(path: String, env: &satz_core::pipeline::Env) -> Result<Self, String> {
         let mode = crate::emitter::deployment_mode(env)?.to_string();
         let service_account =
@@ -190,18 +190,18 @@ impl EstateDeclaration {
 }
 
 /// The estate the answer is for: what it declares, whether its live calls
-/// impersonate the account it declares, and whether this credential may.
+/// impersonate the account it declares, and whether this sign-in may.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct EstateIdentity {
     /// The estate as it was named: the argument `satz migrate` takes.
     pub path: String,
     /// `cloud` or `local`, as the estate declares it; `local` when it declares none.
     pub deployment_mode: String,
-    /// The IaC service account the estate declares (`svc_iac_account` at
+    /// The estate account the estate declares (`svc_iac_account` at
     /// `infra_project_name`). Absent when it declares no such pair.
     pub service_account: Option<String>,
-    /// true: live calls run as `service_account`, impersonated by the ADC account.
-    /// false: they run as the ADC account itself — in local mode, where
+    /// true: live calls run as `service_account`, impersonated by the signed-in account.
+    /// false: they run as the signed-in account itself — in local mode, where
     /// `satz migrate <path> --mode cloud` switches to impersonation, or in cloud
     /// mode under `--no-impersonate`.
     pub impersonated: bool,
@@ -234,34 +234,34 @@ pub(crate) struct QuotaProject {
     pub error: Option<String>,
 }
 
-/// Who the credentials say we are, as data.
+/// Who the sign-in says we are, as data.
 ///
 /// The `note` is the one thing the human line carries that the fields do not: a
-/// user ADC file stores no identity, so `--offline` cannot answer the question it
+/// user's sign-in file stores no identity, so `--offline` cannot answer the question it
 /// was asked, and saying so is more useful than an empty account. Given an estate,
-/// `--offline` answers without any ADC file, and the note says there is none.
+/// `--offline` answers without any sign-in file, and the note says there is none.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct WhoamiReport {
     pub adc: Credential,
-    /// Absent when no estate is given — then the ADC identity is the answer.
+    /// Absent when no estate is given — then the signed-in identity is the answer.
     pub estate: Option<EstateIdentity>,
     pub quota_project: Option<QuotaProject>,
     /// true when the answer came from the file alone, without minting a token
     pub offline: bool,
     pub note: Option<String>,
     /// Given an estate, online: the permissions its resource types need, tested
-    /// with the credential its live commands run as.
+    /// with the sign-in its live commands run as.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permissions: Option<crate::prerequisites::PermissionCheck>,
 }
 
-/// Whether the credential can reach the project it names as its quota project.
+/// Whether the sign-in can reach the project it names as its quota project.
 ///
-/// The trap this exists for: an ADC file carrying a quota project the user
+/// The trap this exists for: a sign-in file carrying a quota project the user
 /// cannot see — a typo of the real one — is accepted by everything that merely
 /// PRINTS it, and then fails every API call with `UserProjectInvalid`, or with
 /// "cannot create the authentication headers", naming neither the project nor
-/// the fix. Two organisations lost a round-trip to it.
+/// the fix. Two organizations lost a round-trip to it.
 pub(crate) async fn check_quota_project(
     token: &str,
     project: &str,
@@ -275,7 +275,7 @@ pub(crate) async fn check_quota_project(
     match crate::gcp::resourcemanager::get_project_number(&client, token, project).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(format!(
-            "quota project {}: not accessible to these credentials (or does not exist) — {}",
+            "quota project {}: not accessible to this sign-in (or does not exist) — {}",
             project, fix
         )),
         Err(e) => Err(format!("quota project {}: {} — {}", project, e, fix)),
@@ -317,7 +317,7 @@ pub(crate) async fn whoami_report(
         };
         return Err(format!(
             "live calls are bound to run as {}, but {}",
-            bound.as_deref().unwrap_or("the credentials themselves"),
+            bound.as_deref().unwrap_or("the signed-in person"),
             now
         )
         .into());
@@ -327,11 +327,11 @@ pub(crate) async fn whoami_report(
     if offline {
         // The file alone: no token, so neither check can run, and saying "not
         // checked" is the honest answer rather than an optimistic one.
-        // With an estate given there is still an answer without a credential —
+        // With an estate given there is still an answer without a sign-in —
         // its mode and WHICH account it declares are read off the estate, not off
-        // the ADC. Only when neither exists is there nothing to report.
+        // the sign-in. Only when neither exists is there nothing to report.
         const NO_ADC: &str =
-            "no Application Default Credentials file found — run `gcloud auth application-default login`";
+            "no sign-in file found — run `gcloud auth application-default login`";
         let found = credential_info_offline();
         if found.is_none() && estate.is_none() {
             return Err(NO_ADC.into());
@@ -339,7 +339,7 @@ pub(crate) async fn whoami_report(
         let note = match &found {
             None => Some(NO_ADC.to_string()),
             Some(i) if i.email.is_none() && i.kind == CredKind::UserAdc => {
-                Some("a user ADC file stores no identity — run without --offline to resolve it".to_string())
+                Some("a user's sign-in file stores no identity — run without --offline to resolve it".to_string())
             }
             Some(_) => None,
         };
@@ -358,20 +358,20 @@ pub(crate) async fn whoami_report(
         });
     }
 
-    // The BASE credential, never the impersonated one: the question "who am I"
-    // is about the account you logged in as, and the estate half is reported
+    // The BASE sign-in, never the impersonated one: the question "who am I"
+    // is about the account you signed in as, and the estate half is reported
     // beside it rather than in place of it.
     mark_announced();
     let token = crate::gcp::base_access_token().await.map_err(|e| {
         format!(
-            "could not get an Application Default Credentials token ({}) — run `gcloud auth \
+            "could not get a token from the sign-in ({}) — run `gcloud auth \
              application-default login`",
             e
         )
     })?;
     let info = credential_info(&token).await;
     if info.email.is_none() {
-        return Err("could not determine the identity behind these credentials".into());
+        return Err("could not determine the identity behind this sign-in".into());
     }
 
     let quota_project = match quota {
@@ -425,14 +425,14 @@ pub(crate) async fn whoami(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let r = whoami_report(offline, estate, probe).await?;
     println!("{}", render_whoami(&r));
-    // A credential that cannot become the estate's account, or a quota project
+    // A sign-in that cannot become the estate's account, or a quota project
     // nothing can reach, makes every later command fail. `whoami` is the command
     // an operator runs to find that out, so it says so in its exit code too.
     let broken = r.estate.as_ref().is_some_and(|e| e.may_impersonate == Some(false))
         || r.quota_project.as_ref().is_some_and(|q| q.reachable == Some(false))
         || r.permissions.as_ref().is_some_and(|p| !p.missing.is_empty());
     if broken {
-        return Err("the credentials cannot do what this estate needs — see above".into());
+        return Err("the sign-in cannot do what this estate needs — see above".into());
     }
     Ok(())
 }
@@ -454,12 +454,12 @@ fn brief(msg: &str) -> String {
     format!("{} […] {}", head.trim_end(), tail.trim_start())
 }
 
-/// Who the calls run as, and the relation to the credential behind them: the ADC
+/// Who the calls run as, and the relation to the sign-in behind them: the signed-in
 /// account itself, or the service account it impersonates. Each case names what
 /// decides it — no estate given, the estate's mode, `--no-impersonate` — so the
 /// line says which one applies and what changes it.
 fn runs_as(r: &WhoamiReport) -> String {
-    let you = r.adc.account.as_deref().unwrap_or("the ADC identity");
+    let you = r.adc.account.as_deref().unwrap_or("the signed-in identity");
     let Some(e) = &r.estate else {
         return format!("{} — no estate given; name one to see what it runs as", you);
     };
@@ -481,24 +481,24 @@ fn runs_as(r: &WhoamiReport) -> String {
             you, e.deployment_mode, e.path, sa
         ),
         (None, _) => format!(
-            "{} — {} declares no IaC service account (svc_iac_account, infra_project_name), so \
+            "{} — {} declares no estate account (svc_iac_account, infra_project_name), so \
              nothing is impersonated; `satz migrate {} --mode cloud` is refused until both are bound",
             you, e.path, e.path
         ),
     }
 }
 
-/// Both halves, one block. The ADC line keeps the wording every live command
-/// prints, so the two are recognisably the same fact.
+/// Both halves, one block. The sign-in line keeps the wording every live command
+/// prints, so the two are recognizably the same fact.
 pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
     let kind = match r.adc.kind {
-        "user-adc" => "user ADC",
+        "user-adc" => "user sign-in",
         "impersonated-sa" => "impersonated service account",
         "sa-key" => "service account key",
-        _ => "unknown credential type",
+        _ => "unknown sign-in type",
     };
     let mut out = format!(
-        "credentials: {} ({})",
+        "signed in as: {} ({})",
         r.adc.account.as_deref().unwrap_or("(identity unknown)"),
         kind
     );
@@ -539,12 +539,12 @@ pub(crate) fn render_whoami(r: &WhoamiReport) -> String {
     out
 }
 
-/// Everything `init --from-live` can derive from the ADC alone.
+/// Everything `init --from-live` can derive from the sign-in alone.
 pub(crate) struct LiveDefaults {
-    /// Local part of the ADC identity — `None` when the run is bound to a
+    /// Local part of the signed-in identity — `None` when the run is bound to a
     /// service account, which is nobody's administrator.
     pub(crate) first_admin: Option<String>,
-    /// Domain of the ADC identity — `None` when the run is bound to a service
+    /// Domain of the signed-in identity — `None` when the run is bound to a service
     /// account, whose domain is Google's.
     pub(crate) customer_domain: Option<String>,
     /// Bare organization number — `None` on a greenfield tenant.
@@ -559,8 +559,8 @@ pub(crate) struct LiveDefaults {
     pub(crate) billing_account: Option<String>,
 }
 
-/// Derive the init parameters from the credentials: tokeninfo → identity,
-/// `organizations:search` → org id + directory customer id,
+/// Derive the init parameters from the sign-in: tokeninfo → identity,
+/// `organizations:search` → organization id + directory customer id,
 /// `billingAccounts.list` → the single open account. Ambiguity is an error or
 /// a named gap, never a guess — and only what is actually MISSING is queried,
 /// so explicit flags keep working on accounts that see many organizations.
@@ -568,17 +568,17 @@ pub(crate) struct LiveDefaults {
 /// sweep root): among many visible ones, that one is taken.
 ///
 /// `principal` is the identity the run is bound to when satz already knows it —
-/// the IaC service account an `import --as` or `--into` impersonates. The token
+/// the estate account an `import --as` or `--into` impersonates. The token
 /// is then that account's, and nothing is asked of it about who it is: an
 /// impersonated token carries the cloud-platform scope alone, which no
-/// tokeninfo e-mail answers. `None` asks the ADC who it is.
+/// tokeninfo e-mail answers. `None` asks the sign-in who it is.
 /// Whose facts [`live_defaults`] derives, and which of them it may take from
 /// that identity.
 #[derive(Debug, PartialEq, Eq)]
 struct DerivedIdentity {
     email: String,
     source: &'static str,
-    /// A person's ADC names the first administrator and the customer's
+    /// A person's sign-in names the first administrator and the customer's
     /// domain; the service account a run is bound to names neither — it is
     /// nobody's administrator and its domain is Google's.
     person: bool,
@@ -588,13 +588,13 @@ struct DerivedIdentity {
 
 /// The identity a run derives its defaults from: the service account it is
 /// bound to (`import --as` / `--into`) when there is one — never asked of the
-/// token — else what the ADC says of itself, which must name an e-mail.
+/// token — else what the sign-in says of itself, which must name an e-mail.
 fn derived_identity(principal: Option<&str>, adc_email: Option<String>) -> Result<DerivedIdentity, String> {
     let (email, source) = match (principal, adc_email) {
-        (Some(p), _) => (p.to_string(), "the IaC service account the run is bound to"),
-        (None, Some(e)) => (e, "the ADC"),
+        (Some(p), _) => (p.to_string(), "the estate account the run is bound to"),
+        (None, Some(e)) => (e, "the sign-in"),
         (None, None) => {
-            return Err("could not determine the ADC identity — run `gcloud auth application-default login`".to_string())
+            return Err("could not determine the signed-in identity — run `gcloud auth application-default login`".to_string())
         }
     };
     let Some((local, domain)) = email.split_once('@') else {
@@ -611,7 +611,7 @@ pub(crate) async fn live_defaults(
     principal: Option<&str>,
 ) -> Result<LiveDefaults, String> {
     let token = crate::gcp::access_token().await?;
-    // the ADC is asked who it is only when the run is bound to nobody: under
+    // the sign-in is asked who it is only when the run is bound to nobody: under
     // `--as` the token is the service account's, and an impersonated token
     // names no e-mail of its own
     let adc_email = match principal {
@@ -712,7 +712,7 @@ pub(crate) async fn live_defaults(
     })
 }
 
-/// How the ADC identity was established, so an unexpected result can be
+/// How the signed-in identity was established, so an unexpected result can be
 /// traced back to the mechanism that produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrincipalSource {
@@ -726,9 +726,9 @@ impl PrincipalSource {
     pub(crate) fn label(self) -> &'static str {
         match self {
             PrincipalSource::TokenInfo => "token introspection",
-            PrincipalSource::Signer => "credential signer",
+            PrincipalSource::Signer => "token signer",
             PrincipalSource::UserInfo => "userinfo endpoint",
-            PrincipalSource::AdcFile => "ADC credentials file",
+            PrincipalSource::AdcFile => "sign-in file",
         }
     }
 }
@@ -742,7 +742,7 @@ fn email_from_identity_json(v: &serde_json::Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Read the service-account address out of an ADC credentials file: either a
+/// Read the service-account address out of a sign-in file: either a
 /// key file's `client_email`, or the impersonation target in
 /// `.../serviceAccounts/{email}:generateAccessToken`.
 pub(crate) fn email_from_adc_json(v: &serde_json::Value) -> Option<String> {
@@ -760,7 +760,7 @@ pub(crate) fn email_from_adc_json(v: &serde_json::Value) -> Option<String> {
     if email.is_empty() { None } else { Some(email.to_string()) }
 }
 
-/// Determine which principal the Application Default Credentials represent.
+/// Determine which principal the sign-in represents.
 ///
 /// Tried in cost order; `None` means no mechanism could tell us, which the
 /// caller treats as "cannot verify" rather than "verified".
@@ -769,7 +769,7 @@ pub(crate) async fn resolve_adc_identity(
     token: &str,
 ) -> Option<(String, PrincipalSource)> {
     // 1. Introspect the token we already hold. This covers `gcloud auth
-    //    application-default login`, the credential type expected here, and needs no
+    //    application-default login`, the sign-in type expected here, and needs no
     //    extra scope. The token goes in the form body rather than the query string so it
     //    cannot leak into proxy or CDN access logs.
     if let Ok(res) = client
@@ -787,7 +787,7 @@ pub(crate) async fn resolve_adc_identity(
         }
     }
 
-    // 2. Service-account, impersonated-service-account and GCE metadata credentials
+    // 2. Service-account, impersonated-service-account and GCE metadata sign-ins
     //    expose the address directly and offline. `authorized_user` and
     //    `external_account` have no signer and fall through.
     if let Ok(signer) = Builder::default().build_signer() {
@@ -798,11 +798,11 @@ pub(crate) async fn resolve_adc_identity(
         }
     }
 
-    // 3. userinfo needs a scope the primary credentials deliberately do not request.
-    //    Build a separate credential for the probe: `with_scopes` is forwarded to the
+    // 3. userinfo needs a scope the primary sign-in deliberately does not request.
+    //    Build a separate sign-in for the probe: `with_scopes` is forwarded to the
     //    wire for every backend (user-account refresh, external-account STS exchange,
     //    metadata query), and STS in particular often accepts only cloud-platform — so
-    //    widening the credential that mints the working token could break environments
+    //    widening the sign-in that mints the working token could break environments
     //    that work today. The worst case here is that we simply learn nothing.
     if let Ok(creds) = Builder::default()
         .with_scopes([
@@ -829,7 +829,7 @@ pub(crate) async fn resolve_adc_identity(
         }
     }
 
-    // 4. Last resort: read the ADC file off disk.
+    // 4. Last resort: read the sign-in file off disk.
     credential_info_offline()?
         .email
         .map(|email| (email, PrincipalSource::AdcFile))
@@ -846,18 +846,18 @@ mod tests {
 
     // --- the identity a run derives its defaults from ---------------------
 
-    /// `import --as <estate>` binds the run to the estate's IaC service account.
+    /// `import --as <estate>` binds the run to that estate's estate account.
     /// Its token is impersonated and names no e-mail, so the identity is the
-    /// bound account itself — even when the ADC would name nobody — and a
+    /// bound account itself — even when the sign-in would name nobody — and a
     /// service account derives no first administrator and no customer domain.
     #[test]
     fn a_bound_service_account_is_the_identity_and_derives_no_person() {
         let sa = "svc-iac-001@acme-infra.iam.gserviceaccount.com";
-        let id = derived_identity(Some(sa), None).expect("a bound run needs nothing of the ADC");
+        let id = derived_identity(Some(sa), None).expect("a bound run needs nothing of the sign-in");
         assert_eq!(id.email, sa);
         assert!(!id.person, "a service account is nobody's administrator");
-        assert_eq!(id.source, "the IaC service account the run is bound to");
-        // what the ADC would have said does not override the binding
+        assert_eq!(id.source, "the estate account the run is bound to");
+        // what the sign-in would have said does not override the binding
         let id = derived_identity(Some(sa), Some("admin@acme.example".into())).unwrap();
         assert_eq!(id.email, sa);
     }
@@ -867,12 +867,12 @@ mod tests {
         let id = derived_identity(None, Some("admin@acme.example".into())).unwrap();
         assert!(id.person);
         assert_eq!((id.local.as_str(), id.domain.as_str()), ("admin", "acme.example"));
-        let err = derived_identity(None, None).expect_err("an ADC that names nobody is refused");
+        let err = derived_identity(None, None).expect_err("a sign-in that names nobody is refused");
         assert!(err.contains("gcloud auth application-default login"), "{err}");
         assert!(derived_identity(None, Some("not-an-address".into())).is_err());
     }
 
-    // --- ADC identity extraction -------------------------------------------
+    // --- signed-in identity extraction -------------------------------------
 
     #[test]
     fn email_from_tokeninfo_body() {
@@ -908,14 +908,14 @@ mod tests {
 
     #[test]
     fn authorized_user_adc_carries_no_email() {
-        // gcloud user ADC has no identity in the file; that is why the REST probes exist.
+        // a gcloud user sign-in has no identity in the file; that is why the REST probes exist.
         let v = jv(r#"{"type":"authorized_user","client_id":"x","refresh_token":"y"}"#);
         assert_eq!(email_from_adc_json(&v), None);
     }
 
-    // --- the credential line -----------------------------------------------
+    // --- the sign-in line -----------------------------------------------
 
-    /// The line is diagnostics and must be writable to a stream that is not
+    /// The line goes to the error stream and must be writable to a stream that is not
     /// stdout — under `satz mcp`, stdout is the JSON-RPC transport and a stray
     /// line there breaks the client rather than just looking untidy.
     #[test]
@@ -929,7 +929,7 @@ mod tests {
         announce_to(&mut sink, &info);
         assert_eq!(
             String::from_utf8(sink).expect("utf-8"),
-            "credentials: svc-iac@acme-infra-001.iam.gserviceaccount.com \
+            "signed in as: svc-iac@acme-infra-001.iam.gserviceaccount.com \
              (impersonated service account), quota project acme-infra-001\n"
         );
     }
@@ -943,7 +943,7 @@ mod tests {
         };
         assert_eq!(
             render_credential_line(&user),
-            "credentials: admin@example.com (user ADC), quota project acme-infra-001"
+            "signed in as: admin@example.com (user sign-in), quota project acme-infra-001"
         );
 
         let imp = CredentialInfo {
@@ -953,14 +953,14 @@ mod tests {
         };
         assert_eq!(
             render_credential_line(&imp),
-            "credentials: svc-iac@acme-infra-001.iam.gserviceaccount.com \
+            "signed in as: svc-iac@acme-infra-001.iam.gserviceaccount.com \
              (impersonated service account), no quota project"
         );
 
         let unknown = CredentialInfo { email: None, kind: CredKind::Unknown, quota_project: None };
         assert_eq!(
             render_credential_line(&unknown),
-            "credentials: (identity unknown) (unknown credential type), no quota project"
+            "signed in as: (identity unknown) (unknown sign-in type), no quota project"
         );
     }
 }
@@ -968,8 +968,8 @@ mod tests {
 #[cfg(test)]
 mod whoami_render_tests {
     //! `whoami` is the command an operator runs when something is already wrong,
-    //! so what it PRINTS is the feature. Two organisations lost a round-trip to a
-    //! line that reported the ADC and nothing else: the credential was fine, and
+    //! so what it PRINTS is the feature. Two organizations lost a round-trip to a
+    //! line that reported the sign-in and nothing else: the sign-in was fine, and
     //! the thing that was broken — the account it has to become, the project it
     //! bills — was not on screen.
     use super::{
@@ -1039,10 +1039,10 @@ mod whoami_render_tests {
     #[test]
     fn both_halves_are_named_even_when_there_is_no_estate() {
         let out = render_whoami(&report());
-        assert!(out.contains("person@example.com (user ADC)"), "{}", out);
+        assert!(out.contains("person@example.com (user sign-in)"), "{}", out);
         assert!(out.contains("/adc.json"), "{}", out);
         // Silence about the second half is what cost the round-trips: say that
-        // the credentials are the answer, rather than leaving the line out.
+        // the sign-in is the answer, rather than leaving the line out.
         assert!(out.contains("runs as:"), "{}", out);
         assert!(out.contains("quota project:"), "{}", out);
     }
@@ -1083,7 +1083,7 @@ mod whoami_render_tests {
     }
 
     /// `--no-impersonate` is the one reason a cloud-mode estate runs as the
-    /// credentials; the line names it, not "local mode", which would be false.
+    /// sign-in; the line names it, not "local mode", which would be false.
     #[test]
     fn no_impersonate_on_a_cloud_mode_estate_names_the_switch() {
         let mut r = report();
@@ -1101,7 +1101,7 @@ mod whoami_render_tests {
         let d = EstateDeclaration { path: "e.satz".into(), mode: "local".into(), service_account: None };
         r.estate = Some(EstateIdentity::new(d, false, None));
         let line = runs_as_line(&r);
-        assert!(line.starts_with("runs as:     person@example.com — e.satz declares no IaC service account"), "{line}");
+        assert!(line.starts_with("runs as:     person@example.com — e.satz declares no estate account"), "{line}");
         // the switch is named as what it is here: refused. A local estate that DOES name
         // the account is offered it instead, two arms above.
         assert!(line.contains("`satz migrate e.satz --mode cloud` is refused until both are bound"), "{line}");
@@ -1151,7 +1151,7 @@ mod whoami_render_tests {
         for (bound, declared, says) in [
             (Some(other), decl("cloud"), "e.satz declares svc-iac-001@acme-infra-001"),
             (Some(SA.to_string()), decl("local"), "e.satz impersonates nothing"),
-            (None, decl("cloud"), "the credentials themselves"),
+            (None, decl("cloud"), "the signed-in person"),
         ] {
             let err = crate::gcp::with_identity(bound, super::whoami_report(true, Some(declared), None))
                 .await
@@ -1189,8 +1189,8 @@ mod whoami_render_tests {
     }
 
     /// Cloud mode without both halves of the account names nobody to run as: the
-    /// declaration is refused with the compile's reason, never read as "impersonates
-    /// nothing" — which would run every live call as the credentials themselves.
+    /// declaration is refused with the transpile's reason, never read as "impersonates
+    /// nothing" — which would run every live call as the signed-in person.
     #[test]
     fn cloud_mode_without_the_account_is_refused_by_the_declaration() {
         for pairs in [
@@ -1202,14 +1202,14 @@ mod whoami_render_tests {
             pairs.push(("deployment_mode", "cloud".into()));
             let e = env(&pairs);
             let err = EstateDeclaration::from_env("e.satz".into(), &e).expect_err("no account, no identity");
-            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the compile's reason, word for word");
+            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the transpile's reason, word for word");
             assert!(err.contains("without a value for"), "{err}");
         }
     }
 
-    /// A mode the compile refuses has no identity: the declaration is refused with the
-    /// compile's reason, never read as `local` — which would run every live call as the
-    /// credentials themselves.
+    /// A mode the transpile refuses has no identity: the declaration is refused with the
+    /// transpile's reason, never read as `local` — which would run every live call as the
+    /// signed-in person.
     #[test]
     fn a_mode_the_compile_refuses_is_refused_by_the_declaration() {
         let account = [("svc_iac_account", "svc-iac-001".into()), ("infra_project_name", "acme-infra-001".into())];
@@ -1221,7 +1221,7 @@ mod whoami_render_tests {
         ] {
             let e = env(&[account[0].clone(), account[1].clone(), ("deployment_mode", mode)]);
             let err = EstateDeclaration::from_env("e.satz".into(), &e).expect_err("no backend, no identity");
-            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the compile's reason, word for word");
+            assert_eq!(Err(err.clone()), crate::emitter::deployment_mode(&e), "the transpile's reason, word for word");
             assert!(err.contains(named), "{err}");
         }
     }
@@ -1259,8 +1259,8 @@ mod whoami_render_tests {
         );
     }
 
-    /// Offline, a user ADC file names nobody — the three cases still read apart,
-    /// because what tells them apart is the estate, not the credential.
+    /// Offline, a user's sign-in file names nobody — the three cases still read apart,
+    /// because what tells them apart is the estate, not the sign-in.
     #[test]
     fn offline_with_an_anonymous_user_adc_the_three_cases_still_differ() {
         let mut r = report();
@@ -1268,19 +1268,19 @@ mod whoami_render_tests {
         r.adc.account = None;
         assert_eq!(
             runs_as_line(&r),
-            "runs as:     the ADC identity — no estate given; name one to see what it runs as"
+            "runs as:     the signed-in identity — no estate given; name one to see what it runs as"
         );
         r.estate = Some(estate("local", false, None));
         assert_eq!(
             runs_as_line(&r),
-            "runs as:     the ADC identity — local mode; `satz migrate e.satz --mode cloud` makes \
+            "runs as:     the signed-in identity — local mode; `satz migrate e.satz --mode cloud` makes \
              every run impersonate svc-iac-001@acme-infra-001.iam.gserviceaccount.com"
         );
         r.estate = Some(estate("cloud", true, None));
         assert_eq!(
             runs_as_line(&r),
             "runs as:     svc-iac-001@acme-infra-001.iam.gserviceaccount.com — impersonated by the \
-             ADC identity, not checked (--offline)"
+             signed-in identity, not checked (--offline)"
         );
     }
 
@@ -1298,7 +1298,7 @@ mod whoami_render_tests {
         assert_eq!(brief("plain and short"), "plain and short");
     }
 
-    /// The suggested quota project is the estate's own infra project, read off
+    /// The suggested quota project is the estate's own infrastructure project, read off
     /// the service account rather than asked for.
     #[test]
     fn the_infra_project_is_read_off_the_service_account() {

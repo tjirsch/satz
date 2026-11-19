@@ -98,7 +98,7 @@ output "regions" {
 }
 
 output "organization_id" {
-  description = "The organisation id"
+  description = "The organization id"
   value       = local.satz_interface.core.organization_id
 }
 
@@ -188,7 +188,7 @@ output "regions" {
 }
 
 output "organization_id" {
-  description = "The organisation id"
+  description = "The organization id"
   value       = "123456789012"
 }
 
@@ -256,7 +256,7 @@ output "regions" {
 
 output "organization_id" {
   value       = "123456789012"
-  description = "The organisation id"
+  description = "The organization id"
 }
 
 output "customer_domain" {
@@ -395,7 +395,7 @@ output "regions" {
 }
 
 output "organization_id" {
-  description = "The organisation id"
+  description = "The organization id"
   value       = "123456789012"
 }
 
@@ -472,7 +472,7 @@ output "regions" {
 
 output "organization_id" {
   value       = "123456789012"
-  description = "The organisation id"
+  description = "The organization id"
 }
 
 output "customer_domain" {

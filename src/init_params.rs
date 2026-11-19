@@ -1,10 +1,10 @@
 //! What `satz init` writes, and where each value came from.
 //!
 //! Three sources, in this order and no other: stated on the command line, derived
-//! from the Application Default Credentials, or EMPTY. There is no fourth — init
-//! used to substitute `"123456789012"` for an unknown organisation and
+//! from what the signed-in person may read, or EMPTY. There is no fourth — init
+//! used to substitute `"123456789012"` for an unknown organization and
 //! `"first.admin"` for an unknown admin, which produced a file that looked
-//! complete and pointed `satz bootstrap` at an organisation nobody owned.
+//! complete and pointed `satz bootstrap` at an organization nobody owned.
 //!
 //! And a re-run MERGES: the params named on this command line are written into
 //! the estate that already exists, every other line is left exactly as it is.
@@ -97,7 +97,7 @@ impl Derivations {
 
     pub(crate) fn report(&self) {
         if !self.lines.is_empty() {
-            println!("init: derived from your credentials —");
+            println!("init: derived from your sign-in —");
             for l in &self.lines {
                 println!("{}", l);
             }
@@ -113,7 +113,7 @@ impl Derivations {
 
 /// The value a param is bound to in an estate's `params` block, if it is bound at
 /// all: a string without its quotes, anything else (a reference, a number) as it is
-/// written. Lexical, not compiled: this runs on a file whose params are still empty.
+/// written. Lexical, not transpiled: this runs on a file whose params are still empty.
 pub(crate) fn current_value(src: &str, param: &str) -> Result<Option<String>, String> {
     let Some(lit) = crate::interview::bound_literal(src, param)? else { return Ok(None) };
     Ok(Some(match lit.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
@@ -147,7 +147,7 @@ pub(crate) fn merge(src: &str, stated: &Stated) -> Result<(String, Vec<Merged>),
         log.push(Merged::Changed { param, from: before, to: value });
     }
     // A named workload folder is the folder form: the section that publishes it follows
-    // the name, and an estate that publishes the organisation is refused.
+    // the name, and an estate that publishes the organization is refused.
     if stated.workload_folder_name.as_deref().is_some_and(|n| !n.trim().is_empty()) {
         out = crate::template::with_workload_folder(&out, true)?;
     }
@@ -214,10 +214,10 @@ params {
     }
 
     /// A re-run writes into the binding the estate has, wherever the block's comments
-    /// put it: two bindings of one param is a file satz refuses to compile.
+    /// put it: two bindings of one param is a file satz refuses to transpile.
     #[test]
     fn a_rerun_never_writes_a_second_binding_of_the_same_param() {
-        let src = "estate c0example\n\nparams {\n  # filled in on day 0 }\n  customer_shortname = \"old\"\n}\n";
+        let src = "estate c0example\n\nparams {\n  # filled in at the bootstrap }\n  customer_shortname = \"old\"\n}\n";
         let stated = Stated { customer_shortname: Some("acme".into()), ..Default::default() };
         let (out, log) = merge(src, &stated).unwrap();
         assert_eq!(out.matches("customer_shortname").count(), 1, "{out}");
@@ -245,11 +245,11 @@ params {
         let (again, log) = merge(&out, &stated).unwrap();
         assert_eq!(again, out);
         assert!(log.iter().all(|m| matches!(m, Merged::Same { .. })), "{log:?}");
-        // an estate that publishes the organisation is refused, not rewritten
+        // an estate that publishes the organization is refused, not rewritten
         let org = format!("{}\n{}", ESTATE, crate::template::workload_folder_section(false));
         let err = merge(&org, &stated).unwrap_err();
-        assert!(err.contains("publishes the workload folder as the organisation"), "{err}");
-        // an empty name is the organisation: bound, and no section written
+        assert!(err.contains("publishes the workload folder as the organization"), "{err}");
+        // an empty name is the organization: bound, and no section written
         let empty = Stated { workload_folder_name: Some(String::new()), ..Default::default() };
         let (out, _) = merge(ESTATE, &empty).unwrap();
         assert!(!out.contains("export \"workload_folder\""), "{out}");

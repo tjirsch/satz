@@ -3,7 +3,7 @@
 //! satz does not run Prowler. It stays the thing that joins and judges; the operator or
 //! the agent runs the scanner. What was missing was the other half: knowing how to run
 //! it for a given estate. A customer with two hundred projects and a claimed CIS 5.0
-//! baseline needs different arguments from a single-project estate, and that knowledge
+//! baseline needs different arguments from a single-workload estate, and that knowledge
 //! lived in somebody's head.
 //!
 //! So this command reads the estate and writes the command line out. It shells out to
@@ -43,12 +43,12 @@ fn prowler_framework(catalog: &str, version: &str) -> Option<&'static str> {
 /// What the estate says about how it should be scanned.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub(crate) struct ProwlerPlan {
-    /// The organisation the estate declares, when it declares one.
+    /// The organization the estate declares, when it declares one.
     pub organization_id: Option<String>,
-    /// Every project the estate emits with a literal id, sorted. A `{param}` in an id
-    /// is resolved by the compile, so a param-built id is literal here.
+    /// Every project the estate writes with a literal id, sorted. A `{param}` in an id
+    /// is resolved by the transpile, so a param-built id is literal here.
     pub projects: Vec<String>,
-    /// The projects the estate emits whose id is built from a reference to another
+    /// The projects the estate writes whose id is built from a reference to another
     /// resource (`"acme-${google_folder.x.folder_id}"`), which only an apply resolves:
     /// `<address> (<id as written>)`, sorted. They are not in `--project-ids`.
     pub unresolved_projects: Vec<String>,
@@ -76,8 +76,8 @@ pub(crate) struct ProwlerPlan {
 
 /// Read the estate and work out how Prowler should be pointed at it.
 ///
-/// `--organization-id` narrows the scan to one organisation; the project list narrows it
-/// further and is what makes a two-hundred-project estate's scan finish. Both come from
+/// `--organization-id` narrows the scan to one organization; the project list narrows it
+/// further and is what makes a two-hundred-workload estate's scan finish. Both come from
 /// what the estate ACTUALLY declares, which is the whole reason this is a command rather
 /// than a documentation page.
 ///
@@ -90,7 +90,7 @@ pub(crate) fn plan(
     org_id: Option<&str>,
     now: &str,
 ) -> ProwlerPlan {
-    // The manifest is the compile's output, so every `{param}` in an id is already its
+    // The manifest is the transpile's output, so every `{param}` in an id is already its
     // value. What is left unresolved is a reference to another resource's attribute —
     // part of the id (an interpolation in `attrs`) or all of it (`refs`) — and only an
     // apply knows that value. Such a project is left out of the line and NAMED, because
@@ -189,7 +189,7 @@ pub(crate) fn plan(
 
 /// Join an argv into a line that can be pasted into a shell unchanged.
 ///
-/// Quoted only where it has to be: a project id or an organisation number never needs
+/// Quoted only where it has to be: a project id or an organization number never needs
 /// it, and a line full of unnecessary quotes is a line people retype by hand.
 fn shell_join(argv: &[String]) -> String {
     argv.iter()
@@ -219,11 +219,11 @@ pub(crate) fn notes(p: &ProwlerPlan) -> String {
     let mut out = String::new();
     if p.organization_id.is_none() {
         out.push_str(
-            "note: this estate declares no organisation, so the scan reaches whatever the credential does\n",
+            "note: this estate declares no organization, so the scan reaches whatever the sign-in does\n",
         );
     }
     if p.projects.is_empty() {
-        out.push_str("note: no --project-ids — this estate emits no project with a literal id, so the scan is not narrowed\n");
+        out.push_str("note: no --project-ids — this estate writes no project with a literal id, so the scan is not narrowed\n");
     }
     if !p.unresolved_projects.is_empty() {
         out.push_str(&format!(
@@ -375,9 +375,9 @@ mod tests {
         assert_eq!(render(&p), format!("{}\n", p.command), "stdout stays the command line");
     }
 
-    /// The plan reads the compile's manifest, where a `{param}` in an id is already its
+    /// The plan reads the transpile's manifest, where a `{param}` in an id is already its
     /// value: a param-built id is scanned like a literal one, and only an id built from a
-    /// reference is left out. Compiled through the real front end and emitter.
+    /// reference is left out. Transpiled through the real front end and emitter.
     #[test]
     fn a_param_built_project_id_is_scanned_like_a_literal_one() {
         let src = r#"estate mixed
@@ -412,11 +412,11 @@ google_project {
         let reg = crate::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
         let fe = satz_core::pipeline::compile_estate("mixed.satz", src, &resolver, &|p| Err(format!("{p}: no packs here")))
-            .expect("the estate compiles");
+            .expect("the estate transpiles");
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
-        let out = crate::emitter::emit(&folded, &ctx).expect("the estate emits");
+        let out = crate::emitter::emit(&folded, &ctx).expect("the estate writes");
 
         let p = plan(&out.manifest, &[], &[], Some("123456789012"), "2026-09-13T08:30Z");
         assert_eq!(p.projects, vec!["acme-built-001", "acme-literal-001"]);

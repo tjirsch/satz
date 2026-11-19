@@ -18,7 +18,7 @@ pub const ORG_PARAM: &str = "customer_organization_id";
 /// occurrence bounded by non-identifier characters (or the string's ends)
 /// becomes a reference — bare where the whole value is the literal, an
 /// interpolation where it sits inside one. The organization number, a
-/// customer's domain, the infra project id, a region are all of this kind.
+/// customer's domain, the infrastructure project id, a region are all of this kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Substitution {
     pub literal: String,
@@ -171,7 +171,7 @@ fn shape_container(body: &mut serde_yaml::Mapping, s: &Shaping<'_>, at_top: bool
     }
 }
 
-/// An org policy names its constraint bare (`compute.managed.requireOsLogin`,
+/// An organization policy names its constraint bare (`compute.managed.requireOsLogin`,
 /// transformation 9) and inherits `parent` from the enclosing scope. A state
 /// carries the full name and the parent as attributes; a top-level policy
 /// whose parent is the organization loses it, one under a folder or project

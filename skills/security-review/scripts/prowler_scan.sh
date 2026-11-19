@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Read-only Prowler scan of one GCP organisation, ONE RUN PER SERVICE with a deadline.
+# Read-only Prowler scan of one GCP organization, ONE RUN PER SERVICE with a deadline.
 #
 #   prowler_scan.sh --org <org-id> --sa <iac-sa-email> --out <raw-dir> --prefix <shortcode> \
 #                   [--own-projects "p1 p2 ..."] [--deadline 2700] [--parallel 6] [--services "..."]
 #
-# --own-projects: the customer's real projects — the infra project, the estate's own projects and
+# --own-projects: the customer's real projects — the infrastructure project, the estate's own projects and
 # every workload's Google project (the `own_projects=` line discover_scope.py prints holds all of
 # them; merge_ocsf.py's own-project list completes it after a first run). Compute (CIS §4) is
 # scanned only on these.
 #
-# Why per service: a monolithic `prowler gcp --organization-id` freezes on organisations with many
+# Why per service: a monolithic `prowler gcp --organization-id` freezes on organizations with many
 # projects (the Dataproc and Compute clients enumerate every project without a socket timeout —
 # three lost runs on a 229-project org). One run per service with a kill deadline always yields
 # usable OCSF; a service that hits the deadline is reported, not silently missing.
 # Why compute only on own projects: the compute client is the slowest; generated/fleet projects
 # show the same picture in every control and are aggregated anyway.
-# Credentials: gcloud ADC of the operator, impersonating the estate's IaC SA (read-only use).
+# Sign-in: the operator, signed in with gcloud, impersonating the estate account (read-only use).
 set -u
 ORG=""; SA=""; OUT=""; PREFIX="scan"; OWN=""; DEADLINE=2700; PAR=6
 SERVICES="apikeys artifacts bigquery cloudfunction cloudsql cloudstorage dataproc dns gcr gemini gke iam kms logging secretmanager"

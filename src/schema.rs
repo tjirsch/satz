@@ -180,7 +180,7 @@ impl BlockSchema {
 /// what it is. The emitter writes each one from the enclosing node — a project,
 /// folder or organization body gives `project`/`project_id`, `folder`/`folder_id`
 /// and `org_id`/`organization` to every type whose schema names one, and it
-/// builds an org policy's `parent` and a folder's `parent` from the same place
+/// builds an organization policy's `parent` and a folder's `parent` from the same place
 /// (`emit_shared::render_resource`). Cloud Asset data therefore never has to
 /// carry it, and an import that leaves it out loses nothing: the estate says it
 /// by where the resource is written.
@@ -215,10 +215,10 @@ impl ResourceRegistry {
     pub fn load_all(directory: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let mut resources = HashMap::new();
         // A missing directory reads as empty here and is refused below with the rest:
-        // satz types every resource from the provider's own schema, so a compile with
-        // none is not a compile. It used to load zero types and carry on, and the
+        // satz types every resource from the provider's own schema, so a transpile with
+        // none is not a transpile. It used to load zero types and carry on, and the
         // estate then failed wherever the first resource needed a type — on a fresh
-        // organisation that was the IaC users group, three steps into bootstrap.
+        // organization that was the estate account user group, three steps into bootstrap.
         let entries = match crate::fsx::read_dir_entries(directory) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -477,9 +477,9 @@ mod load_all_tests {
         dir
     }
 
-    /// A compile with no schema is not a compile. It used to load zero types and carry
+    /// A transpile with no schema is not a transpile. It used to load zero types and carry
     /// on, and the estate failed wherever the first resource needed one — on a fresh
-    /// organisation, the IaC users group three steps into bootstrap. Missing or empty,
+    /// organization, the estate account user group three steps into bootstrap. Missing or empty,
     /// the directory is refused by name, with the command that fills it.
     #[test]
     fn a_missing_or_empty_schema_directory_is_refused_by_name() {

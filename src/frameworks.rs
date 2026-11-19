@@ -6,13 +6,13 @@
 //! can know it. An estate can claim CIS controls while its customer is audited against
 //! ISO 27001.
 //!
-//! So the estate states it, as a day-0 param in `presets/estate-core.satz` with a
+//! So the estate states it, as a bootstrap param in `presets/estate-core.satz` with a
 //! question beside it, and the commands whose output an auditor reads take it from
 //! there: `report-compliance` with no framework reports each one, `satz prowler` scans
 //! for them, and a pack reads the param like any other.
 //!
 //! A value has to name a catalog in `<presets_dir>/catalogs/`. A value that names none
-//! is refused at compile time, with the list of catalogs that exist — a typo here is a
+//! is refused at transpile time, with the list of catalogs that exist — a typo here is a
 //! report that silently covers a framework nobody is held to.
 
 use satz_core::pipeline::Env;

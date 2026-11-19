@@ -164,7 +164,7 @@
   description = "CIS 2.11 — Cloud Storage IAM permissions changed (org-wide)"
   description = "CIS 2.12 — Cloud SQL instance configuration changed (org-wide)"
   description = "CIS 2.5 — project ownership assignments changed (org-wide)"
-  description = "CIS 2.5-2.12 — org-wide audit logs for metrics and alerting"
+  description = "CIS 2.5-2.12 — organization-wide audit logs for metrics and alerting"
   description = "CIS 2.6 — audit configuration changed (org-wide)"
   description = "CIS 2.7 — custom role created, updated or deleted (org-wide)"
   description = "CIS 2.8 — VPC firewall rule changed (org-wide)"

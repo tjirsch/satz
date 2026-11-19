@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Refresh presets/managed-constraint-equivalents.txt from a live organisation.
+"""Refresh presets/managed-constraint-equivalents.txt from a live organization.
 
 Google publishes, per org-policy constraint, the constraint that replaces it
 (`equivalentConstraint`). That pairing is the whole input to the rule the packs
@@ -14,8 +14,8 @@ manual audit.
     uv run scripts/update_constraint_equivalents.py            # auto-detect org + quota project
     uv run scripts/update_constraint_equivalents.py --org 123456789012
 
-Needs Application Default Credentials and a quota project: the OrgPolicy API
-refuses bare ADC. Nothing about the organisation is written to the file — only
+Needs a signed-in person and a quota project: the OrgPolicy API refuses a
+sign-in without one. Nothing about the organization is written to the file — only
 constraint names, which are Google's and identical for every customer.
 
 The file has two sections. The GENERATED one is rewritten wholesale on every run
@@ -63,7 +63,7 @@ CURATED_SEED = (
     "iam.allowedPolicyMemberDomains\tiam.managed.allowedPolicyMembers\tOURS\t"
     "Different names, no equivalentConstraint in either direction, but they enforce the same "
     "control: Domain Restricted Sharing. The legacy one cannot name exceptions for specific "
-    "principals, so Google's own remedy for granting a service agent is to disable it org-wide, "
+    "principals, so Google's own remedy for granting a service agent is to disable it organization-wide, "
     "grant, and re-enable — running both turns every service activation into a window with the "
     "control off. CIS pack v2.0 dropped it, v2.5 declares it reset.\n"
 )
@@ -134,7 +134,7 @@ def main() -> None:
     ap.add_argument(
         "--org",
         dest="organization",
-        help="organisation id; default: the first one gcloud lists",
+        help="organization id; default: the first one gcloud lists",
     )
     ap.add_argument(
         "--quota-project",
@@ -148,7 +148,7 @@ def main() -> None:
         or sh("gcloud", "organizations", "list", "--format=value(name)").split("\n")[0]
     )
     if not org:
-        sys.exit("no organisation found: pass --org, or log in with gcloud")
+        sys.exit("no organization found: pass --org, or log in with gcloud")
     org = org.rsplit("/", 1)[-1]
     quota = args.quota_project or sh("gcloud", "config", "get-value", "project")
     if not quota:
@@ -157,7 +157,7 @@ def main() -> None:
         )
     token = sh("gcloud", "auth", "application-default", "print-access-token")
     if not token:
-        sys.exit("no ADC token: run `gcloud auth application-default login`")
+        sys.exit("no token from the sign-in: run `gcloud auth application-default login`")
 
     constraints = fetch_constraints(org, token, quota)
     if not constraints:

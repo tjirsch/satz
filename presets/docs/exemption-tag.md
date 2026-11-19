@@ -5,17 +5,17 @@ Source: `presets/exemptions/exemption-tag.satz`
 
 ## Purpose
 
-Exemption classes: one organisation tag key, one value per KIND of exemption, and
+Exemption classes: one organization tag key, one value per KIND of exemption, and
 nothing bound to any of them.
 
-An org policy is all-or-nothing per node. To let ONE service account create ONE key,
+An organization policy is all-or-nothing per node. To let ONE service account create ONE key,
 the policy has to be lowered for a whole project or folder and raised again
 afterwards — a lift WINDOW during which nothing under that node is enforced, and which
 nobody remembers to close. A Resource Manager TAG replaces the window: unlike a label
-it is IAM-governed and an org policy's rule can CONDITION on it, so the policy stays
+it is IAM-governed and an organization policy's rule can CONDITION on it, so the policy stays
 enforced everywhere and named resources are let out one at a time.
 
-Google does this themselves. Since 2024 a new organisation gets
+Google does this themselves. Since 2024 a new organization gets
 `iam.disableServiceAccountKeyCreation` carrying
 `resource.matchTagId('tagKeys/…', 'tagValues/…')` against a built-in key, so binding
 the exempting value to one service account exempts that account and nothing else.
@@ -28,7 +28,7 @@ switch off customer-managed encryption just as easily. So the values below are
 CLASSES, each covering one kind of risk, and `roles/resourcemanager.tagUser` on one
 value delegates exactly that kind and no other.
 
-The classes are deliberately narrow. A wide class is a grant that hands over more
+The classes are deliberately narrow. A wide class is a grant that gives away more
 than the person asking for it described.
 
 ---- THE TWO HALVES OF "WHO MAY EXEMPT" -------------------------------------------
@@ -39,7 +39,7 @@ Binding a tag value needs BOTH, and the pair is the scope control:
 principal may grant at all. Declared in the estate; see the grant block at the
 bottom of this file for the shape.
 * the `createTagBinding` permission ON THE TARGET — WHERE they may apply it. Granted
-at the organisation, a folder or a project, and that is the project/folder/org
+at the organization, a folder or a project, and that is the project/folder/org
 restriction. It belongs in the estate rather than here, because which folder a
 team owns is the customer's hierarchy, not the library's.
 
@@ -72,7 +72,7 @@ constraint gets the same treatment when a customer needs it. Then, in the estate
 
 google_tags_tag_binding {
 "svc-legacy-etl-key" {
-// Owner: the platform team. Review: the next access review.
+// Owner: the organization's team. Review: the next access review.
 // Reason: the vendor's connector cannot federate; migration ticket OPS-1234.
 parent    = "//iam.googleapis.com/projects/{infra_project_name}/serviceAccounts/…"
 tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"
@@ -81,7 +81,7 @@ tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"
 
 `require` reads the conditional rule from the estate and prints it under the control
 (`↳ exempted: …`) rather than letting a conditional policy read as plain "enforced".
-The org-wide answer to "who is exempted, and from what" is Cloud Asset Inventory:
+The organization-wide answer to "who is exempted, and from what" is Cloud Asset Inventory:
 
 gcloud asset search-all-resources --scope=organizations/ORG \
 --query='tagValues:{customer_shortname}-exemption/service-account-keys'

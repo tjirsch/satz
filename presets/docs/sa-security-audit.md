@@ -16,8 +16,8 @@ After the apply, a human (not the tooling, which stays read-only) uses it:
 prowler gcp --impersonate-service-account $SA --compliance cis_5.0_gcp ...
 gcloud <cmd> --impersonate-service-account=$SA
 gcloud auth application-default login --impersonate-service-account=$SA
-The last one produces the impersonated ADC the Prowler CLI and the SCC
-configuration read.
+The last one signs the person in as the account, which is what the Prowler CLI
+and the SCC configuration read.
 
 What this pack does NOT do:
 - no API enablement in the seed project (impersonation needs

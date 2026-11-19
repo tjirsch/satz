@@ -1,5 +1,5 @@
 # A hand-written onboarding configuration in the shape vendors generate for a
-# customer to apply (example values only). The organisation is asked for, never
+# customer to apply (example values only). The organization is asked for, never
 # defaulted.
 variable "org_id" {
   type        = string

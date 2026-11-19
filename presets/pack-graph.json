@@ -174,7 +174,7 @@
       "gate": "use_central_alerts",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 16,
-      "phase": "once the archive exists — the alert project defaults to the logsink's, so this does\nnot compile without it",
+      "phase": "once the archive exists — the alert project defaults to the logsink's, so this does\nnot transpile without it",
       "at": "presets/estate-map.satz:390"
     },
     {
@@ -184,12 +184,12 @@
       "gate": "use_cis_baseline",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 17,
-      "phase": "once the estate runs as the service account — the CIS baseline, what the estate is\nfor and what everything below extends. Thirty organisation policies in one apply,\nso it goes in on its own, with its plan read before it is applied.",
+      "phase": "once the estate runs as the service account — the CIS baseline, what the estate is\nfor and what everything below extends. Thirty organization policies in one apply,\nso it goes in on its own, with its plan read before it is applied.",
       "at": "presets/estate-map.satz:396",
       "notices": [
         {
           "param": "cis_baseline_adopted",
-          "text": "Google sets some of these policies on every new organisation, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google sets some of these policies on every new organization, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -202,12 +202,12 @@
       "gate": "cis_block_project_ssh_keys",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 18,
-      "phase": "the baseline's own extensions, gated on params it declares, so they do not compile\nwithout it. Each restricts what may be created; two are on by default (DNS query\nlogging, and the admin ports closed to the internet).",
+      "phase": "the baseline's own extensions, gated on params it declares, so they do not transpile\nwithout it. Each restricts what may be created; two are on by default (DNS query\nlogging, and the admin ports closed to the internet).",
       "at": "presets/estate-map.satz:403",
       "notices": [
         {
           "param": "cis_block_project_ssh_keys_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -224,7 +224,7 @@
       "notices": [
         {
           "param": "cis_require_shielded_vm_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -241,7 +241,7 @@
       "notices": [
         {
           "param": "cis_dns_logging_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -258,7 +258,7 @@
       "notices": [
         {
           "param": "cis_confidential_computing_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -275,7 +275,7 @@
       "notices": [
         {
           "param": "cis_cloud_sql_hardening_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -292,7 +292,7 @@
       "notices": [
         {
           "param": "cis_cmek_required_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -309,7 +309,7 @@
       "notices": [
         {
           "param": "cis_api_key_services_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -326,7 +326,7 @@
       "notices": [
         {
           "param": "cis_bucket_retention_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -361,7 +361,7 @@
       "notices": [
         {
           "param": "cis_cloud_sql_iam_and_deletion_protection_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -374,12 +374,12 @@
       "gate": "cis_api_key_services_dry_run",
       "gate_declared_in": "presets/cis/CIS-GCP-Foundation-4.0.satz",
       "order": 29,
-      "phase": "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\nsame policy with `dry_run_spec`: Google logs every action it would have blocked and\nblocks none, so the violation count sizes the control against this organisation\nbefore it bites. Nothing is enforced while it runs.",
+      "phase": "INSTEAD of the enforcing extension above it, never beside it. A dry run declares the\nsame policy with `dry_run_spec`: Google logs every action it would have blocked and\nblocks none, so the violation count sizes the control against this organization\nbefore it bites. Nothing is enforced while it runs.",
       "at": "presets/estate-map.satz:452",
       "notices": [
         {
           "param": "cis_api_key_services_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -396,7 +396,7 @@
       "notices": [
         {
           "param": "cis_block_project_ssh_keys_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -413,7 +413,7 @@
       "notices": [
         {
           "param": "cis_bucket_retention_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -430,7 +430,7 @@
       "notices": [
         {
           "param": "cis_cloud_sql_hardening_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -447,7 +447,7 @@
       "notices": [
         {
           "param": "cis_cloud_sql_iam_and_deletion_protection_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -464,7 +464,7 @@
       "notices": [
         {
           "param": "cis_confidential_computing_dry_run_adopted",
-          "text": "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
+          "text": "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run.",
           "run": "satz adopt <estate> --execute --import",
           "severity": "error"
         }
@@ -607,7 +607,7 @@
       "gate": "use_exemption_tag",
       "gate_declared_in": "presets/estate-map.satz",
       "order": 48,
-      "phase": "any time after the organisation policies — it creates the tag an exemption is bound to\nand exempts nothing on its own. The BINDING that lets one resource out, and the\ncondition on the constraint that honours it, are the estate's to write; the pack's\nheader shows both",
+      "phase": "any time after the organization policies — it creates the tag an exemption is bound to\nand exempts nothing on its own. The BINDING that lets one resource out, and the\ncondition on the constraint that honors it, are the estate's to write; the pack's\nheader shows both",
       "at": "presets/estate-map.satz:551"
     },
     {

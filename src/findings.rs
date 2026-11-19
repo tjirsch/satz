@@ -1,7 +1,7 @@
-//! What the compile finds after the front end — one list, three readers.
+//! What the transpile finds after the front end — one list, three readers.
 //!
 //! The CLI lays each finding out for a reader (`lay_out`) and refuses on an error; the
-//! language server turns each finding into a diagnostic at the file and line it names;
+//! language server turns each finding into an editor marker at the file and line it names;
 //! MCP returns the list as data, warnings included. One shape, so the three never
 //! disagree about what satz found, and one layout, so every command that prints a
 //! finding prints it the same way.
@@ -14,9 +14,9 @@ use crate::silence::Silenced;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Severity {
-    /// The compile refuses; `transpile` writes nothing.
+    /// The transpile refuses; `transpile` writes nothing.
     Error,
-    /// The compile goes on; `tofu plan` or a reviewer will not.
+    /// The transpile goes on; `tofu plan` or a reviewer will not.
     Warning,
     /// For the log: a fact a reviewer wants to see, no fault.
     Info,
@@ -30,7 +30,7 @@ macro_rules! kinds {
         /// Which check spoke, and half of a finding's identity: a `[[silence]]` row and
         /// `--silence` name a kind, never a wording. The other half is `subject`. The
         /// `update-prerequisites` command's own report silences its kind for its own
-        /// compile; an agent can group by it.
+        /// transpile; an agent can group by it.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
         #[serde(rename_all = "kebab-case")]
         pub(crate) enum Kind { $($(#[$attr])* $variant),+ }
@@ -67,7 +67,7 @@ kinds! {
     ComplianceFramework => "compliance-framework",
     /// `workload_folder_name` and the section that publishes `workload_folder` disagree
     WorkloadFolder => "workload-folder",
-    /// an emitted attribute whose value the provider refuses by its shape
+    /// a written attribute whose value the provider refuses by its shape
     AttributeShape => "attribute-shape",
     Prerequisites => "prerequisites",
     /// a pack whose gate is true and whose line is commented out or absent
@@ -83,14 +83,14 @@ kinds! {
     Providers => "providers",
     Action => "action",
     HclPassthrough => "hcl-passthrough",
-    /// an `export` satz cannot publish: a reference to nothing the estate emits, a value
+    /// an `export` satz cannot publish: a reference to nothing the estate writes, a value
     /// only the cloud knows of a type satz has no lookup for
     Export => "export",
     /// `check-consumer`: a project's HCL that writes where the estate's interface does not
     /// let it — an attachment off an attach point, an authoritative grant or a policy on a
     /// node the estate manages, a resource the estate declares too
     Consumer => "consumer",
-    /// a project estate's compile: a resource that uses a central estate's interface where
+    /// a workload estate's transpile: a resource that uses the interface of an organization's estate where
     /// the interface file does not let it — the rules of `consumer`, on the project's own
     /// resources — or a `${{interface.<folder>.<value>}}` no used interface folder carries
     InterfaceUse => "interface-use",
@@ -267,7 +267,7 @@ pub(crate) fn param_line(src: &str, name: &str) -> Option<u32> {
     .map(|i| i as u32 + 1)
 }
 
-/// A compile the findings refused, as an error: it displays as the layout the CLI
+/// A transpile the findings refused, as an error: it displays as the layout the CLI
 /// prints, unwrapped, and carries the findings that produced it for a caller that can
 /// show them at their lines. `pipeline_b_generate` returns this boxed, so every `?`
 /// call site is unchanged and only the callers that want structure look for it.
@@ -286,7 +286,7 @@ impl CompileRefusal {
     }
 
     /// The first error in one line — `file:line: message` — for a caller that reports a
-    /// refused compile as one row of its own report.
+    /// refused transpile as one row of its own report.
     pub(crate) fn brief(&self) -> String {
         let Some(f) = self.findings.iter().find(|f| f.severity == Severity::Error) else { return String::new() };
         let first = f.message.lines().next().unwrap_or_default();
@@ -360,7 +360,7 @@ impl Width {
 /// it stays in the list and in the JSON, and the footer counts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Shown {
-    /// what refuses the compile
+    /// what refuses the transpile
     Errors,
     /// what does not: the warnings and the infos
     Rest,
@@ -414,7 +414,7 @@ const BODY: &str = "    ";
 pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> String {
     let printed: Vec<&Finding> = findings.iter().filter(|f| shown.takes(f) && f.silenced.is_none()).collect();
     // The columns are as wide as their widest entry in this RUN, not in this call: a
-    // refused compile prints its warnings and then its errors, and they line up.
+    // refused transpile prints its warnings and then its errors, and they line up.
     let run = || findings.iter().filter(|f| f.silenced.is_none());
     let kind_w = run().map(|f| f.kind.as_str().len()).max().unwrap_or(0);
     let at_w = run().filter_map(location).map(|l| l.chars().count()).max().unwrap_or(0);
@@ -550,8 +550,8 @@ pub(crate) fn footer(findings: &[Finding]) -> Option<String> {
 }
 
 /// The CLI's rendering: the warnings and infos to stderr in the layout, then the
-/// verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the compile.
-/// The footer closes a compile that goes on; one that is refused gets it from
+/// verdict `refusal` reaches — `Err` when there is an error, so `?` refuses the transpile.
+/// The footer closes a transpile that goes on; one that is refused gets it from
 /// `report_refusal`, under the errors, so it is the last line either way.
 ///
 /// A silenced finding is left out here and nowhere else: it is still in the list this
@@ -572,7 +572,7 @@ pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
     verdict
 }
 
-/// A refused compile as the CLI's last words: the errors in the layout, then the footer.
+/// A refused transpile as the CLI's last words: the errors in the layout, then the footer.
 pub(crate) fn report_refusal(refusal: &CompileRefusal) {
     let text = lay_out(&refusal.findings, Shown::Errors, Width::of_stderr());
     eprint!("{}", text);
@@ -582,7 +582,7 @@ pub(crate) fn report_refusal(refusal: &CompileRefusal) {
 }
 
 /// One piece of the CLI's rendering, to stderr, followed by a blank line. A test reads
-/// back what its own thread printed, which is how it tells a compile that printed its
+/// back what its own thread printed, which is how it tells a transpile that printed its
 /// warnings from one that printed nothing.
 fn say(text: String) {
     #[cfg(test)]
@@ -603,7 +603,7 @@ pub(crate) fn take_said() -> Vec<String> {
 
 /// The verdict `render` reaches, with nothing printed: the errors in the layout,
 /// unwrapped, `Err` when there is any. A command that reports the findings in its own
-/// output compiles with this, so an internal compile does not speak over it.
+/// output transpiles with this, so an internal transpile does not speak over it.
 ///
 /// It never reads `silenced`, and it never has to: `Silences::apply` skips an `Error`,
 /// so no tier can reach the verdict.
@@ -850,12 +850,12 @@ mod tests {
     fn a_refusal_displays_as_the_layout_and_hands_its_findings_over() {
         let findings = vec![
             Finding::new(Severity::Warning, Kind::Action, "an action"),
-            Finding::new(Severity::Error, Kind::Emit, "emit: no\nand why").located("e.satz", 7),
+            Finding::new(Severity::Error, Kind::Emit, "write: no\nand why").located("e.satz", 7),
         ];
         let e: Box<dyn std::error::Error> = Box::new(CompileRefusal { findings });
-        assert_eq!(e.to_string(), "error    emit    e.satz:7\n    emit: no\n    and why", "the errors alone, and no trailing newline");
+        assert_eq!(e.to_string(), "error    emit    e.satz:7\n    write: no\n    and why", "the errors alone, and no trailing newline");
         assert_eq!(refusal_findings(e.as_ref()).len(), 2);
-        assert_eq!(as_refusal(e.as_ref()).unwrap().brief(), "e.satz:7: emit: no");
+        assert_eq!(as_refusal(e.as_ref()).unwrap().brief(), "e.satz:7: write: no");
         let other: Box<dyn std::error::Error> = "no schemas".into();
         assert!(refusal_findings(other.as_ref()).is_empty(), "only a refusal carries findings");
     }
@@ -877,12 +877,12 @@ mod tests {
             Finding::new(Severity::Warning, Kind::Action, "an action").located("e.satz", 3),
             Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing"),
             Finding::new(Severity::Error, Kind::MissingRequired, "c: the provider requires d").in_group("required arguments missing"),
-            Finding::new(Severity::Error, Kind::Emit, "emit: no"),
+            Finding::new(Severity::Error, Kind::Emit, "write: no"),
         ];
         let e = render(&f).unwrap_err();
         assert_eq!(
             e,
-            "error    emit\n    emit: no\n\n\
+            "error    emit\n    write: no\n\n\
              required arguments missing (2)\n\n\
              error    missing-required\n    a: the provider requires b\n\n\
              error    missing-required\n    c: the provider requires d"
@@ -890,14 +890,14 @@ mod tests {
         assert!(render(&f[..1]).is_ok());
     }
 
-    /// A compile that prints nothing refuses with the same text as one that prints: the
+    /// A transpile that prints nothing refuses with the same text as one that prints: the
     /// only difference between the two is the warnings on stderr.
     #[test]
     fn the_quiet_verdict_is_the_rendered_one_without_the_printing() {
         let f = vec![
             Finding::new(Severity::Warning, Kind::Action, "an action").located("e.satz", 3),
             Finding::new(Severity::Error, Kind::MissingRequired, "a: the provider requires b").in_group("required arguments missing"),
-            Finding::new(Severity::Error, Kind::Emit, "emit: no"),
+            Finding::new(Severity::Error, Kind::Emit, "write: no"),
         ];
         take_said();
         assert_eq!(refusal(&f), render(&f));

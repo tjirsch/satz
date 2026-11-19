@@ -1,10 +1,10 @@
-// Corpus case: an `action` is inert at compile time.
+// Corpus case: an `action` is inert at transpile time.
 //
 // The estate and the pack each declare one, with interpolated arguments. The
 // snapshot below must contain nothing but the folder — no resource, no variable,
 // no comment, not a trace of either action. That is the whole point of the
 // construct: satz records that an executable step exists and refuses to run it as
-// part of compiling, so `transpile` stays a pure function of its sources and the
+// part of transpiling, so `transpile` stays a pure function of its sources and the
 // corpus snapshots, `check-presets` and the auto-fork proof keep meaning what they
 // say. `satz run-actions` is the only thing that ever executes one.
 

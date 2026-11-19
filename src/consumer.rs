@@ -1,18 +1,18 @@
-//! The rules a project is held to where it uses a central estate's interface (ADR 0070):
-//! `satz check-consumer` on a project's HCL, and the compile of a project estate written in
-//! Satz, on its own emitted resources.
+//! The rules a project is held to where it uses the interface of an organization's estate (ADR 0070):
+//! `satz check-consumer` on a project's HCL, and the transpile of a workload estate written in
+//! Satz, on its own written resources.
 //!
-//! - an attachment resource whose target is the central estate's and is no attach point
+//! - an attachment resource whose target belongs to the organization's estate and is no attach point
 //!   that allows its type;
-//! - an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organisation policy
-//!   on a node the central estate manages — the next apply of either side undoes the other's;
-//! - a resource the central estate declares too, matched by the natural key the interface
+//! - an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organization policy
+//!   on a node the organization's estate manages — the next apply of either side undoes the other's;
+//! - a resource the organization's estate declares too, matched by the natural key the interface
 //!   looks it up by (`presets/interface-lookups.yaml`): two states would own one object.
 //!
-//! Both paths judge through one `Facts`: built from the compiled central estate for
-//! `check-consumer`, and read from the generated interface files for a project compile.
+//! Both paths judge through one `Facts`: built from the transpiled organization's estate for
+//! `check-consumer`, and read from the generated interface files for a project transpile.
 //! What a value points at is read two ways: a read of an export — `module.<m>.<output>` of a
-//! module sourced from `<interface>/hcl`, or `interface.<export>` in a project estate — and
+//! module sourced from `<interface>/hcl`, or `interface.<export>` in a workload estate — and
 //! a literal equal to a value the estate publishes or an identity it writes. A value that is
 //! neither is the project's own.
 
@@ -50,7 +50,7 @@ pub(crate) fn hashed(value: &str) -> String {
 }
 
 /// Whether `mine`, as a project writes it, is what a fact holds — the text, when the facts
-/// come from the compiled central estate, or its hash, when they come from a file.
+/// come from the transpiled organization's estate, or its hash, when they come from a file.
 fn same(fact: &str, mine: &str) -> bool {
     if fact.starts_with(HASHED) {
         hashed(mine) == fact
@@ -72,8 +72,8 @@ pub(crate) struct FactOutput {
     pub static_text: Option<String>,
 }
 
-/// What a project's resources are judged against: the central estate's exports, the
-/// resources it declares that a project can name, and the organisations it manages.
+/// What a project's resources are judged against: the exports of the organization's estate, the
+/// resources it declares that a project can name, and the organizations it manages.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Facts {
     pub estate: String,
@@ -86,7 +86,7 @@ pub(crate) struct Facts {
 }
 
 impl Facts {
-    /// From the compiled central estate. The managed resources are those a project can
+    /// From the transpiled organization's estate. The managed resources are those a project can
     /// name: of a type the lookup table reads back, or the target of an export — never one
     /// marked `private`, which keeps a resource out of everything handed to a project.
     pub fn of_estate(estate: &str, interface: Option<&Interface>, manifest: &Manifest) -> Facts {
@@ -156,7 +156,7 @@ impl Facts {
         Facts { estate: estate.to_string(), organizations: organizations.into_iter().collect(), outputs, managed }
     }
 
-    /// From the interface files a project estate uses; the pipeline has already refused
+    /// From the interface files a workload estate uses; the pipeline has already refused
     /// two files that disagree about one name.
     pub fn of_files(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Facts {
         let mut estates: Vec<&str> = Vec::new();
@@ -233,13 +233,13 @@ pub(crate) fn read(dir: &Path) -> Result<Vec<ConsumerBlock>, String> {
     satz_hcl::consumer_blocks(&inputs)
 }
 
-/// What one of the project's values points at in the central estate.
+/// What one of the project's values points at in the organization's estate.
 struct Hit<'a> {
     /// how the project wrote it: `module.satz.vpc`, `interface.vpc`, or the literal
     written: String,
     /// the export it reads, when it reads one
     output: Option<&'a FactOutput>,
-    /// the central estate's resources it names
+    /// the resources of the organization's estate it names
     resources: Vec<String>,
 }
 
@@ -250,7 +250,7 @@ struct Check<'a> {
 }
 
 impl<'a> Check<'a> {
-    /// Where a value points in the central estate; empty when it is the project's own.
+    /// Where a value points in the organization's estate; empty when it is the project's own.
     fn hits(&self, v: &ConsumerValue) -> Vec<Hit<'a>> {
         let mut out = Vec::new();
         match v {
@@ -284,7 +284,7 @@ impl<'a> Check<'a> {
         out
     }
 
-    /// Whether the organisation the central estate manages is what a literal names.
+    /// Whether the organization the organization's estate manages is what a literal names.
     fn is_org(&self, v: &ConsumerValue) -> bool {
         let ConsumerValue::Literal(l) = v else { return false };
         let named = if l.starts_with("organizations/") { l.clone() } else { format!("organizations/{}", l) };
@@ -298,7 +298,7 @@ impl<'a> Check<'a> {
 }
 
 /// The project's arguments that name what a block joins or covers: its target argument,
-/// or for a grant or an org policy every argument but the grant's own.
+/// or for a grant or an organization policy every argument but the grant's own.
 fn node_args<'b>(b: &'b ConsumerBlock, target: Option<&str>) -> Vec<(&'b str, &'b ConsumerValue)> {
     b.attrs
         .iter()
@@ -310,12 +310,12 @@ fn node_args<'b>(b: &'b ConsumerBlock, target: Option<&str>) -> Vec<(&'b str, &'
         .collect()
 }
 
-/// `check-consumer`: a project's HCL against the compiled central estate. A module is the
+/// `check-consumer`: a project's HCL against the transpiled organization's estate. A module is the
 /// interface whose `hcl/` its `source` ends in.
 pub(crate) fn check(blocks: &[ConsumerBlock], interface: Option<&Interface>, manifest: &Manifest) -> Vec<Finding> {
     let facts = Facts::of_estate(interface.map(|i| i.estate.as_str()).unwrap_or_default(), interface, manifest);
     let mut readers = BTreeMap::new();
-    // the `interface.tf` a project estate's transpile writes reads every export as
+    // the `interface.tf` a workload estate's transpile writes reads every export as
     // `local.interface.<export>`; HCL a team keeps beside it reads the same local
     readers.insert("local.interface".to_string(), (0..facts.outputs.len()).collect());
     readers.insert("local.interface_static".to_string(), (0..facts.outputs.len()).collect());
@@ -339,8 +339,8 @@ pub(crate) fn check(blocks: &[ConsumerBlock], interface: Option<&Interface>, man
     judge(blocks, &facts, &readers, Kind::Consumer, "the estate")
 }
 
-/// A project estate's own resources against the interface files it uses: its emission
-/// manifest read as blocks, and a reference its compile replaced by a lookup read as the
+/// A workload estate's own resources against the interface files it uses: its emission
+/// manifest read as blocks, and a reference its transpile replaced by a lookup read as the
 /// `interface.<export>` it was written as.
 pub(crate) fn check_project(manifest: &Manifest, files: &[satz_core::pipeline::UsedInterfaceFile]) -> Vec<Finding> {
     let facts = Facts::of_files(files);
@@ -375,7 +375,7 @@ pub(crate) fn check_project(manifest: &Manifest, files: &[satz_core::pipeline::U
         })
         .collect();
     let readers = BTreeMap::from([(satz_core::pipeline::INTERFACE_ROOT.to_string(), (0..facts.outputs.len()).collect())]);
-    let central = format!("the central estate `{}`", facts.estate);
+    let central = format!("the organization's estate `{}`", facts.estate);
     judge(&blocks, &facts, &readers, Kind::InterfaceUse, &central)
 }
 
@@ -397,7 +397,7 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
         let [tf_type, label] = b.labels.as_slice() else { continue };
         let address = format!("{}.{}", tf_type, label);
 
-        // an attachment: onto the central estate only at an attach point that allows its type
+        // an attachment: onto the organization's estate only at an attach point that allows its type
         if let Some((row, node_type)) = interface::attach_row(&attach_table, tf_type) {
             for (arg, v) in node_args(b, row.target.as_deref()) {
                 for h in c.hits(v) {
@@ -435,13 +435,13 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
             }
         }
 
-        // an authoritative grant or an org policy on a node the central estate manages
+        // an authoritative grant or an organization policy on a node the organization's estate manages
         let authoritative = tf_type.ends_with("_iam_policy") || tf_type.ends_with("_iam_binding");
         let policy = ORG_POLICY.iter().find(|(t, _)| t == tf_type).map(|(_, a)| *a);
         if authoritative || policy.is_some() {
             for (arg, v) in node_args(b, policy) {
                 let managed: Vec<String> = c.hits(v).into_iter().filter(|h| !h.resources.is_empty() || h.output.is_some()).map(|h| h.written).collect();
-                let what = if authoritative { "sets every member of a role on it" } else { "sets an organisation policy on it" };
+                let what = if authoritative { "sets every member of a role on it" } else { "sets an organization policy on it" };
                 if let Some(w) = managed.first() {
                     out.push(err(
                         b,
@@ -459,7 +459,7 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
                     out.push(err(
                         b,
                         format!(
-                            "`{}` {} through `{}`: the organisation {} manages — its next apply and yours undo each other. Ask for the change in the estate",
+                            "`{}` {} through `{}`: the organization {} manages — its next apply and yours undo each other. Ask for the change in the estate",
                             address, what, arg, central
                         ),
                     ));
@@ -467,7 +467,7 @@ fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec
             }
         }
 
-        // a resource the central estate declares too, by the natural key the interface reads it by
+        // a resource the organization's estate declares too, by the natural key the interface reads it by
         if let Some(row) = lookups.get(tf_type.as_str()) {
             for m in facts.managed.iter().filter(|m| m.address.split_once('.').is_some_and(|(t, _)| t == tf_type)) {
                 let same = row.keys.keys().all(|key| match (b.attrs.get(key), m.keys.get(key), m.refs.get(key)) {
@@ -563,7 +563,7 @@ resource "google_project" "team" {
         let binding = format!("{}resource \"google_project_iam_binding\" \"b\" {{\n  project = module.satz.project_id\n  role    = \"roles/viewer\"\n  members = []\n}}\n", MODULE);
         assert!(findings(&binding)[0].contains("sets every member of a role on it through `project = module.satz.project_id`"), "{:?}", findings(&binding));
         let policy = "resource \"google_org_policy_policy\" \"p\" {\n  name   = \"organizations/123456789012/policies/x\"\n  parent = \"organizations/123456789012\"\n}\n";
-        assert!(findings(policy)[0].contains("the organisation the estate manages"), "{:?}", findings(policy));
+        assert!(findings(policy)[0].contains("the organization the estate manages"), "{:?}", findings(policy));
         let own = "resource \"google_project_iam_binding\" \"b\" {\n  project = google_project.mine.project_id\n  role = \"r\"\n  members = []\n}\n";
         assert!(findings(own).is_empty());
     }
@@ -589,7 +589,7 @@ resource "google_project" "team" {
         let text = satz_core::fmt::format(&i.satz_file("payments", &facts, "0.0.0", "e.satz")).unwrap();
         let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
         let used = [satz_core::pipeline::UsedInterfaceFile { file: "interfaces/incoming/payments/satz/interface.satz".into(), interface: file }];
-        // (HCL a project writes, the resource a project estate emits for the same intent)
+        // (HCL a project writes, the resource a workload estate writes for the same intent)
         let cases: [(&str, &str, bool); 5] = [
             (
                 "resource \"google_project_iam_member\" \"a\" {\n  project = module.satz.project_id\n  role    = \"roles/viewer\"\n  member  = \"group:g@example.com\"\n}\n",

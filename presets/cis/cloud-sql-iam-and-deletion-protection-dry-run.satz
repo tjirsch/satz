@@ -4,7 +4,7 @@
 //
 // The dry-run twin of cloud-sql-iam-and-deletion-protection.satz. Google evaluates every rule below, writes a
 // violation to the audit log for each action it WOULD have blocked, and blocks
-// nothing — so the organisation's own numbers answer "will this break us?" before
+// nothing — so the organization's own numbers answer "will this break us?" before
 // the control is enforced. Read them in Cloud Logging:
 //
 //   protoPayload.metadata."@type"="type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo"
@@ -24,7 +24,7 @@ params {
 }
 
 notice cis_cloud_sql_iam_and_deletion_protection_dry_run_adopted {
-  text     = "Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
+  text     = "Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run."
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }

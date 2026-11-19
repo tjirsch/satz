@@ -91,10 +91,10 @@ for c in ("completionProvider", "hoverProvider", "definitionProvider", "document
 assert r["serverInfo"]["name"] == "satz"
 send("initialized", request=False)
 
-# didOpen: no ERROR on a clean estate (parse and pipeline); what the compile warns
+# didOpen: no ERROR on a clean estate (parse and pipeline); what the transpile warns
 # about — the showcase's action, its trusted passthrough — arrives as warnings and notes
 send("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "satz", "version": 1, "text": text}}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri, "diagnostics")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri, "the findings")
 errors = [x for x in d["params"]["diagnostics"] if x["severity"] == 1]
 assert errors == [], f"a clean estate has errors: {errors}"
 assert any("action" in x["message"] and x["severity"] == 2 for x in d["params"]["diagnostics"]), d["params"]["diagnostics"]
@@ -107,9 +107,9 @@ items = r if isinstance(r, list) else r["items"]
 labels = [i["label"] for i in items]
 for want in ("name", "location", "lifecycle_rule"):
     assert want in labels, f"completion in a bucket lacks {want}: {labels[:20]}"
-# a `use` inside a resource body is refused by the compile (a pack is used at the top level
+# a `use` inside a resource body is refused by the transpile (a pack is used at the top level
 # or inside its type's map), so the editor does not offer it there
-assert "use" not in labels, f"completion in a bucket offers `use`, which the compile refuses there: {labels[:20]}"
+assert "use" not in labels, f"completion in a bucket offers `use`, which the transpile refuses there: {labels[:20]}"
 first = [i["label"] for i in sorted(items, key=lambda i: i.get("sortText", i["label"]))][:40]
 assert "location" in first, f"attributes are not offered first: {first}"
 
@@ -128,15 +128,15 @@ assert r and r["uri"].startswith("file://") and r["uri"].endswith(".satz"), f"de
 r = response(send("textDocument/formatting", {"textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": True}}))
 assert r == [], f"a formatted estate got edits: {r}"
 
-# a parse error on change is a diagnostic at its line, cleared again on the fix
+# a parse error on change is a finding at its line, cleared again on the fix
 broken = text.replace("\nestate showcase\n", "\nestate \"showcase\n", 1)
 assert broken != text, "the showcase header line moved; adjust the client"
 send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": broken}]}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and m["params"]["diagnostics"], "an error diagnostic")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and m["params"]["diagnostics"], "an error finding")
 diag = d["params"]["diagnostics"][0]
 assert diag["source"] == "satz" and diag["severity"] == 1, diag
 send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": text}]}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and not m["params"]["diagnostics"], "the diagnostic to clear")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and not m["params"]["diagnostics"], "the finding to clear")
 
 # a pipeline error on save: an unknown resource type, named at its line
 bad = text.replace("google_folder {", "google_folderx {", 1)
@@ -164,4 +164,4 @@ wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["p
 response(send("shutdown"))
 send("exit", request=False)
 proc.wait(timeout=10)
-print("lsp: OK — initialize, diagnostics (parse, pipeline, emitter), completion, hover, definition, formatting")
+print("lsp: OK — initialize, findings (parse, pipeline, emitter), completion, hover, definition, formatting")

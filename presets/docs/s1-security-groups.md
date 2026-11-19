@@ -19,13 +19,13 @@ Memberships are NOT part of this pack: presets define groups,
 humans grant membership.
 
 The first admin holds Project Creator and Billing Account Creator explicitly — the two
-roles a new organisation grants its whole domain. Once that grant and the groups' are
+roles a new organization grants its whole domain. Once that grant and the groups' are
 live, `satz apply` takes the domain off those two roles and touches nothing else of the
-organisation's policy; `satz plan` says what the apply would do.
+organization's policy; `satz plan` says what the apply would do.
 
 The project admins' roles are the list param `gcp_project_admins_roles`; its default is the
 list the grant below reads, `roles/owner` included — the horizontal reach over every project,
-present and future, that the platform team holds while business units hold vertical roles on
+present and future, that the organization's team holds while business units hold vertical roles on
 their own folders and projects. An estate that wants that reach PAM-grantable binds the param
 to `roles/writer` (every service's write permissions in every project — Google's basic role
 that Privileged Access Manager grants and a condition bounds, which Owner cannot be) together
@@ -100,7 +100,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `gcp_security_viewers_name` | The security viewers group's name (the local part; the customer domain is added) | recreate | low | — |
 | `gcp_billing_admins_name` | The billing admins group's name (the local part; the customer domain is added) | recreate | low | — |
 
-**gcp_organization_admins_name** — The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted. This group holds the organisation's highest roles.
+**gcp_organization_admins_name** — The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted. This group holds the organization's highest roles.
 
 
 **gcp_project_admins_name** — The address is the group's identity: renaming it later means a new group, every member moved by hand and every role re-granted.

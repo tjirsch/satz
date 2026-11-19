@@ -3,7 +3,7 @@
 //
 // The CIS baseline declares `allowed_policy_member_subjects`; the billing export and the
 // scanner pack beside this file each declare `contributes_allowed_policy_member_subjects`.
-// The emitted §1.1 policy must carry, in this order: the estate's own binding, then the
+// The written §1.1 policy must carry, in this order: the estate's own binding, then the
 // billing export's account, then the scanner's account — each once, and the scanner's
 // account only once although the estate already names it, which is the duplicate the
 // merge drops. The pack line of the billing export stands BEFORE the CIS baseline's, so

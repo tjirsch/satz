@@ -1,4 +1,4 @@
-// A pack may ship an executable step. It still emits nothing.
+// A pack may ship an executable step. It still writes nothing.
 pack corpus_actions_pack version "1.0"
 
 action "pack-step" {

@@ -1,13 +1,13 @@
 //! The gate every bootstrap passes before it touches an API.
 //!
-//! An empty or malformed day-0 param used to reach Google as part of a URL:
+//! An empty or malformed bootstrap param used to reach Google as part of a URL:
 //! `billingAccounts/:testIamPermissions` — note the empty segment — came back as
 //! a 404 HTML page that satz dumped into an error string, `<!DOCTYPE html>` and
-//! all. The worse shape is silent: a plausible-looking organisation id nobody
-//! owns produces a perfectly ordinary pre-flight against the wrong organisation.
+//! all. The worse shape is silent: a plausible-looking organization id nobody
+//! owns produces a perfectly ordinary prerequisites check against the wrong organization.
 //!
 //! So: every param bootstrap consumes is checked here for presence and shape,
-//! the failure names the param AND the flag that sets it, and no credential is
+//! the failure names the param AND the flag that sets it, and no sign-in is
 //! asked for until this passes.
 
 /// One thing wrong with the estate, as the operator has to fix it.
@@ -28,14 +28,14 @@ fn problem(param: &'static str, flag: &'static str, says: impl Into<String>) -> 
     Problem { param, flag, says: says.into() }
 }
 
-/// A Google organisation id: digits, nothing else. Google's are twelve, but the
+/// A Google organization id: digits, nothing else. Google's are twelve, but the
 /// length is not a documented guarantee, so only the shape is judged.
 pub(crate) fn organization_id(value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err("is empty".into());
     }
     if !value.chars().all(|c| c.is_ascii_digit()) {
-        return Err(format!("is {:?}, which is not a number — an organisation id is all digits, and the DOMAIN is `customer_domain`", value));
+        return Err(format!("is {:?}, which is not a number — an organization id is all digits, and the DOMAIN is `customer_domain`", value));
     }
     Ok(())
 }
@@ -97,7 +97,7 @@ pub(crate) fn bucket_name(value: &str) -> Result<(), String> {
 /// What bootstrap is about to use. Borrowed, so the caller passes what it read.
 pub(crate) struct DayZero<'a> {
     pub shortname: &'a str,
-    /// Empty is legal only on the greenfield path, which has no organisation yet.
+    /// Empty is legal only on the greenfield path, which has no organization yet.
     pub organization_id: &'a str,
     pub greenfield: bool,
     pub billing_account: &'a str,
@@ -115,7 +115,7 @@ pub(crate) fn check(d: &DayZero<'_>) -> Vec<Problem> {
     if d.shortname.trim().is_empty() {
         out.push(problem("customer_shortname", "customer-shortname", "is empty"));
     }
-    // greenfield has no organisation to name yet: that is the whole point of it
+    // greenfield has no organization to name yet: that is the whole point of it
     if !d.greenfield {
         if let Err(why) = organization_id(d.organization_id) {
             out.push(problem("customer_organization_id", "customer-organization-id", why));
@@ -183,14 +183,14 @@ mod tests {
     }
 
     #[test]
-    fn a_domain_in_the_organisation_id_is_named_for_what_it_is() {
+    fn a_domain_in_the_organization_id_is_named_for_what_it_is() {
         let d = DayZero { organization_id: "example.com", ..ok() };
         let err = gate(&d).unwrap_err();
         assert!(err.contains("not a number") && err.contains("customer_domain"), "{}", err);
     }
 
     #[test]
-    fn greenfield_has_no_organisation_yet_and_that_is_allowed() {
+    fn greenfield_has_no_organization_yet_and_that_is_allowed() {
         let d = DayZero { organization_id: "", greenfield: true, ..ok() };
         assert!(gate(&d).is_ok());
         // …but the rest is still judged
@@ -218,7 +218,7 @@ mod tests {
     }
 
     /// A project id the estate does not set is refused by name: bootstrap has no default
-    /// for it, since the compile declares the project under the estate's own value.
+    /// for it, since the transpile declares the project under the estate's own value.
     #[test]
     fn a_project_id_the_estate_does_not_set_is_refused_by_name() {
         let d = DayZero { project_id: None, bucket_name: None, ..ok() };

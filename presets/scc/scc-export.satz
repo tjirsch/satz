@@ -4,7 +4,7 @@
 //   use "presets/scc/scc-export.satz"
 //
 // A notification tells somebody now; an export answers "what did this
-// organisation look like in March". Both read the same findings, and an estate
+// organization look like in March". Both read the same findings, and an estate
 // usually wants both: `presets/scc/scc-notifications.satz` is the other half.
 //
 // FOUR RESOURCES, AND THE ORDER MATTERS. The dataset's project needs the BigQuery
@@ -15,7 +15,7 @@
 // Run the apply again; it is the same estate either way.
 //
 // The exporting identity is
-// `service-org-<organisation>@gcp-sa-scc-notification.iam.gserviceaccount.com` —
+// `service-org-<organization>@gcp-sa-scc-notification.iam.gserviceaccount.com` —
 // the same agent that publishes notifications, and the `principal` the export
 // reports. Security Command Center grants it WRITER on the dataset itself when
 // the export is created; the estate declares the grant anyway, because an access
@@ -53,7 +53,7 @@ params {
 
 question scc_export_project {
   prompt   = "The project that holds the BigQuery dataset of findings"
-  why      = "Whoever can read the dataset can read every finding the organisation has ever raised, including the ones still unfixed. It is also where the BigQuery bill lands."
+  why      = "Whoever can read the dataset can read every finding the organization has ever raised, including the ones still unfixed. It is also where the BigQuery bill lands."
   reversal = recreate
   blast    = high
 }
@@ -96,7 +96,7 @@ google_bigquery_dataset_iam_member {
   }
 }
 
-// 4) The export itself, at the global location SCC keeps organisation exports in.
+// 4) The export itself, at the global location SCC keeps organization exports in.
 google_scc_v2_organization_scc_big_query_export {
   scc_findings {
     big_query_export_id = scc_export_id

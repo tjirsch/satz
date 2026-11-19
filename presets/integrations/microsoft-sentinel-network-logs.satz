@@ -3,7 +3,7 @@
 //   use "presets/integrations/microsoft-sentinel-network-logs.satz"
 //
 // NEEDS `presets/integrations/microsoft-sentinel.satz`: the connector reads as the
-// account that file creates. Used without it, the compile stops with
+// account that file creates. Used without it, the transpile stops with
 // `unknown param 'sentinel_project_id'`.
 //
 // WHY ALL FOUR, AND WHY ON BY DEFAULT. VPC flow logs, firewall rules logging, DNS
@@ -18,7 +18,7 @@
 // wants one stream out uses `suppress` on that sink, topic and subscription.
 //
 // FIVE RESOURCES PER STREAM, and the two grants are the ones that get forgotten: the
-// organisation sink (`include_children`, so a project created tomorrow is covered), its
+// organization sink (`include_children`, so a project created tomorrow is covered), its
 // topic, the subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's
 // own writer identity — without which the sink exists and delivers nothing — and
 // `roles/pubsub.subscriber` for the connector on that one subscription.
@@ -35,7 +35,7 @@
 // topic `sentinel-topic`, the same name its audit setup creates, and two setups creating
 // one topic is a collision. Each stream here has its own topic.
 //
-// NO CLAIM. A copy of a log leaving the organisation satisfies no control; the archive
+// NO CLAIM. A copy of a log leaving the organization satisfies no control; the archive
 // (`monitoring/organization-audit-logsink.satz`) is what claims the logging controls.
 // Note also that nothing here ENABLES flow logs, firewall logging, DNS logging or NAT
 // logging — this carries them once they are on. Enforcing them is a separate decision.

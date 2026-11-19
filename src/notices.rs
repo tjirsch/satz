@@ -2,8 +2,8 @@
 //! estate has acknowledged it.
 //!
 //! A notice is open while the estate does not bind its param `true`. Every reader goes
-//! through here: the compile's warning, the refusal of a command that writes to the
-//! organisation while an open notice is an `error`, what `satz interview`, `add-preset` and
+//! through here: the transpile's warning, the refusal of a command that writes to the
+//! organization while an open notice is an `error`, what `satz interview`, `add-preset` and
 //! `merge-presets` print when a switch opens one, and what `satz adopt --execute
 //! --import` acknowledges when it has run. The
 //! notices are read by the same schema-free walk the questions are, so they are the ones
@@ -20,14 +20,14 @@ use satz_core::satz::Severity as Declared;
 use crate::findings::{Finding, Kind, Severity};
 use crate::settings::ToolConfig;
 
-/// What the run this finding is produced for does to the organisation. The pack's
+/// What the run this finding is produced for does to the organization. The pack's
 /// declared severity is the floor and this is the ceiling: a run that only reads says an
 /// open `error` as a warning, a run that writes says it as the error it is and refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {
-    /// a compile, a report, a plan — nothing reaches the organisation
+    /// a transpile, a report, a plan — nothing reaches the organization
     Reading,
-    /// this run changes the organisation
+    /// this run changes the organization
     Writing,
 }
 
@@ -42,7 +42,7 @@ pub(crate) struct NoticeRow {
     pub text: String,
     /// the command to run
     pub run: String,
-    /// what the pack declared: `error` — every command that writes to the organisation
+    /// what the pack declared: `error` — every command that writes to the organization
     /// refuses while it is open — `warning`, or `info`
     pub severity: String,
     /// the estate binds the param `true`
@@ -93,7 +93,7 @@ pub(crate) fn opened(before: &[NoticeRow], after: &[NoticeRow]) -> Vec<NoticeRow
     after.iter().filter(|n| !n.acknowledged && !was.contains(n.param.as_str())).cloned().collect()
 }
 
-/// What to do about one notice, in one sentence — the same in the compile's warning, the
+/// What to do about one notice, in one sentence — the same in the transpile's warning, the
 /// refusal and what a switch prints.
 fn then(n: &NoticeRow) -> String {
     let held = held(n.declared());
@@ -109,14 +109,14 @@ fn then(n: &NoticeRow) -> String {
 /// back: they are said, and the run goes on.
 fn held(severity: Declared) -> &'static str {
     match severity {
-        Declared::Error => "every command that writes to the organisation refuses until then",
+        Declared::Error => "every command that writes to the organization refuses until then",
         Declared::Warning | Declared::Info => "",
     }
 }
 
 /// What an open message of this severity IS for this run: the pack's severity, capped by
 /// what the run does. A run that only reads says an `error` as a warning — the command
-/// that closes the message compiles the estate too, and a compile that refused would
+/// that closes the message transpiles the estate too, and a transpile that refused would
 /// leave no way to close it.
 fn severity(declared: Declared, doing: Doing) -> Severity {
     match (declared, doing) {
@@ -135,7 +135,7 @@ pub(crate) fn render(rows: &[NoticeRow]) -> String {
     s
 }
 
-/// The gate, for a run that writes to the organisation: every pack-declared message of
+/// The gate, for a run that writes to the organization: every pack-declared message of
 /// this estate that is open and declared an `error`, as the error findings it is. Empty
 /// while none stands, which is what lets the run go on.
 ///
@@ -249,7 +249,7 @@ mod tests {
         }]
     }
 
-    /// The compile's finding for an open notice: the pack's command is its `fix`, with the
+    /// The transpile's finding for an open notice: the pack's command is its `fix`, with the
     /// estate's file name where the pack wrote `<estate>`, and the sentence carries the
     /// text and the acknowledgement, never the command.
     #[test]
@@ -261,20 +261,20 @@ mod tests {
         assert_eq!(f[0].fix.as_deref(), Some("satz adopt e.satz --execute --import"));
         assert_eq!(
             f[0].message,
-            "`presets/p.satz`: Adopt what is live.\nOnce the command has run, bind `p_adopted = true` in the estate's params; every command that writes to the organisation refuses until then."
+            "`presets/p.satz`: Adopt what is live.\nOnce the command has run, bind `p_adopted = true` in the estate's params; every command that writes to the organization refuses until then."
         );
         // what it shares with every pack that wrote the same text: the pack and the param
         // are out of it, because the first line of a table row says both
         assert_eq!(
             f[0].shared.as_deref(),
-            Some("Adopt what is live.\nOnce the command has run, bind each param named above `true` in the estate's params; every command that writes to the organisation refuses until then.")
+            Some("Adopt what is live.\nOnce the command has run, bind each param named above `true` in the estate's params; every command that writes to the organization refuses until then.")
         );
         assert_eq!((f[0].subject.as_deref(), f[0].file.as_deref(), f[0].line), (Some("p_adopted"), Some("yaml/e.satz"), Some(2)));
         assert_eq!(f[0].group.as_deref(), Some("notices open — what a pack asks to be run once it is on"), "a title, with no count in it");
     }
 
     /// The pack sets the floor and the run sets the ceiling: an `error` is an error only
-    /// where the run writes to the organisation, a `warning` never is, and an `info` waits
+    /// where the run writes to the organization, a `warning` never is, and an `info` waits
     /// for nothing.
     #[test]
     fn what_a_message_is_depends_on_the_pack_and_on_what_the_run_does() {
@@ -283,7 +283,7 @@ mod tests {
             compile_findings(&decl("p_adopted", declared), &Env::new(), Path::new("yaml/e.satz"), "e.satz", src, doing)[0].severity
         };
         assert_eq!(at(Declared::Error, Doing::Writing), Severity::Error, "a run that writes refuses");
-        assert_eq!(at(Declared::Error, Doing::Reading), Severity::Warning, "a compile says it and goes on");
+        assert_eq!(at(Declared::Error, Doing::Reading), Severity::Warning, "a transpile says it and goes on");
         assert_eq!(at(Declared::Warning, Doing::Writing), Severity::Warning, "the apply prints it and goes on");
         assert_eq!(at(Declared::Info, Doing::Writing), Severity::Info, "nothing waits for it");
         // and only an error names what it holds back
@@ -298,7 +298,7 @@ mod tests {
 
     /// `satz adopt --execute --import` acknowledges the notice it ran for. An estate
     /// that already binds the param — bound by hand, or by an earlier run — keeps ONE
-    /// binding: a second one is a file satz refuses to compile.
+    /// binding: a second one is a file satz refuses to transpile.
     #[test]
     fn acknowledging_a_param_the_estate_already_binds_leaves_one_binding() {
         let dir = std::env::temp_dir().join(format!("satz-ack-{}", std::process::id()));

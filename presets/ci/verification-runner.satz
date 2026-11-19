@@ -1,27 +1,27 @@
-// Watches an estate's repository: every push must still compile, every night the
-// live organisation must still match.
+// Watches an estate's repository: every push must still transpile, every night the
+// live organization must still match.
 //
 //   use "presets/ci/verification-runner.satz"
 //
 // Two Cloud Build triggers and a scheduler, in the project that HOSTS the runner:
 //
 //   satz-check       on every push to main — `satz transpile --check <estate>`.
-//                    A satz release that no longer compiles the estate fails
+//                    A satz release that no longer transpiles the estate fails
 //                    the estate's next push.
 //   satz-compliance  nightly, via Cloud Scheduler — `satz report-compliance
 //                    --format markdown --out <file> --fail-on <statuses>`. An
-//                    org policy widened in the console fails the next nightly run.
+//                    organization policy widened in the console fails the next nightly run.
 //
 // The runner is a service account of its own. It holds nothing about the
 // estate: satz's first act inside the build is to exchange the runner's identity
-// for the ESTATE's IaC service account, exactly as it does on a workstation. The
+// for the estate account, exactly as it does on a workstation. The
 // grant that permits that lives on the estate's account and is the companion
 // pack, `ci/verification-runner-grant.satz` — separate because in the hosted
 // shape the two resources belong to two different parties.
 //
 // Where it runs decides who it is for:
 //
-//   customer-hosted   ci_runner_project = the estate's own infra project; use
+//   customer-hosted   ci_runner_project = the estate's own infrastructure project; use
 //                     this pack AND the grant pack in the same estate.
 //   MSP-hosted        ci_runner_project = the MSP's project, which must be the
 //                     Cloud Source Repositories project the estate repo lives in
@@ -30,7 +30,7 @@
 //                     ci_estate_file and ci_target_infra_project naming the
 //                     customer's — and the customer's estate uses the grant pack
 //                     with ci_runner_service_account set to the MSP runner's
-//                     email. No credential crosses; one IAM binding does.
+//                     email. No key crosses; one IAM binding does.
 //
 // The build steps are INLINE in the trigger, not a cloudbuild.yaml in the
 // watched repository. Whoever controls the build file controls what runs as the
@@ -41,8 +41,8 @@
 // evidence back into the repository: that needs write access to a repository
 // the runner may not own.
 //
-// Requires the estate's IaC service account to exist (post-init), and, for the
-// live nightly run, Cloud Asset Inventory enabled on the estate's infra project
+// Requires the estate account to exist (post-init), and, for the
+// live nightly run, Cloud Asset Inventory enabled on the estate's infrastructure project
 // with an asset-viewer role at organization level — the same two read
 // dependencies `report-compliance` needs from a workstation.
 
@@ -53,7 +53,7 @@ params {
   // Cloud Source Repositories estate this MUST be the repository's own project.
   ci_runner_project       = infra_project_name
   ci_region               = default_region
-  // The WATCHED estate's infra project — the quota project for the nightly read,
+  // The WATCHED estate's infrastructure project — the quota project for the nightly read,
   // because that is where Cloud Asset Inventory is enabled and where the calls
   // should be billed. Same as this estate's own when customer-hosted; the MSP
   // names the customer's.
@@ -65,7 +65,7 @@ params {
   ci_estate_file          = "{customer_id}.satz"
   ci_framework            = "cis-gcp-4.0"
   // Which statuses make the nightly run fail. `unverified` is deliberately not
-  // in the default: an org whose read dependencies are not yet in place would
+  // in the default: an organization whose read dependencies are not yet in place would
   // fail every night for a reason that is not drift.
   ci_fail_on              = "drifted,not-enforced"
   ci_schedule             = "0 3 * * *"
@@ -104,7 +104,7 @@ question ci_repo_name {
 
 question ci_estate_file {
   prompt   = "The estate file inside that repository's yaml_dir"
-  why      = "The push trigger compiles this file and the nightly run judges it. A wrong name fails on the first push — loudly, which is the good case."
+  why      = "The push trigger transpiles this file and the nightly run judges it. A wrong name fails on the first push — loudly, which is the good case."
   reversal = edit
   blast    = none
 }
@@ -139,13 +139,13 @@ google_project_iam_member {
 
 google_cloudbuild_trigger {
   // The check-in trigger. A regex branch matches pushes; `transpile --check`
-  // compiles in memory and writes nothing, so this needs neither tofu nor a
-  // credential beyond the runner's own — no schema fetch, no impersonation.
+  // transpiles in memory and writes nothing, so this needs neither tofu nor a
+  // sign-in beyond the runner's own — no schema fetch, no impersonation.
   satz_check {
     project         = ci_runner_project
     location        = ci_region
     name            = "satz-check"
-    description     = "on every push: does the estate still compile"
+    description     = "on every push: does the estate still transpile"
     service_account = "${{google_service_account.satz_runner.id}}"
     trigger_template {
       project_id  = ci_runner_project
@@ -168,13 +168,13 @@ google_cloudbuild_trigger {
   // The nightly trigger. A CONCRETE branch, because Cloud Scheduler starts it
   // through `triggers:run`, which resolves the template's branch rather than
   // matching a push against a regex. `update-schema` needs tofu, so the step
-  // installs it; the quota project is the estate's infra project, which is the
+  // installs it; the quota project is the estate's infrastructure project, which is the
   // right answer in every estate.
   satz_compliance {
     project         = ci_runner_project
     location        = ci_region
     name            = "satz-compliance"
-    description     = "nightly: does the live organisation still match the estate"
+    description     = "nightly: does the live organization still match the estate"
     service_account = "${{google_service_account.satz_runner.id}}"
     trigger_template {
       project_id  = ci_runner_project

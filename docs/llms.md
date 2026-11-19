@@ -2,15 +2,15 @@
 
 This page is for an agent that drives satz, usually through its MCP server, and
 writes Satz. It is the working subset of the language and the rules that keep what
-compiles also correct.
+transpiles also correct.
 
 [`docs/language.md`](language.md) is the full reference. This page is what to
 keep in your head.
 
 ## What satz is, and the one rule
 
-Satz is a language for describing a Google Cloud organisation. `satz transpile`
-compiles it to OpenTofu HCL; `tofu` applies that. The resource types and attribute
+Satz is a language for describing a Google Cloud organization. `satz transpile`
+transpiles it to OpenTofu HCL; `tofu` applies that. The resource types and attribute
 names **are the Terraform provider's**, to the underscore — if you know
 `google_storage_bucket`, you know the block.
 
@@ -72,10 +72,10 @@ google_storage_bucket {
 - `"${{google_project.infra.project_id}}"` is a **Terraform reference** that survives
   into the HCL — use it to point at another resource in the same estate.
 - **First definition wins, outer beats inner.** The estate declares before its packs,
-  so an estate param overrides a pack default. That is the customisation channel:
+  so an estate param overrides a pack default. That is the customization channel:
   reach for a param before forking a pack.
 - Overriding a list **replaces** it. There is no concatenation for an estate. Entries from
-  outside arrive one way: a project's request file, a pack of `contributes_<param>` the
+  outside arrive one way: a workload estate's request file, a pack of `contributes_<param>` the
   estate `use`s (see *Interfaces* below).
 - A PACK adds to another file's list param with `contributes_<param> = [ … ]` in its
   own `params`. The entries go after whatever the list holds, each once, they leave
@@ -106,7 +106,7 @@ google_folder {
 }
 ```
 
-A project whose `project_service` names `compute.googleapis.com` is emitted with
+A project whose `project_service` names `compute.googleapis.com` is written with
 `auto_create_network = false`, so it gets no `default` network; state the attribute
 to decide otherwise.
 
@@ -130,7 +130,7 @@ is the only form that **merges across fragments**: two packs granting different 
 to the same member at the same scope fold into one grant.
 
 **2. Member map with its scope pinned.** For a type whose scope is neither the
-organisation nor the node it sits in — a bucket, a service account, a KMS key — write
+organization nor the node it sits in — a bucket, a service account, a KMS key — write
 the scope attribute in the map. Every other key is still a member:
 
 ```satz
@@ -155,7 +155,7 @@ google_storage_bucket_iam_member {
 }
 ```
 
-**Choosing:** prefer a member map (1 or 2). Use the labelled form when the scope has to
+**Choosing:** prefer a member map (1 or 2). Use the labeled form when the scope has to
 be a Terraform reference. For a conditional grant, the role becomes an object:
 
 ```satz
@@ -199,7 +199,7 @@ need, say so instead of forking.
 
 **A workload pack is not a preset.** A preset is a pack of the library under `presets/`,
 switched on with `satz_add_preset`. A workload pack is one file in the estate's
-`packs_dir`, used by an estate beside the organisation: `satz_packs` lists them with their
+`packs_dir`, used by an estate beside the organization: `satz_packs` lists them with their
 state, `satz_get_pack` fetches one and records its origin in `packs_dir/origin.toml`,
 `satz_update_pack` brings a fetched one up to date and leaves an edited one as it is
 (`report_only` first), `satz_detach_pack` makes one the repository's own, and
@@ -214,7 +214,7 @@ suppress google_organization_iam_member "group:x@example.com" role "roles/viewer
 ```
 
 A `suppress` that matches **nothing is a hard error**, so a stale suppression is
-reported instead of deployed.
+reported instead of applied.
 
 ## Claims — the compliance plane
 
@@ -245,7 +245,7 @@ question customer_shortname {
   prompt   = "Short name identifying this customer"
   why      = "Project ids and bucket names derive from it, and those ids are globally unique."
   reversal = recreate // edit | state_surgery | recreate — cost to the ESTATE
-  blast    = none     // none | low | high — cost to the RUNNING organisation
+  blast    = none     // none | low | high — cost to the RUNNING organization
 }
 ```
 
@@ -270,7 +270,7 @@ pack CIS_GCP_Foundation_4_0 version "2.17"
 params { cis_baseline_adopted = false }
 
 notice cis_baseline_adopted {
-  text     = "Google sets some of these policies on every new organisation …"
+  text     = "Google sets some of these policies on every new organization …"
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }
@@ -278,8 +278,8 @@ notice cis_baseline_adopted {
 
 `satz_interview` and `satz_add_preset` return what their call opened in `notices`. Tell the
 human the command and let them run it; when it has run, acknowledge it with
-`satz_interview` `answers: {<param>: true}` — never before. Until then the compile warns
-and every command that writes to the organisation refuses, because the notice declares
+`satz_interview` `answers: {<param>: true}` — never before. Until then the transpile warns
+and every command that writes to the organization refuses, because the notice declares
 `severity = error`; a notice declaring `warning` or `info` refuses nothing. `satz_presets`
 shows every pack's notices with `severity` and `acknowledged`.
 
@@ -291,7 +291,7 @@ blocking answer, and repeat until `summary.complete`.
 
 **Adding or removing a pack** is `satz_add_preset` / `satz_remove_preset` with the pack's gate
 or path — never an edited `use` line. `satz_presets` lists every pack with its answer, its
-line, whether it deploys and what it needs. A refusal names the pack that is missing or
+line, whether it creates anything and what it needs. A refusal names the pack that is missing or
 still depends on it: ask the human before passing `with_requirements` or `cascade`.
 
 ## Adopting what already exists
@@ -311,20 +311,20 @@ hcl trust "reviewed: the provider has no resource for X" { resource "…" "…" 
 action "scc" { reason = "…" run = "../scripts/x.py" args = ["--org", "{customer_organization_id}"] }
 ```
 
-`hcl { … }` deploys, but the compliance plane **cannot see into it** — it is never a
+`hcl { … }` is applied, but the compliance plane **cannot see into it** — it is never a
 witness, and it warns on every transpile unless you write `hcl trust "…"`. An `action`
 is inert until `satz run-actions`, which launches it by extension: a `.py` script runs
 through `uv run --script` on every platform, a `.sh` one does not run on Windows. Write a
 new action in Python. Both are last resorts; prefer a real resource.
 
-## Interfaces — what the projects beside an estate read, and what they may ask for
+## Interfaces — what the workload estates beside an estate read, and what they may ask for
 
 An estate publishes values with `export "<name>" = <value> [attach ["<type>", …]]
-[description "…"]` — outside every block a core export, inside `interface "<project>"
-[common] { … }` one project's; `use interface "<other>"` composes; `export … = all <type>
+[description "…"]` — outside every block a core export, inside `interface "<name>"
+[common] { … }` one workload estate's; `use interface "<other>"` composes; `export … = all <type>
 [under <type>.<label>]` publishes a map keyed by label; `private = true` in a body or
 `private <type>.<label>` keeps a resource out. `satz transpile` writes `interfaces/outgoing/` beside
-`hcl/`: `common/` and one folder per project, each interface as an HCL module and as
+`hcl/`: `common/` and one folder per workload estate, each interface as an HCL module and as
 `satz/interface.satz`, which another estate `use`s. It reads a value by the name of its
 interface folder, `"${{interface.<folder>.<value>}}"` — `<folder>` is the interface's name,
 the folder's name under `interfaces/incoming/`: `"${{interface.payments.project_id}}"`.
@@ -336,9 +336,9 @@ delegated folders and projects. A read stands in a resource body, in `terraform`
 `interface-use`).
 `CHANGES.md` beside an interface's README says what the last transpile changed for it.
 
-`each <list param> by <field> { … }` inside a resource type map writes one labelled body per
-entry of the list; `request <list param> { key fields description }` declares what a project
-may add to that list, and a project's request file — a pack of `contributes_<param>` entries
+`each <list param> by <field> { … }` inside a resource type map writes one labeled body per
+entry of the list; `request <list param> { key fields description }` declares what a workload estate
+may add to that list, and a workload estate's request file — a pack of `contributes_<param>` entries
 — is checked by `satz check-request` and vendored into the estate by pull request.
 
 `each <list> by <field> as "{each.<field>}_<what>" { … }` labels each body with the string,
@@ -347,14 +347,16 @@ stay fixed. `key = value when <param>` and `block when <param> { … }` write th
 the block only where the param carries a value — `when not` for the opposite, and inside an
 `each` also `when each.<field>`. A param nobody declares is an error, never `false`.
 
-Over MCP, `satz_check_consumer` checks a project's HCL against the interface it reads.
+Over MCP, `satz_check_consumer` checks a workload estate's HCL against the interface it reads.
 `satz interfaces` and `satz check-request` have no tool: ask a human for them. Access is
-delegated to a team by an entry of `delegations` in `presets/delegation.satz` — its account,
-state bucket and group — and one entry per target that names it: `delegated_folders`
+delegated to a team by an entry of `delegations` in `presets/delegation.satz` — its estate
+account, state bucket and estate account user group — and
+ one entry per delegated resource that names it: `delegated_folders`
 (`presets/delegated-folders.satz`) or `delegated_projects`
 (`presets/delegated-projects.satz`). `satz_add_entry` adds an entry to any list a pack
 declares with `request` — `{ list, fields }`, checked against the declaration — or a
-reviewed pull request does; a request file is checked in the project's pipeline.
+reviewed pull request does; a request file is checked in the workload repository's pipeline.
+
 
 ## Working through the MCP server
 
@@ -375,10 +377,10 @@ The loop, in order:
    writes the file and returns the open questions; pass what the human decides back
    as `answers` until `summary.complete`.
 2. **Write or edit the `.satz`.**
-3. **`satz_transpile_check`** — compiles in memory, writes nothing. Run it after every
+3. **`satz_transpile_check`** — transpiles in memory, writes nothing. Run it after every
    edit.
 4. **`satz_require <framework>`** — does the estate still discharge what it claims? Run
-   it after touching packs, claims or org policies.
+   it after touching packs, claims or organization policies.
 5. **`satz_transpile`** (needs the `write` capability) — writes `hcl/`.
    `satz_scan_checkov` (needs `exec`) then runs Checkov over it and names the Satz block
    behind each failed check; with `out` (needs `write` too) it also writes Checkov's
@@ -396,7 +398,7 @@ nothing. Never author against a hash you did not get from `satz_remediation_item
 the same Prowler export and Checkov report.
 
 **Adopting what exists.** Never invent an id: `satz_adopt` resolves every declared
-resource against the live organisation and says per row what it matched on; with
+resource against the live organization and says per row what it matched on; with
 `execute` it writes the verified ids into the estate as `"import-id"`. `rows` is the
 worklist, not the table — the rows that ask for something, most urgent first — and
 `rows_total`, `rows_omitted` and `note` say what is missing; pass `out` for the whole
@@ -406,16 +408,16 @@ human's.
 Also available: `satz_check_presets` (is the pack library current, or forked?),
 `satz_merge_presets` (bring it up to date: forks a used pack that changed and repoints
 the estate, or adopts upstream in place with `adopt`), `satz_update_prerequisites` (the roles the
-estate's service account is missing for what it emits and the APIs its infrastructure
+estate's service account is missing for what it writes and the APIs its infrastructure
 project does not enable — it writes both unless `report_only`),
 `satz_review_preset` (judge a pack somebody wrote against the library's bar, findings
 anchored to file and line — offline and read-only),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_fmt` (the
 canonical layout of a file), `satz_get_presets` (fetch the pack library), `satz_prowler`
 (the Prowler command line this estate needs), `satz_whoami`
-(both halves of the identity — the ADC account, and the estate's mode, declared service
-account and whether the calls impersonate it — with live checks that the one may become
-the other and that the quota project is reachable; check this first when a live call is
+(both halves of the identity — the signed-in account, and the estate's mode, declared
+estate account and whether the calls impersonate it — with live checks that the one may
+act as the other and that the quota project is reachable; check this first when a live call is
 refused).
 
 **`satz_report_compliance` returns data, not a table.** Read `live_status` before
@@ -436,7 +438,7 @@ recoverable: say what you would need and why, rather than retrying the same call
 <estate> --check --format json` from a shell — return every finding as an object:
 `severity` (`error` · `warning` · `info`), `kind`, `subject`, `file`, `line`, `message`
 (the sentence) and, where one command answers it, `fix` (that command, as it is typed).
-Run `fix`; never cut a command out of `message`. A refused compile returns the same
+Run `fix`; never cut a command out of `message`. A refused transpile returns the same
 object with its errors in `findings`, a parse error included (`kind: "front-end"`).
 
 On a terminal the same finding is a block: a first line of severity, kind, `file:line` and
@@ -452,24 +454,24 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | message | what happened |
 |---|---|
 | unknown key in a resource body | the attribute is not in the provider schema for that type — invented or misspelled |
-| the same address declared twice | two files emit one address with different bodies; the fold refuses and names both |
+| the same address declared twice | two files write one address with different bodies; the fold refuses and names both |
 | `use … when X: unknown param` | `when` names a param nobody declares |
 | a suppression matched nothing | the thing you are removing is not there — a stale suppression |
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
 | `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the finding's `fix`, then bind its `subject` — the param — `true` |
-| the IaC service account … lacks roles, kind `prerequisites` | a resource type the estate emits needs a role the estate does not grant its IaC service account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
-| … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate emits is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
-| the account … was not delegated roles …, kind `prerequisites` | a team's estate (it reads the interface of a delegation, `delegation-<name>`) needs a role its account was not given; nothing in this estate can grant it — ask for the role in `delegated_folders_roles` of `presets/delegated-folders.satz`, or in `billing_roles` of the delegation's entry in `delegations` of `presets/delegation.satz`, in the organisation's estate. There is no `fix` |
-| … API(s) … not enabled on …, the workload's infrastructure project …, kind `prerequisites` | a team's estate needs an API on the project its calls are billed to, the delegation's infrastructure project, which the organisation's estate declares; ask for it in `apis` of the delegation's entry in `delegations`. There is no `fix`, and `apply` refuses until it is delegated |
+| the estate account … lacks roles, kind `prerequisites` | a resource type the estate writes needs a role the estate does not grant its estate account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
+| … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate writes is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
+| the account … was not delegated roles …, kind `prerequisites` | a workload estate (it reads the interface of a delegation, `delegation-<name>`) needs a role its account was not given; nothing in this estate can grant it — ask for the role in `delegated_folders_roles` of `presets/delegated-folders.satz`, or in `billing_roles` of the delegation's entry in `delegations` of `presets/delegation.satz`, in the organization's estate. There is no `fix` |
+| … API(s) … not enabled on …, the workload's infrastructure project …, kind `prerequisites` | a workload estate needs an API on the project its calls are billed to, the delegation's infrastructure project, which the organization's estate declares; ask for it in `apis` of the delegation's entry in `delegations`. There is no `fix`, and `apply` refuses until it is delegated |
 | `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-preset` that switches the needed one on |
 | `"${{interface.x}}"`: no used interface folder has a value `x`, kind `interface-use` | no interface file the estate `use`s has a value `x`; the message lists what they have |
 | `"${{interface.x}}"`: the interface folders `a`, `b` each have a `x` and they differ, kind `interface-use` | two used folders carry the value with different content; name the folder, `"${{interface.a.x}}"` or `"${{interface.b.x}}"` — the message writes both |
 | `"${{interface.f.x}}"`: no used interface folder is named `f`, or the folder `f` has no value `x`, kind `interface-use` | the folder's name is the interface's name, the folder under `interfaces/incoming/`; the message lists the folders the estate uses, or the values the folder has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
-| `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the request point does not declare; the message lists its fields |
-| `request <param>: entry … has <field> = "…", which the request point's pattern … does not match` | the field's value is not of the form the request point's `patterns` sets — `owner_group` of `projects` is an address `<name>@<domain>`; write the value in that form |
+| `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the list does not declare; the message lists its fields |
+| `request <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `owner_group` of `projects` is an address `<name>@<domain>`; write the value in that form |
 | `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules

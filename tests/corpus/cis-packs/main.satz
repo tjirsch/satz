@@ -1,5 +1,5 @@
 // Corpus case: the CIS coverage extensions, ALL of them on at once. No estate
-// would do this — that is the point. It pins the emitted body of each
+// would do this — that is the point. It pins the written body of each
 // constraint, because the three shapes differ and getting one wrong is a policy
 // that either does nothing or refuses everything:
 //   * a plain managed boolean  -> enforce only

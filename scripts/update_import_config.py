@@ -17,7 +17,7 @@
                      folders/<n>, projects/<id>), paced under the ListAssets
                      quota; a row whose type ListAssets refuses at its
                      content_type loses its asset_type (state shape only).
-                     Reads the Application Default Credentials through gcloud
+                     Reads the signed-in person's token through gcloud
 
 Run with: uv run --with ruamel.yaml scripts/update_import_config.py …
 Comments and row order in the YAML survive (ruamel round-trip).
@@ -806,9 +806,9 @@ def quota_project() -> str:
     for key in ("GOOGLE_CLOUD_QUOTA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"):
         if os.environ.get(key, "").strip():
             return os.environ[key].strip()
-    adc = Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config/gcloud")) / "application_default_credentials.json"
-    if adc.exists():
-        qp = json.loads(adc.read_text()).get("quota_project_id", "").strip()
+    sign_in = Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config/gcloud")) / "application_default_credentials.json"
+    if sign_in.exists():
+        qp = json.loads(sign_in.read_text()).get("quota_project_id", "").strip()
         if qp:
             return qp
     sys.exit("--probe: no quota project — set GOOGLE_CLOUD_QUOTA_PROJECT or run gcloud auth application-default set-quota-project")

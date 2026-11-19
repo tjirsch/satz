@@ -6,7 +6,7 @@ terraform {
   }
 }
 
-# the project the provider defaults to is built from the organisation
+# the project the provider defaults to is built from the organization
 locals {
   infra_project_id = "${var.project_prefix}${var.org_id}"
 }
@@ -42,7 +42,7 @@ resource "google_organization_iam_custom_role" "reader" {
   permissions = ["resourcemanager.projects.get", "resourcemanager.folders.get"]
 }
 
-# authoritative: carried verbatim, and it still reads the organisation variable
+# authoritative: carried verbatim, and it still reads the organization variable
 resource "google_organization_iam_binding" "viewer" {
   org_id  = var.org_id
   role    = "roles/viewer"

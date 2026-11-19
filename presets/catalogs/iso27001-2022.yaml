@@ -182,7 +182,7 @@ controls:
     duties: [evidence-procedure-documented]
   "A.5.29":
     title: "Information security during disruption"
-    paraphrase: "Security is maintained while the organisation is disrupted."
+    paraphrase: "Security is maintained while the organization is disrupted."
     automatability: organizational
   "A.5.30":
     title: "ICT readiness for business continuity"
@@ -205,7 +205,7 @@ controls:
     duties: [retention-schedule-approved]
   "A.5.34":
     title: "Privacy and protection of PII"
-    paraphrase: "PII is handled per applicable law and the organisation's own rules."
+    paraphrase: "PII is handled per applicable law and the organization's own rules."
     automatability: partial
     evidence:
       "cis-gcp/4.0": ["2.3"]

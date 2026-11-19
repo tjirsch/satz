@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# update-third-party-licenses.sh — rewrite THIRD-PARTY-LICENSES.md, the licence text
-# of every crate compiled into satz, from Cargo.lock.
+# update-third-party-licenses.sh — rewrite THIRD-PARTY-LICENSES.md, the license text
+# of every crate built into satz, from Cargo.lock.
 #
 #   scripts/update-third-party-licenses.sh           # rewrite the file
 #   scripts/update-third-party-licenses.sh --check   # fail when it is stale, print the diff
 #
 # The file travels in every release archive (`include` in dist-workspace.toml), which
 # is what MIT and Apache 2.0 ask of a binary redistribution. `about.toml` holds the
-# allow-list of licences and `about.hbs` the layout; a dependency under a licence the
+# allow-list of licenses and `about.hbs` the layout; a dependency under a license the
 # allow-list does not name fails here, naming the crate.
 #
 # The `checks` job of .github/workflows/smoke.yml runs `--check` on every pull request
@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # cargo-about is a tool, not a dependency — it never enters the binary's crate graph.
-# The version is exact on purpose: a different one can read a crate's licence file
+# The version is exact on purpose: a different one can read a crate's license file
 # differently, and the generated file would then differ between a machine and CI
 # without anything in the repository having changed.
 WANT=0.9.2
@@ -34,10 +34,10 @@ tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 # --frozen: --locked (the lockfile is the input and must not move underneath the run)
 #           plus --offline, so the crate sources on disk are the only input. Online,
-#           cargo-about may pull a licence text out of a crate's git repository
+#           cargo-about may pull a license text out of a crate's git repository
 #           instead, and the file would depend on what the network answered. A source
 #           that is not unpacked yet: `cargo fetch --locked`.
-# --fail:   a crate whose licence cannot be read is an error, never an empty entry
+# --fail:   a crate whose license cannot be read is an error, never an empty entry
 cargo about generate --frozen --fail -c about.toml about.hbs -o "$tmp"
 
 if [[ "${1:-}" == "--check" ]]; then

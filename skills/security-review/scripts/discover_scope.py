@@ -3,15 +3,15 @@
 
     python3 discover_scope.py <shortcode-or-folder> [--scan-date YYYY-MM-DD] [--write <scope.yaml>]
 
-Reads the central estate repo (<shortcode>-C<dirid>/: config.toml, whose `yaml_dir` names the
+Reads the organization's repository (<shortcode>-C<dirid>/: config.toml, whose `yaml_dir` names the
 estate directory — `satz/` when the key is absent — and <id>.satz inside it) and prints the facts
-every later step needs: org id, domain, infra project, IaC service account, estate file, audit
+every later step needs: organization id, domain, infrastructure project, estate account, estate file, audit
 folder, the workloads beside the repo and the own project ids for Prowler. With --write it seeds
 a scope.yaml from assets/scope.template.yaml. `satz interfaces` runs when satz is on PATH; it
-compiles the estate offline. Nothing here touches the cloud.
+transpiles the estate offline. Nothing here touches the cloud.
 
 A workload is a sibling directory of the central repo inside the customer folder, neither the
-repo nor `audit/`, of one of two kinds: `satz` — a project estate (config.toml, a .satz in its
+repo nor `audit/`, of one of two kinds: `satz` — a workload estate (config.toml, a .satz in its
 yaml_dir with a `use "…/interface.satz"` line) — or `hcl` — a directory of .tf files reading
 `module.satz.<export>`. Anything else (documents, pdfs) is ignored.
 """
@@ -175,7 +175,7 @@ def project_ids_of(report):
 
 
 def declared_projects(repo):
-    """The `google_project` ids the estate's generated root module declares (hcl/main.tf)."""
+    """The `google_project` ids the estate's generated HCL code declares (hcl/main.tf)."""
     main_tf = repo / "hcl" / "main.tf"
     if not main_tf.exists():
         return []
@@ -267,7 +267,7 @@ def main():
         )
     if report is None:
         print(
-            f"WARNING: {why} — own_projects holds only the infra project and hcl/main.tf's google_project ids; "
+            f"WARNING: {why} — own_projects holds only the infrastructure project and hcl/main.tf's google_project ids; "
             "fill the workloads' project_id in scope.yaml and the --own-projects list by hand",
             file=sys.stderr,
         )

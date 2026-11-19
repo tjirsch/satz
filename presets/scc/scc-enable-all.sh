@@ -17,7 +17,7 @@
 # `gcloud scc manage`, because the SDK knows only 13 of the 17 services the API
 # exposes: ARTIFACT_GUARD, ARTIFACT_ANALYSIS, AGENT_ENGINE_VULN_ASSESSMENT and
 # EXTERNAL_EXPOSURE have no gcloud name at all, while the API sets them without
-# complaint. gcloud is still used for credentials and for walking the hierarchy.
+# complaint. gcloud is still used for sign-in and for walking the hierarchy.
 #
 # Everything
 # DOWNSTREAM of activation (custom modules, sources + source IAM, notification
@@ -25,17 +25,17 @@
 # belongs in a preset; this file covers only the part that has no resource.
 #
 # WHAT IT DOES
-#   1. org pass         each service -> ENABLED   at organizations/<ID>, except
+#   1. organization pass         each service -> ENABLED   at organizations/<ID>, except
 #                                       the multicloud connectors and the two
 #                                       opt-in ones, which --optional decides
 #                                       (leave / enable / disable)
 #   2. descendant sweep each service -> INHERITED at every folder and project
-#                                       under the org, so the org value is the
+#                                       under the organization, so the organization value is the
 #                                       single source of truth and no local
 #                                       override survives
 #   3. optional         each module  -> INHERITED (clears per-module overrides)
 #
-# It does NOT activate a tier. Enabling a service on an org with no
+# It does NOT activate a tier. Enabling a service on an organization with no
 # Premium/Enterprise subscription fails at the API and no flag here changes
 # that — activate the tier first, then run this.
 #
@@ -57,7 +57,7 @@ TARGETS_FILE=""
 QUOTA_PROJECT=""
 
 # Services gcloud knows about (SDK 580.0.0). Used only as a fallback when the
-# org's own service list cannot be read — the live list is authoritative.
+# organization's own service list cannot be read — the live list is authoritative.
 FALLBACK_GCP_SERVICES=(
   SECURITY_HEALTH_ANALYTICS
   EVENT_THREAT_DETECTION
@@ -124,10 +124,10 @@ Usage: presets/scc/scc-enable-all.sh --organization ORG_ID [options]
                                    enabled in the console
                         Everything else is on by default.
   --with-multicloud     include the AWS/Azure connector services
-  --org-only            enable at the org, skip the descendant sweep
+  --org-only            enable at the organization, skip the descendant sweep
   --descendants-only    only sweep folders/projects to INHERITED
   --reset-modules       also set every MODULE to INHERITED (clears per-module
-                        overrides; applies to the org pass and the sweep)
+                        overrides; applies to the organization pass and the sweep)
   --targets-file FILE   newline-separated folders/<id> and projects/<id> to
                         sweep, instead of walking the hierarchy
   --quota-project ID    project the API bills the call to; defaults to the
@@ -142,7 +142,7 @@ Examples
   # do it
   presets/scc/scc-enable-all.sh --organization 123456789012 --apply
 
-  # or let the estate supply the organisation id: the pack beside this file
+  # or let the estate supply the organization id: the pack beside this file
   # binds this script as an `action`, so satz builds the command line from
   # the estate's own params
   satz run-actions <estate>.satz              # print it, run nothing
@@ -250,13 +250,13 @@ diagnose() {
   case "$err" in
     *PERMISSION_DENIED*|*"does not have permission"*)
       say "        -> caller lacks securitycentermanagement.securityCenterServices.update"
-      say "           (roles/securitycenter.admin at the org, or the settings admin role)" ;;
+      say "           (roles/securitycenter.admin at the organization, or the settings admin role)" ;;
     *constraint*|*allowedPolicyMemberDomains*|*allowedPolicyMembers*)
       say "        -> blocked by the CIS §1.1 domain/principal locks: Google's role"
       say "           grant to a service agent was refused. Name the agent in"
       say "           allowed_policy_member_subjects; see the SCC section of presets/README.md" ;;
     *"not supported"*|*NOT_FOUND*|*"is not enabled"*|*subscription*|*tier*)
-      say "        -> service unavailable at this org's SCC tier, or its API is off."
+      say "        -> service unavailable at this organization's SCC tier, or its API is off."
       say "           Tier activation is NOT scriptable here — activate, then re-run." ;;
   esac
 }
@@ -297,12 +297,12 @@ set_state() {
     say "    ok    $service -> $state"
     OK=$((OK+1))
   elif google_managed "$err"; then
-    # Google runs this detector for this organisation itself: the service is not
+    # Google runs this detector for this organization itself: the service is not
     # ours to switch, and saying FAIL would make an estate's `run-actions` stop on
-    # a state that is already correct. Measured on a 2026 organisation, where
+    # a state that is already correct. Measured on a 2026 organization, where
     # SECURITY_HEALTH_ANALYTICS answers
     # "cannot update service settings … for the greenfield GCSB resource".
-    say "    skip  $service (managed by Google for this organisation, not settable here)"
+    say "    skip  $service (managed by Google for this organization, not settable here)"
     SKIPPED_MANAGED+=("$parent $service")
   else
     say "    FAIL  $service -> $state"
@@ -357,7 +357,7 @@ discover_services() {
     printf '%s\n' "$live"
     return
   fi
-  say "note: could not read the org's service list; using the built-in list" >&2
+  say "note: could not read the organization's service list; using the built-in list" >&2
   printf '%s\n' "${FALLBACK_GCP_SERVICES[@]}"
   if (( WITH_MULTICLOUD )); then printf '%s\n' "${MULTICLOUD_SERVICES[@]}"; fi
 }
@@ -387,7 +387,7 @@ is_multicloud() {
 }
 
 # --------------------------------------------------- hierarchy discovery ----
-# Emits folders/<id> and projects/<id> for everything under the org.
+# Writes folders/<id> and projects/<id> for everything under the org.
 walk_folders() {
   local parent_flag="$1" parent_val="$2" f
   while IFS= read -r f; do
@@ -464,7 +464,7 @@ if (( DO_DESCENDANTS )); then
   step "2. folders and projects — every service INHERITED"
   read_into TARGETS < <(discover_targets)
   if (( ! ${#TARGETS[@]} )); then
-    say "  no folders or projects found under the org (or listing was denied)"
+    say "  no folders or projects found under the organization (or listing was denied)"
   else
     say "  ${#TARGETS[@]} target(s)"
     for t in "${TARGETS[@]}"; do
@@ -482,7 +482,7 @@ fi
 step "summary"
 say "  ok: $OK   skipped (Google-managed): ${#SKIPPED_MANAGED[@]}   failed: $FAILED"
 if (( ${#SKIPPED_MANAGED[@]} )); then
-  say "  managed by Google for this organisation, nothing to set:"
+  say "  managed by Google for this organization, nothing to set:"
   printf '    %s\n' "${SKIPPED_MANAGED[@]}"
 fi
 if (( FAILED )); then

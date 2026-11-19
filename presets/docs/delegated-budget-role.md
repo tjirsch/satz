@@ -6,7 +6,7 @@ Source: `presets/delegated-budget-role.satz`
 ## Purpose
 
 Delegated access to budgets: the role an account manages budgets with, for its own
-project or folder alone. It is declared once for the organisation and granted by the
+project or folder alone. It is declared once for the organization and granted by the
 two access packs to the entries that ask for it.
 
 WHAT THE ROLE CARRIES. `billing.resourcebudgets.read` and `billing.resourcebudgets.write`:
@@ -19,7 +19,7 @@ this is a custom role.
 WHO GETS IT. An entry of `presets/delegated-projects.satz` or of
 `presets/delegated-folders.satz` that says `budgets = true`. On a folder the role is
 inherited by the projects in it. An entry that asks while this pack is off is refused by
-the compile: its grant names a role the estate does not declare.
+the transpile: its grant names a role the estate does not declare.
 
 NO CLAIM. A delegation, not a control: this pack witnesses nothing.
 

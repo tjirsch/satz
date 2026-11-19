@@ -104,8 +104,8 @@ pub(crate) struct Cli {
     #[arg(long, global = true, help_heading = "Global options")]
     verbose: bool,
 
-    /// Live commands: call the APIs as the plain ADC identity instead of
-    /// impersonating the estate's IaC service account
+    /// Live commands: call the APIs as the signed-in person instead of
+    /// impersonating the estate account
     #[arg(long, global = true, help_heading = "Global options")]
     no_impersonate: bool,
 
@@ -183,7 +183,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         phase: Option<String>,
     },
-    /// Compile an estate to HCL (a `.yaml` estate is refused, naming the last release that converts one)
+    /// Transpile an estate to HCL code (a `.yaml` estate is refused, naming the last release that converts one)
     Transpile {
         /// Estate file, .satz (inside yaml_dir if relative)
         ///
@@ -198,17 +198,17 @@ pub(crate) enum Commands {
         /// Print the resolved variable table (terraform.tfvars) to stdout after transpilation
         #[arg(long)]
         print_variables: bool,
-        /// After transpiling, run `<tf_tool> plan` in hcl_dir (initialising it first if needed)
+        /// After transpiling, run `<tf_tool> plan` in hcl_dir (initializing it first if needed)
         #[arg(long)]
         plan: bool,
-        /// After transpiling, run `<tf_tool> apply` in hcl_dir (initialising it first if needed)
+        /// After transpiling, run `<tf_tool> apply` in hcl_dir (initializing it first if needed)
         #[arg(long)]
         apply: bool,
         /// After transpiling, run Checkov over hcl_dir and point each finding at
         /// the Satz block that declared the resource (failed checks exit 1)
         #[arg(long)]
         scan: bool,
-        /// Compile only: parse, fold and emit in memory, write nothing —
+        /// Transpile only: parse, fold and write in memory, write nothing —
         /// the estate either transpiles or the error says why
         #[arg(long)]
         check: bool,
@@ -217,9 +217,9 @@ pub(crate) enum Commands {
         /// list is read as Satz writes one, a string as written
         #[arg(long = "input", value_name = "NAME=VALUE")]
         inputs: Vec<String>,
-        /// `json` prints the compile as data on stdout — the estate, the addresses it
-        /// emits, the files written and every finding, silenced ones included — and
-        /// nothing on stderr but the version line. A refused compile prints the same
+        /// `json` prints the transpile as data on stdout — the estate, the addresses it
+        /// writes, the files written and every finding, silenced ones included — and
+        /// nothing on stderr but the version line. A refused transpile prints the same
         /// object with its errors in `findings`, and exits 1
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
@@ -278,14 +278,15 @@ pub(crate) enum Commands {
         /// Initial IaC Admin User (default: first.admin@<domain>)
         #[arg(long)]
         iac_user: Option<String>,
-        /// Display name of the folder directly under the organisation that holds the
-        /// customer's and the projects' folders. Without it they live at the organisation
+        /// Display name of the workload folder: the folder directly under the
+        /// organization that holds the customer's and the projects' folders. Without it they
+        /// live at the organization
         #[arg(long)]
         workload_folder_name: Option<String>,
-        /// Write a WORKLOAD estate instead, from the interface folders an organisation's
+        /// Write a WORKLOAD estate instead, from the interface folders an organization's
         /// estate wrote for a delegation: the delegation's own folder of its
-        /// `interfaces/outgoing/`, `delegation-<name>`, and that of every folder and project
-        /// this estate works in
+        /// `interfaces/outgoing/`, `delegation-<name>`, and that of every delegated folder and
+        /// delegated project this estate works in
         /// (`presets/delegation.satz`, `presets/delegated-folders.satz`,
         /// `presets/delegated-projects.satz`). Each is copied to `interfaces/incoming/`
         /// here, unless it is already there, and the estate runs as the delegation's account
@@ -294,28 +295,28 @@ pub(crate) enum Commands {
         /// With `--from`: the estate's name. Without it the delegation's
         #[arg(long, requires = "from")]
         name: Option<String>,
-        /// Accepted and ignored: deriving from the Application Default Credentials is what init does by default
+        /// Accepted and ignored: deriving from the signed-in person's access is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
         /// Overwrite an existing estate instead of merging the params named here into it
         #[arg(long)]
         force: bool,
         /// Ask for what is still unbound: hand the estate to `satz interview` when a
-        /// day-0 param was neither stated nor derivable
+        /// bootstrap param was neither stated nor derivable
         #[arg(long)]
         interview: bool,
     },
-    /// Bootstrap day-0 infrastructure (folder, project, billing link, core APIs, state bucket) after a permission pre-flight
+    /// Bootstrap the organization: folder, project, billing link, core APIs and state bucket, after a prerequisites check
     Bootstrap {
         /// Estate file, e.g. C0example.satz (inside yaml_dir if relative)
         ///
         /// Not the tool config — that is --config
         estate: PathBuf,
-        /// Read-only: print the plan, verify the ADC identity and run the
-        /// permission pre-flight; create nothing
+        /// Read-only: print the plan, verify who is signed in and run the
+        /// prerequisites check; create nothing
         #[arg(long)]
         dry_run: bool,
-        /// Materialize a not-yet-existing organization: create the infra
+        /// Materialize a not-yet-existing organization: create the infrastructure
         /// project WITHOUT a parent (Google's documented auto-provisioning
         /// trigger for a directory user), wait for the organization, move the
         /// project under it and write the id back into the estate
@@ -340,7 +341,7 @@ pub(crate) enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
-    /// Diff a desired Org Policy preset against the live organization state
+    /// Diff a desired Organization Policy preset against the live organization state
     #[command(visible_alias = "diff-org-policies")]
     DiffOrganizationalPolicies {
         /// Estate file providing the parameter table (inside yaml_dir if relative)
@@ -357,7 +358,7 @@ pub(crate) enum Commands {
         /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
-        /// Audit the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
+        /// Audit the whole resource hierarchy (organization, folders, projects) via Cloud Asset Inventory, classifying node-level overrides against the baseline
         ///
         /// Needs roles/cloudasset.viewer on the organization
         #[arg(short = 'r', long)]
@@ -383,9 +384,9 @@ pub(crate) enum Commands {
         /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
-        /// Inventory declared policies across the whole resource hierarchy (org, folders, projects) via Cloud Asset Inventory
+        /// Inventory declared policies across the whole resource hierarchy (organization, folders, projects) via Cloud Asset Inventory
         ///
-        /// --scope's "available but not set" section stays org-level. Needs
+        /// --scope's "available but not set" section stays organization-level. Needs
         /// roles/cloudasset.viewer
         #[arg(short = 'r', long)]
         recursive: bool,
@@ -439,25 +440,25 @@ pub(crate) enum Commands {
         /// (matched by live id), as packs the estate `use`s
         #[arg(long)]
         into: Option<PathBuf>,
-        /// live shape: read the scope as this estate's IaC service account,
+        /// live shape: read the scope as this estate's estate account,
         /// writing a new file rather than into the estate
         ///
         /// The account the estate applies with is the one that holds
-        /// roles/cloudasset.viewer on the organisation. Without an estate the
-        /// sweep runs as your own credentials. `--into` names an estate
+        /// roles/cloudasset.viewer on the organization. Without an estate the
+        /// sweep runs as your own sign-in. `--into` names an estate
         /// already, and binds the same way. Refused for a local-mode estate and
         /// under `--no-impersonate`: there is no account to borrow. Either flag
-        /// sweeps only the estate's organisation or a folder/project inside it.
+        /// sweeps only the estate's organization or a folder/project inside it.
         #[arg(long = "as", value_name = "ESTATE", conflicts_with = "into")]
         as_estate: Option<PathBuf>,
         /// hcl shape: carry every block verbatim inside `hcl trust` (the
-        /// zero-risk form; the estate deploys exactly as the source did)
+        /// zero-risk form; the estate applies exactly as the source did)
         #[arg(long)]
         wrap_all: bool,
         /// state/live shapes: a grant one principal holds on two folders or
         /// two projects — `error` refuses the import naming them, `counter`
         /// writes the second and later as labelled resources with a running
-        /// number (the map form emits one address per member and role)
+        /// number (the map form writes one address per member and role)
         #[arg(long, value_enum, default_value_t)]
         on_collision: crate::discovery::OnCollision,
         /// state/live shapes: the customer's short name, which no platform
@@ -499,7 +500,7 @@ pub(crate) enum Commands {
     },
     /// Fetch the upstream preset library into presets_dir: installs what is missing and refreshes what the estate does not use
     ///
-    /// Packs the estate DOES use are refused (they deploy — use
+    /// Packs the estate DOES use are refused (they create resources — use
     /// `merge-presets`), unless --force.
     GetPresets {
         /// Overwrite presets the estate uses as well
@@ -604,7 +605,7 @@ pub(crate) enum Commands {
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
-    /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, org policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
+    /// Adopt what already exists: resolve the live ids of the resources this estate declares (folders by name, groups by email, organization policies by constraint, everything else by its rule in import-config.yaml) and bring them under management
     ///
     /// A dry run unless --execute
     Adopt {
@@ -620,15 +621,15 @@ pub(crate) enum Commands {
         /// With --execute: import into state now instead of writing "import-id"s
         #[arg(long)]
         import: bool,
-        /// Activate GCP managed org-policy constraints the organisation has
-        /// never had, so they can be imported (mutates the org)
+        /// Activate GCP managed org-policy constraints the organization has
+        /// never had, so they can be imported (mutates the organization)
         #[arg(long)]
         activate: bool,
     },
-    /// What the estate's resource types oblige it to declare and does not — the roles its IaC service account is missing, and the APIs not enabled on the project their resources' calls are billed to — written into the estate file
+    /// What the estate's resource types oblige it to declare and does not — the roles its estate account is missing, and the APIs not enabled on the project their resources' calls are billed to — written into the estate file
     ///
     /// Writing is the point: the declarations have to be there either way. The
-    /// estate must compile and come out complete afterwards, or the file is
+    /// estate must transpile and come out complete afterwards, or the file is
     /// restored. `--report-only` lists the gap instead, for an engagement where
     /// satz may not grant those roles itself; it exits non-zero while anything is
     /// missing. Without an estate: the table itself (--format json for
@@ -715,11 +716,11 @@ pub(crate) enum Commands {
         #[arg(long, value_name = "AUTHORED_JSON")]
         merge: Option<PathBuf>,
     },
-    /// Run Checkov over the emitted HCL in hcl_dir and point each finding at the Satz block that declared the resource
+    /// Run Checkov over the transpiled HCL code in hcl_dir and point each finding at the Satz block that declared the resource
     ///
     /// Failed checks exit 1
     Scan {
-        /// Estate file (inside yaml_dir if relative) — compiled for the source
+        /// Estate file (inside yaml_dir if relative) — transpiled for the source
         /// locations of the findings; without it, findings name the HCL only
         estate: Option<String>,
     },
@@ -747,19 +748,19 @@ pub(crate) enum Commands {
     },
     /// Check a project's HCL beside the estate against the estate's interface: attachments only at attach points, no authoritative grant or policy on a node the estate manages, no resource the estate declares too
     ///
-    /// Read-only, offline: parses the `.tf` files under DIR and compiles the estate in
+    /// Read-only, offline: parses the `.tf` files under DIR and transpiles the estate in
     /// memory. Each finding names the project's file and line; any finding exits 1. A project
-    /// written in Satz is held to the same rules by its own compile.
+    /// written in Satz is held to the same rules by its own transpile.
     CheckConsumer {
         /// The project's configuration: a directory of `.tf` files, read with its subdirectories
         dir: PathBuf,
         /// Estate file (.satz, inside yaml_dir if relative); default: the one estate in yaml_dir
         estate: Option<String>,
     },
-    /// Every pack the pack graph offers, as this estate has it: the choice (its gate's answer and default), the line (active, ungated, commented, absent, forked or misplaced), whether it deploys, what it needs and what needs it
+    /// Every pack the pack graph offers, as this estate has it: the choice (its gate's answer and default), the line (active, ungated, commented, absent, forked or misplaced), whether it creates anything, what it needs and what needs it
     ///
     /// Read-only, offline. A `use` the pack graph does not know is listed as
-    /// unmanaged; the findings are the compile's own pack findings.
+    /// unmanaged; the findings are the transpile's own pack findings.
     Presets {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -776,7 +777,7 @@ pub(crate) enum Commands {
     ///
     /// Refused, naming them, while a pack it needs is off — `--with-requirements`
     /// switches those on too where there is one to choose — or a pack it excludes is
-    /// on. The edited estate is compiled, and restored when it does not compile.
+    /// on. The edited estate is transpiled, and restored when it does not transpile.
     AddPreset {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -793,7 +794,7 @@ pub(crate) enum Commands {
     /// folder or project, a subnet, a budget: `satz add-entry <estate> delegated_projects
     /// name=rag delegation=rag budgets=true`. Checked against the declaration (its fields,
     /// their patterns, the key new), written into the estate's params, and the estate is
-    /// compiled and restored when it does not compile. `satz interfaces` lists the lists.
+    /// transpiled and restored when it does not transpile. `satz interfaces` lists the lists.
     AddEntry {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -806,14 +807,14 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
-    /// A project's request file, checked offline against the estate's request points before it is vendored into the estate
+    /// A project's request file, checked offline against the estate's lists before it is vendored into the estate
     CheckRequest {
-        /// The request file: `params { contributes_<param> = [ … ] }` for the estate's request points
+        /// The request file: `params { contributes_<param> = [ … ] }` for the estate's lists
         file: PathBuf,
         /// Estate file (.satz, inside yaml_dir if relative); the one estate in yaml_dir when left out
         estate: Option<String>,
     },
-    /// What the estate publishes to the projects beside it: every export, with the interface it stands in, how a project reads it and what may be attached to it, every interface, and every request point
+    /// What the estate publishes to the workload estates beside it: every export, with the interface it stands in, how a workload estate reads it and what may be attached to it, every interface, and every list
     Interfaces {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -824,11 +825,11 @@ pub(crate) enum Commands {
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
     },
-    /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate deploys nothing
+    /// Switch a pack off: bind its gate false and leave its line — a gated line with a false gate creates nothing
     ///
     /// Refused, naming them, while a pack that needs it is on — `--cascade` switches
     /// those off too — or while its line is not gated on its gate. The edited estate
-    /// is compiled, and restored when it does not compile.
+    /// is transpiled, and restored when it does not transpile.
     RemovePreset {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -841,9 +842,9 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
-    /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it emits has a prerequisite row, and it compiles
+    /// Judge one pack against the library's own bar: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy constraint beside its managed replacement, every type it writes has a prerequisite row, and it transpiles
     ///
-    /// A pack is a fragment, so satz folds it into an estate to see what it emits:
+    /// A pack is a fragment, so satz folds it into an estate to see what it writes:
     /// a synthesised one — the documented example params, the pack's own declared
     /// defaults — unless `--against` names a real estate. Exits non-zero when the
     /// pack does not clear the bar.
@@ -926,7 +927,7 @@ pub(crate) enum Commands {
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
     },
-    /// Judge one workload pack: it parses, it is formatted, its header says what it is, it states its version, it carries no value shaped like private data, it declares no membership, every type it emits has a prerequisite row, and it compiles
+    /// Judge one workload pack: it parses, it is formatted, its header says what it is, it states its version, it carries no value shaped like private data, it declares no membership, every type it writes has a prerequisite row, and it transpiles
     ///
     /// The bar of `review-preset` without the two checks that belong to the preset
     /// library: the changelog row and the adoption rule. Exits non-zero when the
@@ -971,7 +972,7 @@ pub(crate) enum Commands {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
         /// Output format — markdown and pdf are the decisions sheet a human reads
-        /// before an organisation is touched
+        /// before an organization is touched
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Markdown, OutFormat::Pdf, OutFormat::Json, OutFormat::Xlsx]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
@@ -985,7 +986,7 @@ pub(crate) enum Commands {
     /// The Prowler invocation this estate needs — printed, never run
     ///
     /// satz does not run Prowler: the scan spends API quota in every project of the
-    /// estate, and Prowler reads as whoever is logged in rather than as the estate's
+    /// estate, and Prowler reads as whoever is signed in rather than as the estate's
     /// service account. What this answers is which frameworks, which projects, which
     /// formats and which output path — read from what the estate actually declares.
     Prowler {
@@ -1028,7 +1029,7 @@ pub(crate) enum Commands {
     },
     /// The language server behind an editor's Satz support (Language Server Protocol, stdio)
     ///
-    /// Started by the editor, never by hand. Diagnostics from the parser on every
+    /// Started by the editor, never by hand. Findings from the parser on every
     /// change and from the whole pipeline on every open and save — the errors
     /// `transpile --check` prints, at the file and line they name; completion and
     /// hover from the provider schema the estate's config.toml points at;
@@ -1054,8 +1055,8 @@ pub(crate) enum Commands {
     /// Serve this estate over the Model Context Protocol (stdio), so an agent drives satz
     ///
     /// satz never calls a model; this is the other direction. `--allow` sets a ceiling the
-    /// client cannot raise: read (compile and report), write (writes files in the estate),
-    /// exec (runs external tools or changes a live org).
+    /// client cannot raise: read (transpile and report), write (writes files in the estate),
+    /// exec (runs external tools or changes a live organization).
     Mcp {
         /// Directory the server may work under: every config and estate it opens
         /// must live inside it (default: the current directory). The server has
@@ -1102,16 +1103,16 @@ pub(crate) enum Commands {
     },
     /// Open the documentation site in the browser
     OpenReadme,
-    /// Show which identity, credential type and quota project the Application
-    /// Default Credentials resolve to
+    /// Show which identity, sign-in type and quota project the sign-in on this
+    /// computer resolves to
     Whoami {
         /// Estate to answer FOR (.satz, inside yaml_dir if relative): a
-        /// cloud-mode estate runs as its IaC service account, impersonated by the
-        /// credentials; a local-mode one runs as the credentials, and names the
+        /// cloud-mode estate runs as its estate account, impersonated by the
+        /// sign-in; a local-mode one runs as the sign-in, and names the
         /// account `satz migrate --mode cloud` switches to. Omit to report the
-        /// ambient credentials.
+        /// ambient sign-in.
         input: Option<PathBuf>,
-        /// Read the ADC file only — no network, no token minted
+        /// Read the sign-in file only — no network, no token minted
         #[arg(long)]
         offline: bool,
     },
@@ -1131,7 +1132,7 @@ pub(crate) enum Commands {
 enum SilenceSub {
     /// Every silence in force, with its reason and what it still silences
     List {
-        /// Estate file, .satz (inside yaml_dir if relative) — compile it, and say per
+        /// Estate file, .satz (inside yaml_dir if relative) — transpile it, and say per
         /// row how many findings it silences, or that nothing answers to it any more
         input: Option<String>,
     },
@@ -1167,7 +1168,7 @@ enum SilenceSub {
 
 /// An error is printed as what it says. Returned from `main`, it would be printed by
 /// the `Debug` formatter: a message in quotes with its newlines escaped, and a refused
-/// compile as a struct dump of every finding.
+/// transpile as a struct dump of every finding.
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     match run().await {
@@ -1248,8 +1249,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // --no-impersonate wins over everything: pinning the process to the plain
-    // ADC here makes every later per-command binding a no-op rather than a
+    // --no-impersonate wins over everything: pinning the process to the
+    // signed-in person here makes every later per-command binding a no-op rather than a
     // conflict — the operator asked for this, so an estate does not override it.
     if cli.no_impersonate {
         crate::gcp::disable_impersonation();
@@ -1257,7 +1258,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // `--no-api-preflight`: `plan` and `apply` run the tool without asking
     // Service Usage anything. Carried to `run_tf`, which is the one place that
-    // preflights, and ignored by `init`, which preflights nothing.
+    // checks the APIs, and ignored by `init`, which checks nothing.
     let api_preflight = !cli.no_api_preflight;
 
     let config_dir = config_file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -1280,7 +1281,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    // One rule in front of every command that changes a customer's organisation: a pack
+    // One rule in front of every command that changes a customer's organization: a pack
     // says what has to be done before its resources are applied, and a message it
     // declared an `error` refuses the run until the estate acknowledges it
     // (`src/org_write.rs`).
@@ -1300,7 +1301,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             reject_yaml_dialect(&input_path, "transpile")?;
             if format == OutFormat::Json {
                 if print_variables || plan || apply || scan {
-                    return Err("--format json is the compile as data; --print-variables, --plan, --apply and --scan print their own output — run them without it".into());
+                    return Err("--format json is the transpile as data; --print-variables, --plan, --apply and --scan print their own output — run them without it".into());
                 }
                 return transpile_as_json(&input_path, &input, output.as_deref(), check, &tool_config, &runtime_config);
             }
@@ -1310,7 +1311,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             if check {
                 println!(
-                    "transpile --check: OK — {} compiles; nothing was written",
+                    "transpile --check: OK — {} transpiles; nothing was written",
                     input_path.display()
                 );
                 return Ok(());
@@ -1482,9 +1483,9 @@ Thumbs.db
             }
 
             if !from.is_empty() {
-                // A team's estate: written from the hand-over folders — the delegation's
+                // A workload estate: written from the interface folders — the delegation's
                 // account, infrastructure project and state bucket, and the core export
-                // `default_region` — so nothing is derived from the credentials: the central
+                // `default_region` — so nothing is derived from the sign-in: the organization's
                 // estate answered it all.
                 let base = if config_dir.as_os_str().is_empty() { Path::new(".") } else { config_dir.as_path() };
                 let incoming = PathBuf::from(&runtime_config.interfaces_dir).join(crate::interface::INCOMING);
@@ -1504,7 +1505,7 @@ Thumbs.db
                 }
                 fsx::write_generated_satz(&yaml_path, &src)?;
                 println!(
-                    "Generated the team's estate: {} — read through {}; next: `satz transpile {}.satz`",
+                    "Generated the workload estate: {} — read through {}; next: `satz transpile {}.satz`",
                     yaml_path.display(),
                     files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", "),
                     crate::project::label(&name)
@@ -1526,9 +1527,9 @@ Thumbs.db
                     workload_folder_name: workload_folder_name.clone(),
                 };
 
-                // Derivation from the credentials is the DEFAULT, not a flag: every
-                // value below is sitting in the ADC the operator already
-                // authenticated with. Stated wins, derived fills the rest and says
+                // Derivation from the sign-in is the DEFAULT, not a flag: every
+                // value below is readable by the person already
+                // signed in. Stated wins, derived fills the rest and says
                 // where it came from, and what nothing can answer stays EMPTY —
                 // never a placeholder. `--from-live` is accepted and ignored.
                 let _ = from_live;
@@ -1542,13 +1543,13 @@ Thumbs.db
                                 "customer_domain",
                                 customer_domain,
                                 live.customer_domain.clone(),
-                                "the ADC identity",
+                                "the signed-in person",
                             );
                             let iac_user = note.fill(
                                 "first_admin",
                                 iac_user,
                                 live.first_admin.as_ref().zip(live.customer_domain.as_ref()).map(|(a, d)| format!("{}@{}", a, d)),
-                                "the ADC identity",
+                                "the signed-in person",
                             );
                             let customer_id =
                                 note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
@@ -1573,7 +1574,7 @@ Thumbs.db
                             (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
                         }
                         Err(why) => {
-                            eprintln!("init: nothing could be derived from the credentials — {}", why);
+                            eprintln!("init: nothing could be derived from the sign-in — {}", why);
                             eprintln!(
                                 "      what you did not pass is written empty; `satz bootstrap` names each one, and \
                                  `satz init` merges them in later."
@@ -1585,13 +1586,13 @@ Thumbs.db
 
                 // 4. Generate the template estate if customer_id provided
                 if let Some(c_id) = customer_id {
-                    // Every day-0 question lives in presets/estate-core.satz, and the pack lines
+                    // Every bootstrap question lives in presets/estate-core.satz, and the pack lines
                     // come from the graph beside it: `--interview` fetches the library before the
                     // file is written, so the estate it asks about carries the menu.
                     if interview {
                         let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
                         if !core.exists() {
-                            println!("\nfetching the preset library — the day-0 questions are read from {}", core.display());
+                            println!("\nfetching the preset library — the bootstrap questions are read from {}", core.display());
                             crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
                                 .await
                                 .map_err(|e| {
@@ -1648,7 +1649,7 @@ Thumbs.db
 
                         // The template and the shipped presets both compose members as
                         // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
-                        // local part only. Emitting it as a variable is what lets the
+                        // local part only. Writing it as a variable is what lets the
                         // `*first-admin` anchor resolve at all.
                         let (first_admin, user_domain) = resolved_iac_user
                             .split_once('@')
@@ -1697,12 +1698,12 @@ Thumbs.db
                         println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
                     }
 
-                    // A day-0 param is either stated, derived, or ASKED — there is
+                    // A bootstrap param is either stated, derived, or ASKED — there is
                     // no fourth state where an estate is simply born incomplete.
                     // Stating it is the flag because the interview is interactive
                     // and a scripted run must not block on it.
                     if interview {
-                        // init writes the estate-core `use` commented out so the estate compiles
+                        // init writes the estate-core `use` commented out so the estate transpiles
                         // before any library is fetched; the interview switches it on, or it
                         // finds no pack declaring a question and asks nothing
                         if crate::template::use_estate_core(&yaml_path)? {
@@ -1723,7 +1724,7 @@ Thumbs.db
             // For the providers the command line names, else the ones the config does —
             // which defaults to google and google-beta. Only the flags used to count, so a
             // plain `satz init` created an empty schema dir, fetched nothing, said nothing,
-            // and printed "Initialization complete" for an estate nothing could compile.
+            // and printed "Initialization complete" for an estate nothing could transpile.
             // A schema already on disk is kept: a re-run merges params, and re-downloading
             // two providers to do that is not what anyone asked for.
             let mut all_provs = final_google;
@@ -1745,7 +1746,7 @@ Thumbs.db
                 println!("Fetching schema for {} {}...", provider, version);
                 crate::schema::ResourceRegistry::generate_schema(&tool, &provider, &version, &out).map_err(|e| {
                     format!(
-                        "init: the estate is written, but the {} schema could not be fetched ({}) — nothing compiles \
+                        "init: the estate is written, but the {} schema could not be fetched ({}) — nothing transpiles \
                          without it. Put OpenTofu on PATH and run `satz update-schema`",
                         name, e
                     )
@@ -1810,7 +1811,7 @@ Thumbs.db
             // state and hcl shapes read a file and call no Google API. Refused
             // here, for every shape at once, rather than accepted and ignored.
             if as_estate.is_some() && shape != "org" {
-                return Err("--as applies to the live shape (organizations/…, folders/…, projects/…): it names the estate whose IaC service account reads the scope, and the state and hcl shapes read a file, calling no Google API".into());
+                return Err("--as applies to the live shape (organizations/…, folders/…, projects/…): it names the estate whose estate account reads the scope, and the state and hcl shapes read a file, calling no Google API".into());
             }
             // The live shape reads the organization from the root it sweeps and
             // from the assets' ancestors. A state and a `.tf` tree can name none,
@@ -1877,14 +1878,14 @@ Thumbs.db
                         };
                         import_state(state_json, output, cfg, filtered, on_collision, customer_shortname.as_deref(), organization.as_deref(), cli.verbose, &tool_config, &runtime_config)
                     } else {
-                        // A live sweep reads a customer's organisation, so it runs
-                        // as that organisation's IaC service account — the account
+                        // A live sweep reads a customer's organization, so it runs
+                        // as that organization's estate account — the account
                         // that holds `roles/cloudasset.viewer` on an estate satz set
                         // up. Two flags name the estate it is: `--into`, which also
                         // writes the delta into it, and `--as`, which only borrows
                         // the identity and writes a new file. Given neither, there is
                         // no estate to be and the sweep reads as the caller, like
-                        // `init` — which is what the organisation has to allow.
+                        // `init` — which is what the organization has to allow.
                         let into_path = into.map(|estate| estate_path(estate, &runtime_config));
                         let as_only = as_estate.is_some();
                         let bind = import_binds_to(into_path.clone(), as_estate.map(|estate| estate_path(estate, &runtime_config)));
@@ -1913,8 +1914,8 @@ Thumbs.db
                             }
                         }
                         let parent = resolve_import_parent(source.as_deref(), cfg.root.as_ref()).await?;
-                        // the scope has to be the estate's organisation or inside it: a
-                        // sweep of another one would write that organisation's
+                        // the scope has to be the estate's organization or inside it: a
+                        // sweep of another one would write that organization's
                         // resources into this estate, read as this estate's account
                         if let Some(estate) = &bind {
                             let org = estate_organization(estate, &runtime_config)?;
@@ -1938,7 +1939,7 @@ Thumbs.db
             // The vars table and the declared policy set both come from the
             // fragment pipeline.
             let config_path = estate_path(estate, &runtime_config);
-            // The quality gate: an estate may not touch an organisation while a
+            // The quality gate: an estate may not touch an organization while a
             // question is open. A dry run is how you look, so it warns instead.
             match crate::questions::require_complete(&config_path, &runtime_config, "bootstrap") {
                 Ok(()) => {}
@@ -1958,25 +1959,25 @@ Thumbs.db
                             return Err(e.into());
                         }
                     }
-                    // Compute waits for the policy that stops the `default` network: on
-                    // day 0 nothing is live, so the first apply switches it on (ADR 0080)
+                    // Compute waits for the policy that stops the `default` network: at
+                    // the bootstrap nothing is live, so the first apply switches it on (ADR 0080)
                     let deferred = r
                         .compute_deferral
                         .map(|d| vec![(crate::prerequisites::COMPUTE_API.to_string(), d.bootstrap_reason())])
                         .unwrap_or_default();
                     (r.infra_services, deferred)
                 }
-                // An estate that does not compile is refused HERE, before a folder, a
+                // An estate that does not transpile is refused HERE, before a folder, a
                 // project or a bucket exists. This arm used to fall back to an empty list
                 // and carry on: bootstrap then enabled only the six APIs it calls itself,
-                // created everything, and the compile failure surfaced afterwards, at the
+                // created everything, and the transpile failure surfaced afterwards, at the
                 // first resource that needed a type. A dry run creates nothing, so it warns.
                 Err(e) if dry_run => {
-                    eprintln!("warning: bootstrap would refuse: the estate does not compile — {}", e);
+                    eprintln!("warning: bootstrap would refuse: the estate does not transpile — {}", e);
                     (Vec::new(), Vec::new())
                 }
                 Err(e) => {
-                    return Err(format!("bootstrap refused before creating anything: the estate does not compile — {}", e).into())
+                    return Err(format!("bootstrap refused before creating anything: the estate does not transpile — {}", e).into())
                 }
             };
             crate::bootstrap::bootstrap(
@@ -2011,7 +2012,7 @@ Thumbs.db
         Commands::DiffOrganizationalPolicies { estate, customer_organization_id, out, format, recursive } => {
             let out = crate::out::target(out, format)?;
             // The params table and the declared policy set both come from the
-            // fragment pipeline; the desired set is what the estate emits.
+            // fragment pipeline; the desired set is what the estate writes.
             let config_path = estate_path(estate, &runtime_config);
             configure_estate_impersonation(&config_path, &runtime_config)?;
             crate::org_policy::diff_org_policies(
@@ -2081,7 +2082,7 @@ Thumbs.db
                 return Err("Failed to regenerate HCL".into());
             }
 
-            // From here the IaC service account manages the estate's Cloud Identity
+            // From here the estate account manages the estate's Cloud Identity
             // groups, and that needs Groups Admin — a Workspace role IAM can neither grant
             // nor test. Assigned as the operator, because the account cannot give itself
             // an admin role; when the login may not, the migration goes on and says how.
@@ -2107,7 +2108,7 @@ Thumbs.db
                 Some(sa) => println!(
                     "next: `satz whoami {input}` — must name {sa} — then `satz transpile {input} --plan`, which must plan \"No changes\" as the service account"
                 ),
-                None => println!("next: `satz transpile {input} --plan` — your own credentials again, against the local state"),
+                None => println!("next: `satz transpile {input} --plan` — your own sign-in again, against the local state"),
             }
             Ok(())
         }
@@ -2163,7 +2164,7 @@ Thumbs.db
         Commands::Require { framework, input, format, out } => {
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
-            // This command REPORTS, it does not emit — it needs `main.tf` as a
+            // This command REPORTS, it does not write — it needs `main.tf` as a
             // value, never on disk. The stage-B block belongs in `transpile`
             // only; pasted here it once made the command silently regenerate
             // hcl/ and return without a report.
@@ -2208,7 +2209,7 @@ Thumbs.db
             let out = crate::out::target(out, format)?;
             let input_path = estate_path(PathBuf::from(&input), &runtime_config);
             configure_estate_impersonation(&input_path, &runtime_config)?;
-            // Reports, never emits — see the note in `require`.
+            // Reports, never writes — see the note in `require`.
             let (manifest, included_claims, org_id, held_to) =
                 compliance_inputs(&input_path, &tool_config, &runtime_config)?;
             let frameworks = crate::compliance::frameworks_to_report(
@@ -2307,7 +2308,7 @@ Thumbs.db
                     .into());
                 }
             }
-            // Compile first, always. An estate that does not compile is an estate
+            // Transpile first, always. An estate that does not transpile is an estate
             // whose parameters cannot be trusted, and an action's arguments are
             // built from them.
             let out = pipeline_b_generate(&input_path, &tool_config, &runtime_config)?;
@@ -2493,8 +2494,8 @@ Thumbs.db
                 OutFormat::Markdown | OutFormat::Pdf => crate::preset_lines::render_markdown(&report),
                 _ => crate::preset_lines::render_text(&report, crate::out::width(&out)),
             };
-            let deploying = report.packs.iter().filter(|p| p.deploys).count();
-            let what = format!("{} pack(s), {} deploying, {} finding(s)", report.packs.len(), deploying, report.findings.len());
+            let creating = report.packs.iter().filter(|p| p.deploys).count();
+            let what = format!("{} pack(s), {} creating, {} finding(s)", report.packs.len(), creating, report.findings.len());
             if format == OutFormat::Pdf {
                 pdf_from_markdown(&text, &out, &what)?;
             } else {
@@ -2540,15 +2541,15 @@ Thumbs.db
                 eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
                 return Err(format!("check-request: {} finding(s) in {}", findings.len(), file.display()).into());
             }
-            // the file fits the points; now the compile with it in place — what the estate
+            // the file fits the points; now the transpile with it in place — what the estate
             // would refuse once the file is vendored (an entry without a field the pack's
             // `each` body reads) is refused here, before the pull request
             let absolute = std::path::absolute(&file).map_err(|e| format!("{}: {}", file.display(), e))?;
             let used = absolute.to_string_lossy().to_string();
             if let Err(e) = pipeline_b_compile_using(&input_path, &[used.as_str()], &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent) {
-                return Err(format!("check-request: {} fits the request points of {}, and the estate refuses it once used — {}", file.display(), input_path.display(), e).into());
+                return Err(format!("check-request: {} fits the lists of {}, and the estate refuses it once used — {}", file.display(), input_path.display(), e).into());
             }
-            eprintln!("check-request: {} fits the request points of {}, and the estate compiles with it", file.display(), input_path.display());
+            eprintln!("check-request: {} fits the lists of {}, and the estate transpiles with it", file.display(), input_path.display());
             Ok(())
         }
         Commands::Interfaces { input, format, out } => {
@@ -2683,24 +2684,24 @@ Thumbs.db
                 if !path.exists() {
                     return Err(format!(
                         "estate not found: {} — `satz whoami` without an estate reports the \
-                         ambient credentials",
+                         ambient sign-in",
                         path.display()
                     )
                     .into());
                 }
-                // An estate whose params cannot be read, or whose mode the compile
+                // An estate whose params cannot be read, or whose mode the transpile
                 // refuses, has no answer: both refuse, and nothing is bound.
                 let declared = estate_declaration(&path, named, &runtime_config)?;
                 configure_estate_impersonation(&path, &runtime_config)?;
                 // Online, the estate's resource types say which permissions to test.
-                // An estate that does not compile still gets its identity answered.
+                // An estate that does not transpile still gets its identity answered.
                 let probe = if offline {
                     None
                 } else {
                     match iac_probe(&path, &tool_config, &runtime_config) {
                         Ok(p) => Some(p),
                         Err(e) => {
-                            eprintln!("note: permissions not tested — the estate does not compile: {}", e);
+                            eprintln!("note: permissions not tested — the estate does not transpile: {}", e);
                             None
                         }
                     }
@@ -2725,31 +2726,31 @@ Thumbs.db
 }
 
 /// Satz front-end, shared by every command that takes an estate input: a .satz file
-/// compiles to its generated .gen.yaml sibling (inspectable, never hand-edited) and
+/// transpiles to its generated .gen.yaml sibling (inspectable, never hand-edited) and
 /// the returned path feeds the unchanged YAML pipeline.
-/// Generation: satz estate -> fragments -> fold -> emit, schema-driven.
+/// Generation: satz estate -> fragments -> fold -> write, schema-driven.
 /// Returns every generated file; every command that reads an estate goes
 /// through it (transpile, require, report-compliance, adopt, import --into).
 struct PipelineBOut {
     main_tf: String,
-    /// `interface.tf` of a project estate: what it read from the central estate's
-    /// interface as `local.interface.<export>`, with the lookups. Empty otherwise.
+    /// `interface.tf` of a workload estate: what it read from the interface of the
+    /// organization's estate as `local.interface.<export>`, with the lookups. Empty otherwise.
     interface_tf: String,
     /// what the references in `providers_tf` stand for, for the billing check
     names: crate::prerequisites::Names,
-    /// what the organisation's estate delegated to this estate's account, when the estate
+    /// what the organization's estate delegated to this estate's account, when the estate
     /// is a workload's: read from the interface file it uses
     delegation: Option<crate::prerequisites::Delegation>,
     /// What `main_tf` contains, as structure (resource blocks only — the raw
     /// `hcl { … }` passthrough is text appended afterwards and is not in it,
     /// which is exactly the "opaque to the proof layer" contract). Every
-    /// consumer that needs the emitted resource set reads this, never the text.
+    /// consumer that needs the written resource set reads this, never the text.
     manifest: crate::manifest::Manifest,
     providers_tf: String,
     variables_tf: String,
     tfvars: String,
     imports_tf: String,
-    /// What the estate publishes to the projects beside it: the root `outputs.tf` and the
+    /// What the estate publishes to the workload estates beside it: the root `outputs.tf` and the
     /// folders under `interfaces_dir`. `None` when it exports nothing.
     interface: Option<crate::interface::Interface>,
     /// the exports and interfaces as declared, with where — what `satz interfaces` reports
@@ -2758,7 +2759,7 @@ struct PipelineBOut {
     /// what a team may add to a list param (`request`), with the entries the list holds
     requests: Vec<satz_core::pipeline::ResolvedRequest>,
     /// Claims declared by the estate and every pack it actually used — the
-    /// compliance plane's input, produced by the same compile that produced
+    /// compliance plane's input, produced by the same transpile that produced
     /// main_tf, so witnesses and claims can never come from different reads.
     claims: Vec<satz_core::pipeline::PackClaims>,
     org_id: Option<String>,
@@ -2770,16 +2771,16 @@ struct PipelineBOut {
     /// The Cloud Identity customer id the estate declares ("" when absent) —
     /// the tenant adoption lists when a group lookup is refused.
     customer_id: String,
-    /// Declared `action`s, arguments resolved. Nothing is emitted for them and
+    /// Declared `action`s, arguments resolved. Nothing is written for them and
     /// nothing runs them here — `run-actions` is the only thing that does.
     actions: Vec<satz_core::pipeline::ResolvedAction>,
-    /// What the compile found and did not refuse on — the warnings and notes the
-    /// CLI printed — as data, for MCP. An error never reaches here: the compile is
+    /// What the transpile found and did not refuse on — the warnings and notes the
+    /// CLI printed — as data, for MCP. An error never reaches here: the transpile is
     /// `Err` instead.
     findings: Vec<crate::findings::Finding>,
     /// The estate's resolved params. The compliance plane reads `compliance_frameworks`
     /// from here — what a pack reads as a param, a command reads as the same value off
-    /// the same compile.
+    /// the same transpile.
     env: satz_core::pipeline::Env,
 }
 
@@ -2800,7 +2801,7 @@ impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
         // Existence is the schema's call. EXACT lookup only: Satz names
         // Terraform types in full, so `org_policy_policy` is not a resource key
         // here. `find_resource` falls back to a `google_` prefix, which is how a
-        // discovered document's short keys are normalised, so this path must not
+        // discovered document's short keys are normalized, so this path must not
         // go through it.
         if !self.registry.resources.contains_key(key) {
             return None;
@@ -2828,12 +2829,12 @@ impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     }
 }
 
-/// Whether a compile reports the estate's missing prerequisites as findings. A caller
-/// that reports them as its own output — `whoami`'s live permission check,
-/// `update-prerequisites` — compiles with `Quiet`, so the compile neither says the same
+/// Whether a transpile reports the estate's missing prerequisites as findings. A caller
+/// that reports them as its own output — `whoami`'s live check of the prerequisites,
+/// `update-prerequisites` — transpiles with `Quiet`, so the transpile neither says the same
 /// thing twice nor refuses on the gap the caller is there to name or close.
 ///
-/// A parameter of one compile, never a process-wide flag: `satz mcp` compiles for many
+/// A parameter of one transpile, never a process-wide flag: `satz mcp` transpiles for many
 /// calls in one process, concurrently, and a flag one call set would silence every
 /// other call's findings — at validation level `error`, their refusal too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2842,13 +2843,13 @@ pub(crate) enum PrerequisiteFindings {
     Quiet,
 }
 
-/// Whether a compile prints its warnings and notes to stderr, where the CLI shows them.
-/// `review-preset` compiles `Silent`: the findings are its report, and printing them
+/// Whether a transpile prints its warnings and notes to stderr, where the CLI shows them.
+/// `review-preset` transpiles `Silent`: the findings are its report, and printing them
 /// beside it would say everything twice. A refusal reads the same either way.
 ///
-/// A parameter of one compile for the reason `PrerequisiteFindings` is: `satz mcp`
+/// A parameter of one transpile for the reason `PrerequisiteFindings` is: `satz mcp`
 /// serves `satz_review_preset` beside every other call, concurrently, and a flag one
-/// review set would stop every other compile in the process from printing.
+/// review set would stop every other transpile in the process from printing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FindingsOutput {
     Stderr,
@@ -2858,7 +2859,7 @@ pub(crate) enum FindingsOutput {
 /// A finding's `file`, relative to the estate's own directory.
 ///
 /// A pack names itself as the `use` line wrote it, which is already estate-relative; the
-/// estate file reaches the compile as the caller spelled it — a path relative to the
+/// estate file reaches the transpile as the caller spelled it — a path relative to the
 /// terminal's directory from the CLI, an absolute one from `satz mcp`. One finding,
 /// named two ways, is a finding no `[[silence]]` row and no editor can match, so the
 /// estate's directory decides the spelling for every reader. A path that is not under
@@ -2869,7 +2870,7 @@ pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<
     if let Ok(rel) = full.strip_prefix(&root) {
         f.file = Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
         // an `hcl` block is named by where it stands, so its subject is that same path:
-        // one spelling whoever compiles, or a `[[silence]]` row written from an agent's
+        // one spelling whoever transpiles, or a `[[silence]]` row written from an agent's
         // JSON would not answer to the CLI's finding
         if let (crate::findings::Kind::HclPassthrough, Some(file), Some(line)) = (f.kind, &f.file, f.line) {
             f.subject = Some(format!("{}:{}", file, line));
@@ -2878,10 +2879,10 @@ pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<
     f
 }
 
-/// `transpile --format json`: the compile as the object `satz_transpile_check` and
+/// `transpile --format json`: the transpile as the object `satz_transpile_check` and
 /// `satz_transpile` return — one run, read by a person as the layout or by a program as
-/// this. The compile prints nothing: the findings are in the object, silenced ones
-/// marked. A refused compile is the same object with nothing emitted and its errors
+/// this. The transpile prints nothing: the findings are in the object, silenced ones
+/// marked. A refused transpile is the same object with nothing written and its errors
 /// among the findings, and the exit code says it refused.
 fn transpile_as_json(
     input_path: &Path,
@@ -2899,7 +2900,7 @@ fn transpile_as_json(
     Ok(())
 }
 
-/// The compile as data, and whether it refused. `Err` is a failure that is no verdict
+/// The transpile as data, and whether it refused. `Err` is a failure that is no verdict
 /// on the estate — a schema directory that is not there.
 fn compile_summary(
     input_path: &Path,
@@ -2931,7 +2932,7 @@ fn compile_summary(
     }
 }
 
-/// Where `transpile` writes: `--output` relocates the emitted HCL, relative to hcl_dir.
+/// Where `transpile` writes: `--output` relocates the transpiled HCL code, relative to hcl_dir.
 fn hcl_target(output: Option<&str>, runtime_config: &ToolConfig) -> PathBuf {
     match output {
         Some(o) if Path::new(o).is_absolute() => PathBuf::from(o),
@@ -2940,7 +2941,7 @@ fn hcl_target(output: Option<&str>, runtime_config: &ToolConfig) -> PathBuf {
     }
 }
 
-/// The compile every command runs: its findings reported in full, and printed.
+/// The transpile every command runs: its findings reported in full, and printed.
 fn pipeline_b_generate(
     input_path: &Path,
     tool_config: &ToolConfig,
@@ -3040,7 +3041,7 @@ fn pipeline_b_compile_using(
     }
     let out = tail.out.expect("no error finding, so the emitter ran");
     let interface = tail.interface;
-    let providers_tf = tail.providers_tf.expect("no error finding, so the providers were emitted");
+    let providers_tf = tail.providers_tf.expect("no error finding, so the providers were written");
     let folded = tail.folded;
     let org_policies: Vec<(String, serde_yaml::Value)> = folded
         .slots
@@ -3083,7 +3084,7 @@ fn pipeline_b_compile_using(
         customer_id,
         // EmitCtx defaults it to the empty string when the estate declares no
         // customer_organization_id; the compliance plane wants None there so it
-        // reports "no customer-organization-id" instead of querying org "".
+        // reports "no customer-organization-id" instead of querying organization "".
         org_id: Some(org_id).filter(|s| !s.is_empty()),
         findings,
         env: fe.env,
@@ -3108,14 +3109,14 @@ fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
     None
 }
 
-/// Everything the compile checks after the front end, collected rather than
+/// Everything the transpile checks after the front end, collected rather than
 /// stopped at: the CLI renders it (`findings::render`), the language server maps
-/// it to diagnostics, MCP returns it. `estate_src` is the estate's text as the
+/// it to findings in the editor, MCP returns it. `estate_src` is the estate's text as the
 /// caller has it — the editor's buffer or the file — for the checks that read the
 /// estate's own lines to say where.
 pub(crate) struct Tail {
     pub folded: satz_core::algebra::Folded,
-    /// `None` when an error finding stopped the compile before or at the emitter.
+    /// `None` when an error finding stopped the transpile before or at the emitter.
     pub out: Option<crate::emitter::EmitOut>,
     pub providers_tf: Option<String>,
     /// The estate's interface, when it exports anything and every export is one satz can
@@ -3161,7 +3162,7 @@ pub(crate) fn compile_tail(
         return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, interface: None, findings: f };
     }
     // After the dry-run check, which stops at any finding; before the suppressions, the
-    // conflicts and the emitter, so a compile one of them stops still names a mode it
+    // conflicts and the emitter, so a transpile one of them stops still names a mode it
     // has no backend for.
     let mode_ok = deployment_mode_finding(&fe.env, estate, estate_src, &mut f);
     compliance_frameworks_finding(&fe.env, presets_dir, estate, estate_src, &mut f);
@@ -3184,7 +3185,7 @@ pub(crate) fn compile_tail(
                 Finding::new(
                     Severity::Error,
                     Kind::InterfaceUse,
-                    "the `hcl` block writes `${interface.<export>}` — a central estate's value is replaced in resource bodies only, and the block is emitted verbatim. Write what needs the value as a resource, where satz replaces it".to_string(),
+                    "the `hcl` block writes `${interface.<export>}` — a value of an organization's estate is replaced in resource bodies only, and the block is written verbatim. Write what needs the value as a resource, where satz replaces it".to_string(),
                 )
                 .about(format!("{}:{}", b.file, b.line))
                 .located(b.file.clone(), b.line as u32),
@@ -3192,7 +3193,7 @@ pub(crate) fn compile_tail(
         }
         return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
     }
-    // A project reads a central estate's values as `${{interface.<export>}}`: replaced
+    // A project reads the values of an organization's estate as `${{interface.<export>}}`: replaced
     // before the emitter, which then writes a literal or the lookup's data address — and,
     // beside each value, its rendering `local.interface.<export>` for the text.
     let mut read = match satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files) {
@@ -3228,7 +3229,7 @@ pub(crate) fn compile_tail(
     let mut out = match crate::emitter::emit(&folded, &ctx) {
         Ok(o) => o,
         Err(e) => {
-            f.push(Finding::new(Severity::Error, Kind::Emit, format!("emit: {}", e)));
+            f.push(Finding::new(Severity::Error, Kind::Emit, format!("write: {}", e)));
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
@@ -3241,7 +3242,7 @@ pub(crate) fn compile_tail(
                 Finding::new(
                     Severity::Error,
                     Kind::Export,
-                    format!("private {}: the estate emits no such resource — a stale or mistyped address keeps nothing out", x.address),
+                    format!("private {}: the estate writes no such resource — a stale or mistyped address keeps nothing out", x.address),
                 )
                 .about(x.address.clone())
                 .located(x.file.clone(), x.line as u32),
@@ -3271,9 +3272,9 @@ pub(crate) fn compile_tail(
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
     // a mode with no backend is already the finding at its line; the providers are not
-    // emitted without one. The prerequisite check reads the text built from the judged
+    // written without one. The prerequisite check reads the text built from the judged
     // values: it names the project each provider bills its calls to. The file on disk is
-    // the rendering — a central estate's value as `local.interface.<export>` — where the
+    // the rendering — a value of an organization's estate as `local.interface.<export>` — where the
     // estate read one.
     let (providers_judged, providers_written) = if !mode_ok {
         (None, None)
@@ -3309,7 +3310,7 @@ pub(crate) fn compile_tail(
                 crate::findings::Kind::Prerequisites,
                 format!(
                     "the interface file exports `{}`: it was written by satz before v0.98.0, which names what was delegated \
-                     `delegated_…`. Take the folder again from the organisation's estate, transpiled with this satz — \
+                     `delegated_…`. Take the folder again from the organization's estate, transpiled with this satz — \
                      a copy with the old names says nothing of what the account was given",
                     export
                 ),
@@ -3412,12 +3413,12 @@ fn deployment_mode_finding(
 }
 
 /// `workload_folder_name` against the section that publishes `workload_folder`
-/// (`template::workload_folder_section`). An empty name is the organisation: no section,
-/// or the organisation's export, is right, and nothing is created. Every other
+/// (`template::workload_folder_section`). An empty name is the organization: no section,
+/// or the organization's export, is right, and nothing is created. Every other
 /// combination is an error at the line to edit:
 ///
 /// - a name, and no `export "workload_folder"`: the folder is neither declared nor published;
-/// - a name, and the organisation's export: the export says the organisation;
+/// - a name, and the organization's export: the export says the organization;
 /// - no name, and the folder's export: a folder is published that the param does not name;
 /// - the folder's export reading a `google_folder` whose `display_name` is not the name.
 fn workload_folder_findings(
@@ -3447,21 +3448,21 @@ fn workload_folder_findings(
     match (name.is_empty(), export, reads) {
         (false, None, _) => f.push(
             err(format!(
-                "`{} = \"{}\"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add {}, or bind `{} = \"\"` for the organisation",
+                "`{} = \"{}\"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add {}, or bind `{} = \"\"` for the organization",
                 NAME, name, folder_lines, NAME
             ))
             .maybe_at(label.clone(), name_line),
         ),
         (false, Some(x), None) => f.push(
             err(format!(
-                "`{} = \"{}\"`{}, but `export \"workload_folder\"` ({}:{}) publishes the organisation. Replace it with {}, or bind `{} = \"\"` for the organisation",
+                "`{} = \"{}\"`{}, but `export \"workload_folder\"` ({}:{}) publishes the organization. Replace it with {}, or bind `{} = \"\"` for the organization",
                 NAME, name, at_name(name_line), x.file, x.line, folder_lines, NAME
             ))
             .located(x.file.clone(), x.line as u32),
         ),
         (true, Some(x), Some(read)) => f.push(
             err(format!(
-                "`export \"workload_folder\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organisation. Bind `{}` to the folder's display name, or — once the projects' folders have moved to the organisation — remove the folder and export \"organizations/{{customer_organization_id}}\"",
+                "`export \"workload_folder\"` ({}:{}) publishes the folder `google_folder.{}`, and `{}` is empty{}, which is the organization. Bind `{}` to the folder's display name, or — once the projects' folders have moved to the organization — remove the folder and export \"organizations/{{customer_organization_id}}\"",
                 x.file, x.line, read, NAME, at_name(name_line), NAME
             ))
             .located(x.file.clone(), x.line as u32),
@@ -3490,7 +3491,7 @@ fn workload_folder_findings(
 ///
 /// The frameworks an estate is HELD TO are what `report-compliance` reports with no
 /// argument, what `satz prowler` scans for and what an audit pack reads. A value that
-/// names no catalog is refused here, at the compile every one of those commands runs
+/// names no catalog is refused here, at the transpile every one of those commands runs
 /// first, rather than at the point a report is written: a typo found in the report is a
 /// framework that was silently out of scope until an audit.
 fn compliance_frameworks_finding(
@@ -3555,7 +3556,7 @@ fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::fin
     true
 }
 
-/// A `"${{…}}"` reference to an address this estate does not emit — at the line that
+/// A `"${{…}}"` reference to an address this estate does not write — at the line that
 /// writes it.
 fn written_reference_findings(
     folded: &satz_core::algebra::Folded,
@@ -3572,9 +3573,9 @@ fn written_reference_findings(
             .collect();
         same.sort();
         let hint = if same.is_empty() {
-            format!("no `{}` is emitted here at all", tf_type)
+            format!("no `{}` is written here at all", tf_type)
         } else {
-            format!("emitted `{}` labels: {}", tf_type, same.join(", "))
+            format!("written `{}` labels: {}", tf_type, same.join(", "))
         };
         f.push(
             Finding::new(
@@ -3582,13 +3583,13 @@ fn written_reference_findings(
                 Kind::WrittenReference,
                 format!("{} writes `${{{}}}`\n  {}", r.site, r.traversal, hint),
             )
-            .in_group("references to resources this estate does not emit")
+            .in_group("references to resources this estate does not write")
             .located(r.file, r.line),
         );
     }
 }
 
-/// An emitted resource missing what its schema requires — at the declaring block,
+/// An written resource missing what its schema requires — at the declaring block,
 /// at the validation level: `warn` says so, `error` refuses, `none` skips.
 fn missing_required_findings(missing: &[crate::emitter::MissingRequired], level: &str, f: &mut Vec<crate::findings::Finding>) {
     use crate::findings::{Finding, Kind, Severity};
@@ -3629,7 +3630,7 @@ fn unscoped_findings(unscoped: &[crate::emitter::Unscoped], f: &mut Vec<crate::f
     }
 }
 
-/// An emitted attribute whose value the provider refuses by its shape — at the declaring
+/// An written attribute whose value the provider refuses by its shape — at the declaring
 /// block, at the validation level like a missing argument. The finding names the param
 /// where the declaring file binds the attribute to a bare one: the operator edits the
 /// param in the estate, and the HCL line `tofu apply` would name is generated.
@@ -3680,23 +3681,23 @@ fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
 }
 
 /// What the estate's resource types oblige it to declare and does not: the roles
-/// its IaC service account is missing, and the APIs no `google_project_service`
+/// its estate account is missing, and the APIs no `google_project_service`
 /// enables. Both at the validation level — `warn` names them and the command that
 /// writes them, `error` refuses, `none` skips. A type the table does not know is a
 /// note, never an error: satz cannot say what it needs. The role line is the
 /// estate's `svc_iac_account` param, the nearest thing the grant has to a site.
 ///
 /// The API half judges each API on the project the resource's provider bills its
-/// calls to, read from the emitted `providers.tf`: a resource inside a
+/// calls to, read from the written `providers.tf`: a resource inside a
 /// `google_project` node on that project, every other one on the default
-/// provider's `billing_project`. The role half is judged on the IaC service
+/// provider's `billing_project`. The role half is judged on the estate
 /// account. What either half cannot judge — a provider that names no billing
 /// project, an unbound service account — is a note naming what is missing: a
 /// check that says nothing reads as a check that passed.
 ///
-/// A workload's estate — one that reads an interface carrying what was delegated to its
+/// A workload estate — one that reads an interface carrying what was delegated to its
 /// account — is judged against that delegation, and what is missing is worded as what to
-/// ask the organisation's estate for: its account can grant itself nothing there, and
+/// ask the organization's estate for: its account can grant itself nothing there, and
 /// the project its calls are billed to is not its own to declare (ADR 0087).
 #[allow(clippy::too_many_arguments)]
 fn prerequisite_findings(
@@ -3720,7 +3721,7 @@ fn prerequisite_findings(
         None => f.push(Finding::new(
             Severity::Info,
             Kind::Prerequisites,
-            "the APIs this estate's resources need were not checked: `providers.tf` was not emitted, \
+            "the APIs this estate's resources need were not checked: `providers.tf` was not written, \
              and it is what names the project each provider bills its calls to",
         )),
         Some(Err(e)) => f.push(Finding::new(Severity::Error, Kind::Prerequisites, e)),
@@ -3729,18 +3730,18 @@ fn prerequisite_findings(
     prerequisite_role_findings(manifest, get, reads, estate, estate_arg, estate_src, sev, update, f);
 }
 
-/// What an estate reads from an organisation's estate, as far as the prerequisite check
+/// What an estate reads from an organization's estate, as far as the prerequisite check
 /// is concerned.
 #[derive(Debug, Clone, Default)]
 struct Reads {
-    /// what was delegated to its account; `None` for an organisation's estate
+    /// what was delegated to its account; `None` for an organization's estate
     delegation: Option<crate::prerequisites::Delegation>,
     /// whether it uses an interface file at all
     interface: bool,
 }
 
 /// Where a workload's account gets what it lacks: the lists of the pack that created it.
-const ASK_THE_ORGANISATION: &str = "`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz` in the organisation's estate";
+const ASK_THE_ORGANIZATION: &str = "`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz` in the organization's estate";
 
 /// The API half of [`prerequisite_findings`].
 fn api_findings(
@@ -3758,7 +3759,7 @@ fn api_findings(
         Some(d) => check.with_delegation(billing.default_project(), d),
         None => check,
     };
-    // a workload's infrastructure project is the organisation's estate's to declare:
+    // a workload's infrastructure project is for the organization's estate to declare:
     // an API missing there is asked for, never written
     let (not_delegated, missing): (Vec<_>, Vec<_>) =
         check.missing().into_iter().partition(|a| delegation.is_some() && Some(a.project.as_str()) == billing.default_project());
@@ -3769,7 +3770,7 @@ fn api_findings(
                 sev,
                 Kind::Prerequisites,
                 format!(
-                    "{} API(s) are switched on twice on {}: the organisation's estate already switched them on \
+                    "{} API(s) are switched on twice on {}: the organization's estate already switched them on \
                      (the interface `{}` says so), and this estate declares them again. Remove the \
                      declaration here — two estates then own one switch, and taking it out of either \
                      switches the API off for both:\n  {}",
@@ -3787,12 +3788,12 @@ fn api_findings(
             Kind::Prerequisites,
             format!(
                 "{} API(s) this estate's resources need are not enabled on {}, the project its calls are \
-                 billed to. That project is the organisation's estate's: ask for each to be added to the \
+                 billed to. That project belongs to the organization's estate: ask for each to be added to the \
                  `apis` of the delegation's entry in `delegations` ({}); the interface `{}` says what is \
                  delegated:\n  {}",
                 not_delegated.len(),
                 billing.default_project().unwrap_or_default(),
-                ASK_THE_ORGANISATION,
+                ASK_THE_ORGANIZATION,
                 d.interface,
                 not_delegated.iter().map(|a| format!("{} — needed by {}", a.api, a.reason.join(", "))).collect::<Vec<_>>().join("\n  ")
             ),
@@ -3844,8 +3845,8 @@ fn api_findings(
     }
 }
 
-/// The role half of [`prerequisite_findings`]: what the IaC service account is
-/// missing for the types the estate emits. It is judged on that account, so an
+/// The role half of [`prerequisite_findings`]: what the estate account is
+/// missing for the types the estate writes. It is judged on that account, so an
 /// estate that binds neither param it is derived from gets a note naming them
 /// instead of no output.
 #[allow(clippy::too_many_arguments)]
@@ -3872,7 +3873,7 @@ fn prerequisite_role_findings(
             Kind::Prerequisites,
             format!(
                 "the roles this estate's resource types need were not checked: they are judged on \
-                 the IaC service account `{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com`, \
+                 the estate account `{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com`, \
                  and the estate binds no {}. Bind {} in `params {{ }}` to have them checked.",
                 unbound.join(" or "),
                 if unbound.len() == 1 { "it" } else { "them" }
@@ -3899,7 +3900,7 @@ fn prerequisite_role_findings(
                          ({}):\n  {}",
                         sa,
                         d.interface,
-                        ASK_THE_ORGANISATION,
+                        ASK_THE_ORGANIZATION,
                         crate::prerequisites::describe_not_delegated(&missing, d).join("\n  ")
                     ),
                 )
@@ -3920,8 +3921,8 @@ fn prerequisite_role_findings(
             Severity::Info,
             Kind::Prerequisites,
             "this estate reads an interface that says nothing of what was delegated to its account (no \
-             `delegated_folder_roles`), so its roles are judged at the organization, as an organisation's \
-             IaC account is",
+             `delegated_folder_roles`), so its roles are judged at the organization, as an organization's \
+             account is",
         ));
     }
     let missing = crate::prerequisites::missing(&needs, &granted);
@@ -3931,7 +3932,7 @@ fn prerequisite_role_findings(
                 sev,
                 Kind::Prerequisites,
                 format!(
-                    "the IaC service account {} lacks roles this estate's resource types need:\n  {}",
+                    "the estate account {} lacks roles this estate's resource types need:\n  {}",
                     sa,
                     crate::prerequisites::describe(&crate::prerequisites::plan(&missing, &granted)).join("\n  ")
                 ),
@@ -3945,7 +3946,7 @@ fn prerequisite_role_findings(
             Severity::Info,
             Kind::Prerequisites,
             format!(
-                "no role is known for {} — grant the one it needs to the IaC service account in the estate",
+                "no role is known for {} — grant the one it needs to the estate account in the estate",
                 unknown.into_iter().collect::<Vec<_>>().join(", ")
             ),
         ));
@@ -3955,7 +3956,7 @@ fn prerequisite_role_findings(
 /// Every declared action, at its line: `satz run-actions` will execute it, and the
 /// difference between "my estate declares this" and "a pack I downloaded declares
 /// this" is the whole of the trust story. A `reason` does not downgrade this to a
-/// note — HCL only deploys, an action executes.
+/// note — HCL is only applied, an action executes.
 fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<crate::findings::Finding>) {
     use crate::findings::{Finding, Kind, Severity};
     for a in actions {
@@ -3984,7 +3985,7 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
     }
 }
 
-/// Every raw `hcl { … }` block, at its line: emitted verbatim, opaque to the
+/// Every raw `hcl { … }` block, at its line: written verbatim, opaque to the
 /// compliance plane — a warning until `hcl trust` says it was reviewed, a note after.
 fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crate::findings::Finding>) {
     use crate::findings::{Finding, Kind, Severity};
@@ -4000,7 +4001,7 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
                 Severity::Warning,
                 Kind::HclPassthrough,
                 format!(
-                    "raw HCL passthrough ({} lines) emitted verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
+                    "raw HCL passthrough ({} lines) written verbatim — opaque to the compliance plane; no claim can cover it. Add `hcl trust \"<reason>\" {{ … }}` once reviewed.",
                     lines
                 ),
             ),
@@ -4011,8 +4012,8 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
     }
 }
 
-/// `migrate --mode cloud`: give the estate's IaC service account Groups Admin when the
-/// regenerated HCL manages Cloud Identity groups. Never fails the migration: the state
+/// `migrate --mode cloud`: give the estate account Groups Admin when the
+/// regenerated HCL code manages Cloud Identity groups. Never fails the migration: the state
 /// move is independent of it, and every outcome is printed with what to do.
 async fn assign_groups_admin(estate: &Path, runtime_config: &ToolConfig) {
     let main_tf = Path::new(&runtime_config.hcl_dir).join("main.tf");
@@ -4031,7 +4032,7 @@ async fn assign_groups_admin(estate: &Path, runtime_config: &ToolConfig) {
     };
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
     let Some(sa) = crate::prerequisites::service_account_of(get) else {
-        eprintln!("⚠️  Groups Admin not checked: the estate names no IaC service account (svc_iac_account, infra_project_name)");
+        eprintln!("⚠️  Groups Admin not checked: the estate names no estate account (svc_iac_account, infra_project_name)");
         return;
     };
     let customer = get("customer_id");
@@ -4046,13 +4047,13 @@ async fn assign_groups_admin(estate: &Path, runtime_config: &ToolConfig) {
 }
 
 /// What `whoami <estate>` tests live: the estate's needs, and its organization,
-/// infra project and billing account to test them on.
+/// infrastructure project and billing account to test them on.
 pub(crate) fn iac_probe(
     path: &Path,
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<crate::prerequisites::Probe, Box<dyn std::error::Error>> {
-    // whoami reports the permissions live; the compile's own note would repeat them
+    // whoami reports the permissions live; the transpile's own note would repeat them
     let out = pipeline_b_compile(path, tool_config, runtime_config, PrerequisiteFindings::Quiet, FindingsOutput::Stderr)?;
     let params = estate_param_strings(path, runtime_config)?;
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
@@ -4084,7 +4085,7 @@ pub(crate) fn iac_probe(
     })
 }
 
-/// An estate may not be applied while a resource type it emits is served by an API
+/// An estate may not be applied while a resource type it writes is served by an API
 /// nothing enables: the apply runs until it reaches that resource and fails there,
 /// leaving half an estate. The same two-speed rule as the unanswered-question gate —
 /// `apply` and `bootstrap` refuse, `plan` and `--dry-run` warn.
@@ -4098,11 +4099,11 @@ fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(
     if !report.not_delegated_apis.is_empty() {
         why.push(format!(
             "{} API(s) this estate's resources need are not enabled on the project its calls are billed to — {}. That \
-             project is the organisation's estate's: ask for each to be added to the `apis` of the entry that \
+             project belongs to the organization's estate: ask for each to be added to the `apis` of the entry that \
              created it ({}).",
             report.not_delegated_apis.len(),
             list(&report.not_delegated_apis),
-            ASK_THE_ORGANISATION
+            ASK_THE_ORGANIZATION
         ));
     }
     if !writable.is_empty() {
@@ -4126,19 +4127,19 @@ pub(crate) struct PrerequisitesReport {
     /// the project the default provider bills its calls to — the infrastructure
     /// project; empty when the providers name none
     pub default_billing_project: String,
-    /// every API the emitted types need, per project their provider bills the
+    /// every API the written types need, per project their provider bills the
     /// calls to, each marked declared there or not
     pub apis: Vec<crate::prerequisites::ApiNeed>,
     /// the APIs a billed project does not enable — what the write adds, but for
     /// `not_delegated_apis`
     pub missing_apis: Vec<crate::prerequisites::ApiNeed>,
-    /// a workload's estate alone: the ones of `missing_apis` on its infrastructure
-    /// project, which the organisation's estate declares. Asked for, never written
+    /// a workload estate alone: the ones of `missing_apis` on its infrastructure
+    /// project, which the organization's estate declares. Asked for, never written
     pub not_delegated_apis: Vec<crate::prerequisites::ApiNeed>,
-    /// a workload's estate alone: what was delegated to its account, which `needs` are
+    /// a workload estate alone: what was delegated to its account, which `needs` are
     /// judged against. `missing` is then what was not delegated, and `write` is empty
     pub delegation: Option<crate::prerequisites::Delegation>,
-    /// a workload's estate alone: what to ask the organisation's estate for, one line
+    /// a workload estate alone: what to ask the organization's estate for, one line
     /// per role and API
     pub request: Vec<String>,
     /// the types whose APIs were not judged, by the provider that serves them:
@@ -4151,7 +4152,7 @@ pub(crate) struct PrerequisitesReport {
     /// what `bootstrap` enables before `tofu` runs
     pub infra_services: Vec<String>,
     /// the enforcing `compute.skipDefaultNetworkCreation` the estate declares, when it
-    /// does: `bootstrap` and the `plan`/`apply` preflight then leave
+    /// does: `bootstrap` and the `plan`/`apply` API prerequisites check then leave
     /// `compute.googleapis.com` to the apply, which creates the policy first
     pub compute_deferral: Option<crate::prerequisites::ComputeDeferral>,
     /// one `gcloud services enable` line per project in `missing_apis` — what an
@@ -4164,7 +4165,7 @@ pub(crate) struct PrerequisitesReport {
     pub missing: Vec<crate::prerequisites::Need>,
     /// the roles `--execute` writes for `missing`
     pub write: Vec<crate::prerequisites::Pick>,
-    /// emitted types the table has no entry for
+    /// written types the table has no entry for
     pub unknown_types: Vec<String>,
 }
 
@@ -4190,9 +4191,9 @@ fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<Hash
         .collect())
 }
 
-/// `prerequisites` is what the compile behind the report does with the same gap:
+/// `prerequisites` is what the transpile behind the report does with the same gap:
 /// `update-prerequisites` (the command and its MCP tool) passes `Quiet`, since the
-/// report IS its output; every other caller keeps the compile's findings.
+/// report IS its output; every other caller keeps the transpile's findings.
 pub(crate) fn prerequisites_report(
     path: &Path,
     tool_config: &ToolConfig,
@@ -4203,7 +4204,7 @@ pub(crate) fn prerequisites_report(
     let params = estate_param_strings(path, runtime_config)?;
     let sa = crate::prerequisites::service_account_of(|k| params.get(k).cloned()).ok_or_else(|| {
         format!(
-            "{}: the estate names no IaC service account (svc_iac_account and infra_project_name)",
+            "{}: the estate names no estate account (svc_iac_account and infra_project_name)",
             path.display()
         )
     })?;
@@ -4239,7 +4240,7 @@ pub(crate) fn prerequisites_report(
         service_account: sa,
         default_billing_project: billing.default_project().unwrap_or_default().to_string(),
         // the lines for the projects the estate declares itself: a workload's
-        // infrastructure project is switched on by the organisation's estate
+        // infrastructure project is switched on by the organization's estate
         enable_missing_apis: crate::prerequisites::by_project(&missing_apis.iter().filter(|a| !not_delegated_apis.contains(a)).cloned().collect::<Vec<_>>())
             .into_iter()
             .map(|(project, apis)| crate::prerequisites::enable_command(&project, &apis.into_iter().collect::<Vec<_>>()))
@@ -4256,7 +4257,7 @@ pub(crate) fn prerequisites_report(
         compute_deferral: crate::prerequisites::compute_deferral(&out.manifest),
         infra_project: infra,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
-        // a workload's account is granted by the organisation's estate: nothing to write here
+        // a workload's account is granted by the organization's estate: nothing to write here
         write: if out.delegation.is_some() { Vec::new() } else { crate::prerequisites::plan(&missing, &granted) },
         delegation: out.delegation,
         granted,
@@ -4266,7 +4267,7 @@ pub(crate) fn prerequisites_report(
 }
 
 fn render_prerequisites(r: &PrerequisitesReport) -> String {
-    let mut out = format!("IaC service account: {}\n", r.service_account);
+    let mut out = format!("estate account: {}\n", r.service_account);
     match &r.delegation {
         Some(d) => {
             out.push_str(&format!(
@@ -4282,7 +4283,7 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             if r.request.is_empty() {
                 out.push_str("not delegated: none\n");
             } else {
-                out.push_str(&format!("not delegated — to ask for in {}, or to grant in this estate where a line says so:\n", ASK_THE_ORGANISATION));
+                out.push_str(&format!("not delegated — to ask for in {}, or to grant in this estate where a line says so:\n", ASK_THE_ORGANIZATION));
                 for l in &r.request {
                     out.push_str(&format!("  {}\n", l));
                 }
@@ -4374,7 +4375,7 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
 
 /// `update-prerequisites <estate>`: both halves reported, and — unless
 /// `--report-only` — written into the estate file. The edit proves itself: the
-/// estate compiles and nothing is missing afterwards, or the file is restored.
+/// estate transpiles and nothing is missing afterwards, or the file is restored.
 fn run_update_prerequisites(
     path: &Path,
     report_only: bool,
@@ -4393,17 +4394,17 @@ fn run_update_prerequisites(
     // counted as DECLARATIONS the estate is missing — the roles the write would add
     // and the APIs beside them — not as permissions, of which one role can carry many
     let gap = report.writable_gap();
-    // what a workload's account lacks is the organisation's estate's to delegate: said,
+    // what a workload's account lacks is for the organization's estate to delegate: said,
     // never written, and an error either way — the estate cannot be applied as it is
     let not_delegated = |r: &PrerequisitesReport| -> Result<(), Box<dyn std::error::Error>> {
         if r.request.is_empty() {
             return Ok(());
         }
         Err(format!(
-            "{} prerequisite(s) are not delegated to {} — the organisation's estate adds what it lacks ({}), and a role on a project it was given the estate grants itself; nothing is written for them",
+            "{} prerequisite(s) are not delegated to {} — the organization's estate adds what it lacks ({}), and a role on a project it was given the estate grants itself; nothing is written for them",
             r.request.len(),
             r.service_account,
-            ASK_THE_ORGANISATION
+            ASK_THE_ORGANIZATION
         )
         .into())
     };
@@ -4432,11 +4433,11 @@ fn run_update_prerequisites(
 
 /// Write the missing roles AND the missing APIs into the estate, then re-check:
 /// what was written, and the report the edited estate yields. A gap that survives
-/// the write, or an estate that no longer compiles, restores the file and is an
+/// the write, or an estate that no longer transpiles, restores the file and is an
 /// error — the estate is never left half-edited, which is why both halves are
 /// written before anything is verified and one restore covers both. Prints
 /// nothing, so the MCP tool shares it. `prerequisites` is passed on to the
-/// re-check's compile, as `prerequisites_report` takes it.
+/// re-check's transpile, as `prerequisites_report` takes it.
 pub(crate) fn prerequisites_write(
     path: &Path,
     report: &PrerequisitesReport,
@@ -4445,14 +4446,14 @@ pub(crate) fn prerequisites_write(
     prerequisites: PrerequisiteFindings,
 ) -> Result<(Vec<String>, PrerequisitesReport), Box<dyn std::error::Error>> {
     let (org, bill) = crate::prerequisites::to_write(&report.write);
-    // A workload's estate grants nothing at the organization or on the billing account:
-    // its account could not apply the grant, and what it holds is the organisation's
+    // A workload estate grants nothing at the organization or on the billing account:
+    // its account could not apply the grant, and what it holds is the organization's
     // estate's decision. The report never asks for one; this holds whoever calls.
     if report.delegation.is_some() && !(org.is_empty() && bill.is_empty()) {
         return Err(format!(
-            "{}: a workload's estate writes no grant at the organization or on the billing account — what its account lacks is asked for in {}",
+            "{}: a workload estate writes no grant at the organization or on the billing account — what its account lacks is asked for in {}",
             path.display(),
-            ASK_THE_ORGANISATION
+            ASK_THE_ORGANIZATION
         )
         .into());
     }
@@ -4478,11 +4479,11 @@ pub(crate) fn prerequisites_write(
             "the declarations were written and {} prerequisite(s) are still missing",
             if after.delegation.is_some() { after.writable_gap() } else { after.missing.len() + after.missing_apis.len() }
         ))),
-        Err(e) => Err(restore(format!("the declarations were written and the estate no longer compiles: {}", e))),
+        Err(e) => Err(restore(format!("the declarations were written and the estate no longer transpiles: {}", e))),
     }
 }
 
-/// Write a compile's HCL into `dir`: `main.tf` with its provenance line, the other
+/// Write a transpile's HCL into `dir`: `main.tf` with its provenance line, the other
 /// files when they are non-empty, and no `imports.tf` left from an earlier run; and the
 /// interfaces into `interfaces_dir`. Returns the files written. `estate` is what the
 /// provenance line names. The CLI and the MCP `satz_transpile` tool both write through here.
@@ -4500,11 +4501,11 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     // OUTPUT changed, not when the version did.
     //
     // What it is for: telling at a glance which estates across a fleet were last
-    // emitted by an old satz —
+    // written by an old satz —
     //   grep -h "Generated by satz" ~/estates/*/hcl/main.tf | sort -u
     //
-    // What it is NOT: evidence that an estate still compiles, or that it still
-    // emits the same resources. A language tightening can break an estate whose
+    // What it is NOT: evidence that an estate still transpiles, or that it still
+    // writes the same resources. A language tightening can break an estate whose
     // stamp looks current, and leave one alone whose stamp is ancient. Only
     // re-transpiling and comparing answers that. The stamp says where to look
     // first; the fleet check says what is actually true.
@@ -4512,7 +4513,7 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     // A comment rather than a value: a block-level comparison strips comment-only
     // lines, so this never reads as a delta.
     let stamped = format!(
-        "# Generated by satz v{} — do not edit; re-emit from {}.\n\n{}",
+        "# Generated by satz v{} — do not edit; transpile again from {}.\n\n{}",
         env!("CARGO_PKG_VERSION"),
         estate,
         out.main_tf
@@ -4537,7 +4538,7 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     Ok(written)
 }
 
-/// One hand-over folder taken for a team's estate: `folder` is a folder a central estate
+/// One interface folder taken for a workload estate: `folder` is a folder an organization's estate
 /// wrote under its `interfaces/outgoing/` — or a copy of one — named after its interface,
 /// with that interface's file at `<name>/satz/interface.satz` inside. It is copied whole to
 /// `incoming/<name>/`, replacing an earlier copy, unless that is where it already stands.
@@ -4549,7 +4550,7 @@ fn take_interface(folder: &Path, incoming: &Path, config_dir: &Path) -> Result<(
     let inside = Path::new(&name).join(SATZ_DIR).join(SATZ_FILE);
     if !folder.join(&inside).is_file() {
         return Err(format!(
-            "{}: no {} in it — a hand-over folder is one folder of a central estate's interfaces/outgoing/, named after its interface",
+            "{}: no {} in it — an interface folder is one folder under interfaces/outgoing/ of an organization's estate, named after its interface",
             folder.display(),
             fsx::slash(&inside)
         )
@@ -4569,7 +4570,7 @@ fn take_interface(folder: &Path, incoming: &Path, config_dir: &Path) -> Result<(
     let file = satz_core::satz::parse(&text)
         .map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?
         .interface_file
-        .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the central estate writes one under interfaces/outgoing/", path.display()))?;
+        .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the organization's estate writes one under interfaces/outgoing/", path.display()))?;
     // the path the estate `use`s: relative to the config directory when it is under it
     let absolute = fsx::canonicalize(&path).unwrap_or(path);
     let use_path = match fsx::canonicalize(config_dir).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
@@ -4730,7 +4731,7 @@ pub(crate) fn write_interface(
 }
 
 /// Resources the provider will refuse for a missing required argument or block,
-/// reported at the validation level: `error` refuses the compile, `warn` (the
+/// reported at the validation level: `error` refuses the transpile, `warn` (the
 /// default) prints one warning per resource, `none` says nothing.
 /// `plan -x --config <dir>` puts `--config` inside the pass-through args, where
 /// clap never sees it. Detect that and print the command that would have worked.
@@ -4753,7 +4754,7 @@ pub(crate) fn misplaced_config_hint(cmd: &Commands) -> Option<String> {
     Some(
         format!(
             "--config must come BEFORE the arguments passed through to the tool: everything after \
-             `{}` is handed over verbatim, so a `--config` there never reaches satz.\n  try: \
+             `{}` is passed on verbatim, so a `--config` there never reaches satz.\n  try: \
              satz {} {} {}",
             sub, sub, cfg, rest.join(" ")
         )
@@ -4800,7 +4801,7 @@ fn estate_among_tf_args(sub: &str, args: &[String]) -> Option<String> {
 /// A thin wrapper: the point is not to reimplement `plan`/`apply` but to make
 /// them location-independent like every other command, so
 /// `satz apply --config <estate>` works from anywhere. stdio is inherited, so
-/// apply's approval prompt and the usual coloured output behave normally, and the
+/// apply's approval prompt and the usual colored output behave normally, and the
 /// tool's own exit code is propagated — a failed plan must fail the caller.
 ///
 /// Three things it adds, all before the tool starts and all only for `plan` and
@@ -4808,21 +4809,21 @@ fn estate_among_tf_args(sub: &str, args: &[String]) -> Option<String> {
 ///
 /// - The APIs. Every API the estate declares on the project the provider bills
 ///   to is switched on if it is off (`api_preflight`, ADR 0036), as the estate's
-///   IaC service account. `init` does not: it configures a backend and talks to
+///   estate account. `init` does not: it configures a backend and talks to
 ///   no Google API of the estate's.
 /// - The default grants. The domain's Project Creator and Billing Account Creator
-///   entries on the organisation — a new organisation's defaults — are taken off by
+///   entries on the organization — a new organization's defaults — are taken off by
 ///   `apply` once every holder the estate declares for the role is live
 ///   (`remove_default_grants`, ADR 0081); `plan` says what `apply` would do. The
 ///   same `api_preflight` switch covers it: off, satz calls no Google API before the tool.
-/// - The replacements. An org policy that the state holds with rules and the
+/// - The replacements. An organization policy that the state holds with rules and the
 ///   estate now declares reset is replaced (`reset_replacements`, ADR 0011), and
-///   satz says so. The emitted `main.tf` names the same `-replace` in a comment
+///   satz says so. The written `main.tf` names the same `-replace` in a comment
 ///   above each policy declared reset, for an apply that does not run through
 ///   satz.
 ///
 /// It does NOT transpile first: `hcl/` is generated, but coupling generation to
-/// the deploy step would change what `plan` means and hide a diff the operator
+/// the apply step would change what `plan` means and hide a diff the operator
 /// should see. Transpile, look, then plan.
 async fn run_tf(
     runtime_config: &ToolConfig,
@@ -4844,7 +4845,7 @@ async fn run_tf(
     }
     if subcommand != "init" && !hcl_dir.join(".terraform").exists() {
         return Err(format!(
-            "'{}' is not initialised — run `satz hcl-init` (same --config) first",
+            "'{}' is not initialized — run `satz hcl-init` (same --config) first",
             hcl_dir.display()
         )
         .into());
@@ -4852,7 +4853,7 @@ async fn run_tf(
     let mut args = args.to_vec();
     if (subcommand == "plan" || subcommand == "apply") && api_preflight {
         // both steps run as what `tofu` is about to act as: one binding, read from the
-        // emitted provider block
+        // written provider block
         configure_emitted_impersonation(&emitted_provider(hcl_dir)?)?;
         enable_declared_apis(hcl_dir, &runtime_config.tf_tool).await?;
         remove_default_grants(hcl_dir, subcommand == "apply").await?;
@@ -4883,7 +4884,7 @@ async fn run_tf(
     }
 }
 
-/// The org policies `plan` and `apply` replace instead of updating in place: each
+/// The organization policies `plan` and `apply` replace instead of updating in place: each
 /// one the state holds with rules while the configuration declares it `reset`.
 /// The provider updates such a policy by sending the rules it holds together with
 /// `reset = true`, and the API refuses the pair (`Cannot set PolicyRules if reset
@@ -4933,7 +4934,7 @@ fn replace_args(args: &[String]) -> Option<std::collections::BTreeSet<String>> {
 }
 
 /// `reset_replacements` for the estate in `hcl_dir`, minus what the arguments
-/// already replace. The state is read only when the emitted configuration declares
+/// already replace. The state is read only when the written configuration declares
 /// a reset policy at all.
 fn reset_replacements_for(
     runtime_config: &ToolConfig,
@@ -4955,11 +4956,11 @@ fn reset_replacements_for(
         return Ok(Vec::new());
     }
     let state = crate::bootstrap::state_index(&runtime_config.tf_tool, hcl_dir)
-        .map_err(|e| format!("reading the state for org policies that must be replaced: {}", e))?;
+        .map_err(|e| format!("reading the state for organization policies that must be replaced: {}", e))?;
     Ok(reset_replacements(&manifest, &state).into_iter().filter(|a| !already.contains(a)).collect())
 }
 
-/// What the emitted provider configuration says the next `tofu` run will do:
+/// What the written provider configuration says the next `tofu` run will do:
 /// which project it bills every call to, and which identity it acts as.
 ///
 /// Read from `providers.tf` rather than derived from the estate again, because
@@ -4972,14 +4973,14 @@ struct EmittedProvider {
     /// be on. `None` when the estate declares no literal one.
     billing_project: Option<String>,
     /// `impersonate_service_account` — `None` in local mode, where `tofu` runs
-    /// as the credentials themselves.
+    /// as the signed-in person.
     impersonate: Option<String>,
 }
 
 /// The default provider's billing project and identity, out of `providers.tf`.
 ///
 /// The DEFAULT provider is the block labelled `google` whose `alias` is
-/// `"google"`: the one every emitted resource without a provider of its own
+/// `"google"`: the one every written resource without a provider of its own
 /// uses. Each per-project alias bills to its own project, so taking whichever
 /// block came first would make the answer depend on emission order.
 fn emitted_provider(hcl_dir: &Path) -> Result<EmittedProvider, String> {
@@ -4993,11 +4994,11 @@ fn emitted_provider(hcl_dir: &Path) -> Result<EmittedProvider, String> {
     Ok(default_google_provider(body.blocks()))
 }
 
-/// The `billing_project` of the default `google` provider in an emitted
+/// The `billing_project` of the default `google` provider in an written
 /// `providers.tf` text — what `import --into --generate-unmapped` bills its child
 /// to, so it bills where the estate does.
 pub(crate) fn emitted_billing_project(providers_tf: &str) -> Result<Option<String>, String> {
-    let body = hcl::parse(providers_tf).map_err(|e| format!("the emitted providers.tf: {}", e))?;
+    let body = hcl::parse(providers_tf).map_err(|e| format!("the written providers.tf: {}", e))?;
     Ok(default_google_provider(body.blocks()).billing_project)
 }
 
@@ -5024,7 +5025,7 @@ fn default_google_provider<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>)
     EmittedProvider::default()
 }
 
-/// Bind the identity `plan` and `apply` run as: the service account the emitted
+/// Bind the identity `plan` and `apply` run as: the service account the written
 /// provider impersonates, which is what `tofu` is about to act as in the same
 /// directory.
 ///
@@ -5055,7 +5056,7 @@ fn configure_emitted_impersonation(provider: &EmittedProvider) -> Result<(), Str
 /// checked — `bootstrap` creates it before any apply.
 ///
 /// Every path says what it did, the ones that check nothing included: a
-/// preflight that prints nothing is read as a preflight that passed.
+/// prerequisites check that prints nothing is read as one that passed.
 async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<dyn std::error::Error>> {
     let billing = emitted_billing(hcl_dir)?;
     let projects = billing.projects();
@@ -5075,7 +5076,7 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
         return Ok(());
     };
     let mut state: Option<crate::bootstrap::StateIndex> = None;
-    // Compute goes on only where the organisation already enforces
+    // Compute goes on only where the organization already enforces
     // `compute.skipDefaultNetworkCreation`, when the estate declares it (ADR 0080)
     let deferral = crate::prerequisites::compute_deferral(&manifest);
     for step in api_preflight_steps(&billing, &manifest) {
@@ -5113,7 +5114,7 @@ async fn enable_declared_apis(hcl_dir: &Path, tf_tool: &str) -> Result<(), Box<d
     Ok(())
 }
 
-/// The emitted `main.tf` as a manifest, with `imports.tf` attached when there is one;
+/// The written `main.tf` as a manifest, with `imports.tf` attached when there is one;
 /// `None` when there is no `main.tf`.
 fn emitted_manifest(hcl_dir: &Path) -> Result<Option<crate::manifest::Manifest>, String> {
     let main_tf = hcl_dir.join("main.tf");
@@ -5125,7 +5126,7 @@ fn emitted_manifest(hcl_dir: &Path) -> Result<Option<crate::manifest::Manifest>,
     let body = hcl::parse(&text).map_err(|e| format!("{}: {}", main_tf.display(), e))?;
     let mut manifest = crate::manifest::Manifest::from_blocks(body.blocks());
     // a project named through the interface or an input is its literal here, as it is
-    // in the compile's own manifest
+    // in the transpile's own manifest
     manifest.resolve_projects(&emitted_names(hcl_dir));
     let imports_tf = hcl_dir.join("imports.tf");
     match std::fs::read_to_string(&imports_tf) {
@@ -5139,15 +5140,15 @@ fn emitted_manifest(hcl_dir: &Path) -> Result<Option<crate::manifest::Manifest>,
     Ok(Some(manifest))
 }
 
-/// After the APIs, before `plan` or `apply`: the two grants a new organisation gives its
+/// After the APIs, before `plan` or `apply`: the two grants a new organization gives its
 /// whole domain — Project Creator and Billing Account Creator — taken off the domain by
-/// `apply` once every holder the estate declares for that role on the organisation is
+/// `apply` once every holder the estate declares for that role on the organization is
 /// live, and nothing else of the policy touched (ADR 0081). `plan` reads and says what
-/// `apply` would do. The organisation and the domain are read from the emitted
+/// `apply` would do. The organization and the domain are read from the written
 /// `terraform.tfvars`, the declared holders from `main.tf`; a folder-scoped estate, a
-/// project estate (no organisation or domain of its own) and an estate that declares no
+/// workload estate (no organization or domain of its own) and an estate that declares no
 /// holder of either role are named and skipped. Runs as the identity `run_tf` bound
-/// for the preflight: what `tofu` is about to act as.
+/// for the API prerequisites check: what `tofu` is about to act as.
 async fn remove_default_grants(hcl_dir: &Path, write: bool) -> Result<(), Box<dyn std::error::Error>> {
     let Some(manifest) = emitted_manifest(hcl_dir)? else {
         eprintln!("default grants: not checked — there is no {}", hcl_dir.join("main.tf").display());
@@ -5163,34 +5164,34 @@ async fn remove_default_grants(hcl_dir: &Path, write: bool) -> Result<(), Box<dy
         (Some(o), Some(d)) if !o.is_empty() && !d.is_empty() => (o.clone(), d.clone()),
         _ => {
             eprintln!(
-                "default grants: not checked — {} names no customer-organization-id and customer-domain, so this estate has no organisation of its own",
+                "default grants: not checked — {} names no customer-organization-id and customer-domain, so this estate has no organization of its own",
                 tfvars.display()
             );
             return Ok(());
         }
     };
     if org.starts_with("folders/") {
-        eprintln!("default grants: not checked — the estate installs under {}, and the grants are the organisation's", org);
+        eprintln!("default grants: not checked — the estate installs under {}, and the grants are the organization's", org);
         return Ok(());
     }
     let org_id = org.trim_start_matches("organizations/").to_string();
     let declared = crate::default_grants::declared_holders(&manifest, &org_id);
     if declared.is_empty() {
         eprintln!(
-            "default grants on organizations/{}: not checked — the estate declares no holder of {} on the organisation",
+            "default grants on organizations/{}: not checked — the estate declares no holder of {} on the organization",
             org_id,
             crate::default_grants::ROLES.join(" or ")
         );
         return Ok(());
     }
-    let token = crate::gcp::access_token().await.map_err(|e| format!("default grants on organizations/{}: satz has no credential to read the policy with: {}", org_id, e))?;
+    let token = crate::gcp::access_token().await.map_err(|e| format!("default grants on organizations/{}: satz has no sign-in to read the policy with: {}", org_id, e))?;
     let client = reqwest::Client::new();
     let report = crate::default_grants::reconcile(&client, &token, &org_id, &domain, &declared, write).await?;
     eprint!("{}", report.render());
     Ok(())
 }
 
-/// What the preflight does on one billed project.
+/// What the API prerequisites check does on one billed project.
 #[derive(Debug, PartialEq, Eq)]
 enum ApiPreflightStep {
     /// the estate declares no API there
@@ -5202,7 +5203,7 @@ enum ApiPreflightStep {
     IfManaged(String, String, Vec<String>),
 }
 
-/// The preflight's steps, one per project a provider bills to: the default
+/// The API prerequisites check's steps, one per project a provider bills to: the default
 /// provider's project always exists, a project the estate adopts by an `import`
 /// block does too, a project node's own project otherwise only when the state
 /// holds it, and a billed project the estate declares nowhere is somebody else's
@@ -5237,9 +5238,9 @@ fn parse_inputs(args: &[String]) -> Result<Vec<(String, String)>, Box<dyn std::e
         .collect()
 }
 
-/// The project each provider in the emitted `providers.tf` bills to. A project estate's
+/// The project each provider in the written `providers.tf` bills to. A workload estate's
 /// providers read `interface.tf` and `terraform.tfvars`, which stand beside the file.
-/// What the references in the emitted files stand for: the static values of
+/// What the references in the written files stand for: the static values of
 /// `interface.tf` and the bindings of `terraform.tfvars`.
 fn emitted_names(hcl_dir: &Path) -> crate::prerequisites::Names {
     let mut names = crate::prerequisites::Names::new();
@@ -5297,7 +5298,7 @@ fn yaml_dialect_refusal(input: &Path, what: &str) -> Box<dyn std::error::Error> 
 
 
 /// What every compliance tool starts from: the emission manifest, the claims of the
-/// packs the estate really uses, the organisation it declares, and the frameworks it
+/// packs the estate really uses, the organization it declares, and the frameworks it
 /// says it is HELD TO (`None` when the estate binds no `compliance_frameworks`).
 type ComplianceInputs = (
     crate::manifest::Manifest,
@@ -5335,7 +5336,7 @@ fn compliance_inputs(
     reject_yaml_dialect(input_path, "this command")?;
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
     let claims = crate::compliance::claims_from_frontend(&out.claims);
-    // The compile already refused an entry that names no catalog, so this only fails
+    // The transpile already refused an entry that names no catalog, so this only fails
     // when the library moved under the run — which is still an error, never an empty
     // list that would read as an estate held to nothing.
     let held_to = crate::frameworks::resolve(&out.env, &runtime_config.presets_dir)?;
@@ -5343,15 +5344,15 @@ fn compliance_inputs(
 }
 
 /// Append `hcl { … }` bodies verbatim to the generated main.tf, each under a
-/// provenance header, and report them: raw HCL deploys but the compliance plane
+/// provenance header, and report them: raw HCL is applied but the compliance plane
 /// cannot see inside it, so every block warns unless it states a `trust` reason.
-/// Every `${…}` reference the estate writes must name a resource it emits.
+/// Every `${…}` reference the estate writes must name a resource it writes.
 /// Checked against the EMISSION MANIFEST, not the fold: a project's services
-/// and an exploded grant are real emitted addresses that were never fold
+/// and an exploded grant are real written addresses that were never fold
 /// entities, and referencing one is legitimate.
 ///
-/// Without this a typo compiles and ships. Terraform catches most of them at
-/// plan time, one cycle later and pointing at generated HCL instead of the
+/// Without this a typo transpiles and ships. Terraform catches most of them at
+/// plan time, one cycle later and pointing at generated HCL code instead of the
 /// line someone wrote; the one it cannot catch is a typo that happens to name
 /// a different real resource.
 /// The raw blocks appended to main.tf, verbatim; what they mean for the compliance
@@ -5378,7 +5379,7 @@ fn append_hcl_passthrough(mut main_tf: String, blocks: &[satz_core::pipeline::Hc
 }
 
 /// Strip the common leading indentation a passthrough body inherited from its
-/// position in the .satz file, so the emitted HCL reads like hand-written HCL.
+/// position in the .satz file, so the transpiled HCL code reads like hand-written HCL.
 fn dedent_hcl(body: &str) -> String {
     let indent = body
         .lines()
@@ -5435,7 +5436,7 @@ fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
     if std::path::Path::new(estate).is_absolute() {
         return None;
     }
-    // by component, not by string: the configured directory reaches here as
+    // segment by segment, not by string: the configured directory reaches here as
     // `./yaml` as often as `yaml`, and a textual prefix misses that
     let parts = |s: &str| -> Vec<String> {
         std::path::Path::new(s)
@@ -5520,7 +5521,7 @@ pub(crate) fn estate_as_typed(estate: &Path, runtime_config: &ToolConfig) -> Str
 /// `--into`, which also writes the delta into it, and `--as`, which borrows the
 /// identity alone and writes a new file. `None` is the answer when neither is
 /// given: the sweep has no estate to be and reads as the caller's own
-/// credentials, which is what an organisation must allow for the bare form to
+/// sign-in, which is what an organization must allow for the bare form to
 /// work. clap refuses the two flags together, so the order here settles nothing.
 fn import_binds_to(into: Option<PathBuf>, as_estate: Option<PathBuf>) -> Option<PathBuf> {
     into.or(as_estate)
@@ -5529,12 +5530,12 @@ fn import_binds_to(into: Option<PathBuf>, as_estate: Option<PathBuf>) -> Option<
 /// As whom a live import given an estate reads the scope, from what the estate
 /// impersonates (`target`, `estate_impersonation_target`) and `--no-impersonate`.
 ///
-/// `--as` exists to borrow the estate's IaC service account, so an `--as` that
+/// `--as` exists to borrow the estate account, so an `--as` that
 /// borrows none is refused: a local-mode estate impersonates nobody, and
 /// `--no-impersonate` keeps the run off the account — either way the sweep would
 /// read as the caller, which the bare form already does. `--into` writes into the
 /// estate, and runs as whatever the estate runs as: its account, or the caller's
-/// credentials for a local-mode estate or under `--no-impersonate`, said as such.
+/// sign-in for a local-mode estate or under `--no-impersonate`, said as such.
 fn sweep_identity(
     estate: &Path,
     target: Option<String>,
@@ -5545,8 +5546,8 @@ fn sweep_identity(
     let named = estate.display().to_string();
     let refused = |why: &str, instead: &str| {
         format!(
-            "--as {}: {}, so the sweep would read as your own Application Default Credentials while naming the estate. \
-             Drop --as to sweep as your own credentials{}. Nothing was swept.",
+            "--as {}: {}, so the sweep would read as yourself, signed in, while naming the estate. \
+             Drop --as to sweep as your own sign-in{}. Nothing was swept.",
             named, why, instead
         )
     };
@@ -5562,7 +5563,7 @@ fn sweep_identity(
     }
 }
 
-/// The organisation an estate is bound to — its `customer_organization_id` — which
+/// The organization an estate is bound to — its `customer_organization_id` — which
 /// every live import given the estate checks the swept scope against. Refused
 /// when the estate binds none, because the check then has nothing to compare.
 fn estate_organization(estate: &Path, runtime_config: &ToolConfig) -> Result<String, Box<dyn std::error::Error>> {
@@ -5578,7 +5579,7 @@ fn estate_organization(estate: &Path, runtime_config: &ToolConfig) -> Result<Str
         .filter(|o| !o.is_empty())
         .ok_or_else(|| {
             format!(
-                "{} binds no customer_organization_id, so satz cannot tell whether the scope is inside the organisation the estate is bound to. \
+                "{} binds no customer_organization_id, so satz cannot tell whether the scope is inside the organization the estate is bound to. \
                  Bind it in the estate's params. Nothing was swept.",
                 estate.display()
             )
@@ -5594,18 +5595,18 @@ fn estate_infra_project(estate: &Path, runtime_config: &ToolConfig) -> Result<Op
 }
 
 /// Configure the identity live estate commands run as: on a
-/// `deployment_mode = "cloud"` estate, the IaC service account
+/// `deployment_mode = "cloud"` estate, the estate account
 /// (`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the
 /// emitter's own provider rule), exactly what `tofu` applies with, so the
-/// human needs no org-wide read roles. Local mode and `--no-impersonate`
-/// stay on the plain ADC. Bootstrap never calls this: on day 0 the SA may
-/// not exist yet.
+/// human needs no organization-wide read roles. Local mode and `--no-impersonate`
+/// stay on the signed-in person. Bootstrap never calls this: before the bootstrap
+/// the estate account does not exist.
 ///
 /// THE RULE: post-init, anything that reads or writes a customer's estate runs
 /// as that estate's service account. The exceptions are deliberate and few —
 /// bare `whoami` (it asks about the human; given an estate it binds like
 /// everything else), `bootstrap` and `init` (no SA exists yet), and
-/// `map-types` (no credentials at all). A live command that calls neither this
+/// `map-types` (no sign-in at all). A live command that calls neither this
 /// nor `disable_impersonation` runs as the human by accident, which is what
 /// `the_estate_commands_are_the_ones_that_bind` gates.
 ///
@@ -5615,7 +5616,7 @@ fn estate_infra_project(estate: &Path, runtime_config: &ToolConfig) -> Result<Op
 ///
 /// Hands back WHO it bound, for the caller that has to tell a child process the
 /// same answer: `import --into --generate-unmapped` writes it into the provider
-/// block `tofu` reads with. `None` is the plain ADC — a local-mode estate, or
+/// block `tofu` reads with. `None` is the signed-in person — a local-mode estate, or
 /// `--no-impersonate`, which outranks the estate.
 fn configure_estate_impersonation(
     input_path: &Path,
@@ -5630,9 +5631,9 @@ fn configure_estate_impersonation(
 /// with nothing bound. `None` is an answer: a local-mode estate impersonates
 /// nothing.
 ///
-/// An estate whose params cannot be read, or whose `deployment_mode` the compile
+/// An estate whose params cannot be read, or whose `deployment_mode` the transpile
 /// refuses, has no answer, and the error says why. Every caller refuses on it: a
-/// command that ran on regardless would run as whoever is logged in.
+/// command that ran on regardless would run as whoever is signed in.
 ///
 /// The CLI binds it for the process; `satz mcp` scopes it to one call, because
 /// it works through estates in turn. Both need the same answer, and deriving it
@@ -5646,12 +5647,12 @@ pub(crate) fn estate_impersonation_target(
         .map(str::to_string))
 }
 
-/// What an estate declares about its identity — its `deployment_mode` and its IaC
-/// service account — read off its params. `named` is the estate as the operator
+/// What an estate declares about its identity — its `deployment_mode` and its estate
+/// account — read off its params. `named` is the estate as the operator
 /// named it, which is what `whoami` repeats in the `satz migrate` it suggests.
 ///
 /// Refused, naming the estate and the reason, when its params cannot be read or it
-/// binds a mode the compile refuses.
+/// binds a mode the transpile refuses.
 pub(crate) fn estate_declaration(
     input_path: &Path,
     named: String,
@@ -5659,7 +5660,7 @@ pub(crate) fn estate_declaration(
 ) -> Result<crate::gcp::identity::EstateDeclaration, String> {
     let refused = |e: String| format!("{} — satz cannot tell which identity this estate runs as, and runs nothing for it", e);
     // a read or parse error names the file and the line already; an `unknown param` gets
-    // what the pack graph says about it, as the compile's own refusal does — most often a
+    // what the pack graph says about it, as the transpile's own refusal does — most often a
     // pack whose provider is off, which is the one thing that makes the refusal fixable
     let src = fsx::read_to_string(input_path).map_err(|e| refused(format!("{}: {}", input_path.display(), e)))?;
     let loader = satz_loader(input_path, &runtime_config.include_dirs);
@@ -5676,7 +5677,7 @@ pub(crate) fn estate_declaration(
         refused(hinted.to_string())
     })?;
     crate::gcp::identity::EstateDeclaration::from_env(named, &env).map_err(|e| {
-        // at the line the estate binds it on — at none when a pack binds it, as the compile says it
+        // at the line the estate binds it on — at none when a pack binds it, as the transpile says it
         let at = crate::findings::param_line(&src, "deployment_mode").map(|l| format!(":{}", l)).unwrap_or_default();
         refused(format!("{}{}: {}", input_path.display(), at, e))
     })
@@ -5708,7 +5709,7 @@ fn mode_switch(
     if from == to {
         return Ok(ModeSwitch { from, to, before, after: None });
     }
-    // the mode the estate would run in is judged by the compile's reader before the file
+    // the mode the estate would run in is judged by the transpile's reader before the file
     // is touched: cloud mode without `svc_iac_account` and `infra_project_name` is refused
     let (_, mut env) = satz_estate_env(input_path, &runtime_config.include_dirs)?;
     env.insert("deployment_mode".to_string(), serde_yaml::Value::String(to.clone()));
@@ -5721,7 +5722,7 @@ fn mode_switch(
 }
 
 /// The parameter table of a `.satz` estate, keyed the way the estate spells a
-/// param: `snake_case`, the compile's own names.
+/// param: `snake_case`, the transpile's own names.
 pub(crate) fn satz_estate_params(
     input: &Path,
     include_dirs: &[String],
@@ -5729,7 +5730,7 @@ pub(crate) fn satz_estate_params(
     Ok(satz_estate_env(input, include_dirs)?.1.into_iter().collect())
 }
 
-/// The source of a `.satz` estate and its parameter table as the compile reads it:
+/// The source of a `.satz` estate and its parameter table as the transpile reads it:
 /// snake_case, every `use`d pack's defaults under the estate's own bindings.
 fn satz_estate_env(
     input: &Path,
@@ -5761,7 +5762,7 @@ pub(crate) fn satz_loader(
     }
 }
 
-/// The org policies a `.satz` estate declares, read off the folded IR.
+/// The organization policies a `.satz` estate declares, read off the folded IR.
 ///
 /// Runs the full generation so the answer is exactly what `transpile` would
 /// write — a policy suppressed or lost to a conflict must not show up as
@@ -5774,9 +5775,9 @@ pub(crate) fn satz_org_policy_bodies(
     Ok(pipeline_b_generate(input, runtime_config, runtime_config)?.org_policies)
 }
 
-/// The emitted files as sorted lines, for comparing two compiles of one estate.
-/// `prerequisites` is what that compile does with a missing role or API: `merge-presets`,
-/// which writes those at its end, passes `Quiet`, so a compile before that step does not
+/// The written files as sorted lines, for comparing two transpiles of one estate.
+/// `prerequisites` is what that transpile does with a missing role or API: `merge-presets`,
+/// which writes those at its end, passes `Quiet`, so a transpile before that step does not
 /// refuse on the gap the step is there to close.
 pub(crate) fn transpile_sorted_b(
     input: &Path,
@@ -5822,7 +5823,7 @@ pub(crate) fn resolve_against(base: &str, path: PathBuf) -> PathBuf {
     }
 }
 
-/// `presets_dir` must come from `runtime_config` so `--config <dir>/config.toml` is honoured.
+/// `presets_dir` must come from `runtime_config` so `--config <dir>/config.toml` is honored.
 /// No fallback to pre-presets_dir layouts — if the library is not where the config says,
 /// this fails visibly rather than quietly reading from a legacy location.
 fn load_import_config(
@@ -6348,12 +6349,12 @@ mod command_groups {
     /// path as the human, and every MCP tool did too.
     #[derive(Debug, PartialEq)]
     enum Identity {
-        /// Binds the estate's IaC service account, as `tofu` applies with.
+        /// Binds the estate account, as `tofu` applies with.
         EstateSa,
-        /// Deliberately the human's ADC. The reason is the point of the entry.
+        /// Deliberately the signed-in person. The reason is the point of the entry.
         Human(&'static str),
         /// satz itself calls no Google API. It may still shell out to `tofu` or
-        /// Checkov, or talk to GitHub — neither is a Google credential.
+        /// Checkov, or talk to GitHub — neither is a Google sign-in.
         NoGoogleApi,
         /// `mcp` binds per tool call, from the estate each tool names.
         PerTool,
@@ -6377,9 +6378,9 @@ mod command_groups {
         ("report-compliance", Identity::EstateSa),
         ("adopt", Identity::EstateSa),
         // Two flags name an estate: `--into`, which writes the delta into it, and
-        // `--as`, which only reads the scope as it. Either binds that estate's IaC
-        // service account, which is the account that holds
-        // `roles/cloudasset.viewer` on an organisation satz set up. Given neither,
+        // `--as`, which only reads the scope as it. Either binds that estate's estate
+        // account, which is the account that holds
+        // `roles/cloudasset.viewer` on an organization satz set up. Given neither,
         // the sweep writes a NEW file and has no estate to be, exactly like `init`.
         // `--generate-unmapped` runs `tofu plan -generate-config-out` as whatever
         // the run is bound to: the provider block it writes carries the estate's
@@ -6388,18 +6389,18 @@ mod command_groups {
         (
             "import",
             Identity::HumanOrEstate(
-                "bare, the scope is read with the caller's own credentials; given an estate — `--into` or `--as` — as that estate runs: its service account, or the caller's credentials for a local-mode `--into` (an `--as` that lends no account is refused)",
+                "bare, the scope is read with the caller's own sign-in; given an estate — `--into` or `--as` — as that estate runs: its service account, or the caller's sign-in for a local-mode `--into` (an `--as` that lends no account is refused)",
             ),
         ),
-        ("bootstrap", Identity::Human("day 0 — the service account does not exist yet")),
-        ("init", Identity::Human("derives the estate's values from the ADC before an estate exists")),
+        ("bootstrap", Identity::Human("the bootstrap — the estate account does not exist yet")),
+        ("init", Identity::Human("derives the estate's values from the signed-in person before an estate exists")),
         (
             "whoami",
             Identity::HumanOrEstate(
                 "bare, the question IS who the human is; given an estate, who that estate acts as",
             ),
         ),
-        ("map-types", Identity::Human("Discovery documents are public — no credential at all")),
+        ("map-types", Identity::Human("Discovery documents are public — no sign-in at all")),
         ("mcp", Identity::PerTool),
         ("transpile", Identity::EstateSaWhenItRuns("only --plan/--apply reach an API, through run_tf")),
         ("update-prerequisites", Identity::NoGoogleApi),
@@ -6412,13 +6413,13 @@ mod command_groups {
         ("hcl-init", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
         ("check-request", Identity::NoGoogleApi),
-        // The API preflight: as the identity the emitted provider impersonates,
+        // The API prerequisites check: as the identity the written provider impersonates,
         // which is the identity `tofu` is about to act as in the same directory.
         ("plan", Identity::EstateSa),
         ("apply", Identity::EstateSa),
         (
             "migrate",
-            Identity::Human("--mode cloud assigns Groups Admin to the IaC service account, which cannot give itself an admin role"),
+            Identity::Human("--mode cloud assigns Groups Admin to the estate account, which cannot give itself an admin role"),
         ),
         ("scan-plan", Identity::NoGoogleApi),
         ("generate-migration", Identity::NoGoogleApi),
@@ -6467,7 +6468,7 @@ mod command_groups {
             "these commands do not say which identity their live calls run as: {missing:?} — \
              add each to IDENTITIES in src/main.rs. If it touches a customer's estate the answer \
              is EstateSa (call configure_estate_impersonation at its arm); if it deliberately \
-             stays on the human's ADC, say why."
+             stays on the signed-in person, say why."
         );
         let unknown: Vec<_> = classified.difference(&cli).collect();
         assert!(unknown.is_empty(), "IDENTITIES names commands the CLI does not have: {unknown:?}");
@@ -6485,8 +6486,8 @@ mod command_groups {
         &["adopt", "adopt-org-policies"],
         &["import"],
         &["whoami"],
-        // `run_tf`'s API preflight, reached by all three routes into the tool.
-        // It binds from the emitted provider rather than from an estate file,
+        // `run_tf`'s API prerequisites check, reached by all three routes into the tool.
+        // It binds from the written provider rather than from an estate file,
         // because these commands are given a directory and no estate.
         &["plan", "apply", "transpile"],
     ];
@@ -6534,7 +6535,7 @@ mod command_groups {
 
         // One binding call per site, plus each function's own definition. Two
         // functions, because a command given an estate derives the identity from
-        // its params and a command given only the emitted directory reads it out
+        // its params and a command given only the written directory reads it out
         // of the artefact `tofu` reads.
         // Both definitions live in main.rs; the arms that call them live in main.rs and,
         // since `run_adopt` moved, in adopt.rs. Each file contributes its calls, and the
@@ -6642,12 +6643,12 @@ mod command_groups {
 #[cfg(test)]
 mod satz_vars_parity {
     //! The org-policy commands read an estate's variable table. Until v0.40 they
-    //! got it by compiling the estate to a `.gen.yaml` twin and parsing the
+    //! got it by transpiling the estate to a `.gen.yaml` twin and parsing the
     //! `variables:` block back out; they now read it from the fragment pipeline.
     //!
     //! Both routes must agree, because a divergence would be invisible: the
-    //! commands would silently address a different org, or resolve a preset
-    //! against different values than the ones `transpile` emits. This pins the
+    //! commands would silently address a different organization, or resolve a preset
+    //! against different values than the ones `transpile` writes. This pins the
     //! two together — including the snake_case -> kebab-case rename, which lives
     //! in the Satz YAML emitter and therefore has to be reproduced by hand on the
     //! pipeline side.
@@ -6759,7 +6760,7 @@ mod corpus {
         v
     }
 
-    /// Compile `<case>/main.satz` through the fragment pipeline, the way
+    /// Transpile `<case>/main.satz` through the fragment pipeline, the way
     /// `transpile` does, and return
     /// `sorted(main.tf) ---tfvars--- sorted(tfvars) ---imports--- sorted(imports.tf)`:
     /// an `"import-id"` is emission too, and one written as an interpolation
@@ -6792,7 +6793,7 @@ mod corpus {
         // schema-derived detail (it once silently lost every alert policy's
         // notification_channels).
         ctx.registry = Some(&reg);
-        let mut out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+        let mut out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: write failed: {}", name, e));
         if !fe.interface_files.is_empty() {
             out.interface_tf = crate::emitter::interface_tf(&locals, &fe.interface_files);
             let findings = crate::consumer::check_project(&out.manifest, &fe.interface_files);
@@ -6858,10 +6859,10 @@ mod corpus {
 
 #[cfg(test)]
 mod placement_gate {
-    //! What a `use` places, and what it never emits, through the emitter — the rules
+    //! What a `use` places, and what it never writes, through the emitter — the rules
     //! that hold by construction and that nothing pinned: a pack is used at the top level
-    //! and its resources land at the organisation, a pack that creates a project names the
-    //! folder it is created in, an organisation-level resource hoists to the organisation
+    //! and its resources land at the organization, a pack that creates a project names the
+    //! folder it is created in, an organization-level resource hoists to the organization
     //! from every position an author may write it, a folder or a project written in a
     //! project's body is refused, and a pack's `params`, `question` and `claim` statements
     //! reach the estate and never `main.tf`.
@@ -6896,7 +6897,7 @@ google_project {
 "#;
 
     /// A pack of CONTENT, no node of its own: one project-scoped resource, one whose
-    /// scope is a Resource Manager path, and one that belongs to the organisation
+    /// scope is a Resource Manager path, and one that belongs to the organization
     /// whatever encloses it. `CONTENT_BODY` is the same three maps without the header, so
     /// the same resources can be written by hand where a `use` no longer stands.
     const CONTENT_BODY: &str = r#"google_storage_bucket {
@@ -6924,7 +6925,7 @@ google_organization_iam_member {
 "#;
 
     /// The same three maps, project-scoped only: a project's body takes neither the
-    /// organisation grant nor anything else that hangs off something above the project.
+    /// organization grant nor anything else that hangs off something above the project.
     const CONTENT_BODY_IN_A_PROJECT: &str = r#"google_storage_bucket {
   evidence {
     name                        = "acme-evidence-001"
@@ -6966,7 +6967,7 @@ google_org_policy_policy {
         assert!(folded.conflicts().is_empty(), "{:?}", folded.conflicts());
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
-        let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("emit: {}", e))?;
+        let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("write: {}", e))?;
         Ok((out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs), fe))
     }
 
@@ -7003,7 +7004,7 @@ google_org_policy_policy {
     fn a_pack_is_used_at_the_top_level_and_its_statements_never_reach_main_tf() {
         let (main_tf, tfvars, fe) = emit(&format!("{}{}", HEAD, "use \"hosting.satz\"\n"));
         let host = block(&main_tf, "google_project", "host");
-        assert!(host.contains("org_id = \"123456789012\""), "a pack used at the top level creates its project at the organisation:\n{}", host);
+        assert!(host.contains("org_id = \"123456789012\""), "a pack used at the top level creates its project at the organization:\n{}", host);
         // the statements: in the estate, resolved — and nowhere in the HCL
         assert_eq!(fe.questions.len(), 1);
         assert_eq!(fe.questions[0].questions[0].subject, "host_is_wanted");
@@ -7053,7 +7054,7 @@ google_org_policy_policy {
 
     /// A pack's project names the folder it is created in, and that param is what an
     /// enclosure used to say. The proof is the project written BY HAND inside the folder:
-    /// the two emit the same `google_project` block, so an estate that moves a pack's line
+    /// the two write the same `google_project` block, so an estate that moves a pack's line
     /// to the top level and binds the param plans nothing.
     #[test]
     fn a_pack_s_project_is_created_in_the_folder_its_param_names() {
@@ -7086,21 +7087,21 @@ google_org_policy_policy {
         );
 
         // The default says nothing, so a pack that names no folder creates its project at
-        // the organisation.
+        // the organization.
         let (top_tf, _, _) = emit(&format!("{}{}", HEAD, "use \"hosting.satz\"\n"));
         let host = block(&top_tf, "google_project", "host");
         assert!(host.contains("org_id = \"123456789012\""), "{}", host);
-        assert!(!host.contains("folder_id"), "an empty folder_id is not emitted:\n{}", host);
+        assert!(!host.contains("folder_id"), "an empty folder_id is not written:\n{}", host);
     }
 
     /// Per SCOPE, where a resource lands: a pack used at the top level reaches the
-    /// organisation, and a node's body places what it encloses — including an org policy,
+    /// organization, and a node's body places what it encloses — including an organization policy,
     /// whose parent is the Resource Manager path `projects/<id>` and not the bare id a
-    /// project reference gives. An organisation-level resource keeps the organisation
+    /// project reference gives. An organization-level resource keeps the organization
     /// from every position an author may write it in: that hoist is what lets an author
     /// write one beside the project it serves.
     #[test]
-    fn a_nodes_body_places_what_it_encloses_and_an_organisation_level_resource_hoists() {
+    fn a_nodes_body_places_what_it_encloses_and_an_organization_level_resource_hoists() {
         let forms = [
             (
                 "a pack used at the top level",
@@ -7137,7 +7138,7 @@ google_org_policy_policy {
                 None => assert!(!bucket.contains("project ="), "{}: the bucket took a project from nowhere:\n{}", form, bucket),
             }
 
-            // a Resource Manager path: organisation, folder or project, in that form
+            // a Resource Manager path: organization, folder or project, in that form
             let policy = block(&main_tf, "google_org_policy_policy", "os_login");
             assert!(
                 policy.contains(&format!("parent = {}", policy_parent)),
@@ -7152,25 +7153,25 @@ google_org_policy_policy {
                 policy
             );
 
-            // organisation-level: the organisation, from every position it may stand in
+            // organization-level: the organization, from every position it may stand in
             if grants {
                 let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
-                assert!(grant.contains("org_id = \"123456789012\""), "{}: the organisation grant did not hoist:\n{}", form, grant);
-                assert!(grant.contains("provider = google.google"), "{}: the organisation grant took a project's provider:\n{}", form, grant);
+                assert!(grant.contains("org_id = \"123456789012\""), "{}: the organization grant did not hoist:\n{}", form, grant);
+                assert!(grant.contains("provider = google.google"), "{}: the organization grant took a project's provider:\n{}", form, grant);
             }
         }
     }
 
     /// A type that belongs above a project, written IN a project's body. It used to be
-    /// emitted at the organisation, which reads as "in this project" and is not.
+    /// written at the organization, which reads as "in this project" and is not.
     /// The same type at a file's top level is the hoist the rule above proves, so the
     /// refusal is of the position, never of the type.
     #[test]
     fn a_type_that_belongs_above_a_project_is_refused_in_its_body() {
         for (block, belongs) in [
-            ("google_folder {\n      inner {\n        display_name = \"Inner\"\n      }\n    }", "a folder hangs off the organisation or another folder"),
-            ("google_project {\n      inner {\n        project_id = \"acme-inner-001\"\n      }\n    }", "a project hangs off the organisation or a folder"),
-            ("google_organization_iam_member {\n      \"group:gcp-auditors@example.com\" = [\"roles/viewer\"]\n    }", "it belongs to the organisation"),
+            ("google_folder {\n      inner {\n        display_name = \"Inner\"\n      }\n    }", "a folder hangs off the organization or another folder"),
+            ("google_project {\n      inner {\n        project_id = \"acme-inner-001\"\n      }\n    }", "a project hangs off the organization or a folder"),
+            ("google_organization_iam_member {\n      \"group:gcp-auditors@example.com\" = [\"roles/viewer\"]\n    }", "it belongs to the organization"),
             ("google_cloud_identity_group {\n      \"log-admins\" { display_name = \"Log Admins\" }\n    }", "it belongs to the Cloud Identity customer"),
             ("google_billing_account_iam_member {\n      \"group:billing@example.com\" = [\"roles/billing.admin\"]\n    }", "it belongs to the billing account"),
         ] {
@@ -7192,7 +7193,7 @@ google_org_policy_policy {
         );
         let (main_tf, _, _) = emit(&estate);
         let grant = block(&main_tf, "google_organization_iam_member", "iam_group_gcp_auditors_example_com_");
-        assert!(grant.contains("org_id = \"123456789012\""), "the grant beside the project did not reach the organisation:\n{}", grant);
+        assert!(grant.contains("org_id = \"123456789012\""), "the grant beside the project did not reach the organization:\n{}", grant);
     }
 }
 
@@ -7361,7 +7362,7 @@ mod manifest_gate {
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(reg);
-        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: emit failed: {}", case.display(), e));
+        let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: write failed: {}", case.display(), e));
         (out, fe)
     }
 
@@ -7396,7 +7397,7 @@ mod manifest_gate {
                 let got = &got_attrs[addr];
                 for (k, v) in legacy {
                     // DELIBERATE divergence (ADR 0079): the text is the rendering — an
-                    // input as `var.<name>`, a central estate's value as
+                    // input as `var.<name>`, a value of an organization's estate as
                     // `local.interface.<export>` — while the manifest holds the value the
                     // fold judged. The scanner reads the rendering; the manifest never does.
                     if v.contains("${var.") || v.contains("${local.interface") {
@@ -7432,7 +7433,7 @@ mod manifest_gate {
                 }
             }
             assert_eq!(m.declared_enforcement(), legacy_enforcement(&out.main_tf), "{}: enforcement", name);
-            // What `adopt` reads for an org policy: address, bare constraint,
+            // What `adopt` reads for an organization policy: address, bare constraint,
             // parent, single enforce — same tuple the old scanner produced.
             let mut got: Vec<_> = m
                 .of_type("google_org_policy_policy")
@@ -7449,13 +7450,13 @@ mod manifest_gate {
             got.sort();
             let mut want = legacy_org_policies(&out.main_tf);
             want.sort();
-            assert_eq!(got, want, "{}: declared org policies", name);
+            assert_eq!(got, want, "{}: declared organization policies", name);
             checked += 1;
         }
         assert!(checked >= 5, "corpus shrank to {} cases", checked);
     }
 
-    /// The contract the scanners could not keep: raw HCL deploys, but no claim
+    /// The contract the scanners could not keep: raw HCL is applied, but no claim
     /// covers it. A resource that exists only inside `hcl { … }` reaches
     /// `main.tf` and never reaches the manifest.
     #[test]
@@ -7492,7 +7493,7 @@ hcl trust "test fixture" {
         .unwrap();
         let (out, fe) = emit_case(&tmp, &reg);
         let main_tf = crate::append_hcl_passthrough(out.main_tf.clone(), &fe.hcl);
-        assert!(main_tf.contains(r#"resource "google_storage_bucket" "ghost""#), "passthrough must deploy:\n{}", main_tf);
+        assert!(main_tf.contains(r#"resource "google_storage_bucket" "ghost""#), "passthrough must be applied:\n{}", main_tf);
         let addrs = out.manifest.addresses();
         assert!(addrs.contains("google_storage_bucket.real"), "{:?}", addrs);
         assert!(!addrs.contains("google_storage_bucket.ghost"), "a passthrough resource is not a witness: {:?}", addrs);
@@ -7508,7 +7509,7 @@ mod acyclic_gate {
     //! (`order_after_project_services` and the three beside it), so the property
     //! belongs here rather than in the pass that happens to add the last edge:
     //! every case under `tests/corpus/` and `tests/iac/`, graphed over its
-    //! references AND its emitted `depends_on`, is acyclic.
+    //! references AND its written `depends_on`, is acyclic.
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
 
@@ -7522,7 +7523,7 @@ mod acyclic_gate {
     }
 
     fn graph(main_tf: &str) -> BTreeMap<String, BTreeSet<String>> {
-        let body = hcl::parse(main_tf).expect("emitted HCL parses");
+        let body = hcl::parse(main_tf).expect("transpiled HCL code parses");
         let mut edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for b in body.blocks() {
             if b.identifier() != "resource" {
@@ -7552,7 +7553,7 @@ mod acyclic_gate {
         edges
     }
 
-    /// Iterative depth-first search with a colour map; the panic names the cycle.
+    /// Iterative depth-first search with a color map; the panic names the cycle.
     fn find_cycle(edges: &BTreeMap<String, BTreeSet<String>>) -> Option<Vec<String>> {
         let mut done: BTreeSet<&str> = BTreeSet::new();
         for root in edges.keys() {
@@ -7628,16 +7629,16 @@ resource "google_project_service" "infra_cloudresourcemanager_googleapis_com" {
 
 #[cfg(test)]
 mod prerequisites_gate {
-    //! Every resource type the library can emit has a row in the prerequisite
-    //! table (`src/prerequisites.rs`) — the roles the IaC service account needs for
+    //! Every resource type the library can write has a row in the prerequisite
+    //! table (`src/prerequisites.rs`) — the roles the estate account needs for
     //! it AND the API that serves it. The cases under `tests/iac/` together use
     //! every pack, each one unconditionally, so a pack added without a case, or a
-    //! pack emitting a type the table does not know, fails here.
+    //! pack writing a type the table does not know, fails here.
     use std::collections::BTreeSet;
     use std::path::Path;
 
     /// The `use "…"` paths of a case, refusing a `when`: a pack switched off
-    /// emits nothing, and a gate over nothing passes.
+    /// writes nothing, and a gate over nothing passes.
     fn uses(case: &Path, src: &str) -> Vec<String> {
         let mut out = Vec::new();
         for line in src.lines().filter(|l| !l.trim_start().starts_with("//")) {
@@ -7704,7 +7705,7 @@ mod prerequisites_gate {
 
         // The third half of shipping a type: `adopt` can find it live. Found when the
         // SCC notification config 409'd on a re-run and adopt answered "no rule" —
-        // a pack that emits a type nobody can adopt has no way back once the object
+        // a pack that writes a type nobody can adopt has no way back once the object
         // exists, except `tofu import` by hand.
         let cfg: crate::config::ImportConfig =
             serde_yaml::from_str(&std::fs::read_to_string(root.join("presets/import-config.yaml")).expect("import-config.yaml"))
@@ -7715,7 +7716,7 @@ mod prerequisites_gate {
         let new_gaps: Vec<&&str> = unadoptable.difference(&excepted).collect();
         assert!(
             new_gaps.is_empty(),
-            "the library emits types adopt cannot resolve — add `import_id:` or `match_on:` to their rows in presets/import-config.yaml: {:?}",
+            "the library writes types adopt cannot resolve — add `import_id:` or `match_on:` to their rows in presets/import-config.yaml: {:?}",
             new_gaps
         );
         let closed: Vec<&&str> = excepted.difference(&unadoptable).collect();
@@ -7745,7 +7746,7 @@ mod prerequisites_gate {
         assert!(rendered >= 20, "only {rendered} template ids rendered");
     }
 
-    /// Types the library emits whose live id is assigned by the server, so no template
+    /// Types the library writes whose live id is assigned by the server, so no template
     /// can derive it from the estate: adopting one needs a live lookup adopt does not do
     /// yet. Each entry leaves the list with the rule that resolves it.
     const NOT_ADOPTABLE_YET: &[(&str, &str)] = &[
@@ -7769,10 +7770,10 @@ mod prerequisite_findings_speak {
     //! The prerequisite check says what it did not check, and judges each API on
     //! the project its resource's provider bills to.
     //!
-    //! It is judged on the emitted providers — the project each one bills to —
-    //! and on the IaC service account, and it used to return at the first sight
+    //! It is judged on the written providers — the project each one bills to —
+    //! and on the estate account, and it used to return at the first sight
     //! of an unbound `svc_iac_account`, taking the API half with it. An estate
-    //! missing that one param therefore compiled with no prerequisite output at
+    //! missing that one param therefore transpiled with no prerequisite output at
     //! all, which reads as "checked, nothing to report"; binding the param made
     //! the same estate name a missing API. A check that cannot run says so.
     use std::collections::BTreeMap;
@@ -7787,7 +7788,7 @@ mod prerequisite_findings_speak {
         )
     }
 
-    /// The default provider as the emitter writes it: billed to the infra project
+    /// The default provider as the emitter writes it: billed to the infrastructure project
     /// when the estate binds one, to nothing otherwise.
     fn providers(params: &[(&str, &str)]) -> String {
         match params.iter().find(|(k, _)| *k == "infra_project_name") {
@@ -7809,7 +7810,7 @@ mod prerequisite_findings_speak {
     }
 
     /// A bucket inside a project node is served by that project's alias, which
-    /// bills to the project itself: its API is missing THERE, and the infra
+    /// bills to the project itself: its API is missing THERE, and the infrastructure
     /// project enabling it does not help.
     #[test]
     fn a_resource_in_a_project_node_is_judged_on_its_own_project() {
@@ -7833,7 +7834,7 @@ mod prerequisite_findings_speak {
 
     /// No `providers.tf` — its emission failed, which is its own finding — is no
     /// silent pass for the API half.
-    /// A workload's estate is asked for nothing at the organization and offered no write;
+    /// A workload estate is asked for nothing at the organization and offered no write;
     /// an estate on an interface that says nothing of a delegation is judged as before, and
     /// told so.
     #[test]
@@ -7867,22 +7868,22 @@ mod prerequisite_findings_speak {
 
         let f = run(&crate::Reads { delegation: None, interface: true });
         assert!(says(&f, "says nothing of what was delegated to its account"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
-        assert!(says(&f, "at the organization"), "judged as an organisation's account");
+        assert!(says(&f, "at the organization"), "judged as an organization's account");
         let f = run(&crate::Reads::default());
-        assert!(!says(&f, "says nothing of what was delegated"), "an organisation's estate reads no interface");
+        assert!(!says(&f, "says nothing of what was delegated"), "an organization's estate reads no interface");
     }
 
     #[test]
     fn no_providers_is_said_not_passed() {
         let f = findings_for(&manifest(), None, &[("infra_project_name", "acme-infra-001")]);
-        assert!(says(&f, "`providers.tf` was not emitted"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
+        assert!(says(&f, "`providers.tf` was not written"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
     }
 
     fn says(f: &[crate::findings::Finding], needle: &str) -> bool {
         f.iter().any(|x| x.message.contains(needle))
     }
 
-    /// The defect itself: an estate that binds the infra project but no service
+    /// The defect itself: an estate that binds the infrastructure project but no service
     /// account gets the API finding, and a note for the half that was skipped.
     #[test]
     fn an_estate_without_a_service_account_still_gets_the_api_half() {
@@ -7901,7 +7902,7 @@ mod prerequisite_findings_speak {
     }
 
     /// An estate that binds neither param gets one note per half, naming the
-    /// param each half needs — and neither note fails a compile: not being able
+    /// param each half needs — and neither note fails a transpile: not being able
     /// to check something is not a finding against the estate.
     #[test]
     fn an_estate_without_either_param_is_told_what_is_missing() {
@@ -7919,7 +7920,7 @@ mod prerequisite_findings_speak {
         );
         assert!(
             f.iter().all(|x| x.severity == crate::findings::Severity::Info),
-            "an unchecked half refuses a compile: {:?}",
+            "an unchecked half refuses a transpile: {:?}",
             f.iter().map(|x| (&x.severity, &x.message)).collect::<Vec<_>>()
         );
         assert!(!f.is_empty());
@@ -7996,7 +7997,7 @@ mod variables_gate {
         assert_eq!(crate::emitter::variable_type(&names), "list(string)", "a list of scalars keeps its type");
     }
 
-    /// The attribute half of the same promise: nothing the library emits has a literal
+    /// The attribute half of the same promise: nothing the library writes has a literal
     /// the provider schema's type refuses. The customer apply that found the check —
     /// `notification_emails` a string where a set belongs — came from an answer; this
     /// holds the packs' own defaults to it.
@@ -8092,7 +8093,7 @@ mod reset_replace {
 
 #[cfg(test)]
 mod api_preflight {
-    //! What `plan` and `apply` read out of the emitted directory before they
+    //! What `plan` and `apply` read out of the written directory before they
     //! start the tool: the project every call is billed to, the identity to ask
     //! as, and the APIs the estate declares there.
     use super::*;
@@ -8140,7 +8141,7 @@ provider "google" {
         let p = read("provider \"google\" {\n  alias = \"google\"\n  billing_project = \"corp-infra-001\"\n}\n");
         assert_eq!(p.billing_project.as_deref(), Some("corp-infra-001"));
         assert_eq!(p.impersonate, None);
-        // nothing to preflight where no provider bills centrally
+        // nothing to check where no provider bills centrally
         assert_eq!(read("terraform {\n}\n"), EmittedProvider::default());
     }
 
@@ -8160,7 +8161,7 @@ provider "google" {
         );
     }
 
-    /// The preflight works on every project a provider bills to. The default
+    /// The API prerequisites check works on every project a provider bills to. The default
     /// provider's project always exists; a project node's own does when the estate
     /// adopts it by an `import` block, and otherwise only when the state holds it —
     /// a project this run creates has nothing to refresh and cannot take an API yet.
@@ -8236,7 +8237,7 @@ provider "google" {
 
 #[cfg(test)]
 mod import_id_channels {
-    //! `"import-id"` on every kind of emitted resource. The emitter used to
+    //! `"import-id"` on every kind of written resource. The emitter used to
     //! drop it silently for IAM bindings and nested project services, and
     //! memberships had no channel at all.
     use super::*;
@@ -8335,7 +8336,7 @@ google_cloud_identity_group {
             assert!(b.imports_tf.contains(&format!("id = \"{}\"", id)), "missing id {}:\n{}", id, b.imports_tf);
         }
         assert!(!b.main_tf.contains("import-id"), "import-id must never reach a resource body:\n{}", b.main_tf);
-        // the unadopted entries still emit as resources
+        // the unadopted entries still write as resources
         assert!(b.manifest.addresses().contains("google_project_service.infra_logging_googleapis_com"));
         assert_eq!(b.manifest.of_type("google_cloud_identity_group_membership").count(), 2);
     }
@@ -8379,13 +8380,13 @@ google_cloud_identity_group {
         };
         let folder = "google_folder {\n  shared {\n    display_name = \"Shared\"\n  }\n}\n\ngoogle_project {";
 
-        // declared nowhere: emitted nowhere — `tofu destroy` is refused by the
+        // declared nowhere: written nowhere — `tofu destroy` is refused by the
         // provider, which is what protects a customer's project
         let plain = emit(&ESTATE.replace("google_project {", folder));
         assert!(!plain.contains("deletion_policy"), "satz wrote a deletion policy nobody declared:\n{}", plain);
         assert!(!plain.contains("deletion_protection"), "satz wrote a deletion protection nobody declared:\n{}", plain);
 
-        // declared: emitted as declared — the teardown edit, one per node
+        // declared: written as declared — the teardown edit, one per node
         let torn_down = emit(
             &ESTATE
                 .replace("google_project {", &folder.replace("display_name = \"Shared\"", "display_name = \"Shared\"\n    deletion_protection = false"))
@@ -8418,7 +8419,7 @@ google_cloud_identity_group {
 mod schema_typed_bodies {
     //! Every key of a resource body is the provider's or satz's own. The estate
     //! resolver answers from the real schema fixture, which is what production
-    //! compiles against.
+    //! transpiles against.
 
     fn compile(src: &str) -> Result<(), String> {
         let reg = super::corpus::registry();
@@ -8445,7 +8446,7 @@ terraform {
 
     /// A project's parent is `folder_id` or `org_id`; `parent` is the Resource
     /// Manager path, which `google_project` has no attribute for. It used to
-    /// compile and reach `main.tf`, where `tofu validate` was the first to say so.
+    /// transpile and reach `main.tf`, where `tofu validate` was the first to say so.
     #[test]
     fn a_project_body_is_refused_an_argument_the_provider_has_not() {
         let err = compile(&format!(
@@ -8469,17 +8470,17 @@ terraform {
     }
 
     /// What a project body carries besides the provider's own arguments:
-    /// `project_service` (satz emits one `google_project_service` per entry),
+    /// `project_service` (satz writes one `google_project_service` per entry),
     /// `"import-id"` (an `import` block) and nested resource types (the project
     /// is the scope they are written in). None of the three is an attribute of
-    /// `google_project`, and all three compile.
+    /// `google_project`, and all three transpile.
     #[test]
     fn a_project_keeps_what_satz_reads_itself() {
         compile(&format!(
             "{}\ngoogle_project {{\n  infra {{\n    \"import-id\" = \"corp-infra-001\"\n    project_id = \"corp-infra-001\"\n    project_service = [\"storage.googleapis.com\"]\n    google_storage_bucket {{\n      audit {{\n        name = \"corp-audit-logs\"\n        location = \"EU\"\n      }}\n    }}\n  }}\n}}\n",
             HEAD
         ))
-        .expect("a project body carrying what satz reads itself compiles");
+        .expect("a project body carrying what satz reads itself transpiles");
     }
 }
 
@@ -8557,8 +8558,8 @@ mod import_skipped_report {
 
 #[cfg(test)]
 mod init_template {
-    //! The estate `init` writes must compile through the fragment pipeline and
-    //! emit exactly the labels `bootstrap` imports by name.
+    //! The estate `init` writes must transpile through the fragment pipeline and
+    //! write exactly the labels `bootstrap` imports by name.
 
     #[test]
     fn the_generated_estate_compiles_and_carries_bootstraps_labels() {
@@ -8571,10 +8572,10 @@ mod init_template {
 
         let reg = super::corpus::registry();
         let resolver = crate::EstateResolver { registry: &reg };
-        // An init estate carries no uncommented pack line: it must compile with no presets
+        // An init estate carries no uncommented pack line: it must transpile with no presets
         // fetched, because `satz bootstrap` is the very next command the operator runs.
         let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
-            .unwrap_or_else(|e| panic!("init template does not compile: {:?}\n{}", e, src));
+            .unwrap_or_else(|e| panic!("init template does not transpile: {:?}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty());
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
@@ -8603,7 +8604,7 @@ mod init_template {
             addrs
         );
         assert!(out.imports_tf.contains("google_storage_bucket.state"), "{}", out.imports_tf);
-        // the membership emits the bare email (prefix stripped), the org grants keep it
+        // the membership writes the bare email (prefix stripped), the organization grants keep it
         assert!(out.main_tf.contains("id = \"first.admin@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("member = \"group:svc-iac-users@example.com\""), "{}", out.main_tf);
         assert!(out.main_tf.contains("svc-iac-users@example.com"), "{}", out.main_tf);
@@ -8611,11 +8612,11 @@ mod init_template {
         // named roles, not owner — and exactly what the template's own resource
         // types need, so a fresh estate has nothing to add
         let get = |k: &str| fe.env.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let sa = crate::prerequisites::service_account_of(get).expect("the template names its IaC service account");
+        let sa = crate::prerequisites::service_account_of(get).expect("the template names its estate account");
         let granted = crate::prerequisites::granted(&out.manifest, &sa);
         assert!(!granted.owner(), "the template grants roles/owner");
         let (needs, unknown) = crate::prerequisites::needs(&out.manifest);
-        assert!(unknown.is_empty(), "the template emits types the role table does not know: {:?}", unknown);
+        assert!(unknown.is_empty(), "the template writes types the role table does not know: {:?}", unknown);
         let missing = crate::prerequisites::missing(&needs, &granted);
         assert!(missing.is_empty(), "the template misses roles its own types need: {:?}", crate::prerequisites::describe(&crate::prerequisites::cover(&missing)));
         // and the other half of a prerequisite: the APIs its own types are served
@@ -8623,9 +8624,9 @@ mod init_template {
         // its first transpile is a scaffold that was never finished.
         let providers_tf =
             crate::emitter::emit_providers(&fe.config, &folded, &fe.env, &std::collections::HashMap::new(), &std::collections::HashMap::new(), None)
-                .expect("the template's providers.tf emits");
+                .expect("the template's providers.tf writes");
         let billing = crate::prerequisites::Billing::parse(&providers_tf, &Default::default()).expect("the template's providers.tf parses");
-        assert_eq!(billing.default_project().map(str::to_string), get("infra_project_name"), "the template bills to its infra project");
+        assert_eq!(billing.default_project().map(str::to_string), get("infra_project_name"), "the template bills to its infrastructure project");
         let check = crate::prerequisites::apis(&out.manifest, &billing);
         assert!(check.unbilled.is_empty(), "the template has resources no project is billed for: {:?}", check.unbilled);
         let missing_apis = check.missing();
@@ -8634,8 +8635,8 @@ mod init_template {
             "the template misses APIs its own types need: {:?}",
             missing_apis.iter().map(|a| format!("{} on {}", a.api, a.project)).collect::<Vec<_>>()
         );
-        // the users group may become the IaC service account, and only that one:
-        // TokenCreator and serviceAccountUser on the account, not on the org
+        // the estate account user group may act as the estate account, and only that one:
+        // TokenCreator and serviceAccountUser on the account, not on the organization
         assert_eq!(out.manifest.of_type("google_service_account_iam_member").count(), 2);
         assert!(
             !out.manifest
@@ -8681,7 +8682,7 @@ mod init_template {
 
     /// `satz init` writes the workload folder in the form its flag names, and the core
     /// interface — the one every project reads — carries it as `workload_folder`: the
-    /// organisation as a static value, a named folder as a lookup of the folder the estate
+    /// organization as a static value, a named folder as a lookup of the folder the estate
     /// declares.
     #[test]
     fn the_core_interface_carries_the_workload_folder_init_wrote() {
@@ -8790,7 +8791,7 @@ mod migrate_mode {
     /// binds the new mode in the estate, whose own params come first.
     #[test]
     fn a_mode_a_pack_defaults_is_overridden_in_the_estate() {
-        let core = "// Day-0 params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"local\"\n}\n";
+        let core = "// Bootstrap params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"local\"\n}\n";
         let (path, cfg) = estate("pack", "", "\nuse \"core.satz\"\n", &[("core.satz", core)]);
         let switch = mode_switch(&path, &cfg, None).unwrap();
         assert_eq!(switch.from, "local");
@@ -8834,7 +8835,7 @@ mod migrate_mode {
     /// Every reader of an estate's identity refuses one it cannot derive, with the same
     /// words: `whoami` (the declaration), the CLI's binding and `satz mcp`'s per-call scope
     /// (the target), and `migrate` (the switch). Reading it as "impersonates nothing" ran
-    /// every live command as whoever was logged in.
+    /// every live command as whoever was signed in.
     fn refused_everywhere(path: &Path, cfg: &ToolConfig, reason: &str) {
         let said = [
             ("whoami", estate_declaration(path, path.display().to_string(), cfg).map(|_| ()).unwrap_err()),
@@ -8848,7 +8849,7 @@ mod migrate_mode {
         }
     }
 
-    /// A mode the compile refuses is refused at the line the estate binds it on.
+    /// A mode the transpile refuses is refused at the line the estate binds it on.
     #[test]
     fn a_mode_the_compile_refuses_is_refused_by_every_reader() {
         let (path, cfg) = estate("boot", "  deployment_mode    = \"boot\"\n", "", &[]);
@@ -8859,7 +8860,7 @@ mod migrate_mode {
     /// Bound by a pack, the mode is refused naming the estate, at no line of it.
     #[test]
     fn a_refused_mode_a_pack_binds_is_refused_naming_the_estate() {
-        let core = "// Day-0 params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"boot\"\n}\n";
+        let core = "// Bootstrap params.\npack core version \"1.0\"\n\nparams {\n  deployment_mode = \"boot\"\n}\n";
         let (path, cfg) = estate("boot-pack", "", "\nuse \"core.satz\"\n", &[("core.satz", core)]);
         refused_everywhere(&path, &cfg, &format!("{}: `deployment_mode = \"boot\"`", path.display()));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -8874,7 +8875,7 @@ mod migrate_mode {
     }
 
     /// Cloud mode without the account is refused at the line that binds the mode, by
-    /// every reader, with the compile's words.
+    /// every reader, with the transpile's words.
     #[test]
     fn cloud_mode_without_the_account_is_refused_by_every_reader() {
         let (path, cfg) = estate("no-account", "  deployment_mode    = \"cloud\"\n", "", &[]);
@@ -8888,7 +8889,7 @@ mod migrate_mode {
     }
 
     /// `migrate --mode cloud` on a local estate that names no account is refused before
-    /// the file is touched, naming the params — not written and then refused by the compile.
+    /// the file is touched, naming the params — not written and then refused by the transpile.
     #[test]
     fn migrating_to_cloud_without_the_account_is_refused_before_the_file_is_touched() {
         let (path, cfg) = estate("migrate-no-account", "", "", &[]);
@@ -8905,11 +8906,11 @@ mod migrate_mode {
 
 #[cfg(test)]
 mod import_identity {
-    //! As whom a live `satz import` reads a customer's organisation.
+    //! As whom a live `satz import` reads a customer's organization.
     //!
-    //! `roles/cloudasset.viewer` on an organisation satz set up is the IaC service
+    //! `roles/cloudasset.viewer` on an organization satz set up is the estate
     //! account's and nobody else's, so a sweep that cannot be that account cannot
-    //! read the organisation satz itself prescribes: `satz import
+    //! read the organization satz itself prescribes: `satz import
     //! organizations/<id>` was refused by Cloud Asset Inventory while the same
     //! sweep through `--into` succeeded. Two flags now name the estate to be, and
     //! either binds the same account `tofu` applies with.
@@ -8965,7 +8966,7 @@ mod import_identity {
     }
 
     /// Given no estate there is none to be: the sweep writes a new file and reads
-    /// as the caller's own credentials, which is what `IDENTITIES` says.
+    /// as the caller's own sign-in, which is what `IDENTITIES` says.
     #[test]
     fn the_scope_form_given_no_estate_reads_as_the_caller() {
         let Commands::Import { into, as_estate, .. } = parsed(&["import", "organizations/123456789012"]) else {
@@ -8999,12 +9000,12 @@ mod import_identity {
         );
     }
 
-    /// The scope is checked against the organisation the estate binds, and an
+    /// The scope is checked against the organization the estate binds, and an
     /// estate that binds none cannot be checked, so it is refused.
     #[test]
-    fn the_estate_names_the_organisation_its_sweeps_are_held_to() {
+    fn the_estate_names_the_organization_its_sweeps_are_held_to() {
         // its own directory: `estate()` rewrites the shared one under the other tests
-        let dir = std::env::temp_dir().join(format!("satz-import-organisation-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("satz-import-organization-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("acme.satz");
         let text = "estate acme\n\nparams {\n  deployment_mode = \"local\"\n}\n\nterraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n";
@@ -9107,7 +9108,7 @@ mod preset_tests {
         fn scan(content: &str, sigil: char) -> Vec<&str> {
             let mut names = Vec::new();
             // Comment lines are skipped: prose legitimately contains `*` (glob paths) and
-            // `&`, and feeding those to the prelude emits anchors YAML cannot scan.
+            // `&`, and feeding those to the prelude writes anchors YAML cannot scan.
             for line in content.lines().filter(|l| !l.trim_start().starts_with('#')) {
                 for (i, _) in line.match_indices(sigil) {
                     let rest = &line[i + 1..];
@@ -9211,10 +9212,10 @@ mod constraint_equivalents {
     //! managed one, a pack runs the REPLACEMENT ALONE and declares the legacy
     //! twin off. Both forms in force means every exemption has to lift two
     //! policies, and for several constraints Google's only exemption path is to
-    //! disable the constraint org-wide, grant, and re-enable.
+    //! disable the constraint organization-wide, grant, and re-enable.
     //!
     //! The pairing is data, not memory: `presets/managed-constraint-equivalents.txt`,
-    //! generated from a live organisation by
+    //! generated from a live organization by
     //! `scripts/update_constraint_equivalents.py`. Google keeps adding managed
     //! twins, so a rule enforced by re-auditing by hand is a rule enforced when
     //! someone remembers.
@@ -9262,15 +9263,15 @@ mod constraint_equivalents {
         out
     }
 
-    /// One emitted org policy: the constraint it targets, and whether the body
+    /// One written organization policy: the constraint it targets, and whether the body
     /// switches it OFF (`reset = true`) rather than enforcing it.
     struct Emitted {
         reset: bool,
         origin: String,
     }
 
-    /// Every `google_org_policy_policy` a corpus case emits, by constraint name.
-    /// Parsed from the emitted HCL rather than from the pack sources: what the
+    /// Every `google_org_policy_policy` a corpus case writes, by constraint name.
+    /// Parsed from the transpiled HCL code rather than from the pack sources: what the
     /// fold and the params finally produce is what an estate applies.
     fn emitted_policies(case: &Path) -> BTreeMap<String, Emitted> {
         let name = case.file_name().unwrap().to_string_lossy().to_string();
@@ -9287,7 +9288,7 @@ mod constraint_equivalents {
         let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx)
-            .unwrap_or_else(|e| panic!("{}: emit failed: {}", name, e));
+            .unwrap_or_else(|e| panic!("{}: write failed: {}", name, e));
 
         let mut found = BTreeMap::new();
         let mut block: Option<Vec<String>> = None;
@@ -9349,12 +9350,12 @@ mod constraint_equivalents {
             match (policies.get(legacy.as_str()), policies.get(managed.as_str())) {
                 // The legacy form is enforced even though a replacement exists.
                 (Some(l), _) if !l.reset => problems.push(format!(
-                    "{} enforces the legacy `{}`, replaced by `{}`. Emit the managed form and \
+                    "{} enforces the legacy `{}`, replaced by `{}`. Write the managed form and \
                      declare this one `spec {{ reset = true }}`.",
                     l.origin, legacy, managed
                 )),
                 // The replacement is enforced but nothing says the legacy one is off.
-                // Absence is not enough: a legacy policy already set on an organisation
+                // Absence is not enough: a legacy policy already set on an organization
                 // is invisible to an apply that does not declare it, so it goes on
                 // enforcing beside its twin and has to be deleted by hand.
                 (None, Some(m)) if !m.reset => problems.push(format!(
@@ -9375,13 +9376,13 @@ mod constraint_equivalents {
 mod agent_guide_tests {
     /// The agent guide is read by something that will act on it. A syntax error in
     /// an example is not a typo there — it is an instruction to write invalid Satz,
-    /// followed by a compile failure the agent has to debug from a doc it trusted.
+    /// followed by a transpile failure the agent has to debug from a doc it trusted.
     ///
     /// This parses every ```satz block in the guide. It is a PARSE gate, not a
-    /// compile gate: the fragments deliberately show one construct at a time and
+    /// transpile gate: the fragments deliberately show one construct at a time and
     /// have no estate around them, so schema checks (does this attribute exist on
     /// this type?) are out of reach here. Those are covered where the same
-    /// constructs appear in `tests/smoke/yaml/showcase.satz`, which is compiled and
+    /// constructs appear in `tests/smoke/yaml/showcase.satz`, which is transpiled and
     /// `tofu validate`d by the smoke matrix.
     #[test]
     fn every_example_in_the_agent_guide_parses() {
@@ -9502,9 +9503,9 @@ action "step" {
     #[test]
     fn a_reference_to_an_unemitted_address_is_an_error_at_its_line() {
         let t = tail("warn");
-        let f = t.findings.iter().find(|f| f.kind == Kind::WrittenReference).expect("the folder nobody emits");
+        let f = t.findings.iter().find(|f| f.kind == Kind::WrittenReference).expect("the folder nobody writes");
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("google_folder.nope.name") && f.message.contains("no `google_folder` is emitted here at all"), "{}", f.message);
+        assert!(f.message.contains("google_folder.nope.name") && f.message.contains("no `google_folder` is written here at all"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("refers {")), "at the declaring block: a body keeps one site");
     }
 
@@ -9549,7 +9550,7 @@ action "step" {
     }
 
     /// A bucket declared outside any project, setting none: a finding at its block, so
-    /// the caller decides whether it is printed — a review's compile prints nothing. It
+    /// the caller decides whether it is printed — a review's transpile prints nothing. It
     /// stays a warning at every level: the provider block's project is a valid home.
     #[test]
     fn a_resource_outside_a_project_that_sets_none_is_a_warning_at_its_block() {
@@ -9567,7 +9568,7 @@ action "step" {
     }
 
     /// The emitter writes a backend for `local` and `cloud` only: any other mode is an
-    /// error at the line binding it, and the compile refuses rather than emitting
+    /// error at the line binding it, and the transpile refuses rather than writing
     /// `providers.tf` without a backend.
     #[test]
     fn a_deployment_mode_with_no_backend_is_an_error_at_its_line() {
@@ -9577,15 +9578,15 @@ action "step" {
             1,
         );
         let t = tail_of(&src, "warn");
-        let f = t.findings.iter().find(|f| f.kind == Kind::DeploymentMode).expect("the mode no backend is emitted for");
+        let f = t.findings.iter().find(|f| f.kind == Kind::DeploymentMode).expect("the mode no backend is written for");
         assert_eq!(f.severity, Severity::Error);
         assert!(f.message.contains("\"boot\"") && f.message.contains("\"local\"") && f.message.contains("\"cloud\""), "{}", f.message);
         let line = src.lines().position(|l| l.contains("deployment_mode")).map(|i| i as u32 + 1);
         assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
-        assert!(t.providers_tf.is_none(), "providers.tf was emitted without a backend");
+        assert!(t.providers_tf.is_none(), "providers.tf was written without a backend");
         let refused = crate::findings::refusal(&t.findings).unwrap_err();
         assert!(refused.contains("deployment_mode = \"boot\""), "{}", refused);
-        // the estate binds no mode: local, and the compile goes through
+        // the estate binds no mode: local, and the transpile goes through
         assert!(tail("warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
     }
 
@@ -9600,15 +9601,15 @@ action "step" {
         let t = tail_of(&src, "warn");
         let f = t.findings.iter().find(|f| f.kind == Kind::InterfaceUse).expect("the passthrough");
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("emitted verbatim"), "{}", f.message);
+        assert!(f.message.contains("written verbatim"), "{}", f.message);
         let line = src.lines().position(|l| l.starts_with("hcl trust")).map(|i| i as u32 + 1);
         assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
-        assert!(t.out.is_none(), "the compile went through with the reference in the block");
+        assert!(t.out.is_none(), "the transpile went through with the reference in the block");
     }
 
     /// `workload_folder_name` and the section that publishes it: each disagreement is
     /// an error at the line to edit; an empty name with no section or with the
-    /// organisation's export, and a name with its folder, are not findings.
+    /// organization's export, and a name with its folder, are not findings.
     #[test]
     fn the_workload_folder_name_and_its_section_must_agree() {
         let with = |params: &str, section: &str| {
@@ -9635,12 +9636,12 @@ action "step" {
         assert_eq!(f[0].severity, Severity::Error);
         assert!(f[0].message.contains("publishes no `workload_folder`"), "{}", f[0].message);
         assert_eq!(f[0].line, line(&src, "workload_folder_name"));
-        assert!(crate::findings::refusal(&tail_of(&src, "warn").findings).is_err(), "the compile is refused");
+        assert!(crate::findings::refusal(&tail_of(&src, "warn").findings).is_err(), "the transpile is refused");
 
-        // a name, and the organisation published
+        // a name, and the organization published
         let src = with(named, &org);
         let f = found(&src);
-        assert!(f[0].message.contains("publishes the organisation"), "{}", f[0].message);
+        assert!(f[0].message.contains("publishes the organization"), "{}", f[0].message);
         assert!(f[0].message.contains(&format!("(line {})", line(&src, "workload_folder_name").unwrap())), "{}", f[0].message);
         assert_eq!(f[0].line, line(&src, "export \"workload_folder\""));
 
@@ -9662,7 +9663,7 @@ action "step" {
 
     /// Cloud mode runs as `{svc_iac_account}@{infra_project_name}`: an estate that binds
     /// it without both is an error at the `deployment_mode` line naming what is missing,
-    /// at every validation level — it would otherwise run as whoever is logged in.
+    /// at every validation level — it would otherwise run as whoever is signed in.
     #[test]
     fn cloud_mode_without_the_account_is_an_error_at_the_mode_line() {
         let src = ESTATE.replacen(
@@ -9677,7 +9678,7 @@ action "step" {
             assert_eq!(f.severity, Severity::Error, "level {}", level);
             assert!(f.message.starts_with("`deployment_mode = \"cloud\"` without a value for `svc_iac_account`: "), "{}", f.message);
             assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), line));
-            assert!(t.providers_tf.is_none(), "providers.tf was emitted for an estate that runs as nobody");
+            assert!(t.providers_tf.is_none(), "providers.tf was written for an estate that runs as nobody");
         }
         let both = src.replacen("  deployment_mode", "  svc_iac_account          = \"svc-iac-001\"\n  deployment_mode", 1);
         assert!(tail_of(&both, "warn").findings.iter().all(|f| f.kind != Kind::DeploymentMode));
@@ -9686,14 +9687,14 @@ action "step" {
 
 #[cfg(test)]
 mod probe_quiet_tests {
-    //! `whoami`'s probe compiles the estate with its prerequisite findings quiet, since
-    //! it tests the permissions live. The quiet is the probe's compile's alone: `satz mcp`
-    //! runs the probe for `satz_whoami` and every later compile in the same process.
+    //! `whoami`'s probe transpiles the estate with its prerequisite findings quiet, since
+    //! it tests the permissions live. The quiet is the probe's transpile's alone: `satz mcp`
+    //! runs the probe for `satz_whoami` and every later transpile in the same process.
     use super::*;
     use crate::findings::Kind;
 
-    /// A bucket, and no grant or API for it: the IaC service account lacks the role,
-    /// and the infra project does not enable the storage API.
+    /// A bucket, and no grant or API for it: the estate account lacks the role,
+    /// and the infrastructure project does not enable the storage API.
     const ESTATE: &str = r#"estate probe_case
 
 params {
@@ -9742,22 +9743,22 @@ google_storage_bucket {
     #[test]
     fn a_compile_after_the_probe_still_reports_the_missing_prerequisite() {
         let (estate, cfg) = estate_at("warn");
-        let before = pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
+        let before = pipeline_b_generate(&estate, &cfg, &cfg).expect("transpiles at warn");
         assert!(reports_the_gap(&before), "the fixture lacks a prerequisite: {:?}", before.findings);
-        let probe = iac_probe(&estate, &cfg, &cfg).expect("the probe compiles");
+        let probe = iac_probe(&estate, &cfg, &cfg).expect("the probe transpiles");
         assert!(!probe.needs.is_empty(), "the probe derived no need from the bucket");
-        let after = pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
-        assert!(reports_the_gap(&after), "the probe silenced a later compile: {:?}", after.findings);
+        let after = pipeline_b_generate(&estate, &cfg, &cfg).expect("transpiles at warn");
+        assert!(reports_the_gap(&after), "the probe silenced a later transpile: {:?}", after.findings);
         let _ = std::fs::remove_dir_all(estate.parent().unwrap());
     }
 
     /// At `error` the finding is a refusal, and the probe that is quiet about it must
-    /// not take the refusal away from the compile that follows.
+    /// not take the refusal away from the transpile that follows.
     #[test]
     fn at_level_error_the_refusal_survives_the_probe() {
         let (estate, cfg) = estate_at("error");
         assert!(refuses_on_the_gap(pipeline_b_generate(&estate, &cfg, &cfg)), "the gap refuses at error");
-        iac_probe(&estate, &cfg, &cfg).expect("the probe's own compile is quiet, so it does not refuse");
+        iac_probe(&estate, &cfg, &cfg).expect("the probe's own transpile is quiet, so it does not refuse");
         assert!(refuses_on_the_gap(pipeline_b_generate(&estate, &cfg, &cfg)), "the probe removed a refusal");
         let _ = std::fs::remove_dir_all(estate.parent().unwrap());
     }
@@ -9765,15 +9766,15 @@ google_storage_bucket {
 
 #[cfg(test)]
 mod review_quiet_tests {
-    //! `review-preset` compiles its scratch estate with nothing printed: the findings are
-    //! its report. The silence is that compile's alone — `satz mcp` serves
-    //! `satz_review_preset` beside every other call, concurrently, and a compile running
+    //! `review-preset` transpiles its scratch estate with nothing printed: the findings are
+    //! its report. The silence is that transpile's alone — `satz mcp` serves
+    //! `satz_review_preset` beside every other call, concurrently, and a transpile running
     //! beside a review prints its warnings as it would alone.
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// A bucket and no grant for it: at `warn`, the compile prints that the IaC service
+    /// A bucket and no grant for it: at `warn`, the transpile prints that the estate
     /// account lacks the storage role.
     const ESTATE: &str = r#"estate beside_review
 
@@ -9803,7 +9804,7 @@ google_storage_bucket {
 }
 "#;
 
-    const PACK: &str = r#"// A log bucket, reviewed while another estate compiles.
+    const PACK: &str = r#"// A log bucket, reviewed while another estate transpiles.
 pack beside_compile version "1.0"
 
 google_storage_bucket {
@@ -9824,11 +9825,11 @@ google_storage_bucket {
     }
 
     /// `transpile --format json` is the object `satz_transpile_check` returns, whether the
-    /// compile goes on or refuses — and a refusal by the FRONT END is one too, with its
+    /// transpile goes on or refuses — and a refusal by the FRONT END is one too, with its
     /// file and line as fields, never only inside a message. It prints nothing.
     #[test]
     fn the_compile_as_data_is_one_shape_whether_it_compiles_or_is_refused() {
-        let dir = std::env::temp_dir().join(format!("satz-compile-summary-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("satz-transpile-summary-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
@@ -9868,19 +9869,19 @@ google_storage_bucket {
         std::fs::create_dir_all(&dir).unwrap();
         let estate = dir.join("beside.satz");
         std::fs::write(&estate, ESTATE).unwrap();
-        let pack = dir.join("beside-compile.satz");
+        let pack = dir.join("beside-transpile.satz");
         std::fs::write(&pack, PACK).unwrap();
         let mut cfg = parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
         cfg.schema_dir = super::corpus::schema_dir();
         cfg.validation_level = "warn".to_string();
         let prints_the_warning = || {
             crate::findings::take_said();
-            pipeline_b_generate(&estate, &cfg, &cfg).expect("compiles at warn");
+            pipeline_b_generate(&estate, &cfg, &cfg).expect("transpiles at warn");
             let said = crate::findings::take_said();
             (said.iter().any(|s| s.contains("roles/storage.admin")), said)
         };
         let (alone, said) = prints_the_warning();
-        assert!(alone, "the fixture's compile prints no warning even alone: {:?}", said);
+        assert!(alone, "the fixture's transpile prints no warning even alone: {:?}", said);
 
         let stop = Stop(Arc::new(AtomicBool::new(false)));
         let reviews = Arc::new(AtomicUsize::new(0));
@@ -9891,17 +9892,17 @@ google_storage_bucket {
                     crate::findings::take_said();
                     crate::review_pack::review(&pack, None, crate::review_pack::Bar::Library, &cfg, &cfg).expect("the review runs");
                     let said = crate::findings::take_said();
-                    assert!(said.is_empty(), "the review printed its compile's findings: {:?}", said);
+                    assert!(said.is_empty(), "the review printed its transpile's findings: {:?}", said);
                     reviews.fetch_add(1, Ordering::Relaxed);
                 }
             })
         };
-        // Compiles back to back for as long as ten whole reviews take: a quiet that any
+        // Transpiles back to back for as long as ten whole reviews take: a quiet that any
         // review could switch for the whole process lands in some of them.
         let mut n = 0usize;
         while (n < 20 || reviews.load(Ordering::Relaxed) < 10) && !reviewer.is_finished() {
             let (printed, said) = prints_the_warning();
-            assert!(printed, "compile {} beside a review printed no warning: {:?}", n, said);
+            assert!(printed, "transpile {} beside a review printed no warning: {:?}", n, said);
             n += 1;
         }
         drop(stop);
@@ -9917,7 +9918,7 @@ mod tf_pass_through_tests {
     //! estate through `--config` and pass everything else on verbatim, so an
     //! estate written among those arguments reaches the tool.
     //!
-    //! Measured on a live organisation: `satz hcl-init C0example.satz`, written
+    //! Measured on a live organization: `satz hcl-init C0example.satz`, written
     //! like every other satz command, reached `tofu init` as a positional
     //! argument and the operator got tofu's usage text.
     use super::*;

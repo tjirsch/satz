@@ -7,7 +7,7 @@ Source: `presets/integrations/microsoft-defender-for-cloud-cspm.satz`
 
 Microsoft Defender for Cloud — the CSPM plan.
 
-Used beside the foundation pack, gated on the licence:
+Used beside the foundation pack, gated on the license:
 
 The custom role this plan grants is NOT here: it depends on the access mode,
 so it lives in its own fragment (`-cspm-role-default` or

@@ -23,7 +23,7 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-default.satz" w
 Required from the estate: `customer_organization_id`. The management project
 takes `billing_account_infra` unless the estate sets `billing_account` on it,
 and it is created in the folder `mdc_mgmt_project_folder` names — under the
-organisation while that param says nothing.
+organization while that param says nothing.
 
 WHY the plans are separate files and not a list param: a pack cannot add to
 another fragment's project — two fragments defining one project is a fold
@@ -85,7 +85,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 |---|---|---|---|---|
 | `mdc_workload_pool_id` | The customer's Microsoft Entra tenant id without dashes — the workload identity pool id from Microsoft's generated onboarding script | recreate | high | — |
 | `mdc_mgmt_project_id` | The management project Defender is onboarded through | recreate | high | — |
-| `mdc_mgmt_project_folder` | The folder the Defender management project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organisation | edit | low | — |
+| `mdc_mgmt_project_folder` | The folder the Defender management project is created in — a folder the estate declares as `google_folder.<label>.name`, an existing one by its numeric id, or empty for the organization | edit | low | — |
 | `mdc_plan_cspm` | Is the Defender CSPM plan licensed for this customer? | edit | low | — |
 | `mdc_cspm_access` *(choice)* | Which access does CSPM get? | edit | low | — |
 
@@ -95,12 +95,12 @@ What to ask before this pack is configured, and what changing the answer costs.
 **mdc_mgmt_project_id** — Customers name projects their own way, so there is no default. The pool, the provider and the service accounts are created in this project; moving them is a new onboarding.
 
 
-**mdc_mgmt_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organisation and inherits the organisation's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit.
+**mdc_mgmt_project_folder** — It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants the workload identity pool and the service accounts inside it inherit.
 
-An empty answer, `""`, is an answer: the organisation itself; the project is created directly under it.
+An empty answer, `""`, is an answer: the organization itself; the project is created directly under it.
 
 
-**mdc_plan_cspm** — Each licensed plan pulls in its fragment with the roles that plan needs. A plan that is on without a licence grants roles nothing uses; one that is off with a licence leaves the connector without access.
+**mdc_plan_cspm** — Each licensed plan pulls in its fragment with the roles that plan needs. A plan that is on without a license grants roles nothing uses; one that is off with a license leaves the connector without access.
 
 
 **mdc_cspm_access** — Switching later replaces the custom role and its binding; both modes true is a fold conflict on the role address, which is the loud failure it should be.

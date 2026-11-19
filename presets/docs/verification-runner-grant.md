@@ -5,12 +5,12 @@ Source: `presets/ci/verification-runner-grant.satz`
 
 ## Purpose
 
-Lets a verification runner act as this estate's IaC service account.
+Lets a verification runner act as the estate account.
 
 One IAM binding: the runner may mint tokens for the estate's service account
 (`roles/iam.serviceAccountTokenCreator`), which is the same right a human
 operator holds through the svc-iac-users group. Nothing else — the runner gets
-no role on the organisation, because it never acts as itself; satz exchanges
+no role on the organization, because it never acts as itself; satz exchanges
 its identity for the estate's account before the first API call.
 
 Separate from `ci/verification-runner.satz` because the two resources belong
@@ -50,7 +50,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `ci_runner_service_account` | The runner service account that may become this estate's IaC account | edit | high | — |
+| `ci_runner_service_account` | The runner service account that may become this estate's account | edit | high | — |
 
 **ci_runner_service_account** — This binding is the whole pack: whoever holds this account reads the estate as its service account. The default names the runner pack's own account in the same project; an MSP-hosted runner is named explicitly, and a wrong address either fails every nightly run or hands the estate to an account nobody meant.
 

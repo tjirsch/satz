@@ -1,8 +1,8 @@
 //! Preset drift detection: the `check-presets` command.
 //!
-//! Presets are read-only building blocks — all per-org values belong in the estate's
+//! Presets are read-only — all per-organization values belong in the estate's
 //! `params { … }` block (overridable defaults, first definition wins). Historically each
-//! customer org edited its preset copies instead, which makes preset updates painful.
+//! customer organization edited its preset copies instead, which makes preset updates painful.
 //! This module compares the local preset library against the pristine upstream one,
 //! classifies every drifted file, and for the mechanically fixable class (changed
 //! variable defaults) prints the exact override block to paste into the estate.
@@ -128,11 +128,11 @@ pub(crate) enum Drift {
     /// Resource bodies or the variable set itself differ — not mechanically migratable.
     Structural { summary: String },
     /// Only the pack's QUESTIONS differ. Reported loudly and never forked: what a
-    /// pack emits is byte-identical, so treating this as an emission change would
+    /// pack writes is byte-identical, so treating this as an emission change would
     /// auto-fork every estate using it over a prompt typo — and call it "resource
     /// lines differ", which is a lie. Leaving it invisible would be worse: a
     /// `reversal: recreate → edit` downgrade is a governance fact. The map's
-    /// `offers` entries are judged the same way: they emit nothing either.
+    /// `offers` entries are judged the same way: they write nothing either.
     QuestionsOnly { summary: String },
 }
 
@@ -360,7 +360,7 @@ pub(crate) struct PresetRow {
     pub baseline_for_fork: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub same_version_different_content: bool,
-    /// stale, but the compiled form is identical — comment or format churn
+    /// stale, but the transpiled form is identical — comment or format churn
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub semantics_unchanged: bool,
 }
@@ -456,7 +456,7 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
                     vtag,
                     row.questions_summary.as_deref().unwrap_or("")
                 ));
-                out.push_str("    the pack emits the same HCL, so this is not drift to adopt or fork —\n");
+                out.push_str("    the pack writes the same HCL, so this is not drift to adopt or fork —\n");
                 out.push_str("    but what a customer is ASKED, or what an answer costs, has changed.\n");
             }
             "stale" if row.semantics_unchanged => {
@@ -619,7 +619,7 @@ pub(crate) async fn check_presets_report(
                         summary.clean += 1;
                         row.status = "clean";
                     }
-                    // Loud, but never a fork: the pack emits the same HCL.
+                    // Loud, but never a fork: the pack writes the same HCL.
                     (Drift::QuestionsOnly { .. }, false) => {
                         summary.clean += 1;
                         row.status = "questions-changed";
@@ -639,7 +639,7 @@ pub(crate) async fn check_presets_report(
                         }
                         // A pristine file whose `.local` fork exists is not a
                         // candidate for adoption: the estate runs the fork, so
-                        // overwriting this copy changes nothing it emits AND
+                        // overwriting this copy changes nothing it writes AND
                         // destroys the branch point the eventual merge needs.
                         row.baseline_for_fork = local_set.contains(&fork_sibling(rel));
                     }
@@ -669,7 +669,7 @@ pub(crate) async fn check_presets_report(
 }
 
 // ---------------------------------------------------------------------------
-// get-presets: populate and refresh, without ever changing a live org by accident
+// get-presets: populate and refresh, without ever changing a live organization by accident
 // ---------------------------------------------------------------------------
 
 /// Write an upstream file into the local library. A `.sh` that a pack binds as an
@@ -842,7 +842,7 @@ pub(crate) async fn run_get_presets(
         r.refused.len()
     );
     if !r.refused.is_empty() {
-        println!("Refused files are packs this estate deploys — changing them changes the org.");
+        println!("Refused files are packs this estate uses — changing them changes the organization.");
     }
     if r.no_estate {
         println!("next: `satz init` — an estate that uses the library, with its packs as commented `use` lines");
@@ -930,7 +930,7 @@ pub(crate) enum MergeEvent {
 /// `presets/managed-constraint-equivalents.txt`, refreshed by
 /// `scripts/update_constraint_equivalents.py` and never by hand. One form of a
 /// constraint, never two — a pack that enforces a legacy constraint its managed
-/// replacement covers sets it from two places on an organisation.
+/// replacement covers sets it from two places on an organization.
 pub(crate) fn constraint_pairs(presets_dir: &Path) -> std::collections::BTreeMap<String, String> {
     let path = presets_dir.join("managed-constraint-equivalents.txt");
     let Ok(text) = std::fs::read_to_string(path) else { return Default::default() };
@@ -1123,7 +1123,7 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
 /// (refreshed on every update, not an accumulating ledger — git is the history).
 /// Adoption = point the estate back at the pristine name and delete fork + diff.
 ///
-/// Semantic change = the compiled canonical form differs (comments/formatting
+/// Semantic change = the transpiled canonical form differs (comments/formatting
 /// don't fork anything). Version fields cross-check: same version + different
 /// semantics warns (upstream release-hygiene bug).
 #[allow(clippy::too_many_lines)]
@@ -1181,21 +1181,21 @@ pub(crate) async fn run_merge_presets(
 
     // baseline for the self-verifying estate edit. It must be taken BEFORE the first
     // pack is written — the fork+repoint proof and the adoption delta compare against
-    // it — so an estate whose own pack copies no longer compile cannot be merged: the
+    // it — so an estate whose own pack copies no longer transpile cannot be merged: the
     // commonest way there is an estate param renamed while a pack copy still binds the
-    // old name. `get-presets --force` refreshes the pristine copies without compiling,
-    // which is the way through; say it rather than stop at the compile error.
+    // old name. `get-presets --force` refreshes the pristine copies without transpiling,
+    // which is the way through; say it rather than stop at the transpile error.
     //
-    // Every compile in this run is quiet about missing prerequisites: the last step
-    // writes them, and at validation level `error` a compile that reported them would
+    // Every transpile in this run is quiet about missing prerequisites: the last step
+    // writes them, and at validation level `error` a transpile that reported them would
     // refuse before that step ran — here, after an adoption, or in the step itself.
     let baseline = match (&estate, report_only) {
         (Some(est), false) => Some(crate::transpile_sorted_b(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet).map_err(|e| {
             format!(
-                "{} does not compile, so merge-presets changed nothing.\n\
-                 merge-presets compiles the estate before it changes anything, and it does not compile:\n  {}\n\
+                "{} does not transpile, so merge-presets changed nothing.\n\
+                 merge-presets transpiles the estate before it changes anything, and it does not transpile:\n  {}\n\
                  If a pack copy under {} is what fails — a param the estate renamed that the copy still binds —\n\
-                 `satz get-presets --force` refreshes the packs the estate uses without compiling (it lists them first);\n\
+                 `satz get-presets --force` refreshes the packs the estate uses without transpiling (it lists them first);\n\
                  then run merge-presets again. A `.local.satz` fork is the estate's own file: edit it by hand.",
                 est.display(),
                 e,
@@ -1395,7 +1395,7 @@ pub(crate) async fn run_merge_presets(
                 ),
             });
             needs_attention = true;
-            continue; // pristine NOT updated either: the estate still deploys the old content
+            continue; // pristine NOT updated either: the estate still creates the old content
         }
         let est = estate.clone().expect("used_stems nonempty implies estate");
         let est_text = crate::fsx::read_to_string(&est)?;
@@ -1471,7 +1471,7 @@ pub(crate) async fn run_merge_presets(
         }
     }
 
-    // Adoption changes what the estate emits — that is the point, so there is no
+    // Adoption changes what the estate writes — that is the point, so there is no
     // identity check to make. Show the delta instead, in the terms that matter.
     if adopted > 0 && !report_only {
         if let (Some(est), Some(before)) = (estate.clone(), baseline.clone()) {
@@ -1506,11 +1506,11 @@ pub(crate) async fn run_merge_presets(
         events.push(MergeEvent::Note { text: "  estate edit verified: transpiled output identical.".to_string() });
     }
 
-    // Last, and after the repoint proof: a pack the estate gained may emit a type
+    // Last, and after the repoint proof: a pack the estate gained may write a type
     // whose role or API the estate does not declare yet, and the pickup is exactly
     // when that becomes true. It runs here rather than earlier because a
     // prerequisite write legitimately changes the emission, and the proof above
-    // compares the estate with itself. Its compiles are quiet about the gap, as
+    // compares the estate with itself. Its transpiles are quiet about the gap, as
     // `update-prerequisites`' are: the report is this step's output.
     if let Some(est) = &estate {
         match crate::prerequisites_report(est, tool_config, runtime_config, crate::PrerequisiteFindings::Quiet) {
@@ -1519,13 +1519,13 @@ pub(crate) async fn run_merge_presets(
                     .into_iter()
                     .chain(report.writable_apis().iter().map(|a| format!("{} on {}", a.api, a.project)))
                     .collect();
-                // a workload's estate: what was not delegated to its account is asked
-                // for in the organisation's estate, and nothing here writes it
+                // a workload estate: what was not delegated to its account is asked
+                // for in the organization's estate, and nothing here writes it
                 if !report.request.is_empty() {
                     events.push(MergeEvent::Prerequisites {
                         wrote: Vec::new(),
                         missing: report.request.clone(),
-                        refused: Some("not delegated to this estate's account: the organisation's estate adds them (`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz`), or the estate grants itself a role on a project it was given".to_string()),
+                        refused: Some("not delegated to this estate's account: the organization's estate adds them (`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz`), or the estate grants itself a role on a project it was given".to_string()),
                     });
                     needs_attention = true;
                 }
@@ -1548,7 +1548,7 @@ pub(crate) async fn run_merge_presets(
                     }
                 }
             }
-            // an estate that cannot be compiled or names no IaC service account has a
+            // an estate that cannot be transpiled or names no estate account has a
             // louder problem than this step; the packs are already written either way
             Err(e) => events.push(MergeEvent::Note {
                 text: format!(
@@ -1592,7 +1592,7 @@ pub(crate) fn adopt_choice(adopt: &[String], stem_name: &str, stem: &Path, behin
     AdoptChoice::No
 }
 
-/// Summarise what an adoption does to the emitted HCL, from two *sorted*
+/// Summarize what an adoption does to the transpiled HCL code, from two *sorted*
 /// transpiler outputs. Sorted text cannot attribute a changed attribute to its
 /// resource, so resources are named and everything else is counted — enough to
 /// tell "one policy disappears" from "one attribute moves", which is the whole
@@ -2065,7 +2065,7 @@ params {
     /// pack was never collected, never compared, and "nothing compared" printed
     /// as "clean" — it reported no drift for an estate whose CIS pack had stopped
     /// enforcing OS Login. Classification of a pack goes through its canonical
-    /// compiled form, the same comparison `merge-presets` makes.
+    /// transpiled form, the same comparison `merge-presets` makes.
     #[test]
     fn satz_pack_drift_is_detected_structurally() {
         let drifted = PACK.replace(r#"enforce = "TRUE""#, r#"enforce = "FALSE""#);
@@ -2117,7 +2117,7 @@ params {
 mod merge_report_tests {
     //! The run is a value now: the CLI renders it and the MCP tool returns it.
     //! These hold the rendering to what the walk used to print, and the counts to
-    //! the events — a `--report-only` run used to summarise zeros beside its own
+    //! the events — a `--report-only` run used to summarize zeros beside its own
     //! "would …" lines, and an `--adopt all` skip was counted nowhere at all.
     use super::*;
 

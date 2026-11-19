@@ -1,6 +1,6 @@
-# A template for one Google project beside the example organisation. Paths resolve against
+# A template for one workload estate beside the example organization. Paths resolve against
 # this file's directory. `schema_dir` and `presets_dir` point into the satz repository so
-# the example compiles in place; in a repository of your own they are the `schemas/` and
+# the example transpiles in place; in a repository of your own they are the `schemas/` and
 # `presets/` folders satz writes beside the estate.
 yaml_dir = "satz"
 hcl_dir = "hcl"

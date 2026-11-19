@@ -3,7 +3,7 @@
 Every pack is a `.satz` file: `pack <name> version "<v>"`, a `params { … }` block
 of overridable defaults, and the resources it contributes. Estates `use` them.
 
-Presets are **read-only building blocks**: use them from a customer's estate and
+Presets are **read-only**: use them from a customer's estate and
 set every org-specific value there — never by editing a preset.
 
 `use "presets/<pack>.satz"` at top level for packs that declare their own
@@ -12,7 +12,7 @@ or inside a resource map for the packs that are a bare list of labels
 (`google_essential_contacts_contact { use … }`, or `use … as <type>` written flat).
 Each pack's header states its own line and `presets/docs/` prints it; the shapes are
 not interchangeable, and using one the wrong way round is refused rather than
-emitted. Pack `params` are overridable defaults; define
+written. Pack `params` are overridable defaults; define
 the same name in the estate `params` block to override (the using document
 always wins). When a needed customization is not expressible as a param, fork:
 copy to `<pack>.local.satz`, repoint the `use` — `merge-presets` maintains the
@@ -26,15 +26,15 @@ estate or a pack): a `when` on a param nobody declares is an error, not `false`.
 
 Multi-resource-type packs (marked below) rely on **hoisted scopes**: org/customer/
 billing-scoped types (`google_cloud_identity_group`, `google_organization_iam_member`,
-`google_billing_account_iam_member`) may sit anywhere in the tree and are emitted
+`google_billing_account_iam_member`) may sit anywhere in the tree and are written
 once at their intrinsic scope. A pack's project is created in the folder its folder
 param names (`logsink_project_folder`, `mdc_mgmt_project_folder`) and directly under
-the organisation while that param is empty; where the `use` line stands decides
+the organization while that param is empty; where the `use` line stands decides
 nothing (ADR 0046). Two packs contributing to the same
 resource-type map merge label by label (the ⊕ fold); the same label with a
 different body is a hard error naming both files.
 
-**Adopting what already exists** (groups, org policies, folders, the state bucket
+**Adopting what already exists** (groups, organization policies, folders, the state bucket
 …) is `satz adopt <estate>` — it resolves live ids and `--execute` writes them
 back as `"import-id"`. Pack headers that mention adoption mean that command.
 
@@ -45,8 +45,8 @@ against everything on this page — it parses, it is formatted, its header opens
 sentence the index can print, its id is its file name, its version has a changelog row in
 [`CHANGELOG.md`](CHANGELOG.md), it carries no value shaped like private data that is not a
 documented example value, it declares no membership, it runs no legacy constraint beside
-its managed replacement, every resource type it emits has a row in satz's prerequisite
-table, it compiles inside an estate, and every string param it leaves `""` has a
+its managed replacement, every resource type it writes has a row in satz's prerequisite
+table, it transpiles inside an estate, and every string param it leaves `""` has a
 `question` — and says what adopting it would cost that estate in roles and APIs. It warns
 on a type `satz adopt` has no rule for. It is the same bar this repository's gates hold,
 reachable without a checkout.
@@ -62,7 +62,7 @@ words the operator replaces: `ORGANIZATION_ID`, `PROJECT_ID`, `DOMAIN`, `EMAIL`,
 `CHANNEL_ID`. A claim with no gcloud route leaves `gcloud` out — the CIS baseline's
 §1.1.4 claim, whose route is its other claims' routes together. `require` and
 `report-compliance` carry every claim that names a control in that control's `measures`,
-from the estate's packs and from the rest of the library; a changed text emits nothing and
+from the estate's packs and from the rest of the library; a changed text writes nothing and
 never forks an estate's pack. Every claim in this library carries `risk` and `gcloud_check`,
 and `gcloud` except §1.1.4; `cargo test` fails on one that does not.
 
@@ -73,7 +73,7 @@ copy-pasteable `use` block with its params and the params it needs from outside,
 resources, the claims with their control titles from the catalog, the duties, which
 contributed resources no claim witnesses, and the pack's own version history — with a
 notes region for what is written by hand. **History:** [`CHANGELOG.md`](CHANGELOG.md) —
-what each release refuses that the one before it compiled, and one row per pack version.
+what each release refuses that the one before it transpiled, and one row per pack version.
 
 **Groups:** `presets/library-groups.txt` sorts every pack into one topic,
 in reading order — the estate map and core, security groups, billing, the CIS baseline,
@@ -101,7 +101,7 @@ refuse any other id; the ids that predate the rule are named in `LEGACY_PACK_IDS
 ### estate-map.satz
 
 Which packs make up the estate, asked as questions — the map an interview follows
-after the day-0 params. One boolean per optional pack plus the S1/S2 model as a
+after the bootstrap params. One boolean per optional pack plus the S1/S2 model as a
 `question oneof`, each with what the pack is for and what turning it off later
 destroys. Below the choices, one `offers` entry per pack in the library says the gate its
 line carries, the phase that has to be finished before it can go in, the block it
@@ -125,7 +125,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 
 | choice | default | pack |
 |---|---|---|
-| `use_cis_baseline` | on | `cis/CIS-GCP-Foundation-4.0` — the thirty organisation policies the estate exists for; its opt-in extensions and their dry-run twins are the baseline's own questions |
+| `use_cis_baseline` | on | `cis/CIS-GCP-Foundation-4.0` — the thirty organization policies the estate exists for; its opt-in extensions and their dry-run twins are the baseline's own questions |
 | `security_model` (oneof) | S1 | `security-group-models/s1-security-groups` or `s2-security-groups` |
 | `use_audit_logsink` | on | `monitoring/organization-audit-logsink`, in the infrastructure folder |
 | `use_central_alerts` | on | `monitoring/organization-cis-log-alerts-central`, beside it — needs the archive |
@@ -135,7 +135,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
 | `use_delegated_budgets` | off | `delegated-budget-role` — the role an entry of delegated access with `budgets = true` is granted: budgets for its own project or folder, nothing on the billing account |
-| `use_delegation` | off | `delegation` — delegated access, the base; per delegation: an infrastructure project with the account a team's estates run as and its state bucket, and the group that may act as the account |
+| `use_delegation` | off | `delegation` — delegated access, the base; per delegation: an infrastructure project with the account the workload estates run as and its state bucket, and the group that may act as the account |
 | `use_delegated_folders` | off | `delegated-folders` — delegated access to folders; per folder a delegation's account works in: the folder, and the account's roles on that folder alone |
 | `use_delegated_projects` | off | `delegated-projects` — delegated access to projects; per Google project a delegation's account works in: the project, and the account's roles on that project alone |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
@@ -156,31 +156,31 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 
 The CIS baseline is the map's first choice: the skeleton writes its line commented under
 its phase, like every pack's, and answering `use_cis_baseline` yes puts it in. It is
-asked rather than assumed because its thirty policies reach the organisation in one
+asked rather than assumed because its thirty policies reach the organization in one
 apply. Defender's plan fragments are offered with `by_hand`: they are gated on
 Defender's own params, and their lines are written by hand beside the Defender line, as
 their headers show.
 
 ### estate-core.satz
 
-The questions every estate has to answer on day 0, with the params they answer — the
+The questions every estate has to answer before the bootstrap, with the params they answer — the
 ones `satz init` writes, each with a `question`: what to ask, why,
 and what changing the answer later costs. Which packs make up the estate is the next
-pack, `estate-map.satz`; this one is the day-0 params and nothing else.
+pack, `estate-map.satz`; this one is the bootstrap params and nothing else.
 
 ```
 use "presets/estate-core.satz"
 ```
 
-The pack **declares no resource**; it holds the day-0 questions and the core
+The pack **declares no resource**; it holds the bootstrap questions and the core
 exports. `satz interview <estate> --create` and the MCP tool `satz_interview` write an
 estate that uses it, with every question open. An estate written by `init` does not
 need it for its params: `init` binds every param from its flags, and a bound param is an
 answered question.
 
-**The core exports.** An estate that uses the pack publishes these to the projects beside
+**The core exports.** An estate that uses the pack publishes these to the workload estates beside
 it — outputs of `hcl/outputs.tf` and values of every interface under `interfaces/outgoing/`
-([workflows](../docs/workflows.md#projects-beside-the-estate)), all known at compile
+([workflows](../docs/workflows.md#workload-estates-beside-the-estate)), all known at transpile
 time:
 
 | export | value |
@@ -199,31 +199,31 @@ infrastructure folder's `folders/<number>`, which the interface looks up, and
 **The workload folder** is where the customer's and the projects' folders live, the parent
 every project's folder takes. `workload_folder_name` names it, like `infra_folder_name`
 names the infrastructure folder, and it may be empty: `""`, the default, is the
-organisation itself, and nothing is created for it. Its question says so
+organization itself, and nothing is created for it. Its question says so
 (`empty = "…"`, [language §6.14](../docs/language.md#614-question--what-to-ask-and-what-the-answer-costs)),
 so `""` is an answer the interview offers and the gate counts. The export is written
 into the estate, not by this pack, because its two forms are different statements:
 
 | `workload_folder_name` | what the estate carries | `workload_folder` |
 |---|---|---|
-| `""` | `export "workload_folder" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at compile time |
+| `""` | `export "workload_folder" = "organizations/{customer_organization_id}"` | `organizations/<id>`, known at transpile time |
 | a name | `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"` | `folders/<number>`, looked up by the interface |
 
 `satz init` writes the section from `--workload-folder-name` (the folder) or without it
-(the organisation); `satz interview` and `satz_interview` write it when the question is
-answered. The folder block stands at the top level, so its parent is the organisation;
+(the organization); `satz interview` and `satz_interview` write it when the question is
+answered. The folder block stands at the top level, so its parent is the organization;
 to put the workload folder inside another folder — a top-level folder named after the
-organisation — move the `workload_folder { … }` block into that folder's block, and the
+organization — move the `workload_folder { … }` block into that folder's block, and the
 interface's lookup follows the parents. An answer or a re-run of `init` whose form
 differs from the section the estate already carries is refused, not rewritten: the
-projects' folders sit under it. The compile refuses a name and a section that disagree, at
-the line to edit: a name with no `export "workload_folder"` or with the organisation's,
-and an empty name with a folder's. An empty name with no section compiles and publishes
+projects' folders sit under it. The transpile refuses a name and a section that disagree, at
+the line to edit: a name with no `export "workload_folder"` or with the organization's,
+and an empty name with a folder's. An empty name with no section transpiles and publishes
 no `workload_folder`.
 
 ```
 error    workload-folder  satz/acme.satz:33  workload_folder_name
-    `workload_folder_name = "Workloads"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"`, or bind `workload_folder_name = ""` for the organisation
+    `workload_folder_name = "Workloads"`, and the estate publishes no `workload_folder`: the folder is neither declared nor exported. Add `google_folder { workload_folder { display_name = workload_folder_name } }` and `export "workload_folder" = "${{google_folder.workload_folder.name}}"`, or bind `workload_folder_name = ""` for the organization
 ```
 
 Google refuses a second folder of one name under one parent, so a folder the customer
@@ -238,13 +238,13 @@ Two kinds of param, and the interview treats them differently:
 | **derived or conventional** | `infra_folder_name`, `infra_project_name`, `infra_bucket_name`, `svc_iac_account`, `svc_iac_users_group`, `deployment_engine`, `deployment_mode`, `default_region`, `default_zone`, `compliance_frameworks` | `default` offered — accepting it is an answer, recorded by writing it |
 
 `workload_folder_name` is of neither kind: its default `""` is a real answer — the
-organisation — because its question declares what an empty answer means.
+organization — because its question declares what an empty answer means.
 
 `compliance_frameworks` is the one param here that is neither derived nor a
 convention: it is what the customer ANSWERS TO — a contract, an auditor, a regulator —
 as a list of catalog ids (`cis-gcp-4.0`, `cis-gcp-5.0`, `iso27001-2022`), default
 `["cis-gcp-5.0"]`. It is not what the estate CLAIMS, which comes from its packs, and a
-value naming no catalog is a compile error with the list. `satz report-compliance
+value naming no catalog is a transpile error with the list. `satz report-compliance
 <estate>` reports one section per framework named here, `satz prowler` scans for them
 beside the frameworks the packs claim, and a pack reads it like any other param.
 
@@ -258,14 +258,14 @@ offers `acme-infra-001`. See [satz interview](../docs/interview.md).
 ### security-group-models/
 
 **This is where STANDING authority is modelled** — who administers projects, networks,
-guardrails, billing, org-wide and continuously. Its counterpart is
+guardrails, billing, organization-wide and continuously. Its counterpart is
 [exemptions/](#exemptions), which says who may make a narrow, named EXCEPTION to a
 control this authority set, without holding this authority. The two stay apart:
 `gcp-security-admins` holds `roles/orgpolicy.policyAdmin` and can rewrite any
 policy, and that is a much bigger thing to hand someone than "may let one service account
 hold a key".
 
-The security group models: admin groups plus their org-level role grants. Each
+The security group models: admin groups plus their organization-level role grants. Each
 model is one typed file, used at the top level of the estate:
 
 - **s1-security-groups.satz** — S1 in ONE typed file (groups AND grants).
@@ -275,17 +275,17 @@ model is one typed file, used at the top level of the estate:
   group. The network authority moves out of project-admins (which lose
   `compute.networkAdmin` and `compute.xpnAdmin`) into a team that owns VPCs,
   Shared VPC, firewall policies, Cloud DNS, hybrid connectivity and network
-  diagnostics — `compute.networkAdmin`, `compute.xpnAdmin`,
+  troubleshooting — `compute.networkAdmin`, `compute.xpnAdmin`,
   `compute.securityAdmin`, `dns.admin`, `networkconnectivity.hubAdmin`,
   `networkmanagement.admin`, plus viewer roles; no owner, no IAM admin.
   One file, since groups and their grants belong together.
 
-**Which model:** S1 when one platform team does both project administration
+**Which model:** S1 when the organization's team does both project administration
 and networking (the network roles ride along in project-admins because the
 people are the same). S2 as soon as network and project administration are
 different people — a connectivity team, Shared VPC with many service
 projects, hierarchical firewall policies, hybrid connectivity, or a
-separation-of-duties requirement; the network team gets org-wide reach over
+separation-of-duties requirement; the network team gets organization-wide reach over
 connectivity and nothing else. Moving S1 → S2 later is a pack swap plus
 adopting the new group, but every project admin loses two roles at that
 apply. The role-by-role table and who-sits-where guide are on the
@@ -293,7 +293,7 @@ apply. The role-by-role table and who-sits-where guide are on the
 
 **The project admins' roles are a list param**, `gcp_project_admins_roles`, whose default is
 the model's list with `roles/owner` — the horizontal reach over every project, present and
-future, that the platform team holds while business units hold vertical roles on their own
+future, that the organization's team holds while business units hold vertical roles on their own
 folders and projects. An estate binds the param to `roles/writer` (Google's basic role for
 every service's write permissions, which Privileged Access Manager grants and a condition
 bounds; Owner takes neither) plus `roles/resourcemanager.projectIamAdmin`,
@@ -302,20 +302,20 @@ bounds; Owner takes neither) plus `roles/resourcemanager.projectIamAdmin`,
 shows two destroys and four creates. The API and gcloud grant Writer; the console cannot
 (ADR 0090).
 
-The groups: `gcp-organization-admins` (break-glass owners of the org tree,
-policies and org IAM), `gcp-project-admins` (day-2 workload projects),
-`gcp-security-admins` (guardrails: org policies, SCC, folder IAM, log
-routing), `gcp-security-viewers` (org-wide read-only for audit and
+The groups: `gcp-organization-admins` (break-glass owners of the organization tree,
+policies and organization IAM), `gcp-project-admins` (day-2 workload projects),
+`gcp-security-admins` (guardrails: organization policies, SCC, folder IAM, log
+routing), `gcp-security-viewers` (organization-wide read-only for audit and
 compliance evidence), `gcp-billing-admins` (billing, budgets, procurement)
 — S2 adds `gcp-network-admins` (everything that connects, no ownership, no
-IAM) — each with the IaC service account as owner; lifecycle
+IAM) — each with the estate account as owner; lifecycle
 ignores `initial_group_config` (imported groups always diff on it). **No pack
 ships human memberships** — presets define groups, humans grant membership
 (in the console or with gcloud, outside satz). Estates that must manage a
 membership declare it on their own estate-level groups. Every group name is a
 param.
 
-**The domain's default grants.** A new organisation grants
+**The domain's default grants.** A new organization grants
 `roles/resourcemanager.projectCreator` and `roles/billing.creator` to its whole domain —
 every user in the directory creates projects and billing accounts. Both models grant those
 two roles to the first admin (`user:{first_admin}@{customer_domain}`) explicitly, beside
@@ -324,7 +324,7 @@ domain's entry off each of the two roles once every holder the estate declares f
 live — the first apply after the model goes in grants the first admin and leaves the
 domain in place, the next removes it, each run printing what it found and did, with the
 `gcloud organizations add-iam-policy-binding` line that restores an entry. Nothing else of
-the organisation's policy is touched: a holder the estate does not declare stays, a domain
+the organization's policy is touched: a holder the estate does not declare stays, a domain
 entry held under a condition is reported and left, and an estate that declares
 `"domain:{customer_domain}"` a holder of one of the roles in its own grant map keeps it
 ([ADR 0081](../docs/adr/0081-the-domain-default-grants-are-removed-by-the-apply-not-by-a-binding.md)).
@@ -360,18 +360,18 @@ The [security group models](#security-group-models) say who holds STANDING autho
 who administers projects, networks, guardrails, billing. This pack says who may make a
 narrow, named EXCEPTION to a control that authority set, without holding that authority.
 
-**One pack, and it exempts nothing.** `exemption-tag.satz` creates the organisation tag
-an org policy can condition on: the key `<shortname>-exemption` and one value per
+**One pack, and it exempts nothing.** `exemption-tag.satz` creates the organization tag
+an organization policy can condition on: the key `<shortname>-exemption` and one value per
 exemption CLASS, bound to nothing.
 
 #### Why a tag rather than lowering the policy
 
-An org policy is all-or-nothing per node. Letting ONE service account create ONE key
+An organization policy is all-or-nothing per node. Letting ONE service account create ONE key
 means lowering the policy for its whole project or folder and raising it again — a
 window during which nothing under that node is enforced, and which nobody remembers to
 close. A Resource Manager tag is IAM-governed and a policy rule can condition on it, so
 the policy stays enforced everywhere and named resources are let out one at a time.
-Google ships `iam.disableServiceAccountKeyCreation` this way on new organisations.
+Google ships `iam.disableServiceAccountKeyCreation` this way on new organizations.
 
 #### The classes, and why there are several
 
@@ -383,7 +383,7 @@ that kind:
 
 | class | what it lets out | constraints it is written for |
 |---|---|---|
-| `service-account-keys` | a principal that must hold a static credential | `iam.managed.disableServiceAccountKeyCreation`, `…KeyUpload`, `iam.managed.disableServiceAccountApiKeyCreation` |
+| `service-account-keys` | a principal that must hold a static key | `iam.managed.disableServiceAccountKeyCreation`, `…KeyUpload`, `iam.managed.disableServiceAccountApiKeyCreation` |
 | `public-endpoint` | a workload reachable from the internet on its own address | `compute.managed.vmExternalIpAccess`, `sql.managed.restrictPublicIp`, `sql.managed.restrictAuthorizedNetworks` |
 | `public-storage` | an object store published on purpose, and the access model for it | `storage.publicAccessPrevention`, `storage.uniformBucketLevelAccess` |
 | `vm-image` | an image or machine family that cannot boot shielded or confidential | `compute.requireShieldedVm`, `compute.managed.restrictNonConfidentialComputing` |
@@ -394,7 +394,7 @@ that kind:
 
 The classes are narrow, and `vm-image` is separate from `vm-access` for that
 reason: what a machine can run and who can get into it are different risks and should be
-different grants. A wide class is a grant that hands over more than the person asking for
+different grants. A wide class is a grant that gives away more than the person asking for
 it described.
 
 **What has no class.** Audit logging (`gcp.detailedAuditLoggingMode`,
@@ -410,9 +410,9 @@ The service-agent caveat for domain-restricted sharing is already a baseline par
 | grant | on what | decides |
 |---|---|---|
 | `roles/resourcemanager.tagUser` | the tag VALUE | WHICH class this principal may grant at all |
-| the `createTagBinding` permission | the TARGET (organisation, folder or project) | WHERE they may apply it |
+| the `createTagBinding` permission | the TARGET (organization, folder or project) | WHERE they may apply it |
 
-That pair is the project / folder / organisation restriction — no separate mechanism. A
+That pair is the project / folder / organization restriction — no separate mechanism. A
 team holding `tagUser` on `public-endpoint` and `createTagBinding` on their own folder can
 exempt public endpoints in that folder, and nothing else, anywhere else.
 
@@ -433,10 +433,10 @@ The second half stays the estate's too, but is not in this pack: which folder a 
 is the customer's hierarchy, not the library's.
 
 **No new security group is needed for this, and adding one would defeat it.**
-`gcp-security-admins` already holds `roles/orgpolicy.policyAdmin` org-wide, so that group
+`gcp-security-admins` already holds `roles/orgpolicy.policyAdmin` organization-wide, so that group
 can lift any policy today by editing it; giving it the tag as well buys only an audit
 trail. The point of the tag is that "may grant a narrow exemption" need not imply "may
-rewrite any policy", and an org-wide exemption-approver group would re-centralise exactly
+rewrite any policy", and an organization-wide exemption-approver group would re-centralise exactly
 what the tag decentralises. Grant the node half to whoever owns the project or folder.
 
 #### What a binding reaches
@@ -473,7 +473,7 @@ thing end to end: the rebound param, the class grant, and the binding.
 It is the only constraint with a rules param. The rest are written in place, because a
 param per constraint would put forty list-of-object blocks into every estate's
 `terraform.tfvars` for a case nobody has; another constraint earns one the way this did,
-from a real organisation that needed it. Until then an estate can `suppress` a pack's
+from a real organization that needed it. Until then an estate can `suppress` a pack's
 policy and declare its own — a fork, and the thing the param exists to avoid.
 
 #### Where an exemption is visible
@@ -487,7 +487,7 @@ as plain "enforced" — the control is met *and* something is let out:
 ```
 
 The estate carries the binding with its owner and reason, which is what makes a permanent
-exemption reviewable. And Cloud Asset Inventory answers the org-wide question, per class:
+exemption reviewable. And Cloud Asset Inventory answers the organization-wide question, per class:
 
 ```bash
 gcloud asset search-all-resources --scope=organizations/ORG \
@@ -496,7 +496,7 @@ gcloud asset search-all-resources --scope=organizations/ORG \
 
 A binding somebody adds out of band — the temporary kind — is reported by
 `satz report-compliance`. It lists every `cloudresourcemanager.googleapis.com/TagBinding`
-of the organisation through Cloud Asset Inventory, keeps the bindings of this key,
+of the organization through Cloud Asset Inventory, keeps the bindings of this key,
 subtracts the `google_tags_tag_binding` resources the estate declares, and prints the rest
 in a section of its own, with each one's value and target. A binding whose value a claimed
 control's policy conditions on is also printed under that control
@@ -518,7 +518,7 @@ Billing-account IAM, split by audience: everyone in the domain gets
 `billing.user` + `billing.viewer`; the full administration (`billing.admin` +
 `billing.costsManager`) goes to ONE group named by the `billing_admins_group`
 param (default `gcp-billing-admins@{customer_domain}` — the s1 model's group);
-the IaC service account keeps `billing.admin`. Declares its own
+the estate account keeps `billing.admin`. Declares its own
 `google_billing_account_iam_member` map, pinned to `billing_account_infra`.
 
 **Use** (root level): `use "presets/billing-account-permissions.satz"`
@@ -527,12 +527,12 @@ the IaC service account keeps `billing.admin`. Declares its own
 
 ### organization-budget.satz
 
-Budgets on the infrastructure billing account: the organisation's, and one per entry of
+Budgets on the infrastructure billing account: the organization's, and one per entry of
 `budgets` for a set of projects or folders.
 
 **Use** (root level): `use "presets/organization-budget.satz"`
 
-**Questions.** `budget_amount` (the organisation budget per month), `budget_currency`
+**Questions.** `budget_amount` (the organization budget per month), `budget_currency`
 (the billing account's own), `budget_notification_email` (an address beside the billing
 account's administrators; empty is nobody else) and `budget_default_recipients_off`.
 `budget_threshold_rules` (50, 80 and 100 % of current spend) and `budget_channel_project`
@@ -548,7 +548,7 @@ alone; a budget without one keeps the administrators.
 `projects` (`projects/<number>`; `"projects/${{google_project.<label>.number}}"` for a
 declared project), `folders` (`folders/<id>` or `organizations/<id>`; a declared folder's
 `"${{google_folder.<label>.name}}"`), `email` and `import_id`. The first entry is the
-organisation's budget, `global-budget`; binding `budgets` replaces the list, so an estate
+organization's budget, `global-budget`; binding `budgets` replaces the list, so an estate
 that adds budgets writes it too:
 
 ```
@@ -558,7 +558,7 @@ budgets = [
 ]
 ```
 
-`budgets` is a request point: a project asks for its own budget with
+`budgets` is a list: a project asks for its own budget with
 `contributes_budgets`, checked by `satz check-request`.
 
 **Adopting an existing budget.** Its entry's `import_id = "billingAccounts/<account>/budgets/<id>"`
@@ -585,7 +585,7 @@ the state bucket.
 | Param | Default | Meaning |
 |---|---|---|
 | `billing_export_project_id` | `{customer_shortname}-billing-001` | the export's own project |
-| `billing_export_project_folder` | `""` | the folder it is created in; empty is the organisation |
+| `billing_export_project_folder` | `""` | the folder it is created in; empty is the organization |
 | `billing_export_project_display_name` | the project id | what the console shows |
 | `billing_export_dataset_id` | `{customer_shortname}_billing_export` | the dataset; a dataset id takes underscores, never hyphens |
 | `billing_export_location` | `default_region` | where the dataset lives; it cannot move |
@@ -618,8 +618,8 @@ one-line param override in the estate.
 
 | Param | Default | Meaning |
 |---|---|---|
-| `allowed_policy_member_principal_sets` | own org (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | §1.1: principal sets whose members may be granted IAM roles |
-| `allowed_policy_member_subjects` | Security Command Center's five organization-level service agents | §1.1: individual principals allowed past the lock — Google service accounts that org-level products grant roles to (SCC's `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`, Firebase Hosting `firebase-hosting@system…`). An override replaces the list: keep the five when adding |
+| `allowed_policy_member_principal_sets` | own organization (`//cloudresourcemanager.googleapis.com/organizations/<org-id>`) | §1.1: principal sets whose members may be granted IAM roles |
+| `allowed_policy_member_subjects` | Security Command Center's five organization-level service agents | §1.1: individual principals allowed past the lock — Google service accounts that organization-level products grant roles to (SCC's `service-org-<id>@gcp-sa-*-hpsa…` / `@security-center-api…`, Firebase Hosting `firebase-hosting@system…`). An override replaces the list: keep the five when adding |
 | `essential_contacts_allowed_domains` | `["@{customer_domain}"]` | domains the Essential Contacts constraint allows, each entry `@domain` |
 | `allowed_resource_locations` | `["in:eu-locations", "in:us-locations"]` | `gcp.resourceLocations` (§2): where resources may be created. Narrow it here instead of forking |
 
@@ -632,7 +632,7 @@ none of the thirteen needs a typed value. The technical defaults (protocol-forwa
 schemes, the contacts domain) are not asked. See [satz interview](../docs/interview.md).
 
 **Notice.** Once the baseline is switched on, `satz adopt <estate> --execute --import`
-is to run before the apply: Google sets some of these policies on every new organisation,
+is to run before the apply: Google sets some of these policies on every new organization,
 and an apply that creates a policy that exists stops on `409 POLICY_ALREADY_EXISTS`. satz
 prints that notice when the pack goes on and warns at its `use` line until the estate
 binds `cis_baseline_adopted = true`, which the adopt run does itself; `transpile --apply`
@@ -640,8 +640,8 @@ and `bootstrap` refuse while it is open. Every org-policy extension carries the 
 notice on its own param — each is adopted when it is switched on.
 
 **Cross-org grants** need the other organization in
-`allowed_policy_member_principal_sets`, beside the estate's own. Example (a lab org
-administered by the parent org's staff):
+`allowed_policy_member_principal_sets`, beside the estate's own. Example (a lab organization
+administered by the parent organization's staff):
 
 ```
 allowed_policy_member_principal_sets = [
@@ -676,7 +676,7 @@ estate never binds it, and its entries are added to whatever `<param>` holds —
 estate's binding, else the declaring pack's default — while the contributing pack is on.
 Switch that pack off and its entries go with it. Two packs contributing the same entry
 add it once. Where the contributing line stands decides nothing: the entries are merged
-before anything is compiled. Where no pack in the estate declares the param at all —
+before anything is transpiled. Where no pack in the estate declares the param at all —
 the CIS baseline is off, so nothing is restricting anyway — the entries are dropped, and
 `satz presets` names the requirement. Two packs contribute today: `billing-export` and
 `integrations/microsoft-defender-for-cloud`, each named in its own section of this page, and
@@ -697,7 +697,7 @@ service-org-<org-id>@gcp-sa-ktd-hpsa.iam.gserviceaccount.com
 ```
 
 They live in Google tenant projects, not in the customer's organization. Each address
-derives from the org id inside a Google-owned domain, so no one else can create an
+derives from the organization id inside a Google-owned domain, so no one else can create an
 identity that matches.
 
 An organization where the legacy `iam.allowedPolicyMemberDomains` is still set refuses
@@ -729,36 +729,36 @@ is unchanged; it is one policy being reset, not two. [ADR 0002](../docs/adr/0002
 
 Both forms in force is a defect. Org-policy constraints AND together, so an exemption
 has to lift **two** policies, and for several legacy constraints Google's only
-documented exemption path is to disable the constraint org-wide, grant, and re-enable
+documented exemption path is to disable the constraint organization-wide, grant, and re-enable
 it, which leaves the control off in between. The CIS pack's `duty_legacy_superseded`
 records this for every pair it enables.
 
 **Leaving the legacy policy out does not remove it.** A legacy policy already set on an
-organisation is invisible to an apply that does not declare it: it keeps enforcing until
+organization is invisible to an apply that does not declare it: it keeps enforcing until
 someone deletes it by hand. `reset = true` restores the constraint's default — ALLOW for
-every constraint paired this way, verified against a live organisation — so the apply
-resets it, and the next apply reverts a later re-enabling. On an organisation where the legacy policy
+every constraint paired this way, verified against a live organization — so the apply
+resets it, and the next apply reverts a later re-enabling. On an organization where the legacy policy
 already exists, run `satz adopt --only google_org_policy_policy --execute --import` first so
 it is imported rather than created twice.
 
 Do not `suppress` one of these blocks: suppressing it removes the declaration that the
-legacy constraint is off, so a legacy policy already set on the organisation keeps
+legacy constraint is off, so a legacy policy already set on the organization keeps
 enforcing beside its managed twin.
 
 **The pairing is data, and the rule is a gate.** Which managed constraint replaces which
-lives in `presets/managed-constraint-equivalents.txt`, generated from a live organisation by
+lives in `presets/managed-constraint-equivalents.txt`, generated from a live organization by
 `scripts/update_constraint_equivalents.py` and never hand-edited above its `CURATED` marker.
-`cargo test` compiles every corpus case against that table and fails when a pack enforces a
+`cargo test` transpiles every corpus case against that table and fails when a pack enforces a
 legacy constraint that has a replacement, or enables a replacement without declaring its twin
 off.
 
-Only pairs need this. Of the 60 managed constraints a live organisation offers, **45 have no
+Only pairs need this. Of the 60 managed constraints a live organization offers, **45 have no
 legacy form at all** — nothing to switch off. Google declares the pairing in
 `equivalentConstraint`, asymmetrically (15 managed name a legacy twin; only 6 legacy name a
 managed one), and not at all for `iam.allowedPolicyMemberDomains` ↔
 `iam.managed.allowedPolicyMembers` — that pair is in the file's `CURATED` section.
 
-#### The one claim that is not about an org policy
+#### The one claim that is not about an organization policy
 
 The baseline claims **CIS 5.0 §2.14, Cloud Asset Inventory enabled**, against
 `google_project_service.infra_cloudasset_googleapis_com` — a resource the SCAFFOLD
@@ -776,14 +776,14 @@ enabling one API on one project is a duplicate Terraform resource, not a merge.
 project carries a different label, or whose service list has lost
 `cloudasset.googleapis.com`, reports this control as a **broken claim** — which is the
 right signal twice over: the witness named is genuinely not there, and
-`report-compliance` reads the organisation through that same API, so it could not verify
+`report-compliance` reads the organization through that same API, so it could not verify
 anything else either.
 
 ### cis/
 
 **Two of these are ON by default: `cis_dns_logging` and `cis_block_internet_ssh_rdp`.**
 Every other fragment here is off until a customer asks for it, because each one restricts
-what an organisation may create. These two are what an organisation is expected to have
+what an organization may create. These two are what an organization is expected to have
 already.
 
 DNS logging does not restrict anything: it makes a RECORD — of name resolution, which is
@@ -824,7 +824,7 @@ use "presets/cis/dns-logging.satz" when cis_dns_logging
 Each is opt-in because it can break a running workload: Confidential Computing is limited to particular machine families,
 Shielded VM needs image support, CMEK needs the keys and grants to exist first, Cloud SQL
 hardening cuts public-IP connectivity, the bucket-retention constraint applies to
-every bucket in the organisation, not only the log sink's, Access Approval makes every
+every bucket in the organization, not only the log sink's, Access Approval makes every
 support case that needs the customer's content wait for an approval, the SSH/RDP policy
 ends every session that reaches an instance straight from the internet, and the Cloud SQL
 IAM/deletion-protection pair refuses every create or update without both settings. The
@@ -832,7 +832,7 @@ comment at the top of each fragment says what specifically breaks.
 
 #### Measure before you enforce: the dry-run twins
 
-"Will this break us?" has an answer that is not a guess. An org policy can carry
+"Will this break us?" has an answer that is not a guess. An organization policy can carry
 `dry_run_spec` instead of `spec`: Google evaluates every rule, writes a violation to the
 audit log for each action it WOULD have blocked, and blocks nothing. Six of these
 fragments ship a **dry-run twin** that does exactly that:
@@ -842,7 +842,7 @@ cis_cloud_sql_hardening_dry_run = true
 use "presets/cis/cloud-sql-dry-run.satz" when cis_cloud_sql_hardening_dry_run
 ```
 
-Apply it, let the organisation run, then read the violations:
+Apply it, let the organization run, then read the violations:
 
 ```
 protoPayload.metadata."@type"="type.googleapis.com/google.cloud.audit.OrgPolicyViolationInfo"
@@ -864,7 +864,7 @@ The twins are GENERATED from the enforcing fragments by
 different policy than the one that will be enforced answers a question nobody asked. Six
 fragments have a twin; five do not, and the convention tolerates that rather than
 pretending otherwise — the legacy constraints (Shielded VM, both CMEK list constraints)
-have no dry-run form, Access Approval is not an org policy, and the two on-by-default
+have no dry-run form, Access Approval is not an organization policy, and the two on-by-default
 extensions have nothing to size.
 
 | fragment | controls | why it is not in the baseline |
@@ -880,10 +880,10 @@ extensions have nothing to size.
 | `internet-ssh-rdp` | 3.6, 3.7 | ends SSH and RDP sessions that reach an instance straight from the internet |
 | `cloud-sql-iam-and-deletion-protection` | 5.0 6.6, 6.9 | every Cloud SQL create and update must carry both settings |
 
-Three fragments are not org-policy constraints. `access-approval` is an organisation
+Three fragments are not org-policy constraints. `access-approval` is an organization
 setting (`google_organization_access_approval_settings`); Access Transparency, which it
 needs, has no provider resource and is switched on in the console first.
-`internet-ssh-rdp` is a hierarchical firewall policy attached to the organisation, and
+`internet-ssh-rdp` is a hierarchical firewall policy attached to the organization, and
 one of the two fragments here that are ON by default. Four rules: SSH and RDP from
 `admin_port_source_ranges` (1000) and `admin_port_source_ranges_ipv6` (1001) pass to the
 VPC firewall rules, which still decide; every other address is denied (1002 for IPv4,
@@ -918,7 +918,7 @@ enforcing each; the emitter makes each policy wait for its constraint. A custom
 constraint is checked when an instance is created or updated, never against one that
 already exists.
 
-**Constraint names and shapes come from a live organisation's OrgPolicy
+**Constraint names and shapes come from a live organization's OrgPolicy
 `ListConstraints`**, not from documentation. The three shapes differ, and a policy in
 the wrong shape either does nothing or refuses everything: a plain managed boolean takes `enforce`; a managed boolean with a parameter
 takes `enforce` plus `parameters`; a list constraint takes allow/deny values.
@@ -935,9 +935,9 @@ question, not the fragment's — a question that gates a pack cannot live in the
 ### monitoring/organization-audit-logsink.satz
 
 Organization-wide audit trail: enables Data Access audit logs for **all** services
-org-wide, creates its own destination project + GCS archive bucket, and routes all Cloud
+organization-wide, creates its own destination project + GCS archive bucket, and routes all Cloud
 Audit Logs from every current and future project into that bucket via an aggregated
-org-level sink (project owners cannot bypass it). Self-contained — multi-resource-type.
+organization-level sink (project owners cannot bypass it). Self-contained — multi-resource-type.
 
 **Use** — `logsink_project_folder` says where the destination project is created, so
 the line stands at the top level:
@@ -962,7 +962,7 @@ globally unique without overrides):
 | Param | Default | Meaning |
 |---|---|---|
 | `logsink_project_id` | `"{customer_shortname}-log-infra-001"` | project_id of the destination project |
-| `logsink_project_folder` | `""` | the folder the destination project is created in — a folder the estate declares by reference (`google_folder.<label>.name`), one that already exists by its id. Empty says nothing and the project is created under the organisation |
+| `logsink_project_folder` | `""` | the folder the destination project is created in — a folder the estate declares by reference (`google_folder.<label>.name`), one that already exists by its id. Empty says nothing and the project is created under the organization |
 | `logsink_bucket_name` | `"{customer_shortname}-organization-audit-logs"` | GCS archive bucket |
 | `logsink_bucket_location` | `default_region` | bucket region |
 | `logsink_retention_days` | `400` | lifecycle delete age |
@@ -978,7 +978,7 @@ from them, and a derived default is offered only when its inputs are in.
 **Notes:**
 Retention lock (`retention_policy.is_locked`) is not set: a lock cannot be undone, so
 the claim carries a duty to set it once the pipeline is validated. DATA_READ
-org-wide can be voluminous — measure a week of volume before narrowing it.
+organization-wide can be voluminous — measure a week of volume before narrowing it.
 
 ### monitoring/ — CIS 2.5–2.12 (log metrics + alerts)
 
@@ -993,10 +993,10 @@ coexist: a control passes when either path is satisfied.
 | | central | per project |
 |---|---|---|
 | File | `organization-cis-log-alerts-central.satz` | `project-cis-log-alerts.satz` |
-| Covers | every project in the org, current and future | one named project |
+| Covers | every project in the organization, current and future | one named project |
 | Resources | 1 logging bucket, 1 sink, 8 metrics, 8 policies, 1 channel | 8 metrics, 8 policies, 1 channel — **per project** |
 | New project | covered on creation, no config change | needs its own `use`; without it the project fails 2.5–2.12 |
-| Recipients | one org-wide channel; per-*control* routing possible | own channel per project |
+| Recipients | one organization-wide channel; per-*control* routing possible | own channel per project |
 | Cost | audit logs stored twice (GCS archive + logging bucket) | none beyond the metrics |
 
 #### monitoring/organization-cis-log-alerts-central.satz
@@ -1018,7 +1018,7 @@ use "presets/monitoring/organization-cis-log-alerts-central.satz" when cis_centr
 | `cis_central_bucket_id` | `"{customer_shortname}-organization-log-alerts"` | Cloud Logging bucket id |
 | `cis_central_bucket_location` | `default_region` | bucket location |
 | `cis_central_bucket_retention_days` | `30` | short, because the archive lives in GCS |
-| `cis_central_sink_name` | `"cis-central-metrics-sink"` | second org sink |
+| `cis_central_sink_name` | `"cis-central-metrics-sink"` | second organization sink |
 | `cis_central_email` | `"gcp-security@{customer_domain}"` | recipient — a full address, any domain. The mailbox must exist and receive external mail (Monitoring sends from alerting-noreply@google.com); a group whose members have no mailboxes drops every alert |
 | `cis_central_channel_name` | `"CIS Security Alerts (org)"` | channel display name |
 | `cis_central_alert_window` | `"300s"` | alert alignment period |
@@ -1029,7 +1029,7 @@ logsink pack's project by reference. The rest are technical defaults and are not
 asked.
 
 **How the credit works.** Prowler's CIS metric checks are written per-project, but it credits
-a child project when an org sink with `include_children` routes its logs to a Cloud Logging
+a child project when an organization sink with `include_children` routes its logs to a Cloud Logging
 bucket carrying a matching bucket-scoped metric with an alert
 (`logging_service.get_projects_covered_by_aggregated_metric`). Eight metrics therefore cover
 the whole organization.
@@ -1054,7 +1054,7 @@ GCS is the tamper-evident archive, the logging bucket the queryable surface for 
 alerting. Audit logs are therefore stored twice — keep the logging bucket's retention short.
 
 **Prowler version.** The credit needs a Prowler that has
-`get_projects_covered_by_aggregated_metric` and org-level sink collection
+`get_projects_covered_by_aggregated_metric` and organization-level sink collection
 (`_get_org_sinks`). A Prowler without them does not see organization sinks in these
 checks: the central setup is not credited, and CIS 2.3/2.4 return no result although a
 GCS sink and bucket exist. Check both:
@@ -1081,12 +1081,12 @@ about a minute while it propagates; a second apply creates the metrics that fail
 
 #### Smoke test — prove the pipeline end to end
 
-One alert tests the whole chain (org sink → central logging bucket → bucket-scoped
+One alert tests the whole chain (organization sink → central logging bucket → bucket-scoped
 metric → policy → email channel). **§2.7, custom role changes,** needs no VPC and no API
 enablement, and leaves nothing behind:
 
 ```bash
-# any project of the org works — the sink is org-wide with include_children
+# any project of the organization works — the sink is organization-wide with include_children
 gcloud iam roles create smoke_test_2_7 --project=<any-project> \
   --permissions=resourcemanager.projects.get --title="smoke test"
 # expect the email at the channel recipient within ~5–10 minutes, then clean up
@@ -1094,8 +1094,8 @@ gcloud iam roles create smoke_test_2_7 --project=<any-project> \
 gcloud iam roles delete smoke_test_2_7 --project=<any-project>
 ```
 
-Org-level `--organization=<org-id>` also works if the caller holds
-`iam.organizationRoleAdmin`; the IaC service account holds it, so impersonating it works
+Organization-level `--organization=<org-id>` also works if the caller holds
+`iam.organizationRoleAdmin`; the estate account holds it, so impersonating it works
 too.
 
 If no email arrives in ~15 minutes, trace the stages:
@@ -1104,7 +1104,7 @@ If no email arrives in ~15 minutes, trace the stages:
 # 1. did the audit event happen?
 gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.CreateRole"' \
   --project=<any-project> --freshness=15m --format='value(timestamp)'
-# 2. did the org sink deliver it into the central alerts bucket?
+# 2. did the organization sink deliver it into the central alerts bucket?
 gcloud logging read 'protoPayload.methodName="google.iam.admin.v1.CreateRole"' \
   --bucket=<cis_central_bucket_id> --location=<cis_central_bucket_location> \
   --view=_AllLogs --project=<cis_central_bucket_project> --freshness=15m \
@@ -1144,7 +1144,7 @@ use "presets/monitoring/project-cis-log-alerts.satz" when cis_alert_project
 **Questions.** `cis_alert_project` (one project per use) and `cis_alert_email_local`
 (the mailbox rule above). The channel name and window are not asked.
 
-**One project per use — no parameterisation of labels.** The resource labels are fixed,
+**One project per use — no parameterization of labels.** The resource labels are fixed,
 so using the pack twice folds the same addresses with different bodies — a hard error.
 For a second project either fork the pack (`.local.satz`) and prefix every label and
 metric `name`, or use the central variant above.
@@ -1156,7 +1156,7 @@ both sources.
 
 **Notification channels are project resources.** `google_monitoring_notification_channel`
 lives in a project and an alert policy can only reference channels from its *own* project —
-there is no org-level channel and no cross-project reference. N projects therefore mean N
+there is no organization-level channel and no cross-project reference. N projects therefore mean N
 channels pointing at the same mailbox, N×8 metrics and N×8 policies, and every new project
 needs the pack again; without it the project fails 2.5–2.12.
 
@@ -1202,7 +1202,7 @@ appear once per parent, and an address on ALL already receives everything.
 
 A shared VPC in a host project of its own: the host project, the shared-VPC host switch,
 one custom-mode network, and a network firewall policy attached to it. The subnets and
-the firewall rules are what the projects ask for: two lists with request points, filled
+the firewall rules are what the projects ask for: two lists with lists, filled
 through contributions, one resource per entry (`each`).
 
 **Use** — the host project lands in the folder `network_host_project_folder` names, so
@@ -1241,7 +1241,7 @@ params {
 }
 ```
 
-| request point | key | fields |
+| list | key | fields |
 |---|---|---|
 | `shared_vpc_subnets` | `name` | `name`, `cidr` (primary range), `region` |
 | `shared_firewall_rules` | `name` | `name`, `priority`, `direction` (`INGRESS`/`EGRESS`), `action` (`allow`/`deny`/`goto_next`), `description`, `match` — the policy rule's `match` block as an object |
@@ -1259,7 +1259,7 @@ params {
 | Param | Default | Meaning |
 |---|---|---|
 | `network_host_project_id` | `"{customer_shortname}-net-host-001"` | the host project's id, asked |
-| `network_host_project_folder` | `""` | the folder the host project is created in, asked; empty is the organisation |
+| `network_host_project_folder` | `""` | the folder the host project is created in, asked; empty is the organization |
 | `shared_network_name` | `"shared"` | the network's name; the policy is `<name>-policy` |
 | `shared_subnet_flow_sampling` | `0.5` | the share of flows every subnet logs — the CIS baseline's `compute.requireVpcFlowLogs` refuses a subnet without flow logs (CIS 3.8); an idle subnet logs nothing |
 | `shared_vpc_subnets` | `[]` | the subnets, filled by requests |
@@ -1272,14 +1272,14 @@ Nothing in the pack bills while idle.
 ### delegation.satz
 
 Delegated access, the base: one identity per delegation. A delegation gives a team — or a
-product, a service — access to a part of the organisation's resources from an estate of its
-own, beside the organisation's. This pack is the half every delegation has, whatever is
-delegated: an infrastructure project holding the service account the team's pipelines run
+product, a service — access to a part of the organization's resources from an estate of its
+own, beside the organization's. This pack is the half every delegation has, whatever is
+delegated: an infrastructure project holding the service account the workload's pipelines run
 as and the bucket its states live in, and the group whose members may act as that account.
 What is delegated is another pack's — folders
 ([`delegated-folders.satz`](#delegated-folderssatz)), Google projects
 ([`delegated-projects.satz`](#delegated-projectssatz)) — and each of their entries names
-the delegation whose account works there. A team then never runs as the organisation's IaC
+the delegation whose account works there. A team then never runs as the organization's IaC
 account.
 
 **Use** — the delegations' infrastructure projects land in the folder
@@ -1304,8 +1304,8 @@ the team:
 satz add-entry C0example.satz delegations name=shop owner_group=gcp-shop-admins@example.com
 ```
 
-`add-entry` checks the entry against the request point below — every field declared, each
-pattern matched, the key not yet in the list — and keeps it only when the estate compiles.
+`add-entry` checks the entry against the list below — every field declared, each
+pattern matched, the key not yet in the list — and keeps it only when the estate transpiles.
 A list's values are comma-separated: `apis=iam.googleapis.com,storage.googleapis.com`.
 
 **Requests.** A team asks for its identity with a small pack of its own, checked with
@@ -1321,13 +1321,13 @@ params {
 }
 ```
 
-| request point | key | fields |
+| list | key | fields |
 |---|---|---|
 | `delegations` | `name` | `name` (the delegation's name — lowercase letters, digits and `-`, starting with a letter), `owner_group` (the address of the group that may become the account, `<name>@<domain>`), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
 
-The request point's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
+The list's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
 `owner_group` that is not `<name>@<domain>` — `gcp-shop-admins`, or
-`group:gcp-shop-admins@example.com` — are refused at compile, by `satz add-entry` and by
+`group:gcp-shop-admins@example.com` — are refused at transpile, by `satz add-entry` and by
 `satz check-request`, naming the entry and the value. `apis` and `billing_roles` are lists,
 and an entry that states one states it whole: a delegation that manages budgets on the
 billing account repeats the six APIs and adds `billingbudgets.googleapis.com`, and writes
@@ -1338,31 +1338,31 @@ billing account repeats the six APIs and adds `billingbudgets.googleapis.com`, a
 | resource | what |
 |---|---|
 | `google_project.deploy_shop` | `{customer_shortname}-deploy-shop` under `delegation_project_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Billing, Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
-| `google_service_account.deploy_shop` | `svc-deploy-shop`, the account the team's pipelines impersonate |
+| `google_service_account.deploy_shop` | `svc-deploy-shop`, the account the workload's pipelines impersonate |
 | `google_storage_bucket.deploy_shop_state` | `{customer_shortname}-deploy-shop-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
-| the account's grants | the entry's `billing_roles` on the billing account, `delegation_organization_roles` on the organisation |
+| the account's grants | the entry's `billing_roles` on the billing account, `delegation_organization_roles` on the organization |
 | the group's grants | `roles/viewer` on the project; `delegation_group_roles` on the account alone |
 
-**The team's calls are billed to this project.** An API a call of the team's estate needs
+**The account's calls are billed to this project.** An API a call of the workload estate needs
 is asked for in the delegation's `apis`, wherever the resource lives; an API a resource
 needs in a delegated project the team enables on that project itself.
 
 **What the account holds outside its targets.** Its `billing_roles` on the billing account
-and `roles/browser` on the organisation, which is what the interfaces' lookups need: a
+and `roles/browser` on the organization, which is what the interfaces' lookups need: a
 folder is looked up by its name among its parent's folders, and that listing needs
-`resourcemanager.folders.list` on the parent. Without it the team's plan stops at the
-lookup. Everything else the account holds, it holds on a target.
+`resourcemanager.folders.list` on the parent. Without it the workload estate's plan stops at the
+lookup. Everything else the account holds, it holds on a delegated resource.
 
-**What the team's estate reads** — the interface `delegation-<name>`, written to
+**What the workload estate reads** — the interface `delegation-<name>`, written to
 `interfaces/outgoing/delegation-<name>/` by every transpile and taken whole to the estate's
 `interfaces/incoming/`, beside the interface of each target:
 
 | export | what |
 |---|---|
-| `deploy_project_id`, `iac_account`, `state_bucket` | the delegation's infrastructure project, the account the team's estates run as, the bucket their states live in |
+| `deploy_project_id`, `iac_account`, `state_bucket` | the delegation's infrastructure project, the account the workload estates run as, the bucket their states live in |
 | `account_group`, `account_group_roles` | the group whose members may act as the account, and what it holds on it |
 | `billing_account` | the billing account a project the team creates is linked to, and a budget is created on |
-| `delegated_billing_roles`, `delegated_apis` | what was delegated to the account beside its targets: its roles on the billing account, and the APIs of its infrastructure project |
+| `delegated_billing_roles`, `delegated_apis` | what was delegated to the account beside its delegated resources: its roles on the billing account, and the APIs of its infrastructure project |
 
 `satz init --from <interface folder>…` writes the workload estate from the delegation's
 interface folder and those of its targets, any number of them: it copies each into
@@ -1372,13 +1372,13 @@ name>/state` in the delegation's bucket. Exactly one of the folders is a delegat
 The estate reads a value by the name of its interface folder:
 `${{interface.delegation-shop.billing_account}}`, `${{interface.shop.delegated_folder}}`.
 
-The README satz writes into each of these folders opens with what it hands over — the
-account, who may act as it, what it holds — and the receiving team's next steps, so the
-folders are the hand-over ([the procedure for both
+The README satz writes into each of these folders opens with what it passes on — the
+estate account, who may act as it, what it holds — and the receiving team's next steps, so the
+folders are all that is copied across ([the procedure for both
 teams](../docs/tutorial-delegated-access.md)).
 
-The `delegated_*` exports, here and in the targets' interfaces, are what satz judges the
-team's estate against: a resource type that needs a role or an API not in them is reported
+The `delegated_*` exports, here and in the interfaces of the delegated resources, are what satz judges the
+workload estate against: a resource type that needs a role or an API not in them is reported
 in that estate as what to ask for here, and nothing is proposed at the organization ([What
 an estate must declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 
@@ -1387,8 +1387,8 @@ an estate must declare](../README.md#what-an-estate-must-declare-update-prerequi
 | Param | Default | Meaning |
 |---|---|---|
 | `delegations` | `[]` | the delegations, bound in the estate, added with `satz add-entry` or filled by requests |
-| `delegation_project_folder` | `""` | the folder the delegations' infrastructure projects are created in, asked; empty is the organisation, the infrastructure folder is `"google_folder.infra_folder.name"` |
-| `delegation_organization_roles` | `["roles/browser"]` | what an account holds on the organisation |
+| `delegation_project_folder` | `""` | the folder the delegations' infrastructure projects are created in, asked; empty is the organization, the infrastructure folder is `"google_folder.infra_folder.name"` |
+| `delegation_organization_roles` | `["roles/browser"]` | what an account holds on the organization |
 | `delegation_group_roles` | tokenCreator, serviceAccountUser | what a delegation's group holds on the account |
 
 Nothing in the pack bills while idle.
@@ -1422,14 +1422,14 @@ use "presets/delegated-folders.satz" when use_delegated_folders
 
 One delegation works in as many folders as name it, and the folders need no common root.
 The grant names the account by reference: an entry that names a delegation no entry of
-`delegations` declares is refused by the compile, which lists the accounts that exist.
+`delegations` declares is refused by the transpile, which lists the accounts that exist.
 
 **Entries.** An entry is bound in the estate, added with `satz add-entry C0example.satz
 delegated_folders name=shop-frontend delegation=shop`, or requested by the team as
 `contributes_delegated_folders` in a small pack of its own, checked with `satz
 check-request <file> <estate>` and vendored into the estate by pull request:
 
-| request point | key | fields |
+| list | key | fields |
 |---|---|---|
 | `delegated_folders` | `name` | `name` (the folder's name, its label — `google_folder.<name>` — and its interface's: lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in it), `display_name` (the name it is shown under; the entry's name when left out), `parent` (`google_folder.workload_folder.name` when left out; another folder the estate declares as `google_folder.<label>.name`, or one that exists as `folders/<id>`), `budgets` (`false` when left out) |
 
@@ -1446,15 +1446,15 @@ that folder, and for nothing else ([`delegated-budget-role.satz`](#delegated-bud
 **What the account may do, and what it may not.** In its folders it creates, changes and
 deletes folders and Google projects, sets the IAM of its projects and enables their APIs.
 No role of `delegated_folders_roles` carries `resourcemanager.folders.setIamPolicy`, so the
-account grants nothing on a folder — its own included — and it holds no organisation
+account grants nothing on a folder — its own included — and it holds no organization
 policy, tag or billing-administration role. Limits inside a delegated folder are
-organisation policies the organisation's estate sets on that folder.
+organization policies the organization's estate sets on that folder.
 
 A folder that already exists is declared as an entry and taken over once with `satz adopt`,
 which finds it by its display name under its parent. The pack grants on no folder it does
 not manage.
 
-**What the team's estate reads** — the folder's interface `<name>`, in
+**What the workload estate reads** — the folder's interface `<name>`, in
 `interfaces/outgoing/<name>/`, taken beside the delegation's own:
 
 | export | what |
@@ -1463,8 +1463,8 @@ not manage.
 | `delegated_folder_roles` | `delegated_folders_roles` |
 | `delegated_budgets` | whether the entry said `budgets = true` |
 
-One estate reads one folder's interface. A delegation with two folders is rolled out by two
-estates that run as the same account. A folder's name is an interface's name: no project of
+One estate reads one folder's interface. A delegation with two folders is worked in by two
+estates that run as the same estate account. A folder's name is an interface's name: no project of
 `delegated-projects.satz` carries the same.
 
 **Overridable defaults:**
@@ -1479,8 +1479,8 @@ Nothing in the pack bills while idle.
 ### delegated-projects.satz
 
 Delegated access to projects: the Google projects a delegation's account works in, and its
-roles on those projects alone. A project is a Google project the organisation's estate
-creates; the team's own estate, in its own repository, fills it. A delegated project has no
+roles on those projects alone. A project is a Google project the organization's estate
+creates; the workload estate, in the workload repository, fills it. A delegated project has no
 account, no state bucket and no group of its own: it is worked by the account of the
 delegation its entry names — an entry of `delegations` in
 [`delegation.satz`](#delegationsatz) — which creates no project itself.
@@ -1509,10 +1509,10 @@ use "presets/delegated-projects.satz" when use_delegated_projects
 ```
 
 One account works in as many projects as name its delegation, and the same account may work
-in folders of `delegated-folders.satz`. A delegation and one of its targets may share a
+in folders of `delegated-folders.satz`. A delegation and one of its delegated resources may share a
 name — the project `payments` of the delegation `payments`. The grant names the account by
 reference: an entry that names a delegation no entry of `delegations` declares is refused
-by the compile, which lists the accounts that exist.
+by the transpile, which lists the accounts that exist.
 
 **Entries.** An entry is bound in the estate, added with `satz add-entry`, or requested by
 the team:
@@ -1534,7 +1534,7 @@ params {
 }
 ```
 
-| request point | key | fields |
+| list | key | fields |
 |---|---|---|
 | `delegated_projects` | `name` | `name` (the project's name, and its interface's — lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in the project), `apis` (the APIs enabled on the project; the five below when left out), `budgets` (`false` when left out) |
 
@@ -1552,15 +1552,15 @@ is a list, and an entry that states it states it whole.
 A name with `-` is the label with `_`: `data-lake` is `google_project.data_lake`.
 
 **What the account may do.** `delegated_projects_roles` is the project's IAM and its
-services. With the first, the team's estate grants its own account what its resource types
+services. With the first, the workload estate grants its own account what its resource types
 need beyond that, on the project (`google_project_iam_member`, which the interface allows).
 The account holds nothing on a project whose entry names another delegation.
 
-**Which project pays for a call.** The team's calls are billed to the delegation's
+**Which project pays for a call.** The account's calls are billed to the delegation's
 infrastructure project, not to the delegated project: an API a call needs is asked for in
 the delegation's `apis`.
 
-**What the team's estate reads** — the project's interface `<name>`, in
+**What the workload estate reads** — the project's interface `<name>`, in
 `interfaces/outgoing/<name>/`, taken beside the delegation's own:
 
 | export | value | attach point for |
@@ -1576,7 +1576,7 @@ interfaces/outgoing/delegation-shop interfaces/outgoing/shop-backend` takes both
 the workload estate, which names the project `${{interface.shop-backend.project_id}}`. An
 account with several projects passes one interface folder per project, and each is read by
 its own name. A project's name is an interface's name: no folder of
-`delegated-folders.satz` carries the same. The organisation's estate adds to a project's
+`delegated-folders.satz` carries the same. The organization's estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — since an interface declared in two files is one.
 
@@ -1585,7 +1585,7 @@ interface "network" }` — since an interface declared in two files is one.
 | Param | Default | Meaning |
 |---|---|---|
 | `delegated_projects` | `[]` | the projects, each with the delegation whose account works in it |
-| `delegated_projects_folder` | `""` | the folder the projects are created in, asked; empty is the organisation, the workload folder is `"google_folder.workload_folder.name"` |
+| `delegated_projects_folder` | `""` | the folder the projects are created in, asked; empty is the organization, the workload folder is `"google_folder.workload_folder.name"` |
 | `delegated_projects_roles` | projectIamAdmin, serviceUsageAdmin | what an account holds on each of its projects |
 
 Nothing in the pack bills while idle.
@@ -1601,7 +1601,7 @@ scopes to that project, and with `billing.resourceCosts.get` it sees that projec
 costs. Only the broad Owner and Editor roles carry them, so this pack declares a custom
 role with exactly these three.
 
-**Use** — once for the organisation, with the first entry that asks:
+**Use** — once for the organization, with the first entry that asks:
 
 ```
 params {
@@ -1618,20 +1618,20 @@ use "presets/delegated-budget-role.satz" when use_delegated_budgets
 | an entry of `delegated_folders` with `budgets = true` | on that folder | the same for every project in the folder |
 
 It holds nothing on the billing account: no other project's costs, no budget for the
-account as a whole. An entry that asks while this pack is off is refused by the compile —
+account as a whole. An entry that asks while this pack is off is refused by the transpile —
 its grant names a role the estate does not declare.
 
-The team's side is the workload pack `packs/project-budget.satz` (`satz get-pack
-project-budget`): it reads the project and the billing account from the hand-over folder,
+The workload's side is the workload pack `packs/project-budget.satz` (`satz get-pack
+project-budget`): it reads the project and the billing account from the interface folder,
 asks for the amount, the currency and an address to tell, and creates the budget. The
-interface says whether budgets were delegated (`delegated_budgets`), and the compile of the
-team's estate judges a budget against it.
+interface says whether budgets were delegated (`delegated_budgets`), and the transpile of the
+workload estate judges a budget against it.
 
 | Param | Default | Meaning |
 |---|---|---|
-| `delegated_budget_role_id` | `"satzDelegatedBudgets"` | the role's id in the organisation |
+| `delegated_budget_role_id` | `"satzDelegatedBudgets"` | the role's id in the organization |
 
-**Not verified against a live organisation:** that the Budget API, which OpenTofu calls,
+**Not verified against a live organization:** that the Budget API, which OpenTofu calls,
 accepts these permissions as Google's console does.
 
 ### interface-notice.satz
@@ -1652,7 +1652,7 @@ In the infrastructure project (`interface_notice_project`) it declares a bucket 
 not the state bucket (`{customer_shortname}-infra-001-interface`), a Pub/Sub topic
 (`{customer_shortname}-satz-interface`), `roles/pubsub.publisher` on the topic for Cloud
 Storage's service agent, a storage notification for `OBJECT_FINALIZE` on the bucket, and
-the object `interface.json`, whose content is the root module's `local.satz_interface` —
+the object `interface.json`, whose content is the HCL code's `local.satz_interface` —
 every exported value, the core ones under `core` and each interface's under
 `interfaces."<name>"` — as JSON. Terraform rewrites the object only when its content
 changes: an apply that changes an exported value publishes one message, an apply that
@@ -1665,17 +1665,17 @@ or a pull from a runner — and reads the new values from the object the message
 
 The service agent's address carries the project number, so the pack reads it with the
 provider's `google_storage_project_service_account` data source in a trusted `hcl` block,
-which the compile notes on every transpile.
+which the transpile notes on every transpile.
 
 ### A pack that publishes an interface
 
-A pack publishes what the projects beside the estate read with `export`, core or inside an
-`interface` block ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)). A
-project is an estate that depends on parts of the estate's interface, with its own
+A pack publishes what the workload estates beside the estate read with `export`, core or inside an
+`interface` block ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-workload-estates-beside-it)). A
+workload estate is an estate that depends on parts of the estate's interface, with its own
 repository or folder, config, state and pipeline.
 
 **A pack's interface is common.** An interface a pack declares — `interface "network" {
-export … }` — is in the library every project's folder carries (`interfaces/outgoing/common/` and
+export … }` — is in the library every interface folder carries (`interfaces/outgoing/common/` and
 `interfaces/outgoing/<project>/`), without the word `common`. One an `each` writes is the
 exception: `each delegated_projects by name { interface "{each.name}" { … } }` writes one interface
 per entry, and each is that project's own (`delegated-projects.satz`). A project's interface takes it with
@@ -1688,7 +1688,7 @@ preset library (`satz doc-presets` and `satz preset-graph` refuse an interface f
 **An export is a contract with the projects that read it.** A pack version that removes or
 renames an export, or changes the shape of its value — a string that becomes a list, a
 `folders/<number>` that becomes a bare number — fails a project that reads it, in its plan
-or in its compile. It is a breaking change: the version's row under [`## Changelog`](CHANGELOG.md#changelog) names the export, an
+or in its transpile. It is a breaking change: the version's row under [`## Changelog`](CHANGELOG.md#changelog) names the export, an
 entry under [`## Breaking changes`](CHANGELOG.md#breaking-changes) says what a project edits, and the
 release that ships it is a minor one. A new export breaks no one.
 
@@ -1716,7 +1716,7 @@ security's as much as the provider's.** It decides how a project changes it:
   central), hub routes, DNS forwarding.
 
 An interface's README shows every export as read, and an attach point with the types it
-takes; a project estate's compile and `satz check-consumer` hold a project to the same
+takes; a workload estate's transpile and `satz check-consumer` hold a project to the same
 table.
 
 ### attach-points.yaml
@@ -1727,17 +1727,17 @@ object, and the estate's authoritative form of the membership: an attribute the 
 must not set (a perimeter's `status.resources`), the entry its `lifecycle { ignore_changes
 }` must hold, or a resource type the estate must not declare on the same node
 (`google_<node>_iam_policy` and `_iam_binding` beside `*_iam_member`). The table is
-compiled into satz; `satz check-consumer` and a project estate's compile read the same
-rows to find a project's attachments ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+built into satz; `satz check-consumer` and a workload estate's transpile read the same
+rows to find a project's attachments ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-workload-estates-beside-it)).
 
 ### interface-lookups.yaml
 
-Not a pack: how the interfaces under `interfaces/outgoing/` read back what an estate emits,
+Not a pack: how the interfaces under `interfaces/outgoing/` read back what an estate writes,
 per resource type — the data source, the keys it is looked up by, the read permission the
 lookup needs, the attributes it yields, and the attributes that derive from what satz
-writes (a service account's `email`, a bucket's `url`). The table is compiled into satz;
-an export that needs a lookup of a type it has no row for is refused at compile, naming
-the type ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+writes (a service account's `email`, a bucket's `url`). The table is built into satz;
+an export that needs a lookup of a type it has no row for is refused at transpile, naming
+the type ([language §6.17](../docs/language.md#617-export-and-interface--what-the-estate-publishes-to-the-workload-estates-beside-it)).
 
 ## Security operations and integrations
 
@@ -1748,7 +1748,7 @@ it; neither can tier activation. Everything downstream of this step has provider
 resources: custom modules, sources and source IAM, v2 notification configs, BigQuery
 exports, mute configs, Security Posture.
 
-`presets/scc/scc-enable-all.sh` is that step: every service `ENABLED` at the org,
+`presets/scc/scc-enable-all.sh` is that step: every service `ENABLED` at the organization,
 every folder and project below it `INHERITED`. Dry run by default.
 
 ```bash
@@ -1757,7 +1757,7 @@ presets/scc/scc-enable-all.sh --organization 123456789012 --apply      # write
 ```
 
 **`scc/scc-service-enablement.satz` binds it**, so an estate does not retype the
-org id — one `use` is the whole thing:
+organization id — one `use` is the whole thing:
 
 ```
 use "presets/scc/scc-service-enablement.satz"
@@ -1785,26 +1785,26 @@ use "presets/scc/scc-notifications.satz"
 - a `google_pubsub_topic` in the project the estate names
   (`scc_notification_project`, asked; the infrastructure project by default);
 - `roles/securitycenter.notificationServiceAgent` for
-  `service-org-<organisation>@gcp-sa-scc-notification.iam.gserviceaccount.com` on
+  `service-org-<organization>@gcp-sa-scc-notification.iam.gserviceaccount.com` on
   that topic — the identity the config reports in its own `serviceAccount` field,
   which is not the `security-center-api` agent SCC activation creates. Without the
   grant the config is created, reports no error, and publishes nothing. SCC adds
   the binding itself when the config is created; the estate declares it anyway, and
   the two converge. `iam.managed.allowedPolicyMembers` does not apply to
-  Google-managed service agents, so a domain-restricted organisation permits it;
+  Google-managed service agents, so a domain-restricted organization permits it;
 - `google_scc_v2_organization_notification_config` at `location = "global"`, with
   the filter the customer decides (`scc_notification_filter`, asked; active HIGH and
   CRITICAL findings by default). The resource is **v2**: the v1
-  notification API answers "This API is no longer available" on a live organisation.
+  notification API answers "This API is no longer available" on a live organization.
 
-Nothing here subscribes to the topic: an organisation with a SIEM points it at the
+Nothing here subscribes to the topic: an organization with a SIEM points it at the
 topic, and one without adds `scc/scc-findings-mail.satz` below. No catalog control
 covers SCC, so the pack claims nothing. It needs the detectors switched on to have
 anything to publish — use it with `scc/scc-service-enablement.satz`.
 
 ### `scc/scc-findings-mail.satz` — the mailbox that is told
 
-For an organisation with nothing subscribed to the topic. A Pub/Sub topic with no
+For an organization with nothing subscribed to the topic. A Pub/Sub topic with no
 subscription drops every message it receives, so findings would be published into
 nothing.
 
@@ -1817,7 +1817,7 @@ a subscription that keeps seven days, an e-mail notification channel, and an ale
 policy that fires when messages reach the topic. The address is asked
 (`scc_findings_email`), and its default is the central alert pack's
 `cis_central_email` BY REFERENCE — one security mailbox for the CIS alerts and the
-findings. Without that pack and without an answer the compile stops with `unknown
+findings. Without that pack and without an answer the transpile stops with `unknown
 param 'cis_central_email'`, which is the honest failure: the recipient is undecided.
 
 What the mail says is that findings were published, with a link — not the finding
@@ -1859,7 +1859,7 @@ subscription would split the findings between them, which is why they do not sha
 ### `scc/scc-export.satz` — findings kept and queryable
 
 The other half: a notification tells somebody now, an export answers what the
-organisation looked like months ago.
+organization looked like months ago.
 
 ```
 use "presets/scc/scc-export.satz"
@@ -1887,7 +1887,7 @@ that list is refused at apply.
 Not in the library, and why: **mute configs** (which findings to silence is a
 customer's noise decision, and a wrong mute hides a real finding — write them in the
 estate), **custom modules** for Security Health Analytics and Event Threat Detection
-(the rules are content a customer's security team owns; on a 2026 organisation SHA's
+(the rules are content a customer's security team owns; on a 2026 organization SHA's
 modules cannot be set at all, see below), **sources and source IAM** (only for a
 customer pushing third-party findings into SCC), and **Security Posture**, which is
 a framework of its own rather than part of this preset.
@@ -1895,7 +1895,7 @@ a framework of its own rather than part of this preset.
 A **pack** may declare an action too, and `satz doc-presets` puts it on the pack's
 page. An action is a step satz runs, never a witness: no claim covers what a script
 did, and nothing about it reaches `report-compliance`. Because
-`get-presets` downloads packs from this public repository, every compile warns
+`get-presets` downloads packs from this public repository, every transpile warns
 when one declares an action, `--no-pack-actions` ignores pack-declared ones, and
 a downloaded script arrives without its executable bit, which satz does not set.
 
@@ -1932,8 +1932,8 @@ that organization) and the AWS/Azure connectors.
 Flags, failure modes and the rest: [`docs/housekeeping.md`](../docs/housekeeping.md),
 under "The scripts, one by one".
 
-**Use**, then adopt what the organisation already has (`satz adopt --activate`
-activates managed constraints via the Org Policy API and imports existing policies
+**Use**, then adopt what the organization already has (`satz adopt --activate`
+activates managed constraints via the Organization Policy API and imports existing policies
 into state — see "Adopting what already exists" in the main README):
 
 ```
@@ -1945,7 +1945,7 @@ satz adopt C0example.satz --only google_org_policy_policy --activate --execute -
 
 ### security-audit/sa-security-audit.satz
 
-Read-only security-audit service account + impersonation group + org-level IAM in one
+Read-only security-audit service account + impersonation group + organization-level IAM in one
 pack (Security Toolset §6.6). Access is impersonation-only: no SA keys,
 no remediation rights (`roles/viewer`, `iam.securityReviewer`,
 `securitycenter.adminViewer`, `cloudasset.viewer`; auditors group gets
@@ -1993,7 +1993,7 @@ use "presets/integrations/microsoft-defender-for-cloud-cspm-role-least-privilege
 what Microsoft's wizard uses as the pool id), `mdc_mgmt_project_id`,
 `mdc_mgmt_project_folder` (the folder that project is created in — a folder the estate
 declares by reference, `google_folder.<label>.name`, or one that already exists by its id;
-empty says nothing and the project is created under the organisation), `mdc_plan_cspm`, and
+empty says nothing and the project is created under the organization), `mdc_plan_cspm`, and
 the access-mode pair `mdc_cspm_default_access` / `mdc_cspm_least_privilege`. Everything
 Microsoft-side — their tenant as the OIDC issuer, the per-plan `api://` audiences, the
 provider ids, the custom role ids, the API list — is an inlined constant, identical for
@@ -2031,7 +2031,7 @@ it is asked only once CSPM is on.
 
 Microsoft Sentinel's GCP connector: Sentinel PULLS logs from a Pub/Sub subscription,
 authenticating through workload identity federation, so no service-account key leaves
-the organisation. Two files, because federation is set up once and log sources are
+the organization. Two files, because federation is set up once and log sources are
 added one at a time.
 
 **Use** (root level):
@@ -2048,7 +2048,7 @@ commercial tenant as issuer with `api://<Sentinel application id>` as the audien
 principal set on that account. It grants nothing else — each log source grants what it
 needs, where it needs it.
 
-`microsoft-sentinel-auditlogs.satz` is the first log source: an organisation sink with
+`microsoft-sentinel-auditlogs.satz` is the first log source: an organization sink with
 `include_children` exporting the four audit streams, the topic it writes to, the
 subscription Sentinel pulls from, `roles/pubsub.publisher` for the sink's own writer
 identity (without which the sink exists and delivers nothing), and
@@ -2088,7 +2088,7 @@ audit fragment: carrying them again exports and bills the same entries twice.
 **The nine sources this library does not ship.** Of Microsoft's fourteen
 configurations, nine — Apigee, Cloud SQL, Compute, IAM, Resource Manager, and the audit
 halves of CDN, NAT, DNS and Cloud IDS — are only `protoPayload.serviceName=…` filters
-over the same audit stream the audit fragment exports organisation-wide. As separate
+over the same audit stream the audit fragment exports organization-wide. As separate
 sinks they duplicate entries and pay for them twice. Service-scoped audit routing, if a
 customer wants it, is ONE sink with a union filter. Three more are unbounded and stay a
 decision rather than a default: Microsoft's audit setup carries NO filter at all (the
@@ -2103,7 +2103,7 @@ error. Its firewall setup names its topic `sentinel-topic` — the same name its
 setup creates — and its IAM setup subscribes to that topic without creating it. Its NAT
 filter's `logName=` is unquoted, so that half of the filter matches nothing.
 
-**Two organisation policies can refuse the first apply**, neither of them set by this
+**Two organization policies can refuse the first apply**, neither of them set by this
 library: a deny-all on `iam.workloadIdentityPoolProviders` blocks the provider unless
 the `sts.windows.net/<microsoft tenant>` issuer is allowed, and where
 `iam.managed.allowedPolicyMembers` is enforced the principal set must be allowed before
@@ -2157,7 +2157,7 @@ question customer_shortname {
   prompt   = "Short name identifying this customer"
   why      = "Project ids and bucket names derive from it, and those ids are globally unique."
   reversal = recreate      // edit | state_surgery | recreate — cost to the ESTATE
-  blast    = none          // none | low | high — cost to the RUNNING organisation
+  blast    = none          // none | low | high — cost to the RUNNING organization
 }
 ```
 
@@ -2175,7 +2175,7 @@ A question is **answered when the estate's own `params {}` binds its param** —
 pack's default or to anything else; accepting a default is an answer, recorded by
 writing the default in. A question whose param the estate does not bind is
 `unanswered`, and **every question must be answered before the estate touches an
-organisation**: `bootstrap` and `transpile --apply` refuse while one is open,
+organization**: `bootstrap` and `transpile --apply` refuse while one is open,
 `transpile --plan` warns. A question with no usable default is `blocking` — a value has
 to be typed. `ask_when` names a boolean param; when it is false the question is
 `not-applicable` and counts toward nothing.
@@ -2200,18 +2200,18 @@ params {
 }
 
 notice cis_baseline_adopted {
-  text     = "Google sets some of these policies on every new organisation …"
+  text     = "Google sets some of these policies on every new organization …"
   run      = "satz adopt <estate> --execute --import"
   severity = error
 }
 ```
 
 satz shows it when the pack goes on — the interview's yes, `satz add-preset`,
-`merge-presets` bringing the pack in — and the compile warns at the estate's `use` line
+`merge-presets` bringing the pack in — and the transpile warns at the estate's `use` line
 until the estate binds the param `true`. `severity = error` makes every command that
-writes to the organisation refuse while it is open (§6.15 of the language reference lists
+writes to the organization refuse while it is open (§6.15 of the language reference lists
 the three severities). The param is the notice's alone: declared `false` in
-the same pack, asked by no question, read by nothing, and never emitted — binding it
+the same pack, asked by no question, read by nothing, and never written — binding it
 moves no line of the HCL. `satz presets` lists every pack's notices with their state, and
 `satz doc-presets` gives a pack a Notices section.
 
@@ -2271,7 +2271,7 @@ Not a pack: the configuration `satz import` reads — an optional `root` (organi
 folder by id or display-name path, project), `only` and `exclude` lists, and per resource type the
 import filter (`import`, `asset_type`, attribute include/exclude) **plus the adoption
 rules `satz adopt` reads** — `import_id` templates for user-chosen ids, `match_on` keys
-for GCP-assigned ones, `activate: managed` for org policies. A type without a rule is
+for GCP-assigned ones, `activate: managed` for organization policies. A type without a rule is
 reported by `adopt` as "no rule"; adding one is a one-line change here. Referenced
 automatically from `presets_dir`, or explicitly via `--import-config`.
 

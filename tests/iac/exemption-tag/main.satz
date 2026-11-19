@@ -70,7 +70,7 @@ use "presets/cis/CIS-GCP-Foundation-4.0.satz"
 
 use "presets/exemptions/exemption-tag.satz"
 
-// (1) WHICH class: the platform team may grant key exemptions, and only key exemptions.
+// (1) WHICH class: the organization's team may grant key exemptions, and only key exemptions.
 // Holding this on `service-account-keys` says nothing about public-storage, encryption
 // or any other value — which is the whole reason the values are classes.
 google_tags_tag_value_iam_member {
@@ -84,7 +84,7 @@ google_tags_tag_value_iam_member {
 // (3) WHAT is exempted: one service account, named, with its owner in the comment.
 google_tags_tag_binding {
   "svc-legacy-connector" {
-    // Owner: the platform team. Review: the next access review.
+    // Owner: the organization's team. Review: the next access review.
     // Reason: the vendor's connector cannot federate.
     parent    = "//iam.googleapis.com/projects/acme-infra-001/serviceAccounts/svc-legacy@acme-infra-001.iam.gserviceaccount.com"
     tag_value = "${{google_tags_tag_value.exempt_service_account_keys.name}}"

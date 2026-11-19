@@ -1,21 +1,21 @@
 // A template for one Google project in the folder of the workload `shop`: the id by
-// the customer's naming scheme, a four-digit cost centre as a label, and the owner, editor
+// the customer's naming scheme, a four-digit cost center as a label, and the owner, editor
 // and viewer roles granted to three groups named after the project. One file, used two ways.
 //
 // AS HCL. `satz transpile simple-project.satz` writes hcl/ with the three inputs below as
 // variables: `variables.tf` declares them, `terraform.tfvars` carries the example values,
-// `main.tf` reads `var.<name>`, and `interface.tf` holds the organisation's values. A team
+// `main.tf` reads `var.<name>`, and `interface.tf` holds the organization's values. A team
 // that works in OpenTofu alone takes hcl/, edits `terraform.tfvars` (or passes `-var`), and
 // runs `tofu plan`; the project's id, name, label and groups follow.
 //
 // AS SATZ. A thin estate binds the inputs in its `params { }` and uses this file — the
-// example beside this one, examples/acme/shop-dev/ — and compiles to the same HCL with the
+// example beside this one, examples/acme/shop-dev/ — and transpiles to the same HCL with the
 // bound values in `terraform.tfvars`. `satz transpile simple-project.satz --input stage=test`
 // binds one for a run.
 //
 // The plan runs as the workload's own account, in the workload's own project, with the
 // state in the workload's own bucket, and creates under the workload's own folder — what
-// `presets/delegation.satz` and `presets/delegated-folders.satz` create for the delegation `shop` in the organisation's
+// `presets/delegation.satz` and `presets/delegated-folders.satz` create for the delegation `shop` in the organization's
 // estate and publishes as the interfaces `delegation-shop` and `shop`. The groups are not declared here: they exist in the
 // customer's directory — synced from Microsoft Entra ID — before the apply, which fails on
 // a group that does not.
@@ -27,12 +27,12 @@ inputs {
   application = "shop"
   // the stage: dev, test or prod
   stage       = "dev"
-  // the four-digit cost centre the project is billed to
+  // the four-digit cost center the project is billed to
   cost_centre = "4711"
 }
 
 params {
-  // The workload's identity, as the organisation's delegation pack created it for
+  // The workload's identity, as the organization's delegation pack created it for
   // `shop` and published it in the interface `delegation-shop` (`deploy_project_id`, `iac_account`,
   // `state_bucket`): the project the plan is billed to and the state lives in, the account
   // the plan runs as, the state bucket. Example values: replace them with your workload's.
@@ -63,10 +63,10 @@ providers {
   }
 }
 
-// The organisation's values, read from two interface folders: the workload's identity with
+// The organization's values, read from two interface folders: the workload's identity with
 // what was delegated to it (`delegation-shop`), and the folder it works in (`shop`). A value
 // is read by the name of its interface folder, `${{interface.<folder>.<value>}}`. One the
-// organisation says once, such as `customer_shortname` or `default_region`, is the same in
+// organization says once, such as `customer_shortname` or `default_region`, is the same in
 // every folder and is also read without the folder's name, `${{interface.<value>}}`.
 use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop/shop/satz/interface.satz"

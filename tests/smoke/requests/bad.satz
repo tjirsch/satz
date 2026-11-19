@@ -1,4 +1,4 @@
-// A request file `satz check-request` refuses: a field the request point does not
+// A request file `satz check-request` refuses: a field the list does not
 // declare.
 
 pack requests_payments version "1.0"

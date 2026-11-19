@@ -8,13 +8,13 @@ Source: `presets/cis/CIS-GCP-Foundation-4.0.satz`
 The CIS GCP Foundation 4.0 organization-policy set, managed constraints
 included.
 
-Every constraint the benchmark asks for as an org policy, with the six
+Every constraint the benchmark asks for as an organization policy, with the six
 superseded legacy twins declared OFF (`spec { reset = true }`) so that no
-organisation ends up with both forms of a constraint enforcing. Some policies
+organization ends up with both forms of a constraint enforcing. Some policies
 have to be activated before they can be imported.
 
 The benchmark: https://www.cisecurity.org/cis-gcp-foundation-4-0-policies/
-Google's constraint catalogue:
+Google's constraint catalog:
 https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
 ## Use it
@@ -107,49 +107,49 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `cis_cloud_sql_hardening` | Forbid public IPs and open authorized networks on Cloud SQL (CIS 6.5, 6.6)? | edit | high | — |
 | `cis_api_key_services_dry_run` | Measure first: run 'API keys restricted to the services an application needs' as a DRY RUN instead of enforcing it? | edit | none | — |
 | `cis_block_project_ssh_keys_dry_run` | Measure first: run 'project-wide SSH keys blocked on VM instances' as a DRY RUN instead of enforcing it? | edit | none | — |
-| `cis_bucket_retention_dry_run` | Measure first: run 'bucket retention durations constrained organisation-wide' as a DRY RUN instead of enforcing it? | edit | none | — |
+| `cis_bucket_retention_dry_run` | Measure first: run 'bucket retention durations constrained organization-wide' as a DRY RUN instead of enforcing it? | edit | none | — |
 | `cis_cloud_sql_hardening_dry_run` | Measure first: run 'Cloud SQL public IPs and authorized networks restricted' as a DRY RUN instead of enforcing it? | edit | none | — |
 | `cis_confidential_computing_dry_run` | Measure first: run 'Confidential Computing required on instances' as a DRY RUN instead of enforcing it? | edit | none | — |
 | `cis_cloud_sql_iam_and_deletion_protection_dry_run` | Measure first: run 'Cloud SQL IAM authentication and deletion protection required' as a DRY RUN instead of enforcing it? | edit | none | — |
 | `cis_cmek_required` | Require customer-managed encryption keys for new resources (CIS 7.2, 7.3, 8.1)? | edit | high | — |
 | `cis_api_key_services` | Restrict API keys to the services an application needs (CIS 4.0 §1.14 / 5.0 §1.15)? | edit | high | — |
-| `cis_bucket_retention` | Constrain bucket retention durations organisation-wide (CIS 4.0 §2.3 / 5.0 §2.4)? | edit | low | — |
-| `cis_access_approval` | Require an approval before Google personnel reach the organisation's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)? | edit | low | — |
-| `cis_block_internet_ssh_rdp` | Deny SSH and RDP from the internet across the whole organisation (CIS 3.6, 3.7)? | edit | high | — |
+| `cis_bucket_retention` | Constrain bucket retention durations organization-wide (CIS 4.0 §2.3 / 5.0 §2.4)? | edit | low | — |
+| `cis_access_approval` | Require an approval before Google personnel reach the organization's content (Access Approval, CIS 4.0 §2.15 / 5.0 §2.16)? | edit | low | — |
+| `cis_block_internet_ssh_rdp` | Deny SSH and RDP from the internet across the whole organization (CIS 3.6, 3.7)? | edit | high | — |
 | `cis_cloud_sql_iam_and_deletion_protection` | Require IAM database authentication and deletion protection on Cloud SQL (CIS 5.0 §6.6, §6.9)? | edit | high | — |
 | `cis_dns_logging` | Require Cloud DNS policies to log queries (CIS 5.0 §2.13)? | edit | low | — |
 | `allowed_resource_locations` | Where may resources be created (gcp.resourceLocations)? | edit | high | — |
-| `allowed_policy_member_principal_sets` | Which organisations' identities may be granted IAM roles (CIS §1.1, domain restricted sharing)? | edit | high | — |
+| `allowed_policy_member_principal_sets` | Which organizations' identities may be granted IAM roles (CIS §1.1, domain restricted sharing)? | edit | high | — |
 | `allowed_policy_member_subjects` | Which individual principals may be granted roles despite the lock (Google service agents)? | edit | high | — |
 
 **cis_block_project_ssh_keys** — An estate that relies on project-wide keys for break-glass access loses it the moment this is enforced, and the managed constraint is still PREVIEW with no legacy form to fall back to. Per-instance keys and OS Login keep working.
 
 
-**cis_require_shielded_vm** — Not every image supports Shielded VM: an organisation with custom or older images fails instance creation until they are rebuilt — and this is the one constraint with no dry-run, so it cannot be rehearsed before it bites.
+**cis_require_shielded_vm** — Not every image supports Shielded VM: an organization with custom or older images fails instance creation until they are rebuilt — and this is the one constraint with no dry-run, so it cannot be rehearsed before it bites.
 
 
-**cis_confidential_computing** — Confidential VMs are limited to particular machine families and cost more; enforced organisation-wide this stops most ordinary workloads from starting.
+**cis_confidential_computing** — Confidential VMs are limited to particular machine families and cost more; enforced organization-wide this stops most ordinary workloads from starting.
 
 
 **cis_cloud_sql_hardening** — Existing instances reached over a public IP lose connectivity the moment this is enforced; the private path has to exist first.
 
 
-**cis_api_key_services_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on.
+**cis_api_key_services_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_api_key_services, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_api_key_services on.
 
 
-**cis_block_project_ssh_keys_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on.
+**cis_block_project_ssh_keys_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_block_project_ssh_keys, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_block_project_ssh_keys on.
 
 
-**cis_bucket_retention_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on.
+**cis_bucket_retention_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_bucket_retention, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_bucket_retention on.
 
 
-**cis_cloud_sql_hardening_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on.
+**cis_cloud_sql_hardening_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_hardening, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_hardening on.
 
 
-**cis_confidential_computing_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on.
+**cis_confidential_computing_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_confidential_computing, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_confidential_computing on.
 
 
-**cis_cloud_sql_iam_and_deletion_protection_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organisation's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on.
+**cis_cloud_sql_iam_and_deletion_protection_dry_run** — Google evaluates the rule and logs every action it would have blocked, blocking none of them, so the violation count is this organization's own answer to whether enforcing it causes an outage. Turn this on INSTEAD of cis_cloud_sql_iam_and_deletion_protection, not beside it. Nothing is enforced while it runs and the control reports as unmet, which is the truth; promote by switching this off and cis_cloud_sql_iam_and_deletion_protection on.
 
 
 **cis_cmek_required** — The most disruptive control in the set: every new resource of a listed service must be created with a CMEK, so the key rings, the keys and the grants have to exist first — and the pack cannot know which projects may supply keys.
@@ -161,34 +161,34 @@ What to ask before this pack is configured, and what changing the answer costs.
 **cis_bucket_retention** — It constrains EVERY bucket, not only the log sink's: once set, a bucket may carry a retention policy only if its duration is in the list, so buckets on other durations can no longer be updated.
 
 
-**cis_access_approval** — Every support case that needs to look at the customer's content then waits for someone on the notification list to approve. Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) is a MANUAL prerequisite: an organisation administrator holding Access Transparency Admin (roles/axt.admin) switches it on in the Cloud console under IAM & Admin → Settings → Enable Access Transparency, before the apply that creates the Access Approval settings — there is no gcloud command, API or provider resource for it, it needs a Standard, Enhanced or Premium support plan, and the apply fails without it.
+**cis_access_approval** — Every support case that needs to look at the customer's content then waits for someone on the notification list to approve. Access Transparency (CIS 4.0 §2.14 / 5.0 §2.15) is a MANUAL prerequisite: an organization administrator holding Access Transparency Admin (roles/axt.admin) switches it on in the Cloud console under IAM & Admin → Settings → Enable Access Transparency, before the apply that creates the Access Approval settings — there is no gcloud command, API or provider resource for it, it needs a Standard, Enhanced or Premium support plan, and the apply fails without it.
 
 
-**cis_block_internet_ssh_rdp** — On by default, because an organisation that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organisation is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read.
+**cis_block_internet_ssh_rdp** — On by default, because an organization that has not closed ports 22 and 3389 to the internet is one scan away from the finding it will be asked about. A hierarchical firewall policy on the organization is read before every VPC rule: a session reaching an instance from a PUBLIC address on either port ends the moment the policy attaches. Internal administration is not touched — the pass list carries the three private blocks as well as Google's IAP range — so what breaks is a bastion with an external IP, which needs its range listed or its access moved to IAP. Every rule logs, which is what fills the firewall half of a SIEM. Answering no is a deviation and needs a reason an auditor will read.
 
 
-**cis_cloud_sql_iam_and_deletion_protection** — Every Cloud SQL create and update in the organisation must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it.
+**cis_cloud_sql_iam_and_deletion_protection** — Every Cloud SQL create and update in the organization must then carry both settings; tooling that creates instances without them fails, and an existing instance that lacks one is refused its next update until that update adds it.
 
 
-**cis_dns_logging** — On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no org policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason.
+**cis_dns_logging** — On by default: DNS query logs are how a compromised host asking for its command-and-control domain becomes visible, and they are small beside flow logs — one entry per query, no sampling knob. What it enforces is only half the control: a DNS policy that exists must have logging on, because no organization policy can require that a network HAS a policy at all. The other half is verified live — report-compliance names the networks without one. What it breaks: creating or updating a DNS policy with logging off is refused. Answering no is a deviation and needs a reason.
 
 
 **allowed_resource_locations** — Data residency is the customer's decision, not the pack's. Narrowing later refuses creation outside the list and leaves what already exists elsewhere non-compliant; widening later is what an operator once did by hand, and the next apply undid it.
 
 
-**allowed_policy_member_principal_sets** — The default is the customer's own organisation. A partner organisation whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control.
+**allowed_policy_member_principal_sets** — The default is the customer's own organization. A partner organization whose identities need roles here has to be listed, or every grant to them is refused; one listed too many opens the estate to a directory the customer does not control.
 
 
-**allowed_policy_member_subjects** — The default is Security Command Center's five organisation-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions.
+**allowed_policy_member_subjects** — The default is Security Command Center's five organization-level service agents, canonical and free to allow. A product whose service agent is not listed fails at the grant — Firebase Hosting, for one. Overriding REPLACES the list: keep the five when adding. A pack that needs a principal allowed contributes it itself; this answer is for the estate's own exceptions.
 
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_baseline_adopted` | `satz adopt <estate> --execute --import` | error | Google sets some of these policies on every new organisation, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_baseline_adopted` | `satz adopt <estate> --execute --import` | error | Google sets some of these policies on every new organization, and an administrator may have set others; an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the baseline is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 
@@ -200,20 +200,20 @@ What to run once this pack is switched on. satz shows each notice when the pack 
 
 | framework | control | title | kind | witnesses | interpretation |
 |---|---|---|---|---|---|
-| cis-gcp 5.0 | 1.1.4 | Organization policies configured for centralized constraints | implements | `google_org_policy_policy.compute_managed_requireOsLogin`<br>`google_org_policy_policy.compute_managed_vmCanIpForward`<br>`google_org_policy_policy.compute_managed_vmExternalIpAccess`<br>`google_org_policy_policy.compute_requireVpcFlowLogs`<br>`google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes`<br>`google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly`<br>`google_org_policy_policy.compute_skipDefaultNetworkCreation`<br>`google_org_policy_policy.essentialcontacts_managed_allowedContactDomains`<br>`google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.gcp_resourceLocations`<br>`google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption`<br>`google_org_policy_policy.iam_managed_allowedPolicyMembers`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload`<br>`google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts`<br>`google_org_policy_policy.storage_publicAccessPrevention`<br>`google_org_policy_policy.storage_uniformBucketLevelAccess` | The organization carries a centrally managed org-policy baseline: every constraint this pack emits applies at the organization node and is inherited by every folder and project beneath it. |
-| cis-gcp 4.0 | 1.1 | Corporate login credentials only | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organisation cannot keep enforcing beside this one — see duty_legacy_superseded. |
+| cis-gcp 5.0 | 1.1.4 | Organization policies configured for centralized constraints | implements | `google_org_policy_policy.compute_managed_requireOsLogin`<br>`google_org_policy_policy.compute_managed_vmCanIpForward`<br>`google_org_policy_policy.compute_managed_vmExternalIpAccess`<br>`google_org_policy_policy.compute_requireVpcFlowLogs`<br>`google_org_policy_policy.compute_managed_restrictProtocolForwardingCreationForTypes`<br>`google_org_policy_policy.compute_setNewProjectDefaultToZonalDNSOnly`<br>`google_org_policy_policy.compute_skipDefaultNetworkCreation`<br>`google_org_policy_policy.essentialcontacts_managed_allowedContactDomains`<br>`google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.gcp_resourceLocations`<br>`google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption`<br>`google_org_policy_policy.iam_managed_allowedPolicyMembers`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload`<br>`google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts`<br>`google_org_policy_policy.storage_publicAccessPrevention`<br>`google_org_policy_policy.storage_uniformBucketLevelAccess` | The organization carries a centrally managed org-policy baseline: every constraint this pack writes applies at the organization node and is inherited by every folder and project beneath it. |
+| cis-gcp 4.0 | 1.1 | Corporate login credentials only | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | Domain Restricted Sharing, enforced by the MANAGED constraint alone: only the listed principal sets may be granted roles, plus the individually listed subjects. Consumer accounts cannot be granted roles. The legacy iam.allowedPolicyMemberDomains is deliberately declared OFF (reset = true) rather than merely left out, so a policy already set on the organization cannot keep enforcing beside this one — see duty_legacy_superseded. |
 | cis-gcp 5.0 | 1.2 | Corporate login credentials only | implements | `google_org_policy_policy.iam_managed_allowedPolicyMembers` | As for 4.0 §1.1 — 5.0 §1.2 (5.0 inserted a new §1.1 'Organization resources' subsection, shifting the former 1.x up by one). |
-| cis-gcp 4.0 | 1.4 | Only GCP-managed service account keys | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | User-managed service account keys can neither be created nor uploaded org-wide, leaving only Google-managed keys. |
+| cis-gcp 4.0 | 1.4 | Only GCP-managed service account keys | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | User-managed service account keys can neither be created nor uploaded organization-wide, leaving only Google-managed keys. |
 | cis-gcp 5.0 | 1.5 | Only GCP-managed service account keys | implements | `google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation`<br>`google_org_policy_policy.iam_managed_disableServiceAccountKeyUpload` | As for 4.0 §1.4 — 5.0 §1.5. |
 | cis-gcp 4.0 | 1.5 | Service accounts without admin privileges | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | Default service accounts are prevented from holding privileged basic roles. |
 | cis-gcp 5.0 | 1.6 | Service accounts without admin privileges | implements | `google_org_policy_policy.iam_managed_preventPrivilegedBasicRolesForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
 | cis-gcp 4.0 | 1.5 | Service accounts without admin privileges | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | Also disables the automatic Editor grant to default service accounts at project creation. |
 | cis-gcp 5.0 | 1.6 | Service accounts without admin privileges | contributes | `google_org_policy_policy.iam_automaticIamGrantsForDefaultServiceAccounts` | As for 4.0 §1.5 — 5.0 §1.6. |
-| cis-gcp 4.0 | 1.16 | Essential Contacts configured for the organisation | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim. |
-| cis-gcp 5.0 | 1.17 | Essential Contacts configured for the organisation | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | As for 4.0 §1.16 — 5.0 §1.17. |
+| cis-gcp 4.0 | 1.16 | Essential Contacts configured for the organization | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | Restricts which domains may be set as Essential Contacts. The contact itself is declared by the essential-contacts-organization pack, which carries the implements claim. |
+| cis-gcp 5.0 | 1.17 | Essential Contacts configured for the organization | contributes | `google_org_policy_policy.essentialcontacts_managed_allowedContactDomains` | As for 4.0 §1.16 — 5.0 §1.17. |
 | cis-gcp 4.0 | 2.1 | Cloud Audit Logging on all services | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | Detailed audit logging mode plus a ban on per-principal audit-logging exemptions keep the audit trail complete. The audit config itself is declared by the audit-logsink pack. |
 | cis-gcp 5.0 | 2.1 | Cloud Audit Logging on all services | contributes | `google_org_policy_policy.gcp_detailedAuditLoggingMode`<br>`google_org_policy_policy.iam_disableAuditLoggingExemption` | As for 4.0 §2.1 (5.0 §2.1, unchanged). |
-| cis-gcp 5.0 | 2.14 | Cloud Asset Inventory enabled | implements | `google_project_service.infra_cloudasset_googleapis_com` | The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organisation's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live. |
+| cis-gcp 5.0 | 2.14 | Cloud Asset Inventory enabled | implements | `google_project_service.infra_cloudasset_googleapis_com` | The Cloud Asset API is enabled in the estate's infrastructure project, which is what makes the organization's inventory and its history queryable — and is what `report-compliance` itself reads through to verify every other control live. |
 | cis-gcp 4.0 | 3.1 | Default network does not exist | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | New projects are created without the auto-mode default VPC and its permissive firewall rules. |
 | cis-gcp 5.0 | 3.1 | Default network does not exist | implements | `google_org_policy_policy.compute_skipDefaultNetworkCreation` | As for 4.0 §3.1 (5.0 §3.1, unchanged). |
 | cis-gcp 4.0 | 3.8 | VPC Flow Logs enabled on subnets | implements | `google_org_policy_policy.compute_requireVpcFlowLogs` | Subnets must enable VPC Flow Logs. |
@@ -233,12 +233,12 @@ What to run once this pack is switched on. satz shows each notice when the pack 
 
 **What the controls ask** (this project's paraphrase from the catalog — never the framework's own text):
 
-- **Cloud Asset Inventory enabled** (cis-gcp 5.0 §2.14) — The Cloud Asset API is enabled so the organisation's resource inventory can be queried and its history kept.
+- **Cloud Asset Inventory enabled** (cis-gcp 5.0 §2.14) — The Cloud Asset API is enabled so the organization's resource inventory can be queried and its history kept.
 - **Cloud Audit Logging on all services** (cis-gcp 4.0 §2.1, cis-gcp 5.0 §2.1) — Data Access audit logs (ADMIN_READ/DATA_READ/DATA_WRITE) enabled org-wide for all services.
 - **Compute instances without public IP addresses** (cis-gcp 4.0 §4.9, cis-gcp 5.0 §4.9) — VMs are not reachable directly from the internet via external IPs.
-- **Corporate login credentials only** (cis-gcp 4.0 §1.1, cis-gcp 5.0 §1.2) — IAM grants are restricted to identities from the organisation's own directory; consumer accounts cannot be granted roles.
+- **Corporate login credentials only** (cis-gcp 4.0 §1.1, cis-gcp 5.0 §1.2) — IAM grants are restricted to identities from the organization's own directory; consumer accounts cannot be granted roles.
 - **Default network does not exist** (cis-gcp 4.0 §3.1, cis-gcp 5.0 §3.1) — New projects are created without the auto-mode default VPC and its permissive firewall rules.
-- **Essential Contacts configured for the organisation** (cis-gcp 4.0 §1.16, cis-gcp 5.0 §1.17) — Organisation-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address.
+- **Essential Contacts configured for the organization** (cis-gcp 4.0 §1.16, cis-gcp 5.0 §1.17) — Organization-level Essential Contacts are set so Google security, billing and legal notices reach a monitored address.
 - **IP forwarding not enabled on instances** (cis-gcp 4.0 §4.6, cis-gcp 5.0 §4.6) — Instances may not forward packets for addresses other than their own.
 - **OS Login enabled** (cis-gcp 4.0 §4.4, cis-gcp 5.0 §4.4) — VM SSH access goes through OS Login and IAM rather than project-wide or instance metadata keys.
 - **Only GCP-managed service account keys** (cis-gcp 4.0 §1.4, cis-gcp 5.0 §1.5) — User-managed service account keys cannot be created or uploaded; only Google-managed keys exist.
@@ -251,12 +251,12 @@ What to run once this pack is switched on. satz shows each notice when the pack 
 
 **Manual duties** (a control stays *partial* until each is attested):
 
-- `appliances` (cis-gcp 4.0 §4.6, cis-gcp 5.0 §4.6) — NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the org policy.
-- `existing-vms` (cis-gcp 4.0 §4.4, cis-gcp 5.0 §4.4) — Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an org with running VMs.
+- `appliances` (cis-gcp 4.0 §4.6, cis-gcp 5.0 §4.6) — NAT gateways and network appliances legitimately need IP forwarding; grant an exception deliberately rather than relaxing the organization policy.
+- `existing-vms` (cis-gcp 4.0 §4.4, cis-gcp 5.0 §4.4) — Enforcing OS Login can cut existing SSH access patterns; verify before enabling on an organization with running VMs.
 - `legacy-superseded` (cis-gcp 5.0 §1.2) — The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten — see the 4.0 claim for why running it would weaken rather than strengthen the control.
-- `legacy-superseded` (cis-gcp 4.0 §1.1) — The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off org-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organisation goes on enforcing, unseen by the apply.
+- `legacy-superseded` (cis-gcp 4.0 §1.1) — The legacy iam.allowedPolicyMemberDomains is superseded, not forgotten. Google states it cannot configure exceptions for specific principals, so its only remedy for granting a Google service agent is to DISABLE the constraint, grant, and re-enable. Running it therefore does not add protection — it converts every service activation into a window where domain-restricted sharing is switched off organization-wide. The managed constraint enforces the same control continuously while naming its exceptions explicitly, which is why this baseline runs the managed constraint alone and, since v2.5, declares the legacy one reset instead of simply omitting it: an omitted constraint that is already set on the organization goes on enforcing, unseen by the apply.
 - `review-allowlist` (cis-gcp 4.0 §1.1, cis-gcp 5.0 §1.2) — Re-check allowed_policy_member_principal_sets / _subjects whenever a partner directory is added or a Google-managed service agent needs a grant.
-- `review-baseline` (cis-gcp 5.0 §1.1.4) — The baseline is a decision, not a default — re-read it when the organisation adds a workload class the current constraints were not chosen for.
+- `review-baseline` (cis-gcp 5.0 §1.1.4) — The baseline is a decision, not a default — re-read it when the organization adds a workload class the current constraints were not chosen for.
 
 Not every resource this pack contributes is a witness:
 

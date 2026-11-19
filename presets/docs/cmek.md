@@ -13,7 +13,7 @@ the key rings, the keys and the grants have to exist first. It also needs a
 decision the pack cannot make — which projects may supply keys.
 
 Both constraints are plain LIST constraints, not managed booleans — verified
-against a live organisation's OrgPolicy `ListConstraints`.
+against a live organization's OrgPolicy `ListConstraints`.
 
 ## Use it
 
@@ -59,16 +59,16 @@ What to ask before this pack is configured, and what changing the answer costs.
 **cmek_required_services** — Every new resource of a listed service is refused without a CMEK, so the key rings, keys and service-agent grants for that service have to exist first. The default is the two services the claimed CIS controls cover.
 
 
-**cmek_allowed_key_projects** — The default is anywhere in this organisation — the loosest useful value. Narrowing it to the KMS project later refuses every key that lives elsewhere, and a resource whose key is refused cannot be created.
+**cmek_allowed_key_projects** — The default is anywhere in this organization — the loosest useful value. Narrowing it to the KMS project later refuses every key that lives elsewhere, and a resource whose key is refused cannot be created.
 
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_cmek_required_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_cmek_required_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 
@@ -82,7 +82,7 @@ What to run once this pack is switched on. satz shows each notice when the pack 
 |---|---|---|---|---|---|
 | cis-gcp 4.0 | 7.2 | BigQuery tables encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | BigQuery may not create resources without a customer-managed key, and the key must come from an approved project. |
 | cis-gcp 5.0 | 7.2 | BigQuery tables encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §7.2 (5.0 §7.2, unchanged). |
-| cis-gcp 4.0 | 7.3 | Default customer-managed key set for BigQuery datasets | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the org policy cannot set. |
+| cis-gcp 4.0 | 7.3 | Default customer-managed key set for BigQuery datasets | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | A dataset cannot be created without a CMEK, which is what makes a default key present; the default key ITSELF is a dataset attribute the organization policy cannot set. |
 | cis-gcp 5.0 | 7.3 | Default customer-managed key set for BigQuery datasets | contributes | `google_org_policy_policy.gcp_restrictNonCmekServices` | As for 4.0 §7.3 (5.0 §7.3, unchanged). |
 | cis-gcp 4.0 | 8.1 | Dataproc clusters encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | Dataproc may not create clusters without a customer-managed key, and the key must come from an approved project. |
 | cis-gcp 5.0 | 8.1 | Dataproc clusters encrypted with a customer-managed key | implements | `google_org_policy_policy.gcp_restrictNonCmekServices`<br>`google_org_policy_policy.gcp_restrictCmekCryptoKeyProjects` | As for 4.0 §8.1 (5.0 §8.1, unchanged). |

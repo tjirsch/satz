@@ -5,32 +5,32 @@
 drawn diagram. Companion to `language.md`, which it does not change.
 
 This document answers one question: **where does an external audit toolset —
-Prowler scanning a whole organisation, Claude turning findings into a
+Prowler scanning a whole organization, Claude turning findings into a
 remediation plan and a security concept — plug into a language whose whole
 point is to prove what it declared?** The answer is five integration points,
-each a small, deterministic surface on satz, and a division of labour that
+each a small, deterministic surface on satz, and a division of labor that
 keeps the auditor independent of the thing it audits.
 
 ---
 
-## 1. Two spheres, one organisation
+## 1. Two spheres, one organization
 
-![The Satz sphere and the audit sphere over one live organisation, with the five integration points](security-loop.svg)
+![The Satz sphere and the audit sphere over one live organization, with the five integration points](security-loop.svg)
 
-Satz and the toolset look at the same organisation from opposite sides.
+Satz and the toolset look at the same organization from opposite sides.
 
 | | Satz sphere | Audit sphere |
 |---|---|---|
-| question | *is what we declared live and enforcing?* | *is the whole organisation conformant?* |
-| scope | what an estate declares — org policies, IAM, groups, logging, alerting | **everything**: every project, every workload, every resource nobody declared |
-| method | claims name emitted addresses; evidence checks them by value | Prowler runs the framework's checks against live config APIs |
+| question | *is what we declared live and enforcing?* | *is the whole organization conformant?* |
+| scope | what an estate declares — organization policies, IAM, groups, logging, alerting | **everything**: every project, every workload, every resource nobody declared |
+| method | claims name written addresses; evidence checks them by value | Prowler runs the framework's checks against live config APIs |
 | output | goal view (✓ ◐ ⚠ ✗ ‼), evidence report, evidence history | OCSF findings, compliance CSV per framework, HTML |
 | stance | first party — proves its own claims | **third party** — the external auditor; owes Satz nothing |
 
 The asymmetry is the design. Satz can only prove what it knows about, and a
 `verified` row means exactly "the witness I named is live and doing what I
-declared" — it says nothing about the Cloud Run service somebody deployed by
-hand last week. Prowler sees that service. It also sees the org policy Satz
+declared" — it says nothing about the Cloud Run service somebody created by
+hand last week. Prowler sees that service. It also sees the organization policy Satz
 declared and reports it PASS, which is a genuinely independent second
 confirmation from a system that read the API on its own.
 
@@ -47,13 +47,13 @@ than the README suggests.
 
 | surface | state |
 |---|---|
-| `prowler <estate>` | prints the invocation this estate needs — the organisation and projects it declares, the frameworks it claims as `--compliance`, `json-ocsf`, and a path under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute, so no two scans share a file. It runs nothing: the scan spends API quota in every project and reads as the logged-in human, not as the estate's service account. `satz_prowler` serves the same answer over MCP. |
+| `prowler <estate>` | prints the invocation this estate needs — the organization and projects it declares, the frameworks it claims as `--compliance`, `json-ocsf`, and a path under `evidence/prowler/<UTC date>/` named for the scope and the UTC minute, so no two scans share a file. It runs nothing: the scan spends API quota in every project and reads as the logged-in human, not as the estate's service account. `satz_prowler` serves the same answer over MCP. |
 | `report-compliance --prowler <file>` | reads the **OCSF export of Prowler 5** only (`prowler gcp --output-formats json-ocsf`): check id from `metadata.event_code`, project from `cloud.account.uid`, status from `status_code`, the framework mapping from `unmapped.compliance`, and the version from `metadata.product.version`, which is checked — an older export is refused by its version rather than read as empty, and one that is not one JSON document — two scans appended into one file — by the line, column and byte offset where it breaks. A FAIL on a verified witness makes the row CONTESTED; a FAIL whose check maps to no control of the framework is counted per check beside the table (`prowler_unmapped`). Covered by `mod prowler_ocsf_tests`. |
 | catalogs (`presets/catalogs/*.yaml`) | `title`, `paraphrase`, `automatability`, and — since the ISO cross-walk — `evidence` (another catalog's controls that stand as this one's evidence) and `duties` (the control's own human half). No Prowler check id. `cis-gcp-5.0` is a provisional §2 subset. `iso27001-2022` is the second framework, and it is a cross-walk rather than a second set of claims. |
-| `require` | text or JSON (`--format`), and `satz_require` over MCP returns the same value. Its "Provides: `<pack>`" hint comes from indexing every claim in the preset library by control id — a real control→pack map, but pack-name only. |
+| `require` | text or JSON (`--format`), and `satz_require` over MCP returns the same value. Its "Provides: `<pack>`" hint comes from indexing every claim in the preset library by control id — a real control→estate map, but pack-name only. |
 | claims at the compliance boundary | `claims_from_frontend` drops pack **version, file and line**; `interpretation` and duty text are parsed but never rendered. |
 | `evidence/<framework>-<ts>.json` | one row per control; `witnesses`, `duties`, `prowler` are **pre-rendered markdown strings**, not structured data. |
-| live matching | eight resource types: org sink, log metric, bucket, alert policy, notification channel and org policy from resource data, plus the organization's audit config and a bucket IAM member read from the IAM policy Cloud Asset serves as its own content type. A log metric, an alert policy and a notification channel are scoped by their project (resolved to its number); a bucket by its name; a policy by its path. Address → live id only, never the reverse. |
+| live matching | eight resource types: organization sink, log metric, bucket, alert policy, notification channel and organization policy from resource data, plus the organization's audit config and a bucket IAM member read from the IAM policy Cloud Asset serves as its own content type. A log metric, an alert policy and a notification channel are scoped by their project (resolved to its number); a bucket by its name; a policy by its path. Address → live id only, never the reverse. |
 | the toolset's own footprint | `presets/security-audit/sa-security-audit.satz` provisions the read-only audit service account and its impersonation group — the auditor is itself a pack. Metric filters in the alerting packs are already written to Prowler's substring expectations. |
 
 Two consequences shape the proposal. First, the evidence side needs an OCSF
@@ -101,7 +101,7 @@ the same check serves.
 **What changes.** A `checks:` list and a `source:` line in the catalog schema
 (`Control` gains `checks: Vec<String>`); the import command; paraphrases stay
 ours and are preserved across re-imports (framework prose is
-licence-restricted and never copied). A `derived-from` cross-reference so a
+license-restricted and never copied). A `derived-from` cross-reference so a
 control can say it is the ISO face of a CIS control.
 
 **Stays on the toolset side.** Choosing frameworks per scope, Level 1/2
@@ -128,7 +128,7 @@ evidence row and state a combined verdict:
 | any | MANUAL | duty; surfaces in the duties column |
 
 **Why here.** The evidence report is already the place where declared meets
-live. A second, independent reader of the same organisation belongs in the
+live. A second, independent reader of the same organization belongs in the
 same row — and the CONTESTED verdict is the single most valuable thing an
 external auditor can give a first-party proof system: it catches the case where
 `verified` is true and insufficient.
@@ -149,9 +149,9 @@ every FAIL into the bucket that says *who fixes it and how*:
 | bucket | test | plan skeleton says |
 |---|---|---|
 | **A · a pack already covers it** | the control is unmet and the library index has a provider | "adopt `<pack>` (v`<n>`)" — or, if the pack is included and the control is still FAIL, "set param `<p>`" (once I5 links controls to params) |
-| **B · Satz declares the resource** | the finding's resource matches an emitted address (needs the reverse index, see §4) | "the estate declares this at `<file>:<line>`; witness is `<state>`" — usually a CONTESTED case from I2 |
+| **B · Satz declares the resource** | the finding's resource matches an written address (needs the reverse index, see §4) | "the estate declares this at `<file>:<line>`; witness is `<state>`" — usually a CONTESTED case from I2 |
 | **C · declared exception** | a `deviates` claim covers the control | "accepted: `<reason>`; open duties: `<…>`" — nothing to fix, something to re-assess |
-| **D · unmanaged, expressible** | the resource type has a provider schema entry and a scope Satz can hold | "bring under management: declare or `import-id` in `<estate>`, or generalise into a pack" |
+| **D · unmanaged, expressible** | the resource type has a provider schema entry and a scope Satz can hold | "bring under management: declare or `import-id` in `<estate>`, or generalize into a pack" |
 | **E · not IaC** | MANUAL controls, console-only settings, Workspace, things `gcloud` cannot read | "manual: `<audit procedure>`" — stays a duty |
 
 Output is markdown and JSON: one section per bucket, each finding with its
@@ -162,12 +162,12 @@ constraints — the toolset's "no finding without a way to fix it" rule, with th
 *which way* pre-sorted.
 
 **Why here.** This is the arrow the whole loop turns on. Bucket A is the
-findings→presets generalisation the toolset already practises by hand; bucket D
+findings→presets generalization the toolset already practices by hand; bucket D
 is the pipeline for new packs; bucket B keeps first-party proof honest; bucket C
 means an exception is a *record*, not a recurring argument.
 
 **What changes.** A command that composes three things satz has —
-the library claim index, the compile's address set, the `deviates` claims —
+the library claim index, the transpile's address set, the `deviates` claims —
 with the I2 findings. Buckets A, C, E need nothing new; B needs the reverse
 index (§4); the param link in A is I5's `governs`.
 
@@ -258,7 +258,7 @@ deviated control is the same signal from the other side.
     "goal": "satisfied", "evidence": "verified", "verdict": "verified, corroborated",
     "coverage": "implements",
     "packs": [{"name": "CIS_GCP_Foundation_4_0", "version": "2.1", "file": "presets/…", "line": 321, "pristine": true}],
-    "interpretation": "User-managed service account keys can neither be created nor uploaded org-wide…",
+    "interpretation": "User-managed service account keys can neither be created nor uploaded organization-wide…",
     "witnesses": [{"address": "google_org_policy_policy.iam_managed_disableServiceAccountKeyCreation",
                    "live": "organizations/…/policies/iam.managed.disableServiceAccountKeyCreation",
                    "state": "verified", "enforce": "TRUE"}],
@@ -280,7 +280,7 @@ deviated control is the same signal from the other side.
 }
 ```
 
-**Why here.** The concept's hardest section — *layers of defence and the
+**Why here.** The concept's hardest section — *layers of defense and the
 measures taken* — is, for the platform part, a rendering of facts Satz already
 holds: which packs, which policies enforced, which deviations with which
 reasons, which duties open, what the last evidence run said. Today those facts
@@ -313,24 +313,25 @@ the skeleton of the "measures" chapter; the concept is the document.
 
 ---
 
-## 3. Division of labour
+## 3. Division of labor
 
 | step | who | reads | writes |
 |---|---|---|---|
 | define the target (concept) | Claude + human | scope interview, concept-facts (I5), METHODIK phases | concept `.docx` |
-| roll out | satz + human runs `tofu` | estate + packs | `main.tf`, live org |
+| apply | satz + human runs `tofu` | estate + packs | `main.tf`, live organization |
 | prove first-party | satz | claims, Cloud Asset Inventory | goal view, evidence report + history |
-| audit third-party | Prowler (read-only audit SA, a pack) | the whole org | OCSF, compliance CSV |
+| audit third-party | Prowler (read-only audit SA, a pack) | the whole organization | OCSF, compliance CSV |
 | corroborate | satz (I2) | OCSF + evidence | combined verdicts, CONTESTED |
 | triage | satz (I3) | OCSF + library index + addresses + deviations | plan skeleton A–E |
 | plan | Claude | skeleton, customer constraints | remediation plan with `gcloud`/Satz snippets |
 | **execute** | **customer / operations — never Claude, never the toolset** | plan | changes |
-| generalise | human + Claude | bucket A/D findings | new or updated packs |
+| generalize | human + Claude | bucket A/D findings | new or updated packs |
 | except | estate owner | reason | `claim … deviates` (I4) |
-| review false positives | auditor | tool behaviour | `findings-review.yaml`, audit-side |
+| review false positives | auditor | tool behavior |
+ `findings-review.yaml`, audit-side |
 | re-audit | Prowler; satz `delta` | two OCSF runs | delta; evidence history |
 
-Three lines are load-bearing. *Execute* stays human: the toolset's credentials
+Three lines are load-bearing. *Execute* stays human: the toolset's own access
 are read-only and Satz's `apply` is the owner's command — nothing in this
 proposal gives Claude a write path. *Except* is in the estate, not in the audit
 workspace, because an exception is a decision about the resource's owner's
@@ -347,8 +348,8 @@ say so per scope rather than paper over it.
 
 | scope | Satz covers today | Prowler sees additionally | concept section |
 |---|---|---|---|
-| **platform only** | org structure, IAM/groups, org policies, org-level logging and alerting, essential contacts, budgets, the audit SA | project-level drift, hand-made resources, SCC findings, everything MANUAL | the platform chapter is mostly I5 facts + open duties |
-| **full org** | as above, for every project the estate declares | every workload in every project | platform chapter as above **plus** an unmanaged-inventory appendix from bucket D/E |
+| **platform only** | organization structure, IAM/groups, organization policies, organization-level logging and alerting, essential contacts, budgets, the audit SA | project-level drift, hand-made resources, SCC findings, everything MANUAL | the platform chapter is mostly I5 facts + open duties |
+| **full organization** | as above, for every project the estate declares | every workload in every project | platform chapter as above **plus** an unmanaged-inventory appendix from bucket D/E |
 | **one application + its infrastructure** | the platform controls the app inherits; the app's projects if declared | the app itself: Cloud Run, Functions, Firebase/Firestore, IAP, Identity Platform, secrets, CI/CD — **CIS barely covers these** and Satz has no packs for them yet | inherited controls from I5; the app-side analysis (ten analyses, H/M/W findings) is the toolset's methodology and is not a Satz concern; the own-controls section closes what CIS does not cover |
 
 Two things follow for the roadmap:
@@ -359,8 +360,8 @@ Two things follow for the roadmap:
   **own catalog** (`presets/catalogs/workload-baseline.yaml`) where none does.
   The catalog format carries that already; only the packs are missing.
 - **The reverse index** (live resource → declaring address) is the piece bucket
-  B needs and the codebase lacks. It is not discovery reborn: the compile
-  already knows every emitted address and, for the six matched types, the live
+  B needs and the codebase lacks. It is not discovery reborn: the transpile
+  already knows every written address and, for the six matched types, the live
   id it resolved to. Keeping that map (address ↔ live id ↔ project) from
   `report-compliance` and reading it in `triage` is enough for the platform
   scope; extending live matching beyond six types is the same work the evidence
@@ -393,7 +394,7 @@ data that is already parsed.
 - **Read-only audit.** The audit SA is `viewer` + `securityReviewer` +
   `securitycenter.adminViewer` + `cloudasset.viewer`, impersonated; no keys.
   The pack that provisions it ships with satz; the toolset never gets more.
-- **Remediation is executed by the customer or operations.** satz emits,
+- **Remediation is executed by the customer or operations.** satz writes,
   the owner applies; the toolset plans. No path in this proposal changes that.
 - **Satz never mutes evidence.** A FAIL is shown even when a deviation covers
   it or a review calls it a false positive — annotated, never hidden.

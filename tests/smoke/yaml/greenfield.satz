@@ -1,6 +1,6 @@
 // A greenfield estate: directory + billing exist, the organization does not
 // yet. `customer_organization_id` is deliberately empty — bootstrap must
-// explain --greenfield / init --from-live instead of a bare "missing org id".
+// explain --greenfield / init --from-live instead of a bare "missing organization id".
 
 estate greenfield_fixture
 

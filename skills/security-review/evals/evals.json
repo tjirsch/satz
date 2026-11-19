@@ -18,7 +18,7 @@
     },
     {
       "id": 2,
-      "prompt": "Do a security review of the mmt01 organisation: scan it with prowler and checkov, run the satz compliance evidence, and produce the findings Excel and the remediation plan.",
+      "prompt": "Do a security review of the mmt01 organization: scan it with prowler and checkov, run the satz compliance evidence, and produce the findings Excel and the remediation plan.",
       "expected_output": "Preflight prints org/identity; prowler_scan.sh per service with deadline (compute on own projects); merge + MANIFEST.md; satz_evidence.sh output in evidence/; scope.yaml under audit/tools; both documents built and verified; nothing applied or changed live.",
       "files": [],
       "assertions": [

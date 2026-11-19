@@ -9,7 +9,7 @@ Microsoft Sentinel's GCP connector — the federation half, once per customer.
 
 Sentinel reads Google Cloud logs by PULLING them from a Pub/Sub subscription,
 authenticating through workload identity federation: no service-account key
-leaves the organisation. This file creates what the federation needs — the pool,
+leaves the organization. This file creates what the federation needs — the pool,
 the OIDC provider that trusts Microsoft, the service account Sentinel acts as,
 and the binding that lets the federated principal become it. What it does NOT
 create is anything to read: each log source is its own topic, subscription and
@@ -29,7 +29,7 @@ every customer (docs/examples.md lists them). The customer's OWN tenant id is
 `sentinel_workload_pool_id` — the pool is named after it, without dashes, which is
 what Microsoft's script does.
 
-TWO ORGANISATION POLICIES CAN REFUSE THIS, and neither is set by this library:
+TWO ORGANIZATION POLICIES CAN REFUSE THIS, and neither is set by this library:
 1. a deny-all on `iam.workloadIdentityPoolProviders` blocks the provider below —
 the estate must allow the `sts.windows.net/<microsoft tenant>` issuer;
 2. where `iam.managed.allowedPolicyMembers` is enforced, the principal set has

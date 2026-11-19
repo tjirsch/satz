@@ -1,9 +1,9 @@
-//! What the IaC service account needs, per resource type an estate emits, and what
+//! What the estate account needs, per resource type an estate writes, and what
 //! the estate grants it.
 //!
 //! The table is satz's own knowledge — which predefined role carries the permission
-//! a resource type needs — so it is compiled in, like the bootstrap pre-flight's
-//! `required_permissions`. `satz update-prerequisites --format json` prints it, and
+//! a resource type needs — so it is built in, like the `required_permissions` of
+//! the bootstrap's prerequisites check. `satz update-prerequisites --format json` prints it, and
 //! `scripts/check_prerequisites.py` checks every role entry against Google's role
 //! definitions.
 //!
@@ -26,7 +26,7 @@ pub(crate) enum Scope {
     /// granted at the organization; tested there
     Organization,
     /// granted at the organization as well, inherited by every project; tested on
-    /// the estate's infra project
+    /// the estate's infrastructure project
     Project,
     /// granted on the billing account
     BillingAccount,
@@ -59,7 +59,7 @@ const GROUPS_ADMIN: Entry = Entry {
     scope: Scope::Workspace,
 };
 
-/// Needed whatever the estate emits: `import`, `adopt` and `report-compliance`
+/// Needed whatever the estate writes: `import`, `adopt` and `report-compliance`
 /// read every project, the hand-made ones included.
 pub(crate) const READ: &[Entry] = &[
     org("resourcemanager.projects.get", &["roles/viewer"]),
@@ -67,11 +67,11 @@ pub(crate) const READ: &[Entry] = &[
     org("resourcemanager.organizations.getIamPolicy", &["roles/iam.securityReviewer"]),
     org("cloudasset.assets.searchAllResources", &["roles/cloudasset.viewer"]),
     // every provider bills its calls to a project (user_project_override), which
-    // needs this there: the infra project, and each project node's own
+    // needs this there: the infrastructure project, and each project node's own
     project("serviceusage.services.use", &["roles/serviceusage.serviceUsageConsumer"]),
 ];
 
-/// Per resource type: every type the preset library and the `init` template emit
+/// Per resource type: every type the preset library and the `init` template write
 /// (a test holds the library to it), and the types `satz import` brings in.
 /// No row carries `resourcemanager.projects.delete`. Google makes a project's
 /// creator its owner, so the account deletes the projects it created and no other;
@@ -186,7 +186,7 @@ pub(crate) const TYPES: &[(&str, &[Entry], &[&str])] = &[
     ("google_pubsub_subscription_iam_member", &[project("pubsub.subscriptions.setIamPolicy", &["roles/pubsub.admin"])], &["pubsub.googleapis.com"]),
     ("google_pubsub_topic", &[project("pubsub.topics.create", &["roles/pubsub.editor"])], &["pubsub.googleapis.com"]),
     // the SCC notification chain: the grant on the topic, and the config at the
-    // organisation. `roles/pubsub.editor` does not carry setIamPolicy — admin does.
+    // organization. `roles/pubsub.editor` does not carry setIamPolicy — admin does.
     ("google_pubsub_topic_iam_member", &[project("pubsub.topics.setIamPolicy", &["roles/pubsub.admin"])], &["pubsub.googleapis.com"]),
     (
         "google_scc_v2_organization_notification_config",
@@ -212,7 +212,7 @@ pub(crate) const TYPES: &[(&str, &[Entry], &[&str])] = &[
     ("google_storage_bucket_object", &[project("storage.objects.create", &["roles/storage.admin"])], &["storage.googleapis.com"]),
     // A notification is a setting of the bucket; the topic it publishes to is Pub/Sub's.
     ("google_storage_notification", &[project("storage.buckets.update", &["roles/storage.admin"])], &["storage.googleapis.com", "pubsub.googleapis.com"]),
-    // Resource Manager tags. The key and its values are organisation-scoped; a binding
+    // Resource Manager tags. The key and its values are organization-scoped; a binding
     // attaches a value to one resource and is the exemption itself, which is why it is
     // listed separately: an estate may be allowed to define the vocabulary without being
     // allowed to hand out exemptions with it.
@@ -263,7 +263,7 @@ pub(crate) fn render_table() -> String {
     out
 }
 
-/// One capability the estate needs its IaC service account to hold.
+/// One capability the estate needs its estate account to hold.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Need {
     /// `read`, or the resource types that need it
@@ -275,18 +275,18 @@ pub(crate) struct Need {
     pub scope: Scope,
 }
 
-/// The APIs one resource type is served by. Every provider block satz emits sets
+/// The APIs one resource type is served by. Every provider block satz writes sets
 /// `user_project_override` with a `billing_project`, so Google tests each of these
 /// on the project the resource's provider bills its calls to — whatever the
-/// resource's own scope is: a budget hangs off the billing account and an org
-/// policy off the organisation, and both still need their API on the billed
+/// resource's own scope is: a budget hangs off the billing account and an organization
+/// policy off the organization, and both still need their API on the billed
 /// project. [`Billing`] says which project that is.
 pub(crate) fn apis_for(tf_type: &str) -> Option<&'static [&'static str]> {
     TYPES.iter().find(|(t, _, _)| *t == tf_type).map(|(_, _, a)| *a)
 }
 
 /// The project each provider configuration bills its calls to, read from an
-/// emitted `providers.tf` — the file `tofu` itself reads. The default `google`
+/// written `providers.tf` — the file `tofu` itself reads. The default `google`
 /// provider (`alias = "google"`) bills to the infrastructure project, and each
 /// per-project alias (`project_<label>`, ADR 0059) to its own project, so a
 /// resource written inside a `google_project` node needs its APIs on THAT
@@ -308,10 +308,10 @@ fn provider_of(r: &crate::manifest::EmittedResource) -> String {
         .unwrap_or_else(|| r.tf_type.split('_').next().unwrap_or_default().to_string())
 }
 
-/// What a reference in the emitted `providers.tf` stands for, by the text it is written
+/// What a reference in the written `providers.tf` stands for, by the text it is written
 /// as: `local.interface.<export>` for a static value `interface.tf` holds (a looked-up value
 /// stands for nothing before the plan), `var.<name>` for a value `terraform.tfvars` binds.
-/// A project estate's providers are written with these references, and the check needs
+/// A workload estate's providers are written with these references, and the check needs
 /// the project each one bills to by name.
 pub(crate) type Names = BTreeMap<String, String>;
 
@@ -395,7 +395,7 @@ fn resolved(expr: &hcl::Expression, names: &Names) -> Option<String> {
 }
 
 impl Billing {
-    /// From the blocks of an emitted `providers.tf`, the references read through `names`.
+    /// From the blocks of an written `providers.tf`, the references read through `names`.
     pub(crate) fn from_blocks<'a>(blocks: impl IntoIterator<Item = &'a hcl::Block>, names: &Names) -> Self {
         let literal = |b: &hcl::Block, key: &str| -> Option<String> {
             b.body.attributes().find(|a| a.key() == key).and_then(|a| resolved(&a.expr, names))
@@ -415,9 +415,9 @@ impl Billing {
         Billing { by_provider }
     }
 
-    /// From the text of an emitted `providers.tf`.
+    /// From the text of an written `providers.tf`.
     pub(crate) fn parse(providers_tf: &str, names: &Names) -> Result<Self, String> {
-        let body = hcl::parse(providers_tf).map_err(|e| format!("the emitted providers.tf: {}", e))?;
+        let body = hcl::parse(providers_tf).map_err(|e| format!("the written providers.tf: {}", e))?;
         Ok(Self::from_blocks(body.blocks(), names))
     }
 
@@ -443,7 +443,7 @@ impl Billing {
     }
 }
 
-/// One API an estate's emitted resources are served by, on the project their
+/// One API an estate's written resources are served by, on the project their
 /// calls are billed to, and the types that put it there. `declared` is whether a
 /// `google_project_service` in the estate enables it on that project.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
@@ -485,7 +485,7 @@ impl ApiCheck {
     }
 }
 
-/// The APIs the estate's emitted types need, each on the project the resource's
+/// The APIs the estate's written types need, each on the project the resource's
 /// provider bills to and marked with whether the estate enables it there. A pack
 /// that enables an API on some other project has not satisfied the need — the
 /// project that counts is the one Google tests the call against.
@@ -531,8 +531,8 @@ pub(crate) fn apis(manifest: &Manifest, billing: &Billing) -> ApiCheck {
 /// Every service the estate declares on `project`, in the estate and in the
 /// packs it uses. `bootstrap` enables the infrastructure project's imperatively
 /// before `tofu` runs — the race it dodges is the same one the emitter's
-/// ordering pass handles inside an apply, and on day 0 there is no apply yet —
-/// and the `plan`/`apply` preflight enables each billed project's.
+/// ordering pass handles inside an apply, and at the bootstrap there is no apply yet —
+/// and the `plan`/`apply` API prerequisites check enables each billed project's.
 pub(crate) fn declared_apis(manifest: &Manifest, project: &str) -> Vec<String> {
     manifest
         .of_type("google_project_service")
@@ -552,15 +552,15 @@ pub(crate) fn by_project(missing: &[ApiNeed]) -> BTreeMap<String, BTreeSet<Strin
     out
 }
 
-/// What an estate's emitted resources need — `read` first, then one `Need` per
-/// capability, merged across the types that share it — and the emitted types the
+/// What an estate's written resources need — `read` first, then one `Need` per
+/// capability, merged across the types that share it — and the written types the
 /// table has no entry for.
 pub(crate) fn needs(manifest: &Manifest) -> (Vec<Need>, BTreeSet<String>) {
     needs_of(manifest, true)
 }
 
-/// [`needs`], with the reads or without them. A workload's estate is judged without:
-/// `import`, `adopt` and `report-compliance` read an organisation, and its account holds
+/// [`needs`], with the reads or without them. A workload estate is judged without:
+/// `import`, `adopt` and `report-compliance` read an organization, and its account holds
 /// nothing there to read with.
 pub(crate) fn needs_of(manifest: &Manifest, read: bool) -> (Vec<Need>, BTreeSet<String>) {
     let types: BTreeSet<&str> = manifest.resources.values().map(|r| r.tf_type.as_str()).collect();
@@ -602,14 +602,14 @@ pub(crate) fn needs_of(manifest: &Manifest, read: bool) -> (Vec<Need>, BTreeSet<
     (out, unknown)
 }
 
-/// The roles an estate grants its IaC service account, by where.
+/// The roles an estate grants its estate account, by where.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Granted {
     pub organization: BTreeSet<String>,
     pub billing_account: BTreeSet<String>,
-    /// on a folder or a project the estate declares — what a workload's estate grants
-    /// its own account in the projects it creates. Read for a workload's estate alone:
-    /// an organisation's account is judged at the organization.
+    /// on a folder or a project the estate declares — what a workload estate grants
+    /// its own account in the projects it creates. Read for a workload estate alone:
+    /// an organization's account is judged at the organization.
     pub own: BTreeSet<String>,
 }
 
@@ -653,26 +653,26 @@ pub(crate) const DELEGATED_APIS: &str = "delegated_apis";
 /// The role whose holder owns the projects it creates.
 pub(crate) const PROJECT_CREATOR: &str = "roles/resourcemanager.projectCreator";
 
-/// What the organisation's estate delegated to the account a workload's estate runs as,
+/// What the organization's estate delegated to the account a workload estate runs as,
 /// read from the interface file the estate uses. An estate that reads one is a
 /// workload's: its account holds roles on its own folders and none at the organization,
 /// and it cannot grant itself more — so its needs are judged against this, and what is
-/// not in it is the organisation's estate's to add.
+/// not in it is for the organization's estate to add.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct Delegation {
-    /// the interfaces that carry it, `delegation-<name>` and those of its targets, comma-separated
+    /// the interfaces that carry it, `delegation-<name>` and those of its delegated resources, comma-separated
     pub interface: String,
     /// the account's roles on the folder the estate works in; empty for an estate that
     /// reads no folder's interface
     pub folder_roles: BTreeSet<String>,
-    /// the account's roles on the project the organisation's estate created for it;
+    /// the account's roles on the project the organization's estate created for it;
     /// empty for an estate that reads no such project's interface
     pub project_roles: BTreeSet<String>,
     /// its roles on the billing account
     pub billing_roles: BTreeSet<String>,
     /// the APIs enabled on its infrastructure project, which its providers bill to
     pub apis: BTreeSet<String>,
-    /// whether it may manage budgets for its own project or folder: the organisation's
+    /// whether it may manage budgets for its own project or folder: the organization's
     /// role for it, which carries the project-level budget permissions and nothing on the
     /// billing account (`presets/delegated-budget-role.satz`)
     pub budgets: bool,
@@ -684,12 +684,12 @@ const BUDGET_PERMISSION: &str = "billing.budgets.create";
 
 /// The delegation an estate reads, from every interface file it uses. An estate is a
 /// workload's when one of them exports `delegated_folder_roles` or
-/// `delegated_project_roles`; `None` for an organisation's estate, and for an estate whose
+/// `delegated_project_roles`; `None` for an organization's estate, and for an estate whose
 /// interfaces say nothing of what was delegated.
 ///
 /// The roles on a delegation's folders count only for an estate that reads a folder's
 /// interface (`delegated_folder`): an account that was given no folder, or an estate that
-/// works in a project the organisation's estate created, creates no project of its own.
+/// works in a project the organization's estate created, creates no project of its own.
 pub(crate) fn delegation(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Option<Delegation> {
     // An estate may work in several places. Which of them a resource stands in is not
     // judged, so a role counts when it was delegated on every place that names its kind.
@@ -751,7 +751,7 @@ pub(crate) fn written_before_delegated(files: &[satz_core::pipeline::UsedInterfa
         .collect()
 }
 
-/// The needs of a workload's estate that nothing delegated meets.
+/// The needs of a workload estate that nothing delegated meets.
 ///
 /// A need on a folder or a project is met by a role delegated on the delegated folders,
 /// which everything the estate creates stands under, or by one the estate grants its own
@@ -774,7 +774,7 @@ pub(crate) fn not_delegated(needs: &[Need], granted: &Granted, delegation: &Dele
                 !(held || (on_a_project && owns_its_projects))
             }
             // a budget for its own scope needs nothing on the billing account when the
-            // organisation delegated budgets there
+            // organization delegated budgets there
             Scope::BillingAccount => {
                 let own_budget = delegation.budgets && n.permission.as_deref() == Some(BUDGET_PERMISSION);
                 !(own_budget || n.roles.iter().any(|r| delegation.billing_roles.contains(r) || granted.billing_account.contains(r)))
@@ -820,7 +820,7 @@ pub(crate) fn describe_not_delegated(needs: &[Need], delegation: &Delegation) ->
 }
 
 /// The API switches a delegated estate declares on the project its calls are billed to
-/// although the organisation's estate already switched that API on there: the address and
+/// although the organization's estate already switched that API on there: the address and
 /// the API of each. Two estates then own one switch, and taking it out of either state —
 /// a destroy, a removed line — switches the API off for both.
 pub(crate) fn doubled_apis(manifest: &Manifest, default_project: Option<&str>, delegation: &Delegation) -> Vec<(String, String)> {
@@ -836,7 +836,7 @@ pub(crate) fn doubled_apis(manifest: &Manifest, default_project: Option<&str>, d
 
 impl ApiCheck {
     /// Mark the APIs the delegation enables on the workload's infrastructure project —
-    /// the project the default provider bills to — as enabled there: the organisation's
+    /// the project the default provider bills to — as enabled there: the organization's
     /// estate declares them, not this one.
     pub(crate) fn with_delegation(mut self, default_project: Option<&str>, delegation: &Delegation) -> Self {
         for a in &mut self.needs {
@@ -893,7 +893,7 @@ pub(crate) fn cover(needs: &[Need]) -> Vec<Pick> {
 }
 
 /// What `--execute` writes for the estate's gaps. A write grants on the
-/// organization or the billing account, and so emits that grant's resource type —
+/// organization or the billing account, and so writes that grant's resource type —
 /// `google_billing_account_iam_member` for a billing account the estate grants
 /// nothing on yet — whose own needs the same write meets.
 pub(crate) fn plan(gaps: &[Need], granted: &Granted) -> Vec<Pick> {
@@ -935,7 +935,7 @@ pub(crate) fn describe(picks: &[Pick]) -> Vec<String> {
         .collect()
 }
 
-/// The IaC service account an estate declares, whatever its deployment mode:
+/// The estate account an estate declares, whatever its mode:
 /// `svc_iac_account` in `infra_project_name`. `None` when either is unset.
 pub(crate) fn service_account_of(get: impl Fn(&str) -> Option<String>) -> Option<String> {
     match (get("svc_iac_account"), get("infra_project_name")) {
@@ -951,31 +951,31 @@ pub(crate) struct Probe {
     pub needs: Vec<Need>,
     /// `organizations/N`, or `folders/N` for a folder-scoped estate
     pub scope_root: Option<String>,
-    /// `projects/<infra project>` — it inherits the organization's grants like any
+    /// `projects/<infrastructure project>` — it inherits the organization's grants like any
     /// project, hand-made ones included
     pub project: Option<String>,
     pub billing_account: Option<String>,
-    /// the IaC service account and the directory customer (`C0…`), for Groups Admin
+    /// the estate account and the directory customer (`C0…`), for Groups Admin
     pub service_account: Option<String>,
     pub customer: Option<String>,
     /// what is left out of the live test, and why — said in the result
     pub skipped: Vec<String>,
 }
 
-/// The permissions an estate's resource types need, tested with the credential
+/// The permissions an estate's resource types need, tested with the sign-in
 /// its live commands run as.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PermissionCheck {
     /// permissions tested
     pub tested: usize,
-    /// the needs whose permission the credential does not hold
+    /// the needs whose permission the sign-in does not hold
     pub missing: Vec<Need>,
     /// what was not tested, and why
     pub not_tested: Vec<String>,
 }
 
 /// Test the probe's permissions with `testIamPermissions`, as the identity the
-/// estate's live commands run as — the IaC service account in cloud mode.
+/// estate's live commands run as — the estate account in cloud mode.
 pub(crate) async fn test_live(probe: &Probe) -> PermissionCheck {
     let mut check = PermissionCheck { not_tested: probe.skipped.clone(), ..Default::default() };
     let token = match crate::gcp::access_token().await {
@@ -1027,15 +1027,15 @@ pub(crate) async fn test_live(probe: &Probe) -> PermissionCheck {
                     }
                 }
             }
-            None => check.not_tested.push("Groups Admin (Google Workspace): the estate names no IaC service account".to_string()),
+            None => check.not_tested.push("Groups Admin (Google Workspace): the estate names no estate account".to_string()),
         }
     }
     check
 }
 
 /// The line that enables `apis` on `project` by hand. Printed wherever satz
-/// knows an API has to be on and does not switch it on itself: the preflight
-/// that was refused, and the APIs `update-prerequisites` writes into an estate
+/// knows an API has to be on and does not switch it on itself: the API prerequisites
+/// check that was refused, and the APIs `update-prerequisites` writes into an estate
 /// that someone then applies with `tofu` directly.
 pub(crate) fn enable_command(project: &str, apis: &[String]) -> String {
     format!("gcloud services enable {} --project {}", apis.join(" "), project)
@@ -1052,22 +1052,22 @@ pub(crate) const SKIP_DEFAULT_NETWORK: &str = "compute.skipDefaultNetworkCreatio
 /// Google creates the `default` network the moment Compute is switched on in a project,
 /// and tests `compute.skipDefaultNetworkCreation` at that moment. An estate that declares
 /// the policy enforcing wants no such network, and inside the apply the emitter orders
-/// every Compute service behind the policy. The `plan`/`apply` preflight and `bootstrap`
-/// run BEFORE the apply, where no edge can order them, so they switch Compute on only
-/// where the organisation already enforces the constraint; otherwise the apply does it,
+/// every Compute service behind the policy. The `plan`/`apply` API prerequisites check and
+/// `bootstrap` run BEFORE the apply, where no edge can order them, so they switch Compute on only
+/// where the organization already enforces the constraint; otherwise the apply does it,
 /// after the policy, and the run says so.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ComputeDeferral {
     /// the policy the estate declares, by address
     pub policy: String,
-    /// `organizations/<n>` when the policy is declared on the organisation: where its
+    /// `organizations/<n>` when the policy is declared on the organization: where its
     /// live enforcement is read. A policy on a folder names the folder by reference,
     /// which may not exist yet, so nothing is read and the apply decides.
     pub organization: Option<String>,
 }
 
 /// The deferral the estate calls for, or `None` when it declares no enforcing
-/// `compute.skipDefaultNetworkCreation` policy. An organisation-level policy is preferred
+/// `compute.skipDefaultNetworkCreation` policy. An organization-level policy is preferred
 /// over a folder's: its enforcement can be read.
 pub(crate) fn compute_deferral(manifest: &Manifest) -> Option<ComputeDeferral> {
     let on_organization = |r: &EmittedResource| r.attrs.get("parent").is_some_and(|p| p.starts_with("organizations/"));
@@ -1083,34 +1083,34 @@ impl ComputeDeferral {
     const WHAT_THE_APPLY_DOES: &'static str =
         "creates the policy and switches Compute on after it, so the project gets no `default` network";
 
-    /// Why the preflight left Compute alone, given what it read live: `Ok(Some(true))` is
+    /// Why the API prerequisites check left Compute alone, given what it read live: `Ok(Some(true))` is
     /// never a reason (Compute goes on), anything else is one.
     pub fn reason(&self, live: &Result<Option<bool>, String>) -> String {
         let finding = match (&self.organization, live) {
             (None, _) => format!("the estate declares `{}` enforcing on a folder", self.policy),
             (Some(_), Err(e)) => format!(
-                "the estate declares `{}` enforcing and whether the organisation enforces it could not be read ({})",
+                "the estate declares `{}` enforcing and whether the organization enforces it could not be read ({})",
                 self.policy, e
             ),
-            (Some(_), Ok(_)) => format!("the estate declares `{}` enforcing and the organisation does not enforce it yet", self.policy),
+            (Some(_), Ok(_)) => format!("the estate declares `{}` enforcing and the organization does not enforce it yet", self.policy),
         };
         format!("{}; the apply {}", finding, Self::WHAT_THE_APPLY_DOES)
     }
 
-    /// Why `bootstrap` left Compute alone on day 0: nothing is live yet, so nothing is read.
+    /// Why `bootstrap` left Compute alone: nothing is live yet, so nothing is read.
     pub fn bootstrap_reason(&self) -> String {
         format!("the estate declares `{}` enforcing; the first apply {}", self.policy, Self::WHAT_THE_APPLY_DOES)
     }
 }
 
-/// An API the preflight found off and left to the apply, with the reason.
+/// An API the API prerequisites check found off and left to the apply, with the reason.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct DeferredApi {
     pub api: String,
     pub reason: String,
 }
 
-/// What the `plan`/`apply` preflight found and did on the billed project.
+/// What the `plan`/`apply` API prerequisites check found and did on the billed project.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ApiPreflight {
     /// the project every provider call is billed to
@@ -1151,7 +1151,7 @@ impl ApiPreflight {
     }
 }
 
-/// The preflight could not put the declared APIs on. What the operator needs
+/// The API prerequisites check could not put the declared APIs on. What the operator needs
 /// comes first — which APIs and the command that enables them — and what the API
 /// said comes last, for whoever has to work out why. The run stops before
 /// `tofu` refreshes anything against an API that is off.
@@ -1191,7 +1191,7 @@ impl ApiRefusal {
 }
 
 /// Switch on every API in `declared` that is off on `project`, as the identity
-/// bound for this process — the estate's IaC service account, the one `tofu`
+/// bound for this process — the estate account, the one `tofu`
 /// applies with and the one the estate grants the Service Usage role to.
 ///
 /// `tofu apply` refreshes every resource in state before it creates anything,
@@ -1203,19 +1203,19 @@ impl ApiRefusal {
 ///
 /// An API that is already on is left alone and the run says so. Anything that
 /// fails — no permission, the Service Usage API itself off on the billed
-/// project, an org policy — is an [`ApiRefusal`], never a warning the caller can
+/// project, an organization policy — is an [`ApiRefusal`], never a warning the caller can
 /// run past.
 ///
 /// `through` is the project the Service Usage calls themselves are billed to: the
 /// infrastructure project, which switches APIs on for every project of the estate
 /// (ADR 0072), so a project with `serviceusage.googleapis.com` off has its APIs
-/// switched on all the same. `None` bills them to the credential's own project.
+/// switched on all the same. `None` bills them to the sign-in's own project.
 pub(crate) async fn enable_declared_apis(
     project: &str,
     declared: Vec<String>,
     through: Option<&str>,
     // the estate's enforcing `compute.skipDefaultNetworkCreation`, when it declares one:
-    // Compute is then switched on only where the organisation already enforces it
+    // Compute is then switched on only where the organization already enforces it
     deferral: Option<&ComputeDeferral>,
 ) -> Result<ApiPreflight, ApiRefusal> {
     let refused = |why: &str, detail: String, enable: Vec<String>| ApiRefusal {
@@ -1226,7 +1226,7 @@ pub(crate) async fn enable_declared_apis(
     };
     let token = crate::gcp::access_token()
         .await
-        .map_err(|e| refused("satz has no credential to check them with", e, declared.clone()))?;
+        .map_err(|e| refused("satz has no sign-in to check them with", e, declared.clone()))?;
     let client = reqwest::Client::new();
     let states = crate::gcp::serviceusage::service_states(&client, &token, project, &declared, through)
         .await
@@ -1555,7 +1555,7 @@ fn add_to_existing(text: &str, block: &str, member: &str, params: &HashMap<Strin
 /// A new top-level block granting the roles.
 fn append_block(text: &str, block: &str, roles: &BTreeSet<String>) -> String {
     let mut s = text.trim_end().to_string();
-    s.push_str("\n\n// The IaC service account's roles for this estate's resource types (`satz update-prerequisites`).\n");
+    s.push_str("\n\n// The estate account's roles for this estate's resource types (`satz update-prerequisites`).\n");
     s.push_str(&format!("{} {{\n", block));
     if block == "google_billing_account_iam_member" {
         s.push_str("  billing_account_id = billing_account_infra\n");
@@ -1688,7 +1688,7 @@ mod tests {
                   resource \"google_billing_budget\" \"bud\" {\n  display_name = \"x\"\n}\n";
         let m = manifest(tf);
         let (want, _) = needs_of(&m, false);
-        assert!(want.iter().all(|n| n.reason != ["read"]), "a workload's estate is not asked for the organisation's reads: {:?}", want);
+        assert!(want.iter().all(|n| n.reason != ["read"]), "a workload estate is not asked for the organization's reads: {:?}", want);
         let g = granted(&m, SA);
         let d = delegated(FOLDER_ROLES, &["roles/billing.user"], &[]);
         let miss = not_delegated(&want, &g, &d);
@@ -1697,13 +1697,13 @@ mod tests {
         // the billing role in the workload's entry closes it
         let d = delegated(FOLDER_ROLES, &["roles/billing.user", "roles/billing.costsManager"], &[]);
         assert!(not_delegated(&want, &g, &d).is_empty());
-        // the same estate judged as an organisation's lacks everything at the organization
+        // the same estate judged as an organization's lacks everything at the organization
         assert!(missing(&needs(&m).0, &g).len() > 5);
     }
 
     #[test]
     fn what_no_delegation_carries_is_asked_for_and_never_met_by_owning_a_project() {
-        // access control on a folder and an organisation policy: no role of the pack
+        // access control on a folder and an organization policy: no role of the pack
         // carries either, and owning a project does not
         let tf = "resource \"google_folder_iam_member\" \"m\" {\n  role = \"roles/viewer\"\n  member = \"group:g@example.com\"\n}\n\
                   resource \"google_org_policy_policy\" \"p\" {\n  name = \"x\"\n}\n\
@@ -1834,12 +1834,12 @@ mod tests {
         let workload = || file("delegation-shop", vec![(DELEGATED_FOLDER_ROLES, list(&[PROJECT_CREATOR])), (DELEGATED_APIS, list(&["iam.googleapis.com"]))]);
         let project = file("shop-backend", vec![(DELEGATED_PROJECT_ROLES, list(&[PROJECT_IAM_ADMIN]))]);
         let folder = file("shop", vec![(DELEGATED_FOLDER, serde_yaml::Value::from("${data.google_active_folder.shop.name}"))]);
-        // a workload's account in a project the organisation's estate created: no folder
-        let d = delegation(&[workload(), project]).expect("a workload's estate");
+        // a workload's account in a project the organization's estate created: no folder
+        let d = delegation(&[workload(), project]).expect("a workload estate");
         assert!(d.folder_roles.is_empty() && d.project_roles.contains(PROJECT_IAM_ADMIN) && d.apis.contains("iam.googleapis.com"), "{:?}", d);
         assert_eq!(d.interface, "delegation-shop`, `shop-backend");
         // the same account in its folder
-        let d = delegation(&[workload(), folder]).expect("a workload's estate");
+        let d = delegation(&[workload(), folder]).expect("a workload estate");
         assert!(d.folder_roles.contains(PROJECT_CREATOR) && d.project_roles.is_empty(), "{:?}", d);
         // a project with its own account reads one file
         let own = file("payments", vec![(DELEGATED_PROJECT_ROLES, list(&[PROJECT_IAM_ADMIN])), (DELEGATED_APIS, list(&["storage.googleapis.com"]))]);
@@ -1889,7 +1889,7 @@ mod tests {
         assert_eq!(miss.len(), 1, "{:?}", miss);
         let lines = describe_not_delegated(&miss, &d);
         assert!(lines[0].contains("`budgets = true` on the entry"), "{:?}", lines);
-        // the organisation's role for it on the project: no billing role is needed
+        // the organization's role for it on the project: no billing role is needed
         d.budgets = true;
         assert!(not_delegated(&want, &g, &d).is_empty());
         // it meets the budget alone: another need on the billing account stays open
@@ -1898,7 +1898,7 @@ mod tests {
     }
 
     #[test]
-    fn an_api_the_organisation_already_switched_on_is_found_when_declared_again() {
+    fn an_api_the_organization_already_switched_on_is_found_when_declared_again() {
         let m = manifest(
             "resource \"google_project_service\" \"again\" {\n  project = \"acme-payments-001\"\n  service = \"storage.googleapis.com\"\n}\n\
              resource \"google_project_service\" \"extra\" {\n  project = \"acme-payments-001\"\n  service = \"run.googleapis.com\"\n}\n\
@@ -1928,7 +1928,7 @@ mod tests {
         assert!(g.organization.contains("roles/storage.admin") && g.billing_account.contains("roles/billing.admin"));
         let miss = missing(&want, &g);
         let roles: BTreeSet<&str> = miss.iter().map(|n| n.roles[0].as_str()).collect();
-        // storage and the budget are covered; the org-level read roles and IAM admin are not
+        // storage and the budget are covered; the organization-level read roles and IAM admin are not
         assert!(!roles.contains("roles/storage.admin") && !roles.contains("roles/billing.admin"), "{:?}", roles);
         assert!(roles.contains("roles/browser") && roles.contains("roles/resourcemanager.organizationAdmin"), "{:?}", roles);
         // the Workspace role is named, never counted as missing
@@ -2014,7 +2014,7 @@ mod tests {
         list.iter().map(|a| a.to_string()).collect()
     }
 
-    /// The infra project is named by a bare param reference in every estate the
+    /// The infrastructure project is named by a bare param reference in every estate the
     /// template writes, and by a literal in one somebody hand-wrote. Both resolve.
     #[test]
     fn an_api_is_spliced_into_the_infra_projects_service_list() {
@@ -2031,7 +2031,7 @@ mod tests {
         assert!(edited.contains("= [\"iam.googleapis.com\", \"storage.googleapis.com\"]"), "{}", edited);
     }
 
-    /// An estate whose infra project has no list at all gets one, under the line
+    /// An estate whose infrastructure project has no list at all gets one, under the line
     /// that names the project.
     #[test]
     fn a_project_without_a_service_list_gets_one() {
@@ -2046,7 +2046,7 @@ mod tests {
         );
     }
 
-    /// Another project's list is not the infra project's, and a file that declares
+    /// Another project's list is not the infrastructure project's, and a file that declares
     /// neither is not edited at all — the caller names the file to fix by hand.
     #[test]
     fn a_project_that_is_not_the_infra_project_is_never_edited() {

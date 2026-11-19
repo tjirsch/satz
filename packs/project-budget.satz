@@ -4,7 +4,7 @@
 //
 // A workload pack: an estate that works in a delegated project takes it with
 // `satz get-pack project-budget` and answers the two questions below. It needs the
-// organisation to have delegated budgets for that project — `budgets = true` on the
+// organization to have delegated budgets for that project — `budgets = true` on the
 // project's entry of `presets/delegated-projects.satz` — and nothing on the billing account:
 // with that delegation the account manages budgets for its own project alone, and sees no
 // other project's costs.
@@ -64,7 +64,7 @@ question budget_email {
   empty    = "no channel: Google writes to the billing account's administrators"
 }
 
-// The API a budget is a call to, on the project the call is billed to. The organisation's
+// The API a budget is a call to, on the project the call is billed to. The organization's
 // estate does not switch it on; left on when the pack is taken out.
 google_project_service {
   budget_api {

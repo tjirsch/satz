@@ -9,7 +9,7 @@
 #
 # What each list is (docs/examples.md is the register these values come from):
 #   dir      Google Workspace directory ids (C0…)
-#   num      11–13-digit organisation, project and folder numbers
+#   num      11–13-digit organization, project and folder numbers
 #   bill     billing account ids
 #   domain   domains and e-mail domains: the IANA-reserved names, and the vendors
 #            and standards bodies this project references

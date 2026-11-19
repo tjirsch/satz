@@ -22,7 +22,7 @@ pub(crate) fn iam_member_label(
         format!("{:?}", cv).hash(&mut hasher);
     }
     // Only an explicitly pinned scope enters the hash. Grants scoped by the
-    // organisation or by their structural node pass "" and keep the label they
+    // organization or by their structural node pass "" and keep the label they
     // have always had: it is the Terraform resource name, and renaming an IAM
     // binding is a destroy-and-create on every estate.
     if !scope.is_empty() {
@@ -497,10 +497,10 @@ resolve: ValueResolver,
             ))?;
 
         // The parent is a Resource Manager path, and the enclosing node gives one in
-        // its own form: the organisation reference is `organizations/<id>` and a
+        // its own form: the organization reference is `organizations/<id>` and a
         // folder reference is `google_folder.x.name`, which resolves to `folders/<id>`
         // — but a project reference is `google_project.x.project_id`, the bare id, so
-        // an org policy inside a project writes `projects/<id>`.
+        // an organization policy inside a project writes `projects/<id>`.
         // `parent_text` is that path as TEMPLATE text (`${…}` around a reference), which
         // is what the policy's name is built from.
         let (resolved_parent_expr, parent_text): (Option<hcl::Expression>, Option<String>) =
@@ -591,7 +591,7 @@ resolve: ValueResolver,
             }
         }
 
-        // 3. Try Org Context
+        // 3. Try Organization Context
         if !context_set {
             if let Some(o_id) = &ctx.org_id {
                 for o in org_params {
@@ -606,7 +606,7 @@ resolve: ValueResolver,
         }
 
         // A project or folder the type takes, neither inherited nor set: handed back
-        // for the compile to report as a finding, which its caller renders or keeps.
+        // for the transpile to report as a finding, which its caller renders or keeps.
         if !context_set {
             let needs_project = project_params.iter().any(|p| schema.block.attributes.contains_key(*p) && !attrs.contains_key(serde_yaml::Value::String(p.to_string())));
             let needs_folder = folder_params.iter().any(|f| schema.block.attributes.contains_key(*f) && !attrs.contains_key(serde_yaml::Value::String(f.to_string())));
@@ -769,13 +769,13 @@ resolve: ValueResolver,
     Ok(ResourceBlock { block: block_builder.build(), import_id, label, needs_scope })
 }
 
-/// One resource as `single_resource_block` emits it.
+/// One resource as `single_resource_block` writes it.
 pub(crate) struct ResourceBlock {
     pub block: hcl::Block,
     pub import_id: Option<String>,
     pub label: String,
     /// The scope the type takes that the resource neither sets nor inherits —
-    /// `project` or `folder` — for the compile to report as a finding.
+    /// `project` or `folder` — for the transpile to report as a finding.
     pub needs_scope: Option<&'static str>,
 }
 
@@ -861,7 +861,7 @@ pub(crate) fn configure_google_provider(
 }
 
 /// One root provider block from a config mapping (the walk's provider loop body). `view`
-/// is the mapping as written where a central estate's value was spliced into it: the
+/// is the mapping as written where a value of an organization's estate was spliced into it: the
 /// values come from it, the decisions from `map`.
 pub(crate) fn provider_block_from_map(
     p_name: &str,
@@ -898,7 +898,7 @@ pub(crate) fn provider_block_from_map(
 
 /// The per-project provider alias block: the default `google` provider scoped
 /// to one project the estate declares. Every resource written inside that
-/// project node is emitted with `provider = google.project_<label>`.
+/// project node is written with `provider = google.project_<label>`.
 ///
 /// It differs from the default provider in the project only. The project is its
 /// own quota project — `user_project_override` sends
@@ -937,8 +937,8 @@ pub(crate) fn project_provider_block(
 // Cloud Identity group naming + HCL string helpers (moved from the retired walk)
 //
 // Shared with the adopter, which has to address exactly the resources the
-// emitter emits. Keeping the derivation in one place is what stops it from
-// computing a group email or a Terraform address the generated HCL does not use.
+// emitter writes. Keeping the derivation in one place is what stops it from
+// computing a group email or a Terraform address the generated HCL code does not use.
 // ---------------------------------------------------------------------------
 
 /// Terraform label for a group's YAML key (`-` is not legal in an identifier).
@@ -946,7 +946,7 @@ pub(crate) fn group_resource_label(yaml_key: &str) -> String {
     yaml_key.replace('-', "_")
 }
 
-/// Full Terraform address of the `google_cloud_identity_group` emitted for `yaml_key`.
+/// Full Terraform address of the `google_cloud_identity_group` written for `yaml_key`.
 pub(crate) fn group_resource_address(yaml_key: &str) -> String {
     format!("google_cloud_identity_group.{}", group_resource_label(yaml_key))
 }
@@ -992,7 +992,7 @@ fn group_member_entry(v: &serde_yaml::Value) -> Option<(String, Option<String>)>
 }
 
 /// Members a group declares, as `raw YAML string -> roles`. Keyed by the raw string
-/// (`user:a@example.com`), matching how the emitted resource label is derived.
+/// (`user:a@example.com`), matching how the written resource label is derived.
 pub(crate) fn aggregate_group_members(
     attrs: &serde_yaml::Mapping,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
@@ -1020,7 +1020,7 @@ pub(crate) fn aggregate_group_members(
 }
 
 /// The memberships a group adopts: `raw member string -> import id`, from the
-/// object form of a member entry. Both pipelines emit one `import` block per
+/// object form of a member entry. Both pipelines write one `import` block per
 /// entry, addressed by `membership_resource_address`.
 pub(crate) fn group_member_import_ids(
     attrs: &serde_yaml::Mapping,
@@ -1062,7 +1062,7 @@ pub(crate) fn membership_resource_label(group_yaml_key: &str, member_raw: &str) 
     )
 }
 
-/// Full Terraform address of the membership emitted for `member_raw` in `group_yaml_key`.
+/// Full Terraform address of the membership written for `member_raw` in `group_yaml_key`.
 pub(crate) fn membership_resource_address(group_yaml_key: &str, member_raw: &str) -> String {
     format!(
         "google_cloud_identity_group_membership.{}",
@@ -1071,7 +1071,7 @@ pub(crate) fn membership_resource_address(group_yaml_key: &str, member_raw: &str
 }
 
 /// Escape a string for use as HCL quoted-template source (`TemplateExpr::QuotedString`),
-/// which the hcl crate emits between quotes verbatim. Literal `"` and `\\` must arrive
+/// which the hcl crate writes between quotes verbatim. Literal `"` and `\\` must arrive
 /// pre-escaped or the output is invalid HCL (`filter = "metric.type="…""`). Content
 /// inside `${…}`/`%{…}` is expression context where quotes are legal raw, so it is left
 /// untouched; `$${`/`%%{` are the literal escape sequences, not interpolation starts.
@@ -1117,7 +1117,7 @@ fn escape_template_literals(s: &str) -> String {
 }
 
 /// A user-supplied string as an HCL expression: a template when it carries
-/// `${…}`/`%{…}` interpolation, else a plain string literal — serialising a
+/// `${…}`/`%{…}` interpolation, else a plain string literal — serializing a
 /// reference as a literal would escape `${` to `$${` and silently break it.
 pub(crate) fn string_to_hcl_expr(s: &str) -> hcl::Expression {
     if s.contains("${") || s.contains("%{") {

@@ -1,15 +1,15 @@
 //! `satz lsp`: the language server behind an editor's Satz support.
 //!
 //! What an editor gets is what satz knows, from satz's own front end — no second
-//! parser, no second schema. Diagnostics come from `satz::parse` on every change
+//! parser, no second schema. Findings come from `satz::parse` on every change
 //! and from the whole fragment pipeline (`compile_estate`, the ⊕ fold, the
 //! suppressions) on every open and save, the same errors `transpile --check`
 //! prints, at the file and line they name. Completion and hover read the
 //! provider schema the estate's `config.toml` points at; go-to-definition follows
-//! a `use` path the way the compiler resolves it and a param reference to its
+//! a `use` path the way the transpile resolves it and a param reference to its
 //! `params {}` line; formatting is `satz fmt`.
 //!
-//! A pack has no estate of its own to compile: its pipeline diagnostics come
+//! A pack has no estate of its own to transpile: its pipeline findings come
 //! from the estates beside it that `use` it, attributed back to the pack's file.
 //!
 //! stdout is the protocol. Nothing in this module prints; the registry's loading
@@ -89,7 +89,7 @@ struct Server {
     docs: HashMap<PathBuf, String>,
     /// Estates by config directory, loaded on first use.
     estates: HashMap<PathBuf, Estate>,
-    /// Files that currently carry pipeline diagnostics, so they can be cleared.
+    /// Files that currently carry pipeline findings, so they can be cleared.
     published: BTreeSet<PathBuf>,
 }
 
@@ -169,11 +169,11 @@ impl Server {
     }
 
     // -----------------------------------------------------------------------
-    // Diagnostics
+    // Findings in the editor
     // -----------------------------------------------------------------------
 
-    /// Parse diagnostics for the file on every change; the pipeline's on open
-    /// and save — a whole-estate compile is not a per-keystroke thing.
+    /// Parse findings for the file on every change; the pipeline's on open
+    /// and save — a whole-estate transpile is not a per-keystroke thing.
     fn publish_all(&mut self, conn: &Connection, path: &Path, pipeline: bool) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         let text = self.docs.get(path).cloned().unwrap_or_default();
         let mut by_file: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
@@ -188,7 +188,7 @@ impl Server {
             Ok(_) => {}
         }
         if pipeline {
-            // A file that carried pipeline diagnostics last time and has none now
+            // A file that carried pipeline findings last time and has none now
             // gets an empty set, or the editor keeps showing stale ones.
             let stale: Vec<PathBuf> = self.published.iter().filter(|p| !by_file.contains_key(*p)).cloned().collect();
             for p in stale {
@@ -202,7 +202,7 @@ impl Server {
         Ok(())
     }
 
-    /// The compile the CLI's `transpile --check` runs, over the editor's buffers,
+    /// The transpile the CLI's `transpile --check` runs, over the editor's buffers,
     /// for the estate this file is — or, for a pack, for every estate beside it
     /// that uses it.
     fn pipeline_diagnostics(&mut self, path: &Path, text: &str, file: &File) -> Vec<(PathBuf, Diagnostic)> {
@@ -210,7 +210,7 @@ impl Server {
         let Some(registry) = self.registry(&dir) else { return vec![] };
         let config = self.estates[&dir].config.clone();
         // an interface file is data satz generates: its parse is its whole check, and the
-        // estate that uses it is compiled when that estate is open
+        // estate that uses it is transpiled when that estate is open
         if file.interface_file.is_some() {
             return vec![];
         }
@@ -224,7 +224,7 @@ impl Server {
             out.extend(compile_for_diagnostics(&root, &src, &config, &registry, &self.docs));
         }
         // A pack's own line is what its author is looking at; the estate's other
-        // files are not in front of them. Keep every file's diagnostics — the
+        // files are not in front of them. Keep every file's findings — the
         // editor shows them where they belong — but never lose the pack's.
         out
     }
@@ -240,7 +240,7 @@ impl Server {
             let reg = ResourceRegistry::load_all(&estate.config.schema_dir).ok()?;
             if reg.resources.is_empty() {
                 // No schema: the pipeline would name every type unknown. Parse
-                // diagnostics still work; `satz update-schema` is the fix.
+                // findings still work; `satz update-schema` is the fix.
                 return None;
             }
             estate.registry = Some(Arc::new(reg));
@@ -538,7 +538,7 @@ impl Server {
 }
 
 // ---------------------------------------------------------------------------
-// The compile, over buffers, to diagnostics
+// The transpile, over buffers, to the editor's findings
 // ---------------------------------------------------------------------------
 
 type Loader = Box<dyn Fn(&str) -> Result<String, String>>;
@@ -636,7 +636,7 @@ fn compile_for_diagnostics(
             _ => (root.to_path_buf(), 1),
         };
         let t = text_of(&p);
-        // The layout, as far as a diagnostic can hold it. The range is the location and
+        // The layout, as far as the editor's finding can hold it. The range is the location and
         // the editor draws the severity; `code` is the kind; the message is the group's
         // title, the sentence, and the fix as its own last line — the order the CLI
         // prints them in.
@@ -806,15 +806,15 @@ const TOP_LEVEL: &[(&str, &str)] = &[
     ("action", "a deployment step with no provider resource: `action \"name\" { reason run args }`"),
     ("offers", "the map only — one pack the library offers: `offers \"presets/…\" { when phase block … }`"),
     ("notice", "a pack only — what to run once the pack is on, open until the estate binds PARAM true: `notice PARAM { text run severity }`"),
-    ("export", "a value published to the projects beside the estate, carried by every interface under interfaces/outgoing/: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
-    ("interface", "one project's exports, written to interfaces/outgoing/<name>/ beside the core ones: `interface \"name\" [common] { export … use interface … }` — `common` puts it into the library every project's folder carries; `interface \"name\"` alone on its line heads an interface file satz generates, which a project estate `use`s and reads as `\"${{interface.<export>}}\"`"),
+    ("export", "a value published to the workload estates beside the estate, carried by every interface under interfaces/outgoing/: `export \"name\" = VALUE [attach [\"TYPE\", …]] [description \"…\"]`"),
+    ("interface", "one named set of exports, written to interfaces/outgoing/<name>/ beside the core ones: `interface \"name\" [common] { export … use interface … }` — `common` puts it into the library every interface folder carries; `interface \"name\"` alone on its line heads an interface file satz generates, which a workload estate `use`s and reads as `\"${{interface.<export>}}\"`"),
     ("each", "one interface per entry of a list param: `each LIST by FIELD { interface \"{each.FIELD}\" { … } }`; inside a resource type map, one labelled body per entry"),
     ("suppress", "decline what a pack provides: `suppress TYPE \"name\" [role \"…\"]`"),
     ("private", "keep one resource out of every export and every `all` map: `private TYPE.LABEL`"),
     ("request", "a pack only — what a project may add to a list param, checked by `satz check-request`: `request PARAM { key fields description }`"),
     ("hcl", "raw HCL passthrough, verbatim and opaque to claims: `hcl [trust \"…\"] { … }`"),
-    ("terraform", "the backend block, emitted as providers.tf"),
-    ("providers", "the provider blocks, emitted as providers.tf"),
+    ("terraform", "the backend block, written as providers.tf"),
+    ("providers", "the provider blocks, written as providers.tf"),
 ];
 
 const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
@@ -855,7 +855,7 @@ const BODY_KEYS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("text", "what to do and why, as the operator reads it"),
             ("run", "the command to run once the pack is on"),
-            ("severity", "error | warning | info — an open `error` refuses every command that writes to the organisation (warning)"),
+            ("severity", "error | warning | info — an open `error` refuses every command that writes to the organization (warning)"),
         ],
     ),
     (

@@ -168,20 +168,20 @@ impl Misfit {
 /// that lives where it stands.
 ///
 /// A project is the bottom of the resource hierarchy, so nothing above it is placed by
-/// standing in its body: a folder and a project hang off the organisation or off a
-/// folder, an organisation grant off the organisation, a group off the Cloud Identity
+/// standing in its body: a folder and a project hang off the organization or off a
+/// folder, an organization grant off the organization, a group off the Cloud Identity
 /// customer, a billing grant off the billing account. Written there they would reach the
-/// organisation anyway, which reads as "in this project" and is not. The same types are
+/// organization anyway, which reads as "in this project" and is not. The same types are
 /// written at the TOP LEVEL of a file — the one that declares the project included — and
 /// hoist from wherever that file is `use`d.
 fn above_a_project(k: &str, types: &dyn TypeResolver) -> Option<String> {
     match k {
-        "google_folder" => return Some("a folder hangs off the organisation or another folder".to_string()),
-        "google_project" => return Some("a project hangs off the organisation or a folder".to_string()),
+        "google_folder" => return Some("a folder hangs off the organization or another folder".to_string()),
+        "google_project" => return Some("a project hangs off the organization or a folder".to_string()),
         _ => {}
     }
     match types.resolve(k)?.scope {
-        crate::Scope::Org => Some("it belongs to the organisation".to_string()),
+        crate::Scope::Org => Some("it belongs to the organization".to_string()),
         crate::Scope::Customer => Some("it belongs to the Cloud Identity customer".to_string()),
         crate::Scope::Billing => Some("it belongs to the billing account".to_string()),
         crate::Scope::Node => None,
@@ -212,7 +212,7 @@ fn key_text(key: &Key) -> String {
     }
 }
 
-/// What a line moved out of a node's body has to carry with it. Every pack emits the same
+/// What a line moved out of a node's body has to carry with it. Every pack writes the same
 /// resources wherever its line stands, bar the two that create a project: those name the
 /// folder the project is created in with a param of their own, and the param is what has
 /// to be bound once the line no longer stands in the folder.
@@ -222,7 +222,7 @@ fn relocation_advice(node: &str, label: &str) -> String {
     match node {
         "google_folder" => format!(
             "A pack that creates a project names the folder it is created in with a param of its own — {packs} — \
-             so bind that param to `{node}.{label}.name` in the estate's `params {{ … }}`. Every other pack emits \
+             so bind that param to `{node}.{label}.name` in the estate's `params {{ … }}`. Every other pack writes \
              the same resources wherever its line stands",
             packs = packs,
             node = node,
@@ -333,8 +333,8 @@ pub(super) fn misfit(pos: Position, entry: &Entry, types: &dyn TypeResolver) -> 
                             key_text(key), what
                         ),
                         fix: "It is written at the top level of a file, the file that declares the project included: \
-                              one file declares a project together with the organisation-level resources that go with it, \
-                              and those reach the organisation from wherever that file is `use`d"
+                              one file declares a project together with the organization-level resources that go with it, \
+                              and those reach the organization from wherever that file is `use`d"
                             .to_string(),
                     })
                 }
@@ -713,7 +713,7 @@ question customer_shortname {
             ("a typed pack inside a resource type map", "estate t\n\ngoogle_org_policy_policy {\n  use \"typed.satz\"\n}\n", "inside `google_org_policy_policy { … }`"),
             ("a typed pack as a resource type", "estate t\n\nuse \"typed.satz\" as google_org_policy_policy\n", "inside `google_org_policy_policy { … }`"),
             ("a typed pack as a resource type, in the folder map", "estate t\n\ngoogle_folder {\n  use \"typed.satz\" as google_org_policy_policy\n}\n", "inside `google_org_policy_policy { … }`"),
-            // the hole: this compiled, and the pack's types became folder names
+            // the hole: this transpiled, and the pack's types became folder names
             ("a typed pack in the folder map", "estate t\n\ngoogle_folder {\n  use \"typed.satz\"\n}\n", "inside `google_folder { … }`"),
         ];
         for (form, estate, stands) in typed_forms {

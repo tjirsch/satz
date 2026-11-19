@@ -4,12 +4,12 @@ Two kinds of example. First the **register of identifiers** every example in thi
 repository is allowed to use — a rule the privacy gate enforces on every commit.
 Then **worked estates**: real files in this repository, transpiled by
 `scripts/smoke.sh` on every pull request and every push to `main`, so each one
-compiles with the current binary.
+transpiles with the current binary.
 
 ## Example customers
 
 This repository is public. Real customer names, domains, Google Workspace
-directory ids (`C0…`), GCP organisation, folder and project numbers, billing
+directory ids (`C0…`), GCP organization, folder and project numbers, billing
 account ids and repository URLs must never appear in a tracked file. Instead,
 **every example uses one of the four customers below, with exactly these
 values.** `scripts/check-names.sh` enforces it: any `C0…` id, any 11–13-digit
@@ -28,9 +28,9 @@ nothing here can resolve. All numbers are visibly synthetic.
 | `customer_domain` | `example.com` | `example.org` | `example.net` | `delta.example` |
 | contacts domain (if different) | `example.net` | – | – | `mail.delta.example` |
 | directory id (`customer_id`) | `C0example` | `C0bolt002` | `C0cedar03` | `C0delta04` |
-| organisation id | `123456789012` | `222222222222` | `333333333333` | `444444444444` |
+| organization id | `123456789012` | `222222222222` | `333333333333` | `444444444444` |
 | billing account | `012345-6789AB-CDEF01` | `0B0B0B-0B0B0B-0B0B02` | `0C0C0C-0C0C0C-0C0C03` | `0D0D0D-0D0D0D-0D0D04` |
-| infra project | `acme-infra-001` | `bolt-infra-001` | `cedar-infra-001` | `delta-infra-001` |
+| infrastructure project | `acme-infra-001` | `bolt-infra-001` | `cedar-infra-001` | `delta-infra-001` |
 | a delegation's infrastructure project (`presets/delegation.satz`, delegation `shop`) | `acme-deploy-shop`, its bucket `acme-deploy-shop-state`, its account `svc-deploy-shop`, its folder `Shop` (`presets/delegated-folders.satz`) | – | – | – |
 | log project | `acme-log-001` | `bolt-log-001` | `cedar-log-001` | `delta-log-001` |
 | audit bucket | `acme-organization-audit-bucket` | `bolt-organization-audit-bucket` | `cedar-organization-audit-bucket` | `delta-organization-audit-bucket` |
@@ -92,9 +92,9 @@ Two things cover that gap:
 
 **Which one to use.** Customer A for any single-estate example. B, C, D only
 when an example needs a
-second, third or fourth organisation (cross-org grants, a fleet table, a
+second, third or fourth organization (cross-org grants, a fleet table, a
 partner directory). Customer A's separate contacts domain and Customer D's
-subdomain exist so that "the org and the contacts live on different domains"
+subdomain exist so that "the organization and the contacts live on different domains"
 can be shown without inventing a value.
 
 **Fleet estates in working-state files** (`CLAUDE.local.md`, the private roadmap, apply
@@ -132,17 +132,17 @@ public history.
 trailer), `*.iam.gserviceaccount.com` service accounts built from the values
 above (e.g. `svc-iac@acme-infra-001.iam.gserviceaccount.com`), and
 Google-owned agents of the form `service-org-<org-id>@…gserviceaccount.com`
-with an org id from the table.
+with an organization id from the table.
 
 If an example genuinely needs a value this page does not define, add the
 value here first, in the same commit.
 
 ---
 
-## The smallest estate that compiles
+## The smallest estate that transpiles
 
 An estate is a name and a `params` block. Nothing else is required: a file that
-declares no resources emits an empty configuration, not an error.
+declares no resources writes an empty configuration, not an error.
 `tests/smoke/yaml/greenfield.satz` is the smallest one this repository keeps:
 
 ```
@@ -162,7 +162,7 @@ params {
 
 Its `customer_organization_id` is empty: the state of a tenant whose Google Cloud
 organization does not exist yet. `satz bootstrap` answers that with the greenfield
-path — `--greenfield`, or `satz init` re-run with the id — rather than a bare "missing org
+path — `--greenfield`, or `satz init` re-run with the id — rather than a bare "missing organization
 id". See [from nothing to applied](workflows.md#from-nothing-to-applied).
 
 ## A working estate, end to end
@@ -206,14 +206,14 @@ that has no provider resource; and the `claim` blocks that say which controls th
 estate implements and which it declines.
 
 **A new language feature gets its example here first**: the reference cites this
-file, and CI compiles it.
+file, and CI transpiles it.
 
-## An organisation and the projects beside it
+## An organization and the workload estates beside it
 
 `examples/` holds estates that show one use of satz each. `examples/acme/` is one
-organisation — the estate `satz init --workload-folder-name Workloads` writes, with
+organization — the estate `satz init --workload-folder-name Workloads` writes, with
 `presets/estate-core.satz` in use — and each subfolder of it is one example: a project
-that reads the organisation through `interfaces/outgoing/common/` copied to its `interfaces/incoming/`.
+that reads the organization through `interfaces/outgoing/common/` copied to its `interfaces/incoming/`.
 `examples/README.md` gives the commands and names the values to replace.
 
 `examples/acme/simple-project/satz/simple-project.satz` is one Google project as a
@@ -225,7 +225,8 @@ inputs {
   application = "shop"
   // the stage: dev, test or prod
   stage       = "dev"
-  // the four-digit cost centre the project is billed to
+  // the four-digit cost center the project
+ is billed to
   cost_centre = "4711"
 }
 
@@ -249,15 +250,15 @@ google_project {
 }
 ```
 
-With the example values it is the Google project `acme-shop-dev` under the organisation's
-workload folder, labelled `cost_centre = "4711"`, with `roles/owner` (and, in the file,
+With the example values it is the Google project `acme-shop-dev` under the organization's
+workload folder, labeled `cost_centre = "4711"`, with `roles/owner` (and, in the file,
 `roles/editor` and `roles/viewer`) granted to groups named after the project at
 `example.com`; the groups exist in the directory before the apply and are not declared.
-Compiled as it stands it is the HCL team's form — `variables.tf` declares the inputs,
+Transpiled as it stands it is the HCL team's form — `variables.tf` declares the inputs,
 `terraform.tfvars` carries the example values, `main.tf` reads `var.<name>` and
-`interface.tf` holds the organisation's values, so the team edits `terraform.tfvars` and
+`interface.tf` holds the organization's values, so the team edits `terraform.tfvars` and
 runs `tofu` without satz. `examples/acme/shop-dev/satz/shop_dev.satz` is the Satz team's
 form of the same template: a thin estate binding the inputs in its `params { }` and
-`use`-ing the template, which compiles to the same `main.tf`. The grants are labelled
+`use`-ing the template, which transpiles to the same `main.tf`. The grants are labeled
 resources rather than a member map: a group name that reads an input is a value, and an
 input is never a key.

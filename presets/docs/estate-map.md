@@ -6,7 +6,7 @@ Source: `presets/estate-map.satz`
 ## Purpose
 
 The map: which packs make up this estate, asked as questions — so an interview
-has a path. First the day-0 params (estate-core), then these choices, then the
+has a path. First the bootstrap params (estate-core), then these choices, then the
 questions of every pack the answers switched on.
 
 The map declares the choices, and at the bottom of the file one `offers` entry
@@ -19,18 +19,18 @@ for an edge the packs do not show. The estate carries the matching `use … when
 lines, each written commented under its phase. `satz init`, `satz interview
 --create` and the MCP tool `satz_interview` write them; answering a choice yes in
 the interview uncomments its line. A pack switched on brings its own questions
-with it; one switched off asks nothing and emits nothing. A question that gates a
+with it; one switched off asks nothing and writes nothing. A question that gates a
 pack cannot live in the pack it gates, which is why they all live here.
 
 The CIS baseline is the first choice and barely one: the estate exists for it,
 and its opt-in extensions are the baseline pack's own questions. It is asked
-because it is thirty organisation policies in one apply, not because an estate
+because it is thirty organization policies in one apply, not because an estate
 is expected to go without. Defender's plan fragments are offered with `by_hand`:
 their gates are the Defender pack's own, and their lines are written by hand
 beside the Defender line, as their headers show.
 
 Turning a pack off later destroys what it created. The `reversal` of each
-choice says so; the `blast` says how much that costs the running organisation.
+choice says so; the `blast` says how much that costs the running organization.
 
 ## Use it
 
@@ -111,50 +111,50 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `use_cis_baseline` | Put the CIS GCP Foundation baseline — thirty organisation policies — in this estate? | recreate | high | — |
+| `use_cis_baseline` | Put the CIS GCP Foundation baseline — thirty organization policies — in this estate? | recreate | high | — |
 | `security_model` *(choice)* | Which security-group model does this customer run? | state_surgery | low | — |
-| `use_audit_logsink` | Archive the organisation's audit logs into a bucket in a logging project? | recreate | high | — |
-| `use_central_alerts` | Alert on the CIS log events — ownership, IAM, firewall, route, network, bucket and SQL changes — organisation-wide? | recreate | low | — |
+| `use_audit_logsink` | Archive the organization's audit logs into a bucket in a logging project? | recreate | high | — |
+| `use_central_alerts` | Alert on the CIS log events — ownership, IAM, firewall, route, network, bucket and SQL changes — organization-wide? | recreate | low | — |
 | `use_billing_permissions` | Grant the billing-admins group its roles on the billing account? | edit | low | — |
-| `use_essential_contacts` | Register the organisation's essential contact? | recreate | low | — |
-| `use_budget` | Put budgets with alerts at 50, 80 and 100 % on the infrastructure billing account — the organisation's, and any for projects or folders? | recreate | none | — |
+| `use_essential_contacts` | Register the organization's essential contact? | recreate | low | — |
+| `use_budget` | Put budgets with alerts at 50, 80 and 100 % on the infrastructure billing account — the organization's, and any for projects or folders? | recreate | none | — |
 | `use_shared_network` | Run a shared VPC for the projects: a host project, one network, and a firewall policy whose subnets and rules the projects request? | recreate | high | — |
 | `use_delegation` | Delegate access — give a team that works from an estate of its own, beside this one, an identity: an infrastructure project with the service account its pipelines run as and the bucket its states live in, and the group whose members may act as that account? | recreate | high | — |
-| `use_delegated_projects` | Delegate access to projects — create the Google projects a delegation's account works in, with its roles on each project alone, and the interface the team's estate reads? | recreate | high | — |
+| `use_delegated_projects` | Delegate access to projects — create the Google projects a delegation's account works in, with its roles on each project alone, and the interface the workload estate reads? | recreate | high | — |
 | `use_delegated_budgets` | Let delegated accounts manage budgets for their own project or folder: declare the role an entry with `budgets = true` is granted? | edit | low | — |
-| `use_delegated_folders` | Delegate access to folders — create the folders a delegation's account works in, with its roles on those folders alone, and the interface the team's estate reads? | recreate | high | — |
+| `use_delegated_folders` | Delegate access to folders — create the folders a delegation's account works in, with its roles on those folders alone, and the interface the workload estate reads? | recreate | high | — |
 | `use_billing_export` | Export Cloud Billing usage and cost data to BigQuery, in a project of its own? | recreate | low | — |
 | `use_project_cis_log_alerts` | Alert on the CIS log events inside one project of its own as well? | recreate | low | — |
-| `use_scc_enablement` | Turn Security Command Center on for the organisation? | edit | low | `true` |
+| `use_scc_enablement` | Turn Security Command Center on for the organization? | edit | low | `true` |
 | `use_scc_notifications` | Publish findings to a Pub/Sub topic, for a SIEM or a ticket system to pick up? | edit | low | — |
 | `use_scc_findings_mail` | Mail a security address when findings arrive? | edit | low | — |
 | `use_scc_findings_siem` | Let an external SIEM pull findings off the topic? | edit | low | — |
 | `use_scc_export` | Keep findings in BigQuery, so they can be queried months later? | edit | low | — |
 | `use_security_audit_sa` | Create a read-only security-audit service account with an impersonation group for auditors? | recreate | low | — |
 | `use_defender` | Onboard Microsoft Defender for Cloud through workload identity federation to the customer's Entra tenant? | recreate | high | — |
-| `use_sentinel` | Connect Microsoft Sentinel to this organisation? | recreate | low | — |
-| `use_sentinel_auditlogs` | Send the organisation's audit logs to Sentinel? | recreate | low | — |
+| `use_sentinel` | Connect Microsoft Sentinel to this organization? | recreate | low | — |
+| `use_sentinel_auditlogs` | Send the organization's audit logs to Sentinel? | recreate | low | — |
 | `use_sentinel_network_logs` | Send the network streams too — VPC flow logs, firewall, DNS queries, Cloud NAT? | recreate | low | — |
 | `use_verification_runner` | Run continuous verification from this estate's own project — transpile --check on every push, report-compliance every night? | recreate | low | — |
-| `use_verification_runner_grant` | Let a verification runner act as this estate's IaC service account? | edit | low | — |
-| `use_exemption_tag` | Create the organisation tag that lets a policy exempt named resources? | edit | none | — |
+| `use_verification_runner_grant` | Let a verification runner act as the estate account? | edit | low | — |
+| `use_exemption_tag` | Create the organization tag that lets a policy exempt named resources? | edit | none | — |
 | `interface_notice` *(choice)* | How do the projects that read this estate's interface hear that an exported value changed? | edit | low | — |
 
-**use_cis_baseline** — This is what the estate is FOR, not an addition to it: every CIS claim the compliance report makes rests on these policies, and the opt-in extensions below are gated on params this pack declares. It is asked rather than assumed because it is thirty policies at the organisation node in one apply, which goes in deliberately — after the state and the identity have moved to the service account, with its plan read first. Turning it off later takes every one of those policies off the organisation.
+**use_cis_baseline** — This is what the estate is FOR, not an addition to it: every CIS claim the compliance report makes rests on these policies, and the opt-in extensions below are gated on params this pack declares. It is asked rather than assumed because it is thirty policies at the organization node in one apply, which goes in deliberately — after the state and the identity have moved to the service account, with its plan read first. Turning it off later takes every one of those policies off the organization.
 
 
 **security_model** — Splitting network authority out later means a new group, membership moves and re-granted roles.
 
-- `security_model_s1` — S1 — five admin groups; network authority sits with project admins (A small team that separates org admins, project admins and security roles, and nothing more.)
+- `security_model_s1` — S1 — five admin groups; network authority sits with project admins (A small team that separates organization admins, project admins and security roles, and nothing more.)
 - `security_model_s2` — S2 — S1 plus a distinct network-admins group (For a customer with a separate network team.)
 
-**use_audit_logsink** — The compliance archive: every Admin Activity, Data Access, System Event and Policy log, organisation-wide, in one bucket with a retention. Without it there is no record to answer an auditor with. Turning it off later destroys the logging project and the archive.
+**use_audit_logsink** — The compliance archive: every Admin Activity, Data Access, System Event and Policy log, organization-wide, in one bucket with a retention. Without it there is no record to answer an auditor with. Turning it off later destroys the logging project and the archive.
 
 
 **use_central_alerts** — CIS 2.5–2.12 as eight metrics and alert policies in the logging project, into one mailbox. Needs the audit-log archive above: it lives in that project. Turning it off later destroys the alerting bucket and its policies, and with them thirty days of alert history.
 
 
-**use_billing_permissions** — billing.admin and billing.costsManager for the model's billing-admins group, and use/view for the domain. Without it nobody but the first admin and the IaC account can see or move spend.
+**use_billing_permissions** — billing.admin and billing.costsManager for the model's billing-admins group, and use/view for the domain. Without it nobody but the first admin and the account can see or move spend.
 
 
 **use_essential_contacts** — Google's suspension, security and legal notices need an address to go to. Without a contact they go to nobody, and the first sign of a problem is the consequence.
@@ -166,7 +166,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 **use_shared_network** — Projects then run in one network the estate owns instead of each building its own: a project asks for a subnet or a firewall rule by pull request, the estate applies it, and the interface publishes it. Turning it off later destroys the host project, the network and every subnet and rule in it, and cuts off every project attached to it.
 
 
-**use_delegation** — A team then never runs as the organisation's IaC account: it impersonates its own account, keeps its own state, and holds only what the estate delegates to it. This is the base every delegation has; what is delegated — folders, projects — is its own pack, each entry naming its delegation. Turning it off later destroys every delegation's infrastructure project, its account and its states, and with them every team's way in.
+**use_delegation** — A team then never runs as the organization's account: it impersonates its own account, keeps its own state, and holds only what the estate delegates to it. This is the base every delegation has; what is delegated — folders, projects — is its own pack, each entry naming its delegation. Turning it off later destroys every delegation's infrastructure project, its account and its states, and with them every team's way in.
 
 
 **use_delegated_projects** — A project is then one entry of `delegated_projects` that names its delegation; the account holds the project's IAM and services on that project and nowhere else, and one account may work in several. Turning it off later destroys every such project and everything in it.
@@ -181,22 +181,22 @@ What to ask before this pack is configured, and what changing the answer costs.
 **use_billing_export** — A budget says when a threshold is crossed; the export says what the money went on, per project, per SKU, per day. It creates a project and a dataset, and it allows Google's export account past domain-restricted sharing while it is on. Switching the export itself on is a console step Cloud Billing has no API for, which the pack's notice names. Turning the pack off later destroys the project and the spend history in it.
 
 
-**use_project_cis_log_alerts** — The central alerts cover every project from the logging project. This pack puts the same eight metrics and alert policies, and a channel, into ONE project — for a project with its own on-call, delegated ownership or tenant isolation, or an organisation without the central logging bucket. One project per line: a second project is a fork, because the labels are fixed. Turning it off later destroys the project's metrics, policies and channel, and their alert history.
+**use_project_cis_log_alerts** — The central alerts cover every project from the logging project. This pack puts the same eight metrics and alert policies, and a channel, into ONE project — for a project with its own on-call, delegated ownership or tenant isolation, or an organization without the central logging bucket. One project per line: a second project is a fork, because the labels are fixed. Turning it off later destroys the project's metrics, policies and channel, and their alert history.
 
 
-**use_scc_enablement** — Google's own detector platform: it watches every project for misconfigurations, leaked keys, crypto-mining and attack patterns, and nothing else in this library replaces it. The tier this library assumes is Premium, and it is not free: the charge is per covered resource per hour, not a share of the bill — at organisation level 0.0057 USD per instance-hour for Compute Engine, Cloud SQL and App Engine Flex, per vCPU-hour for Cloud Run and AlloyDB, 0.20 USD per container image scanned, plus Cloud Storage operation and BigQuery analysis rates (https://cloud.google.com/security-command-center/pricing). Because it follows the NUMBER of resources and not their size, it lands near the 5% of Google Cloud spend Google charges for the equivalent annual subscription on an estate of ordinary machines, and at 10% or more on an estate of many small ones. The 30-day trial is started in the console and becomes pay-as-you-go by itself; pay-as-you-go carries no commitment, and putting the organisation back to Standard stops the charge. Answering yes here declares the step that switches the detectors on — the tier itself is activated in the console.
+**use_scc_enablement** — Google's own detector platform: it watches every project for misconfigurations, leaked keys, crypto-mining and attack patterns, and nothing else in this library replaces it. The tier this library assumes is Premium, and it is not free: the charge is per covered resource per hour, not a share of the bill — at organization level 0.0057 USD per instance-hour for Compute Engine, Cloud SQL and App Engine Flex, per vCPU-hour for Cloud Run and AlloyDB, 0.20 USD per container image scanned, plus Cloud Storage operation and BigQuery analysis rates (https://cloud.google.com/security-command-center/pricing). Because it follows the NUMBER of resources and not their size, it lands near the 5% of Google Cloud spend Google charges for the equivalent annual subscription on an estate of ordinary machines, and at 10% or more on an estate of many small ones. The 30-day trial is started in the console and becomes pay-as-you-go by itself; pay-as-you-go carries no commitment, and putting the organization back to Standard stops the charge. Answering yes here declares the step that switches the detectors on — the tier itself is activated in the console.
 
 
-**use_scc_notifications** — Findings that stay in the console are read when somebody remembers to look. The topic is the one place another system can read them from as they are raised. Whoever can read the topic reads every finding in the organisation.
+**use_scc_notifications** — Findings that stay in the console are read when somebody remembers to look. The topic is the one place another system can read them from as they are raised. Whoever can read the topic reads every finding in the organization.
 
 
-**use_scc_findings_mail** — For an organisation with nothing subscribed to the topic — and a topic nobody subscribes to drops every message it receives. This adds a subscription that keeps seven days, an e-mail channel and an alert that fires when findings reach the topic. The mail says findings arrived and links to them; the finding itself stays in the topic, the console and the export. Off when a SIEM already reads the topic.
+**use_scc_findings_mail** — For an organization with nothing subscribed to the topic — and a topic nobody subscribes to drops every message it receives. This adds a subscription that keeps seven days, an e-mail channel and an alert that fires when findings reach the topic. The mail says findings arrived and links to them; the finding itself stays in the topic, the console and the export. Off when a SIEM already reads the topic.
 
 
 **use_scc_findings_siem** — For a customer whose security team works in Sentinel, Defender for Cloud, Splunk or QRadar rather than in a mailbox. It adds the connector's own pull subscription and `roles/pubsub.subscriber` for the identity it reads as, which is asked — without that grant a connector authenticates and reads nothing. This and the mailbox are not exclusive: the SIEM ingests every finding, the mailbox is told they are arriving.
 
 
-**use_scc_export** — A notification tells somebody now; the export answers what the organisation looked like in March. Whoever can read the dataset reads every finding the organisation has ever raised, and the dataset's location cannot be changed afterwards.
+**use_scc_export** — A notification tells somebody now; the export answers what the organization looked like in March. Whoever can read the dataset reads every finding the organization has ever raised, and the dataset's location cannot be changed afterwards.
 
 
 **use_security_audit_sa** — Auditor access without keys and without remediation rights. Turning it off later removes the account and every auditor's access with it.
@@ -205,10 +205,10 @@ What to ask before this pack is configured, and what changing the answer costs.
 **use_defender** — Only for a customer who runs Defender. It needs the two ids from Microsoft's onboarding script and creates a workload identity pool; turning it off later removes the pool and Defender loses its connector. The plan fragments are added by hand per that pack's header.
 
 
-**use_sentinel** — Sentinel reads Google Cloud logs by pulling them from Pub/Sub, federated through workload identity — no service-account key leaves the organisation. This creates the federation half: the pool named after the customer's Entra tenant, the provider that trusts Microsoft, and the account Sentinel acts as. Onboarding is two-sided: the connector in Azure is configured with what this creates, and nothing flows until both halves are done. Turning it off later leaves the connector authenticated against a pool that no longer exists.
+**use_sentinel** — Sentinel reads Google Cloud logs by pulling them from Pub/Sub, federated through workload identity — no service-account key leaves the organization. This creates the federation half: the pool named after the customer's Entra tenant, the provider that trusts Microsoft, and the account Sentinel acts as. Onboarding is two-sided: the connector in Azure is configured with what this creates, and nothing flows until both halves are done. Turning it off later leaves the connector authenticated against a pool that no longer exists.
 
 
-**use_sentinel_auditlogs** — What a SIEM is for: who did what, organisation-wide, with `include_children` so a project created tomorrow is covered. On with Sentinel, because a connector with no audit logs answers no question anybody asks it. The one cost decision inside it is asked separately — Data Access logs are most of the volume and Sentinel bills by the gigabyte ingested.
+**use_sentinel_auditlogs** — What a SIEM is for: who did what, organization-wide, with `include_children` so a project created tomorrow is covered. On with Sentinel, because a connector with no audit logs answers no question anybody asks it. The one cost decision inside it is asked separately — Data Access logs are most of the volume and Sentinel bills by the gigabyte ingested.
 
 
 **use_sentinel_network_logs** — Each of these is EMPTY until somebody enables that feature on a subnet, a firewall rule, a DNS policy or a NAT gateway, and Google charges nothing to route logs, so a sink for a feature nobody enabled costs nothing. Switching them off therefore saves nothing; what it costs is the day somebody enables flow logs and finds Sentinel was not watching. On with Sentinel. The volume once a feature IS on is real and lands on Sentinel's ingestion bill — an estate can leave one stream out with a `suppress`.
@@ -217,13 +217,13 @@ What to ask before this pack is configured, and what changing the answer costs.
 **use_verification_runner** — The customer-hosted shape: Cloud Build triggers and a runner account in the infrastructure project. The grant that lets the runner read as the estate is the next choice, and follows this one. An MSP-hosted runner lives in the MSP's estate: answer this one no here and the grant yes.
 
 
-**use_verification_runner_grant** — One binding: the runner's account may mint tokens for the estate's account, the right a human operator holds through the IaC users group. It follows the runner choice, because a runner in this estate needs it; with the runner in another estate — an MSP's — it is answered on its own, and the grant's own question names that runner's account. Whoever holds the runner account reads the estate as its service account.
+**use_verification_runner_grant** — One binding: the runner's account may mint tokens for the estate's account, the right a human operator holds through the estate account user group. It follows the runner choice, because a runner in this estate needs it; with the runner in another estate — an MSP's — it is answered on its own, and the grant's own question names that runner's account. Whoever holds the runner account reads the estate as its estate account.
 
 
-**use_exemption_tag** — An organisation policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organisation policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organisation-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead.
+**use_exemption_tag** — An organization policy is all-or-nothing per node: letting ONE service account or ONE project out of a control today means lowering the policy for a whole folder and raising it again afterwards, a window during which nothing is enforced and which nobody remembers to close. A Resource Manager tag is IAM-governed and an organization policy's rule can condition on it, so the policy stays enforced everywhere and named resources are let out one at a time — visible in the compliance report and listable organization-wide through Cloud Asset Inventory. Creating the tag exempts nothing on its own: a binding does, and each binding is written in the estate with its owner and its reason. Before granting any exemption, ask whether the consumer needs it at all — a workload in Google Cloud, a Cloud Run service and external CI can all federate instead.
 
 
-**interface_notice** — The projects beside the estate read its exports through interfaces/outgoing/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. The choice has one option per delivery form, and none is an answer: Pub/Sub is the one satz has. Turning a form off later removes what it created, and every project that listens to it stops hearing.
+**interface_notice** — The workload estates beside the estate read its exports through interfaces/outgoing/, in their own state and their own pipelines. Without a notice they learn of a changed folder or project on their next plan, or never. The choice has one option per delivery form, and none is an answer: Pub/Sub is the one satz has. Turning a form off later removes what it created, and every workload estate that listens to it stops hearing.
 
 - `interface_notice_pubsub` — Pub/Sub — a message on a topic in the infrastructure project (A bucket holds the exported values as one JSON object, and a storage notification publishes one message to a topic for every apply that changes one. A project subscribes in its own state: a push to its CI's webhook or a pull from a runner.)
 

@@ -94,7 +94,7 @@ pub struct ImportResourceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub derive_yaml_key_from: Option<String>,
     /// Adoption rule for a type whose Terraform import id is user-chosen: a
-    /// template over the emitted resource's attributes and resolved
+    /// template over the written resource's attributes and resolved
     /// references, e.g. `projects/{project}/serviceAccounts/{account_id}@…`.
     /// Rendered offline, no API call.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +105,7 @@ pub struct ImportResourceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_on: Option<Vec<String>>,
     /// `managed`: a missing constraint must be activated before import
-    /// (org policies only).
+    /// (organization policies only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activate: Option<String>,
     /// API path → Terraform path for the fields whose names differ (F5c).
@@ -133,7 +133,7 @@ impl ImportResourceConfig {
 }
 
 /// Where a live import starts. `organization` is required for the live shape;
-/// `folder` (by number, or by display-name path from the org) and `project`
+/// `folder` (by number, or by display-name path from the organization) and `project`
 /// narrow it. Exactly one of `folder.id` / `folder.path`.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct ImportRoot {

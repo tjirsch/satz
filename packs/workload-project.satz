@@ -3,9 +3,9 @@
 //
 //   use "packs/workload-project.satz"
 //
-// A workload pack: an estate beside the organisation takes it with
+// A workload pack: an estate beside the organization takes it with
 // `satz get-pack workload-project`, binds the params below and applies as its own
-// account — a delegation's (`presets/delegation.satz` in the organisation's estate), which
+// account — a delegation's (`presets/delegation.satz` in the organization's estate), which
 // may create projects in the folders it was given (`presets/delegated-folders.satz`).
 //
 // THE PROJECT. `workload_project_id` under `workload_project_parent`, linked to
@@ -51,7 +51,7 @@ question workload_project_id {
 
 question workload_project_parent {
   prompt   = "The folder the workload's project is created in"
-  why      = "The folder decides the organisation policies the project inherits; moving the project later is a manual move."
+  why      = "The folder decides the organization policies the project inherits; moving the project later is a manual move."
   reversal = edit
   blast    = low
 }

@@ -14,9 +14,9 @@ narrowed.
     uv run scripts/check_prerequisites.py                 # the table of this checkout (cargo run)
     uv run scripts/check_prerequisites.py --satz satz     # the table of an installed binary
 
-Needs Application Default Credentials (`gcloud auth application-default login`);
-predefined roles are Google's and the same for every organisation, so any
-credential that can call the IAM API will do. Workspace entries are not IAM roles
+Needs a signed-in person (`gcloud auth application-default login`);
+predefined roles are Google's and the same for every organization, so any
+sign-in that can call the IAM API will do. Workspace entries are not IAM roles
 and are skipped.
 """
 
@@ -53,7 +53,7 @@ def adc_token() -> str:
             check=True,
         )
     except (OSError, subprocess.CalledProcessError) as e:
-        sys.exit(f"no ADC token ({e}) — run `gcloud auth application-default login`")
+        sys.exit(f"no token from the sign-in ({e}) — run `gcloud auth application-default login`")
     return out.stdout.strip()
 
 

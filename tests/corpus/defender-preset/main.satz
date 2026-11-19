@@ -2,7 +2,7 @@
 // an estate wires it — foundation + the CSPM plan + one access mode. Proves the
 // four fragments compose, that the plan fragment reaches the foundation's
 // project without nesting into it, and that the references (the project number
-// in the principal set, the pool id, the service account names) emit as
+// in the principal set, the pool id, the service account names) write as
 // references. Snapshot-gated.
 
 estate corpus_defender_preset

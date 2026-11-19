@@ -32,9 +32,9 @@ const ASSET_TYPES_PER_REQUEST: usize = 100;
 const ATTRIBUTION_LABEL: &str = "goog-terraform-provisioned";
 
 /// What `satz import` does with a grant edge — one member, one role — that two
-/// folders, or two projects, both hold. The map form's emitted label hashes
+/// folders, or two projects, both hold. The map form's written label hashes
 /// member and role (`iam_member_label`, deliberately not the node, so labels
-/// never move), so two such edges emit ONE Terraform address and the transpile
+/// never move), so two such edges write ONE Terraform address and the transpile
 /// refuses. `Error` refuses at import instead, naming the edges and the switch;
 /// `Counter` keeps the first edge in the map form and writes each further one
 /// as a labelled resource under its own node, with a running number in the
@@ -159,7 +159,7 @@ fn rows_by_asset_type(
 /// [`SkipReason::Ambiguous`], naming them and the `--only` that picks one, and
 /// a parent no enabled row is for is reported as what it is. Choosing by the
 /// table's order instead cost every log sink and every log bucket of a live
-/// organisation under `--all` — all 23 sinks became
+/// organization under `--all` — all 23 sinks became
 /// `google_logging_billing_account_sink` and were then dropped for want of a
 /// `billing_account` the asset never had.
 fn row_for_asset<'a>(
@@ -204,7 +204,7 @@ fn row_for_asset<'a>(
     // schema is the next place the provider states one: a type with a `project`
     // argument and no other parent is for a project, a type whose parent is
     // an argument of its own (`parent`, `folder`, `org_id`, `organization`) and
-    // that has no `project` is for an organisation or a folder. A hierarchical
+    // that has no `project` is for an organization or a folder. A hierarchical
     // `google_compute_firewall_policy` and a project's
     // `google_compute_network_firewall_policy` share one Cloud Asset type and
     // are told apart this way.
@@ -314,15 +314,15 @@ pub(crate) fn sweep_plan(config: Option<&ImportConfig>) -> Result<SweepPlan<'_>,
 /// answer needs and the gRPC client names no identity of its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SweepIdentity {
-    /// The IaC service account of the estate `--into` or `--as` names.
+    /// The estate account of the estate `--into` or `--as` names.
     Estate { account: String, estate: String },
-    /// No estate was named: the caller's own Application Default Credentials.
+    /// No estate was named: the caller's own sign-in.
     Caller,
     /// `--into` names a local-mode estate, whose identity IS the caller's
-    /// Application Default Credentials.
+    /// own sign-in.
     LocalMode { estate: String },
     /// `--into` names a cloud-mode estate and `--no-impersonate` keeps the run on
-    /// the caller's Application Default Credentials.
+    /// the caller's own sign-in.
     NoImpersonate { estate: String },
 }
 
@@ -340,19 +340,19 @@ impl std::fmt::Display for SweepIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SweepIdentity::Estate { account, estate } => {
-                write!(f, "{}, the IaC service account of {}", account, estate)
+                write!(f, "{}, the estate account of {}", account, estate)
             }
             SweepIdentity::Caller => {
-                f.write_str("the caller's own Application Default Credentials: no estate was named, so there is no service account to be")
+                f.write_str("the caller's own sign-in: no estate was named, so there is no estate account to be")
             }
             SweepIdentity::LocalMode { estate } => write!(
                 f,
-                "the caller's own Application Default Credentials: {} runs in local mode, which impersonates no service account",
+                "the caller's own sign-in: {} runs in local mode, which impersonates no estate account",
                 estate
             ),
             SweepIdentity::NoImpersonate { estate } => write!(
                 f,
-                "the caller's own Application Default Credentials: --no-impersonate keeps the run off the service account {} names",
+                "the caller's own sign-in: --no-impersonate keeps the run off the estate account {} names",
                 estate
             ),
         }
@@ -363,9 +363,9 @@ impl std::fmt::Display for SweepIdentity {
 /// requests ran as.
 ///
 /// Two causes reach the same place, and the message names the one the failure
-/// looks like. A refusal is about the CREDENTIAL: on an estate satz set up,
-/// `roles/cloudasset.viewer` is held by the IaC service account and by nobody
-/// else, so a sweep on the caller's own Application Default Credentials is
+/// looks like. A refusal is about the SIGN-IN: on an estate satz set up,
+/// `roles/cloudasset.viewer` is held by the estate account and by nobody
+/// else, so a sweep on the caller's own sign-in is
 /// denied the scope. Anything else is about the TABLE: an asset type ListAssets
 /// does not serve is named in its own message.
 fn fetch_refusal(errors: &[String], identity: &SweepIdentity) -> String {
@@ -376,24 +376,24 @@ fn fetch_refusal(errors: &[String], identity: &SweepIdentity) -> String {
              and correct the table with scripts/update_import_config.py --probe."
         }
         (true, SweepIdentity::Estate { .. }) => {
-            "Cloud Asset Inventory refused the scope, which is a question about the credential: \
+            "Cloud Asset Inventory refused the scope, which is a question about the sign-in: \
              that service account needs roles/cloudasset.viewer on the scope — on an estate satz set up it \
-             holds it on the organisation, so a scope outside that organisation is refused."
+             holds it on the organization, so a scope outside that organization is refused."
         }
         (true, SweepIdentity::Caller) => {
-            "Cloud Asset Inventory refused the scope, which is a question about the credential: \
-             roles/cloudasset.viewer on the organisation is the IaC service account's, not the caller's. \
+            "Cloud Asset Inventory refused the scope, which is a question about the sign-in: \
+             roles/cloudasset.viewer on the organization is the estate account's, not the caller's. \
              Name the estate whose account holds it — `--as <estate>` to read the scope as it, `--into <estate>` \
              to write the delta into it."
         }
         (true, SweepIdentity::LocalMode { .. }) => {
-            "Cloud Asset Inventory refused the scope, which is a question about the credential: a local-mode \
-             estate runs as whoever is logged in, so those credentials need roles/cloudasset.viewer on the scope."
+            "Cloud Asset Inventory refused the scope, which is a question about the sign-in: a local-mode \
+             estate runs as whoever is signed in, so that sign-in needs roles/cloudasset.viewer on the scope."
         }
         (true, SweepIdentity::NoImpersonate { .. }) => {
-            "Cloud Asset Inventory refused the scope, which is a question about the credential: drop \
-             --no-impersonate to read the scope as the estate's service account, which holds \
-             roles/cloudasset.viewer on an organisation satz set up."
+            "Cloud Asset Inventory refused the scope, which is a question about the sign-in: drop \
+             --no-impersonate to read the scope as the estate account, which holds \
+             roles/cloudasset.viewer on an organization satz set up."
         }
     };
     format!(
@@ -837,7 +837,7 @@ fn unserved_report(unserved: &[UnservedType]) -> Vec<String> {
     out
 }
 
-/// Whether the API refused the request for the credential or the scope rather
+/// Whether the API refused the request for the sign-in or the scope rather
 /// than for one of the asset types in it. Asking such a request again in halves
 /// changes nothing, so the run ends on it.
 fn is_denied(e: &str) -> bool {
@@ -2121,7 +2121,7 @@ impl Discoverer {
         println!("import: sweeping {} as {}", parent, identity);
         let client = crate::gcp::asset_service()
             .await
-            .map_err(|e| format!("the Cloud Asset Inventory client cannot be built with the credentials of {}: {}", identity, e))?;
+            .map_err(|e| format!("the Cloud Asset Inventory client cannot be built with the sign-in of {}: {}", identity, e))?;
         let quota_project = crate::org_policy::resolve_quota_project();
 
         let SweepPlan { type_map, askers, not_inventoried, not_importable } = sweep_plan(discovery_config.as_ref())?;
@@ -2162,7 +2162,7 @@ impl Discoverer {
                 let quota_project = quota_project.clone();
                 async move {
                     // Same quota project every other Cloud Asset sweep sends; without
-                    // it a credential with no default quota project is refused.
+                    // it a sign-in with no default quota project is refused.
                     let mut builder = client
                         .list_assets()
                         .set_parent(parent.to_string())
@@ -2207,7 +2207,7 @@ impl Discoverer {
 
                      // The statistics count what the construction below will
                      // build, so they read the same selector; a count taken
-                     // any other way is a number nothing has to honour.
+                     // any other way is a number nothing has to honor.
                      if let Ok((tf_type, _)) = row_for_asset(&asset, &scope, &rows, registry) {
                          *stats.entry(tf_type.to_string()).or_insert(0) += 1;
                      }
@@ -2980,7 +2980,7 @@ impl Discoverer {
         let mut stats: HashMap<String, usize> = HashMap::new();
         
         
-        // Count Org Level
+        // Count Organization Level
         if let Some(map) = &config.org_policy_policy { *stats.entry("google_org_policy_policy".to_string()).or_insert(0) += map.len(); }
         if let Some(map) = &config.organization_iam_member { *stats.entry("google_organization_iam_member".to_string()).or_insert(0) += map.len(); }
         for (k, v) in &config.extra {
@@ -3044,7 +3044,7 @@ impl Discoverer {
         }
     }
 
-    /// The estate's form of an org policy, and the required attributes neither
+    /// The estate's form of an organization policy, and the required attributes neither
     /// the asset data nor the estate supplies — none, for a policy whose only
     /// other required attribute is `parent`, which is the scope the sweep asked
     /// about and which the emitter writes from the enclosing node.
@@ -3344,7 +3344,7 @@ fn link_folders_to_parents(
 /// hold resources of the same name all the time (every project has a
 /// `_Default` log sink). Where one key is used by a type more than once, the
 /// copies inside a folder or project take that container's name as a prefix;
-/// the one at the organisation keeps the plain key. Without this the fold
+/// the one at the organization keeps the plain key. Without this the fold
 /// refuses the imported estate, naming both lines.
 ///
 /// A grant map is keyed by member, not by address, and is left alone: one
@@ -3535,7 +3535,7 @@ pub fn resolve_grant_collisions(config: &mut Config, mode: OnCollision) -> Resul
     }
     if mode == OnCollision::Error {
         let mut msg = format!(
-            "import: {} grant(s) held on more than one folder/project would emit one address each — the map form's label is member + role:\n",
+            "import: {} grant(s) held on more than one folder/project would write one address each — the map form's label is member + role:\n",
             colliding.len()
         );
         for ((tf_type, member, role), nodes) in &colliding {
@@ -3607,7 +3607,7 @@ pub fn resolve_grant_collisions(config: &mut Config, mode: OnCollision) -> Resul
 }
 
 /// The Terraform type of a parent a skipped resource named: `project <id>` and
-/// `projects/<id>` are projects, `folders/<n>` a folder. An organisation is never
+/// `projects/<id>` are projects, `folders/<n>` a folder. An organization is never
 /// filtered out, so it has none.
 fn parent_type_of(parent: &str) -> Option<&'static str> {
     if parent.starts_with("project ") || parent.starts_with("projects/") {
@@ -3773,7 +3773,7 @@ fn skipped_lines(skipped: &[Skipped], filtered_off: &HashSet<String>, verbose: b
 mod skipped_tests {
     use super::*;
 
-    /// Found importing four types from a live organisation: `--only
+    /// Found importing four types from a live organization: `--only
     /// google_monitoring_alert_policy,…` fetched them all and dropped every one, because
     /// `--only` had left out `google_project`, and the estate came out empty.
     #[test]
@@ -3943,8 +3943,8 @@ mod shape_tests {
 
 #[cfg(test)]
 mod collision_tests {
-    //! One principal granted one role on two folders: the map form's emitted
-    //! label hashes member + role and not the node, so the two edges would emit
+    //! One principal granted one role on two folders: the map form's written
+    //! label hashes member + role and not the node, so the two edges would write
     //! one address. The import says so, or numbers the second on request.
     use super::*;
 
@@ -4018,7 +4018,7 @@ mod collision_tests {
 
     #[test]
     fn a_folder_grant_and_a_project_grant_never_collide() {
-        // different types emit different addresses whatever the member and role
+        // different types write different addresses whatever the member and role
         let mut config = two_folders();
         let mut members = serde_yaml::Mapping::new();
         members.insert(
@@ -4045,7 +4045,7 @@ mod collision_tests {
 mod nesting_tests {
     //! Folder nesting used to order by id STRING LENGTH and re-insert a child at
     //! the top level when its parent was already nested — a folder three levels
-    //! deep was emitted under the organization, and `apply` would have moved it.
+    //! deep was written under the organization, and `apply` would have moved it.
     use super::*;
 
     fn folder(name: &str) -> Folder {
@@ -4085,7 +4085,7 @@ mod nesting_tests {
     #[test]
     fn a_nested_folder_drops_the_parent_it_was_discovered_with() {
         // the nesting is the parent; declared beside it the emitter refuses the
-        // folder, so a live import of nested folders would not compile
+        // folder, so a live import of nested folders would not transpile
         let parents: HashMap<String, String> =
             [("folders/2", "folders/1")].into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
         let names: HashMap<String, String> =
@@ -4101,7 +4101,7 @@ mod nesting_tests {
     }
 
     #[test]
-    fn a_project_under_the_organisation_is_top_level_without_folder_id() {
+    fn a_project_under_the_organization_is_top_level_without_folder_id() {
         // it used to take the "outside the sweep" arm and come out as
         // `folder_id = "organizations/…"`, which the provider refuses
         let pparents: HashMap<String, String> = [("projects/p1", "organizations/1")]
@@ -4340,7 +4340,7 @@ mod row_selection_tests {
     //! table: several types share one Cloud Asset type, and the table's order is
     //! a hash map's, so nothing but the asset itself may decide.
     //!
-    //! Measured on a live organisation: under `--all` every log sink — project,
+    //! Measured on a live organization: under `--all` every log sink — project,
     //! folder and organization alike — became `google_logging_billing_account_sink`
     //! and was then dropped for want of a `billing_account` the asset never had,
     //! and every log bucket went the same way. The default run imported the same
@@ -4541,9 +4541,9 @@ mod fetch_refusal_tests {
     //! A sweep that fails says which of the two causes it looks like, and names
     //! the identity it ran as.
     //!
-    //! Measured on a live organisation: `satz import organizations/<id>` was
+    //! Measured on a live organization: `satz import organizations/<id>` was
     //! refused by Cloud Asset Inventory because `roles/cloudasset.viewer` is the
-    //! IaC service account's, and the message sent the operator to the asset-type
+    //! estate account's, and the message sent the operator to the asset-type
     //! table instead.
     use super::*;
 
@@ -4554,7 +4554,7 @@ mod fetch_refusal_tests {
     fn a_refused_scope_names_the_credential_and_the_flags_that_change_it() {
         let msg = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::Caller);
         assert!(msg.contains("nothing written"), "{msg}");
-        assert!(msg.contains("Application Default Credentials: no estate was named"), "the identity it ran as is not named: {msg}");
+        assert!(msg.contains("own sign-in: no estate was named"), "the identity it ran as is not named: {msg}");
         assert!(msg.contains("roles/cloudasset.viewer"), "the role the estate's account holds is not named: {msg}");
         assert!(msg.contains("--as <estate>") && msg.contains("--into <estate>"), "neither flag is offered: {msg}");
         assert!(!msg.contains("--exclude"), "a denied scope is not an asset-type problem: {msg}");
@@ -4572,14 +4572,14 @@ mod fetch_refusal_tests {
 
     /// An estate that was named but whose run reads as the caller says why, and
     /// never that no estate was named: a local-mode estate runs as the caller's
-    /// credentials, and `--no-impersonate` keeps a cloud-mode one off its account.
+    /// own sign-in, and `--no-impersonate` keeps a cloud-mode one off its account.
     #[test]
     fn a_named_estate_that_reads_as_the_caller_says_why() {
         let local = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::LocalMode { estate: "yaml/acme.satz".into() });
         assert!(local.contains("yaml/acme.satz runs in local mode"), "{local}");
         assert!(!local.contains("no estate was named"), "{local}");
         let pinned = fetch_refusal(&[DENIED.to_string()], &SweepIdentity::NoImpersonate { estate: "yaml/acme.satz".into() });
-        assert!(pinned.contains("--no-impersonate keeps the run off the service account yaml/acme.satz names"), "{pinned}");
+        assert!(pinned.contains("--no-impersonate keeps the run off the estate account yaml/acme.satz names"), "{pinned}");
         assert!(pinned.contains("drop --no-impersonate"), "{pinned}");
         assert!(!pinned.contains("no estate was named"), "{pinned}");
     }
@@ -4590,7 +4590,7 @@ mod fetch_refusal_tests {
     fn a_type_list_assets_does_not_serve_still_points_at_the_table() {
         let msg = fetch_refusal(&["1 type(s) x/Y: INVALID_ARGUMENT: unsupported asset type".to_string()], &SweepIdentity::Caller);
         assert!(msg.contains("--exclude") && msg.contains("update_import_config.py --probe"), "{msg}");
-        assert!(msg.contains("Application Default Credentials"), "{msg}");
+        assert!(msg.contains("own sign-in"), "{msg}");
         assert!(!msg.contains("cloudasset.viewer"), "{msg}");
     }
 }
@@ -4600,7 +4600,7 @@ mod fetch_refusal_tests {
 mod sweep_batch_tests {
     //! A batch of asset types survives one type the API does not serve.
     //!
-    //! Measured on a live organisation: `apigee.googleapis.com/SecurityProfileV2`
+    //! Measured on a live organization: `apigee.googleapis.com/SecurityProfileV2`
     //! is in `presets/cai-asset-types.txt` and Cloud Asset Inventory no longer
     //! serves it, so ListAssets answered INVALID_ARGUMENT for the whole request
     //! of a hundred types and `satz import --all` wrote nothing at all.
@@ -4673,7 +4673,7 @@ mod sweep_batch_tests {
         assert_eq!(names, unique, "an asset was collected twice");
     }
 
-    /// A denied scope is the credential's, not a type's: it ends the run at the
+    /// A denied scope is the sign-in's, not a type's: it ends the run at the
     /// first answer instead of being asked again a hundred times and reported as
     /// a hundred unserved types.
     #[tokio::test]
@@ -4798,7 +4798,7 @@ mod scope_attribute_tests {
     //! An attribute whose value is where the resource STANDS is not a hole in
     //! the asset data.
     //!
-    //! Measured on a live organisation: every one of 25 org policies imported
+    //! Measured on a live organization: every one of 25 organization policies imported
     //! correctly and every one of them printed `WARNING: Required attribute
     //! 'parent' missing in asset data`, with the policy's JSON under it — the
     //! parent IS the scope the sweep asked about, and the emitter writes it from
@@ -4824,7 +4824,7 @@ mod scope_attribute_tests {
     #[test]
     fn a_policys_parent_is_the_scope_and_not_a_missing_attribute() {
         let reg = registry();
-        let (_, schema) = reg.find_resource("google_org_policy_policy").expect("org policy schema");
+        let (_, schema) = reg.find_resource("google_org_policy_policy").expect("organization policy schema");
         assert!(
             schema.block.attributes["parent"].required,
             "the provider requires `parent`; without that this test proves nothing"
@@ -4873,7 +4873,7 @@ mod scope_attribute_tests {
 mod nested_segment_ids {
     //! Which segment of an asset path is which attribute.
     //!
-    //! Measured on a live organisation: an imported
+    //! Measured on a live organization: an imported
     //! `google_iam_workload_identity_pool_provider` carried the PROVIDER's id as
     //! its `workload_identity_pool_id`, because a required `<x>_id` was read off
     //! the path's last segment. Re-applied, that estate points the provider at a
@@ -5012,7 +5012,7 @@ mod meaningful_empty_values {
     //! An empty string on a required attribute the provider schema names is a
     //! VALUE, and survives the import.
     //!
-    //! Measured on a live organisation: a Pub/Sub subscription set to never
+    //! Measured on a live organization: a Pub/Sub subscription set to never
     //! expire (`expiration_policy.ttl = ""`) came back without its
     //! `expiration_policy` — from the state and from the live sweep alike. That
     //! estate applied restores Google's 31-day default, after which the
@@ -5323,7 +5323,7 @@ mod api_value_translation {
 
 #[cfg(test)]
 mod live_import_fidelity {
-    //! A whole-organisation live import whose plan shows imports only: each case
+    //! A whole-organization live import whose plan shows imports only: each case
     //! here is a resource a live rehearsal imported so that `tofu plan` failed,
     //! replaced it, or updated it in place.
     use super::*;
@@ -5674,7 +5674,7 @@ mod live_import_fidelity {
         assert!(dropped.iter().any(|x| x.path == "architecture" && matches!(x.why, DropReason::NotReadBack(_))), "{dropped:?}");
     }
 
-    /// Also seen: a project's network firewall policy and an organisation's
+    /// Also seen: a project's network firewall policy and an organization's
     /// hierarchical one share a Cloud Asset type. The provider schema tells
     /// them apart — one has `project`, the other a `parent` of its own.
     #[test]

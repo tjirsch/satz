@@ -15,28 +15,28 @@ two of them are outside the notification config itself:
 2. SCC's notification service agent holding
 `roles/securitycenter.notificationServiceAgent` on THAT topic — without
 the grant the config is created and never publishes;
-3. the notification config, which names the organisation, the topic and the
+3. the notification config, which names the organization, the topic and the
 filter that decides which findings travel.
 
-The publisher is `service-org-<organisation id>@gcp-sa-scc-notification.iam.gserviceaccount.com`
+The publisher is `service-org-<organization id>@gcp-sa-scc-notification.iam.gserviceaccount.com`
 — the identity the config reports in its own `serviceAccount` field, not the
 `security-center-api` agent SCC activation creates. Security Command Center
 adds this binding itself when the config is created; the estate declares it
 anyway, because an access the estate depends on belongs in the estate, and
 `_iam_member` is not authoritative, so both writing it converge.
 
-A domain-restricted organisation permits it: `iam.managed.allowedPolicyMembers`
+A domain-restricted organization permits it: `iam.managed.allowedPolicyMembers`
 does not apply to Google-managed service agents (verified on a live
-organisation with that policy enforcing and this agent in no subject list).
+organization with that policy enforcing and this agent in no subject list).
 
 The **v2** resource is deliberate: the v1 notification API answers "This API
-is no longer available" on a live organisation.
+is no longer available" on a live organization.
 
 WHAT THIS DOES NOT COVER. Enabling the detectors, which has no provider
 resource at all: `presets/scc/scc-service-enablement.satz`, an action. Use
 both — findings nobody raises are findings nobody publishes. Who reads the
 topic is the customer's: `presets/scc/scc-findings-mail.satz` subscribes to it
-and mails an address for an organisation that has no SIEM, and
+and mails an address for an organization that has no SIEM, and
 `presets/scc/scc-export.satz` keeps the findings in BigQuery. Not covered at
 all: mute configs, custom modules and Security Posture.
 
@@ -83,7 +83,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `scc_notification_project` | Which project holds the topic the findings are published to? | recreate | high | — |
 | `scc_notification_filter` | Which findings travel — everything, or only what somebody would act on tonight? | edit | low | — |
 
-**scc_notification_project** — Whoever can read the topic reads every finding in the organisation, including the ones that name a misconfiguration nobody has fixed yet. The infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from whoever administers workloads. Moving it later is a new topic, and a subscriber has to be repointed.
+**scc_notification_project** — Whoever can read the topic reads every finding in the organization, including the ones that name a misconfiguration nobody has fixed yet. The infrastructure project keeps it with the other operational plumbing; a separate security project keeps it away from whoever administers workloads. Moving it later is a new topic, and a subscriber has to be repointed.
 
 
 **scc_notification_filter** — Written in Security Command Center's filter language, not Cloud Logging's. Too wide and the topic is noise nobody reads; too narrow and a real finding never leaves the console. The default is active findings at HIGH and CRITICAL, which is what a duty roster can answer. Widening it later is an edit, and the findings already raised are not re-sent.

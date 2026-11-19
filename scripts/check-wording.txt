@@ -1,0 +1,46 @@
+# One line per wording the glossary does not allow: an extended regex (case-insensitive),
+# a tab, and what to say. A line `allow<TAB><extended regex>` exempts a line of text that
+# matches it (case-sensitive). docs/glossary.md is the reference — its table "Words not
+# used" is what this file finds, as far as a pattern can; scripts/check-wording.sh reads
+# this file and says what it reads of each kind of source.
+hand-?over (folder|record|card)s?|handover|the hand-over	interface folder (or: the documents)
+(^|[^A-Za-z_])hand(s|ed|ing)? over([^A-Za-z_]|$)	copy (copy the interface folders to …)
+vendor(ed)? folder	interface folder
+team'?s estates?|team estates?|project estates?|a project on satz	workload estate
+team'?s (own )?repositor(y|ies)	workload repository
+central estates?|org estates?|organi[sz]ation estates?	the organization's estate
+onboard(s|ed|ing)? (a |an |the |that |one |every )?(project|team|workload|delegation)s?|(project|team|workload) onboarding|onboarding of (a |an |the |every )?(project|team|workload)s?	delegated access
+deploy project|infra project	infrastructure project (the delegation's infrastructure project)
+account groups?($|[^A-Za-z_ ]| [^A]| A[^d])|owner groups?|IaC (users )?groups?|deployers groups?	estate account user group
+(^|[^A-Za-z_.])compil(e|es|ed|ing|ation)([^A-Za-z_]|$)	transpile
+(^|[^A-Za-z_.])emit(s|ted|ting)?([^A-Za-z_]|$)	transpile (satz transpiles an estate; it writes a resource, a file, a line)
+generated code|generated HCL($|[^ ]| [^c])|OpenTofu code|Terraform code|root module	HCL code (also: generated HCL code, transpiled HCL code)
+(^|[^A-Za-z_.-])deploy(s|ed|ing)?([^A-Za-z_-]|$)|(^|[^A-Za-z_])roll(s|ed|ing)?[ -]?outs?([^A-Za-z_]|$)	apply
+(^|[^A-Za-z_])day[ -]?(0|zero)([^A-Za-z0-9_]|$)	bootstrap (the bootstrap; bootstrap the organization)
+request points?	list param
+rights check|permission check|(^|[^A-Za-z_-])pre-?flights?([^A-Za-z_.-]|$)	prerequisites
+(^|[^A-Za-z_-])(components?|building blocks?|service packs?)([^A-Za-z_]|$)	workload pack, or preset
+pack map	estate map
+sign-off (page|sheet)|decisions catalog	decisions sheet
+IaC[ -](service[ -])?accounts?|(^|[^A-Za-z_@-])deployers?([^A-Za-z_@.-]|$)	estate account
+logged in|(^|[^A-Za-z_])ADC([^A-Za-z_]|$)|Application Default Credentials	signed in
+(^|[^A-Za-z_])credentials?([^A-Za-z_]|$)	signed in (signed in as …), the sign-in
+(^|[^A-Za-z_])diagnostics?([^A-Za-z_]|$)	finding
+(^|[^A-Za-z_./<$=|{-])(the|an?|this|that|every|each|per|one|live|whole|new|same|its|their|your) orgs?([^A-Za-z_./>=-]|$)|(^|[^A-Za-z_./<$=|{-])org.?s? (polic(y|ies)|sinks?|admins?|grants?|scope|level|pass|firewall|structure|number|reference|id|IAM|setup)([^A-Za-z_]|$)|(^|[^A-Za-z_./<$=|{(-])org-(wide|level)|(^|[^A-Za-z_./<$=|{-])orgs([^A-Za-z_./>=-]|$)	organization
+projects? beside|projects may request	workload estate (a project is a cloud project)
+organis|isation|behaviour|colour|licence|catalogue|initialis|recognis|summaris|normalis|serialis|customis|minimis|authoris|realis(e|ed|es|ing)|prioritis|analys(e|ed|ing)([^A-Za-z]|$)|(^|[^A-Za-z_])centres?|favour|honour|defence|programme	American spelling
+allow	"google_saas_runtime_rollout(_kind)?": "Rollout
+allow	0009-iac-service-account-named-roles|0022-the-licence-is-apache-2-0
+allow	`deploys`|\["deploys"\]
+allow	"check_name":"No impersonation roles at org level"
+allow	"Compiling satz-core"
+allow	normalise_conditional_binding
+allow	reported\["adc"\]|"adc" in reported
+allow	\["diagnostics"\]
+allow	user-adc \| impersonated-sa
+allow	(error|warning) +emit|--silence emit
+allow	0043-an-organisation-level-type|0069-an-import-given-an-estate-sweeps-only-its-organisation
+allow	0071-each-expands-a-list-into-labelled-bodies-at-compile-time
+allow	Prowler-CLI via ADC, SCC-MCP-
+allow	IAM Credentials|Corporate login credentials
+allow	grep -qi 'credential|"credential", "token"

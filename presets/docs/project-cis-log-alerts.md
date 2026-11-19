@@ -15,7 +15,7 @@ project is chosen by each resource's own project field, not by where the `use`
 sits.
 
 ---------------------------------------------------------------------------
-ONE PROJECT PER USE — no parameterisation
+ONE PROJECT PER USE — no parameterization
 ---------------------------------------------------------------------------
 The labels below (cis_2_5_project_ownership, ...) are fixed, so using this
 pack twice collides on the fold. For a second project, fork it and prefix
@@ -36,7 +36,7 @@ creates N channels pointing at the same mailbox, N x 8 metrics and N x 8
 policies. Every new project needs it again; without it the project fails
 CIS 2.5-2.12.
 
-The cheaper topology: route all projects' logs through an org-level
+The cheaper topology: route all projects' logs through an organization-level
 aggregated sink into a LOGGING bucket (not GCS), then define the eight
 metrics bucket-scoped in that one project. Prowler credits every child
 project of such a sink as compliant

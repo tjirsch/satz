@@ -1,4 +1,4 @@
-//! The estate `satz init --customer-id` writes: the Day-0 skeleton `bootstrap`
+//! The estate `satz init --customer-id` writes: the scaffold `bootstrap`
 //! expects (its imports are addressed by label — `google_folder.infra_folder`,
 //! `google_project.infra`, `google_storage_bucket.state` — so those labels are
 //! a contract, not a style). Written in Satz: a new customer's first file must
@@ -28,8 +28,8 @@ pub struct TemplateArgs {
     /// both compose members as `user:{first_admin}@{customer_domain}`, so this must not
     /// carry the domain.
     pub first_admin: String,
-    /// The display name of the folder directly under the organisation that holds the
-    /// customer's and the projects' folders; `None` when they live at the organisation.
+    /// The display name of the folder directly under the organization that holds the
+    /// customer's and the projects' folders; `None` when they live at the organization.
     pub workload_folder_name: Option<String>,
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn estate_name(customer_id: &str) -> String {
 }
 
 /// Everything an estate carries besides its params: the backend, the providers,
-/// the IaC group and service account, the management folder, project and state
+/// the estate account user group and the estate account, the management folder, project and state
 /// bucket — the labels `bootstrap` imports by name. Shared by `init` and the
 /// interview skeleton, so the two ways to start end at the same file.
 pub(crate) const SCAFFOLD: &str = r#"terraform {
@@ -80,14 +80,14 @@ google_cloud_identity_group {
   svc_iac_users {
     id           = "{svc_iac_users_group}@{customer_domain}"
     display_name = "Service Account IaC Users"
-    description  = "Service account users allowed to impersonate the IaC service account"
+    description  = "Service account users allowed to impersonate the estate account"
     owner        = ["{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"]
     member       = ["user:{first_admin}@{customer_domain}"]
   }
 }
 
 google_organization_iam_member {
-  // The IaC service account: read on every project (import, adopt, reports), and
+  // The estate account: read on every project (import, adopt, reports), and
   // the roles this estate's resource types need — `satz update-prerequisites` adds the ones
   // further packs bring. Granted at the organization, so every folder and project
   // inherits them, hand-made ones included. The Groups Admin role in the Workspace
@@ -113,7 +113,7 @@ google_organization_iam_member {
   ]
 }
 
-// The users group may become the IaC service account — that account only, not
+// The estate account user group may act as the estate account — that account only, not
 // every service account in the organization.
 google_service_account_iam_member {
   service_account_id = "${{google_service_account.provisioner.name}}"
@@ -186,16 +186,16 @@ google_folder {
   }
 }
 
-// The folder, published to the projects beside the estate (interfaces/outgoing/). Its number
+// The folder, published to the workload estates beside the estate (interfaces/outgoing/). Its number
 // exists once the folder does, so the interfaces look it up.
 export "infra_folder" = "${{google_folder.infra_folder.name}}" description "The folder that holds the infrastructure project, folders/<number>"
 "#;
 
-/// The param that names the workload folder; empty is the organisation.
+/// The param that names the workload folder; empty is the organization.
 pub(crate) const WORKLOAD_FOLDER_NAME: &str = "workload_folder_name";
 
 /// The workload folder: where the customer's and the projects' folders live, published as the
-/// core export `workload_folder` — the organisation (`organizations/<id>`, a static value,
+/// core export `workload_folder` — the organization (`organizations/<id>`, a static value,
 /// nothing created) or one folder directly under it (`folders/<number>`, looked up). `init`
 /// writes it from its flag, a re-run with the flag through [`with_workload_folder`]. The
 /// folder's name is the param, so renaming it moves nothing here.
@@ -204,7 +204,7 @@ pub(crate) fn workload_folder_section(folder: bool) -> String {
     const DESCRIPTION: &str = "Where the customer's and the projects' folders live: organizations/<id>, or folders/<number> for a folder directly under it";
     if folder {
         format!(
-            r#"{HEAD}// One folder directly under the organisation, `workload_folder_name`. Google refuses a
+            r#"{HEAD}// One folder directly under the organization, `workload_folder_name`. Google refuses a
 // second folder of one name under one parent: a folder the customer already has is imported
 // (`satz adopt <estate> --execute --import`), and until it is, the apply stops on it.
 google_folder {{
@@ -220,7 +220,7 @@ export "workload_folder" = "${{{{google_folder.workload_folder.name}}}}" descrip
         )
     } else {
         format!(
-            r#"{HEAD}// The organisation itself. Published to the projects, whose folders take it as their parent.
+            r#"{HEAD}// The organization itself. Published to the projects, whose folders take it as their parent.
 export "workload_folder" = "organizations/{{customer_organization_id}}" description "{DESCRIPTION}"
 "#
         )
@@ -230,7 +230,7 @@ export "workload_folder" = "organizations/{{customer_organization_id}}" descript
 /// `src` with its workload folder in the form `folder` names: the section appended when the
 /// estate publishes none, `src` unchanged when it already publishes that form. The other
 /// form is refused, never rewritten: the projects' folders sit under the root, and turning a
-/// folder into the organisation, or the reverse, moves every one of them.
+/// folder into the organization, or the reverse, moves every one of them.
 pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, String> {
     let export = src
         .lines()
@@ -252,17 +252,17 @@ pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, St
     let (now, edit) = if is_folder {
         (
             "the folder `google_folder.workload_folder`",
-            "once the projects' folders have moved to the organisation, remove the folder and export \"organizations/{customer_organization_id}\"",
+            "once the projects' folders have moved to the organization, remove the folder and export \"organizations/{customer_organization_id}\"",
         )
     } else {
         (
-            "the organisation",
+            "the organization",
             "declare `google_folder { workload_folder { display_name = workload_folder_name } }` and export \"${{google_folder.workload_folder.name}}\"",
         )
     };
     Err(format!(
         "{}: line {} publishes the workload folder as {}. Changing it moves every folder the projects created under it, so satz does not rewrite it — edit that section by hand ({}), then run this again",
-        if folder { "a workload folder" } else { "the organisation as the workload folder" },
+        if folder { "a workload folder" } else { "the organization as the workload folder" },
         n + 1,
         now,
         edit
@@ -274,7 +274,7 @@ pub(crate) fn with_workload_folder(src: &str, folder: bool) -> Result<String, St
 /// estate, so the menu holds every line but those of the bare lists, which are the content
 /// of their type's map.
 ///
-/// The menu is one list in the graph's order, and the compile builds one param namespace
+/// The menu is one list in the graph's order, and the transpile builds one param namespace
 /// in file order: a pack that reads another pack's param has its line after that pack's,
 /// which is the order of the `offers` entries.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -310,19 +310,19 @@ fn pack_menu(graph: &PackGraph) -> String {
     pack_group(
         "// ---- the packs, each under the phase that comes before it ----------------------\n\
          //\n\
-         // Day 0 is the scaffold alone. Bootstrap it, apply it, then `satz migrate --mode cloud`\n\
-         // so the state and the identity move to the IaC service account — and only then does a\n\
+         // At the bootstrap the estate is the scaffold alone. Bootstrap it, apply it, then `satz migrate --mode cloud`\n\
+         // so the state and the identity move to the estate account — and only then does a\n\
          // pack go in, one at a time, each with its own plan and apply. That is why every line\n\
-         // below is commented out: an estate that used four packs on day 0 could not be applied\n\
+         // below is commented out: an estate that used four packs at the bootstrap could not be applied\n\
          // until somebody had answered for packs nobody had chosen yet.\n\
          //\n\
          // Uncomment a line to add its pack. `satz interview` does it when that pack's question\n\
          // is answered yes, and `satz merge-presets` adds the line for a pack the library has\n\
          // gained since — so the list here stays the library's, not one person's memory of it.\n\
-         // Whichever writes it, the compile reports a question THIS estate has answered true\n\
+         // Whichever writes it, the transpile reports a question THIS estate has answered true\n\
          // whose line is still commented, so the two never drift apart. A default in the map or\n\
          // in a pack is the library's proposal, not this estate's answer: `satz presets` lists it,\n\
-         // and the compile says nothing until the answer is bound here.\n",
+         // and the transpile says nothing until the answer is bound here.\n",
         graph,
         Place::Menu,
     )
@@ -443,7 +443,7 @@ pub(crate) fn insert_into_map(src: &str, at: &str, line: &str, phase: &str) -> O
 }
 
 /// `src` with the resource type map `at` names appended, holding `line` — for an estate
-/// that has no such map. A map is content the estate may always carry: an empty one emits
+/// that has no such map. A map is content the estate may always carry: an empty one writes
 /// nothing, and the line inside it is commented until the pack is switched on.
 pub(crate) fn append_map(src: &str, at: &str, line: &str, phase: &str) -> String {
     let mut out = src.to_string();
@@ -483,25 +483,25 @@ const COMMENTED_CORE: &str = "// use \"presets/estate-core.satz\"";
 
 /// Where `use "presets/estate-core.satz"` stands commented out in an estate `init` wrote:
 /// its line, 1-based, or `None` when the line is active or not there. `satz interview`
-/// offers to switch it on, because the pack declares the day-0 questions and the core
+/// offers to switch it on, because the pack declares the bootstrap questions and the core
 /// exports every interface carries.
 pub(crate) fn estate_core_commented(src: &str) -> Option<usize> {
     src.lines().position(|l| l.trim() == COMMENTED_CORE).map(|i| i + 1)
 }
 
-/// The estate an INTERVIEW starts from: the day-0 scaffold, and every pack commented out.
+/// The estate an INTERVIEW starts from: the bootstrap scaffold, and every pack commented out.
 ///
-/// The day-0 params and their questions come from `presets/estate-core.satz`, and that is
-/// the only `use` the file starts with — the day-0 questions, all of them about the estate
+/// The bootstrap params and their questions come from `presets/estate-core.satz`, and that is
+/// the only `use` the file starts with — the bootstrap questions, all of them about the estate
 /// itself. Every pack line is written COMMENTED, under the phase that has to be finished
 /// before it can go in, because the real order of work is: bootstrap, apply, move the
 /// state and the identity to the service account with `satz migrate`, and only then add
-/// packs one at a time. A day-0 file that already used four packs could not be applied
+/// packs one at a time. A scaffold-only file that already used four packs could not be applied
 /// until somebody answered for packs they had not chosen yet.
 ///
 /// Uncommenting a line is what adds its pack. `satz interview` does it when the pack's
 /// question is answered yes; an operator or an agent can do it by hand. Whichever writes
-/// it, the compile is what keeps them honest: a pack's question answered true while its
+/// it, the transpile is what keeps them honest: a pack's question answered true while its
 /// line is still commented is reported, never silently ignored.
 ///
 /// `presets/estate-map.satz` is the line to uncomment first — it is what declares the
@@ -521,7 +521,7 @@ estate {estate}
 params {{
 }}
 
-// The day-0 params and their questions. The only pack the file starts with: its
+// The bootstrap params and their questions. The only pack the file starts with: its
 // questions, every one of them about the estate itself.
 use "presets/estate-core.satz"
 
@@ -555,7 +555,7 @@ pub fn generate_template(args: &TemplateArgs, graph: Option<&PackGraph>, output_
         args.workload_folder_name.as_deref().unwrap_or("")
     );
     let content = format!(
-        r#"// Generated by `satz init` — the Day-0 estate `satz bootstrap` builds on.
+        r#"// Generated by `satz init` — the estate `satz bootstrap` starts from.
 // Every value below is a param: change it here, never in a pack.
 
 estate {estate}
@@ -582,16 +582,16 @@ params {{
   compliance_frameworks    = ["cis-gcp-5.0"]
   // The folder the audit archive's project is created in, read by
   // `presets/monitoring/organization-audit-logsink.satz`. Bound here because init writes
-  // the folder: unbound, that pack creates its project under the organisation.
+  // the folder: unbound, that pack creates its project under the organization.
   logsink_project_folder = "google_folder.infra_folder.name"
-  // Where the customer's and the projects' folders live: "" is the organisation, a name one
+  // Where the customer's and the projects' folders live: "" is the organization, a name one
   // folder directly under it. The section at the end of this file publishes it as
-  // `workload_folder`; the compile refuses a name and a section that disagree.
+  // `workload_folder`; the transpile refuses a name and a section that disagree.
 {workload_folder}}}
 
-// The day-0 params and their questions: init binds what it derived above, and this pack
+// The bootstrap params and their questions: init binds what it derived above, and this pack
 // declares the rest, each with its question. It stays commented until the library is
-// fetched, so the estate compiles with nothing downloaded — `satz init --interview`
+// fetched, so the estate transpiles with nothing downloaded — `satz init --interview`
 // fetches it, switches it on, and asks what init could not derive; `satz interview`
 // offers to switch it on once `satz get-presets` has fetched the library.
 // use "presets/estate-core.satz"
@@ -784,8 +784,8 @@ pub(crate) mod tests {
         for line in use_lines(&sk).filter(|l| !l.contains("estate-core")) {
             assert!(line.starts_with("// use "), "a pack line in a fresh skeleton must be commented: {}", line);
         }
-        // the day-0 pack is the exception: it is not in the menu at all
-        assert!(sk.contains("\nuse \"presets/estate-core.satz\"\n"), "estate-core is the one pack a day-0 file uses");
+        // the bootstrap pack is the exception: it is not in the menu at all
+        assert!(sk.contains("\nuse \"presets/estate-core.satz\"\n"), "estate-core is the one pack a scaffold-only file uses");
         assert_eq!(estate_core_commented(&sk), None, "the skeleton's core line is active");
     }
 
@@ -800,9 +800,9 @@ pub(crate) mod tests {
         })
     }
 
-    /// A param is known from the line that declares it on — the compile builds one namespace
+    /// A param is known from the line that declares it on — the transpile builds one namespace
     /// in file order — so a pack whose defaults or resources read another pack's param has to
-    /// come AFTER that pack's line. Written before it, the file compiles while the line is
+    /// come AFTER that pack's line. Written before it, the file transpiles while the line is
     /// commented and stops with `unknown param` the moment its question is answered yes.
     /// What a pack reads is derived from the packs (`doc_packs::needs`), so a new pack with
     /// that shape fails here, not in an interview.
@@ -845,7 +845,7 @@ pub(crate) mod tests {
                     reads.insert(gate.to_string());
                 }
                 for param in &reads {
-                    // the day-0 params come first in both files: estate-core, or init's own params
+                    // the bootstrap params come first in both files: estate-core, or init's own params
                     if declares("presets/estate-core.satz", param) {
                         continue;
                     }
@@ -869,7 +869,7 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             early.is_empty(),
-            "a pack line before the line of a pack whose param it reads — answering it yes stops the compile with `unknown param`. The order of the lines is the order of the `offers` entries, so the entry has to move:\n  {}",
+            "a pack line before the line of a pack whose param it reads — answering it yes stops the transpile with `unknown param`. The order of the lines is the order of the `offers` entries, so the entry has to move:\n  {}",
             early.join("\n  ")
         );
     }
@@ -903,7 +903,7 @@ pub(crate) mod tests {
             assert_eq!(with_workload_folder(&one, folder).unwrap(), one, "a second answer of the same form writes nothing");
             let err = with_workload_folder(&one, !folder).unwrap_err();
             assert!(err.contains("satz does not rewrite it"), "{}", err);
-            assert!(err.starts_with(if folder { "the organisation" } else { "a workload folder" }), "{}", err);
+            assert!(err.starts_with(if folder { "the organization" } else { "a workload folder" }), "{}", err);
             assert!(err.contains(&format!("line {}", one.lines().position(|l| l.starts_with("export \"workload_folder\"")).unwrap() + 1)), "{}", err);
         }
         assert!(

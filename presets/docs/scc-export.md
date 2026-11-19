@@ -9,7 +9,7 @@ Security Command Center findings, exported to BigQuery as they are raised —
 where findings are KEPT, as opposed to where they are sent.
 
 A notification tells somebody now; an export answers "what did this
-organisation look like in March". Both read the same findings, and an estate
+organization look like in March". Both read the same findings, and an estate
 usually wants both: `presets/scc/scc-notifications.satz` is the other half.
 
 FOUR RESOURCES, AND THE ORDER MATTERS. The dataset's project needs the BigQuery
@@ -20,7 +20,7 @@ BigQuery": the API is on, and BigQuery's own control plane is a minute behind.
 Run the apply again; it is the same estate either way.
 
 The exporting identity is
-`service-org-<organisation>@gcp-sa-scc-notification.iam.gserviceaccount.com` —
+`service-org-<organization>@gcp-sa-scc-notification.iam.gserviceaccount.com` —
 the same agent that publishes notifications, and the `principal` the export
 reports. Security Command Center grants it WRITER on the dataset itself when
 the export is created; the estate declares the grant anyway, because an access
@@ -84,7 +84,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 | `scc_export_project` | The project that holds the BigQuery dataset of findings | recreate | high | — |
 | `scc_export_location` | Where the findings dataset lives (a BigQuery location, e.g. europe-west3 or EU) | recreate | high | — |
 
-**scc_export_project** — Whoever can read the dataset can read every finding the organisation has ever raised, including the ones still unfixed. It is also where the BigQuery bill lands.
+**scc_export_project** — Whoever can read the dataset can read every finding the organization has ever raised, including the ones still unfixed. It is also where the BigQuery bill lands.
 
 
 **scc_export_location** — A dataset's location cannot change: moving it means a new dataset and copying the history. Findings describe the estate's weaknesses, so where they are stored is a data-residency decision. Where the CIS pack enforces allowed resource locations, a location outside that list is refused.

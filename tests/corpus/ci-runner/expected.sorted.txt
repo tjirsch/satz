@@ -59,8 +59,8 @@
   depends_on = [
   depends_on = [
   depends_on = [
-  description = "nightly: does the live organisation still match the estate"
-  description = "on every push: does the estate still compile"
+  description = "nightly: does the live organization still match the estate"
+  description = "on every push: does the estate still transpile"
   display_name = "satz continuous verification runner"
   http_target {
   location = "europe-west3"

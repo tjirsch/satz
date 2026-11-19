@@ -1,17 +1,17 @@
-//! Google Workspace admin roles — the one day-0 prerequisite IAM can neither grant nor
-//! test: the Groups Admin role the IaC service account needs before it manages the
+//! Google Workspace admin roles — the one bootstrap prerequisite IAM can neither grant
+//! nor test: the Groups Admin role the estate account needs before it manages the
 //! estate's Cloud Identity groups.
 //!
-//! The service account is asked first, as itself: a `groups.list` on the customer's
+//! The estate account is asked first, as itself: a `groups.list` on the customer's
 //! directory succeeds for an account that holds the role and is refused for one that
-//! does not. Only when it does not is the operator's login asked the same way, and only
+//! does not. Only when it does not is the operator's sign-in asked the same way, and only
 //! then does the Admin SDK Directory API run.
 //!
-//! Assigning it runs as the operator, never as the service account (which cannot give
-//! itself an admin role), and it only works when the operator's login carries the
-//! role-management scope. A user's Application Default Credentials carry the scopes
-//! chosen at `gcloud auth application-default login`, whatever a program requests, so
-//! the default login cannot make this call. Every failure is classified into the one
+//! Assigning it runs as the operator, never as the estate account (which cannot give
+//! itself an admin role), and it only works when the operator's sign-in carries the
+//! role-management scope. A user's sign-in carries the scopes chosen at
+//! `gcloud auth application-default login`, whatever a program requests, so the
+//! default sign-in cannot make this call. Every failure is classified into the one
 //! thing the operator does next.
 
 const ADMIN: &str = "https://admin.googleapis.com/admin/directory/v1";
@@ -185,9 +185,9 @@ async fn unique_id(http: &reqwest::Client, token: &str, quota_project: Option<&s
 /// Who holds Groups Admin, asked in the order that decides what happens next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Holder {
-    /// the IaC service account: nothing to do, and nothing to say about the login
+    /// the estate account: nothing to do, and nothing to say about the sign-in
     ServiceAccount,
-    /// the service account does not, the operator's login does: it may assign it
+    /// the estate account does not, the operator's sign-in does: it may assign it
     Login,
     /// neither: a Workspace admin assigns it to the service account
     Neither,
@@ -289,7 +289,7 @@ fn unanswered(refusal: &Refusal, quota_project: Option<&str>) -> String {
     }
 }
 
-/// Whether the IaC service account `sa_email` holds Groups Admin in the directory
+/// Whether the estate account `sa_email` holds Groups Admin in the directory
 /// `customer` (`C0…`), and — with `assign` — assign it when it does not. The service
 /// account is asked first, as itself; only when it does not hold the role is the
 /// operator's login asked, and only then does the Directory API run, as the operator

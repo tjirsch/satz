@@ -16,20 +16,20 @@ ships 35 `google_scc_*` / `google_securityposture_*` types and none of them
 is service enablement or tier activation — the `google_scc_management_*`
 ones are custom modules only. Turning Security Health Analytics, Event
 Threat Detection, Container Threat Detection and the rest on therefore
-cannot be written as a resource in any language satz compiles.
+cannot be written as a resource in any language satz transpiles.
 
 So the step stays a script, and this pack binds it: `satz run-actions
-<estate>.satz --execute` runs it with the organisation id the estate
+<estate>.satz --execute` runs it with the organization id the estate
 already declares, instead of a human retyping it into a shell.
 
 WHAT THIS DOES NOT COVER
 Everything DOWNSTREAM of enablement is codeable and belongs in a preset of
 its own: custom modules (SHA + ETD), sources and source IAM, notification
 configs (the **v2** resources — the v1 API answers "This API is no longer
-available" on a live org), BigQuery exports, mute configs, and
+available" on a live organization), BigQuery exports, mute configs, and
 `google_securityposture_posture(_deployment)`.
 
-TIER ACTIVATION IS NOT HERE EITHER. Enabling a service on an organisation
+TIER ACTIVATION IS NOT HERE EITHER. Enabling a service on an organization
 on the Standard tier fails at the API, and no flag
 changes that. Activate the tier first — a console action — then run this.
 
@@ -37,15 +37,15 @@ PREREQUISITES; the script reports each one that is missing:
 * `securitycenter.googleapis.com` and
 `securitycentermanagement.googleapis.com` enabled on the quota project.
 * The §1.1 domain-lock interaction: SCC's service agents are granted
-roles at the organisation, and a managed `iam.managed.allowedPolicyMembers`
+roles at the organization, and a managed `iam.managed.allowedPolicyMembers`
 policy refuses any agent the baseline does not list. In the console, a
 refused agent shows as SCC not staying activated and asking to be
 activated on every visit. The CIS pack's subject list carries the five
 agents SCC activation creates; enabling more services does not add to
-them (measured on a live organisation).
+them (measured on a live organization).
 
 NOTHING RUNS AT TRANSPILE TIME. An action is inert until `run-actions` is
-invoked, it emits nothing, and no claim can cover it — satz records that
+invoked, it writes nothing, and no claim can cover it — satz records that
 the step exists and never says what it did. `report-compliance` does not
 report whether SCC is on; Cloud Asset Inventory does not carry it.
 
@@ -76,7 +76,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 | asks about | prompt | reversal | blast | recommends |
 |---|---|---|---|---|
-| `scc_optional_services` | Two detectors are not switched on with the rest — which of them does this organisation want? (leave · none · all · the ones you name) | edit | low | — |
+| `scc_optional_services` | Two detectors are not switched on with the rest — which of them does this organization want? (leave · none · all · the ones you name) | edit | low | — |
 
 **scc_optional_services** — Web Security Scanner crawls the customer's own web applications with real requests against whatever is listening, and Artifact Analysis is billed per container image scanned. Everything else Security Command Center offers is switched on with the baseline. `leave`, the default, touches neither — which is how one somebody switched on in the console survives. `none` switches both off, `all` switches both on, and naming them makes the estate the source of truth: the ones named are on and the rest go off.
 

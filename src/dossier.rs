@@ -42,7 +42,7 @@ pub(crate) struct Item {
     pub paraphrase: String,
     pub resource: String,
     pub project: String,
-    /// The emitted Satz address that declares this resource, when matched.
+    /// The written Satz address that declares this resource, when matched.
     pub declared_address: Option<String>,
     /// `file:line` of the declaring block, when known.
     pub declared_at: Option<String>,
@@ -132,7 +132,7 @@ pub(crate) struct Inputs<'a> {
     /// Checkov findings with their Terraform address; they join Prowler rows
     /// on the DECLARED address (the only identity both sides share).
     pub checkov: &'a [crate::scan::Finding],
-    /// `file:line` per emitted address.
+    /// `file:line` per written address.
     pub declared_at: &'a BTreeMap<String, String>,
 }
 
@@ -284,7 +284,7 @@ fn describe_goal(goal: Option<&Goal>) -> (String, Vec<String>, Vec<String>, Vec<
             vec![],
             open_duties.clone(),
         ),
-        Some(Goal::ClaimBroken { missing, pack }) => (format!("CLAIM BROKEN: {} declares witnesses not emitted: {}", pack, missing.join(", ")), vec![], vec![], vec![]),
+        Some(Goal::ClaimBroken { missing, pack }) => (format!("CLAIM BROKEN: {} declares witnesses not written: {}", pack, missing.join(", ")), vec![], vec![], vec![]),
         Some(Goal::ClaimContradicted { inert, pack, coverage }) => (
             format!(
                 "CLAIM CONTRADICTED: {} {}: {}",

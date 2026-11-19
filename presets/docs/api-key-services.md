@@ -12,7 +12,7 @@ this is enforced, unless its API targets are already narrowed. Set the
 allowed services first, then enforce.
 
 The constraint is a MANAGED one carrying a parameter, not a bare boolean —
-verified against a live organisation's OrgPolicy `ListConstraints`. It blocks
+verified against a live organization's OrgPolicy `ListConstraints`. It blocks
 creating an API key bound to a service account unless the key's API targets
 are non-empty and limited to `allowed_api_key_services`, which is what the
 control asks for.
@@ -55,11 +55,11 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_api_key_services_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_api_key_services_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 

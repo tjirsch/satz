@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# fleet-v1.sh — does every estate still compile on the current binary, and does
-# it still emit the same infrastructure?
+# fleet-v1.sh — does every estate still transpile on the current binary, and does
+# it still write the same infrastructure?
 #
 #   scripts/fleet-v1.sh [options] [ESTATE...]
 #
-# V1 is the check that catches an estate which quietly stopped compiling, or one
-# whose emitted resource SET moved under a language tightening. Releases are
+# V1 is the check that catches an estate which quietly stopped transpiling, or one
+# whose written resource SET moved under a language tightening. Releases are
 # small and frequent; an estate is transpiled when someone happens to touch it.
 # Between those two facts is the gap this closes, so run it after every release.
 #
@@ -57,7 +57,7 @@ ESTATE   a path to an estate checkout (the directory holding config.toml), or a
                   A row without both is prose, and is skipped. Default:
                   $FLEET_ROSTER.
   --scratch DIR   where copies are transpiled (default: a temp dir, removed).
-                  Give one to keep the emitted trees for inspection.
+                  Give one to keep the written trees for inspection.
   --require-all   an estate with no usable checkout fails the run.
   -v, --verbose   print a unified diff of every changed block.
 
@@ -189,7 +189,7 @@ while IFS="$(printf '\t')" read -r code repo; do
   elif [ ! -f "$repo/config.toml" ]; then
     skip="no config.toml in $repo"
   elif [ ! -d "$repo/hcl" ]; then
-    skip="no emitted hcl/ to compare against"
+    skip="no written hcl/ to compare against"
   fi
   if [ -n "$skip" ]; then
     printf '   UNAVAILABLE — %s\n\n' "$skip"
@@ -220,7 +220,7 @@ while IFS="$(printf '\t')" read -r code repo; do
 
   # schemas/ is a derived cache and estate repos gitignore it, so a fresh clone
   # has none — and without it every resource type is "unknown" and the estate
-  # fails to compile. That is a fact about the CHECKOUT, not about the estate:
+  # fails to transpile. That is a fact about the CHECKOUT, not about the estate:
   # calling it a blocker would cry wolf on every clone, which is how a fleet
   # report trains its reader to skim.
   schema_dir="$(sed -n 's/^schema_dir *= *"\(.*\)"/\1/p' "$work/config.toml" | head -1)"
@@ -268,7 +268,7 @@ def address(header: str) -> str:
     return ".".join(toks)
 
 
-def normalise(body: str) -> str:
+def normalize(body: str) -> str:
     keep = []
     for raw in body.splitlines():
         line = raw.rstrip()
@@ -286,15 +286,15 @@ def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
     this script rather than of the estate.
 
     `only` restricts the walk to a set of file names. V1 asks whether satz still
-    emits what it emitted before, so the comparison set is satz's OWN output. An
+    writes what it written before, so the comparison set is satz's OWN output. An
     estate may keep a hand-written `.tf` beside it — a write-only secret cannot
     come from the estate, so its `variable` block has to live in `hcl/` — and
     comparing that against an emission which never contained it reports its
     blocks as deletions that no apply would ever make.
 
-    The walk is FLAT. satz emits into `hcl/` itself, never below it, so a
+    The walk is FLAT. satz writes into `hcl/` itself, never below it, so a
     subdirectory there belongs to the estate — a module, a landing zone kept
-    beside the emission — and its `main.tf` is not the emitted `main.tf` that
+    beside the emission — and its `main.tf` is not the written `main.tf` that
     happens to share the name. Walking it would compare a whole tree against a
     flat emission and report every block in it as removed.
     """
@@ -369,7 +369,7 @@ def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
                 if depth == 0:
                     before = text[:start].strip()
                     header = before.splitlines()[-1] if before else ""
-                    found.setdefault(address(header), []).append(normalise(text[start + 1 : i]))
+                    found.setdefault(address(header), []).append(normalize(text[start + 1 : i]))
                     text = text[i + 1 :]
                     n, i = len(text), -1
             i += 1
@@ -389,16 +389,16 @@ def blocks(root: pathlib.Path, only: set[str] | None = None) -> dict[str, str]:
 
 old_root, new_root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 verbose = sys.argv[3] == "1"
-emitted = {p.name for p in new_root.glob("*.tf")}
-old, new = blocks(old_root, emitted), blocks(new_root)
+written = {p.name for p in new_root.glob("*.tf")}
+old, new = blocks(old_root, written), blocks(new_root)
 
 # A `.tf` in hcl/ that this emission did not produce is either hand-written or a
-# file satz used to emit and no longer does. The two are not the same thing and
+# file satz used to write and no longer does. The two are not the same thing and
 # the script cannot tell them apart, so it names them and lets the reader decide
 # rather than silently ignoring them or calling them deletions. A subdirectory is
-# the same kind of thing one level up: satz never emits one, so whatever it holds
+# the same kind of thing one level up: satz never writes one, so whatever it holds
 # belongs to the estate and is named, not compared.
-foreign = sorted({p.name for p in old_root.glob("*.tf")} - emitted)
+foreign = sorted({p.name for p in old_root.glob("*.tf")} - written)
 subdirs = sorted(p.name + "/" for p in old_root.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 added = sorted(set(new) - set(old))
@@ -409,9 +409,9 @@ print(f"ADDR {len(added)} {len(removed)}")
 print(f"BODY {len(changed)}")
 print(f"FOREIGN {len(foreign) + len(subdirs)}")
 for f in foreign:
-    print(f"  ! {f} — in hcl/ but not emitted (hand-written, or no longer produced)")
+    print(f"  ! {f} — in hcl/ but not written (hand-written, or no longer produced)")
 for d in subdirs:
-    print(f"  ! {d} — a directory in hcl/; satz emits flat files, so its contents belong to the estate and were not compared")
+    print(f"  ! {d} — a directory in hcl/; satz writes flat files, so its contents belong to the estate and were not compared")
 for a in added:
     print(f"  + {a}")
 for a in removed:
@@ -420,7 +420,7 @@ for a in changed:
     print(f"  ~ {a}")
     if verbose:
         for line in difflib.unified_diff(
-            old[a].splitlines(), new[a].splitlines(), "emitted-before", "emitted-now", lineterm="", n=1
+            old[a].splitlines(), new[a].splitlines(), "written-before", "written-now", lineterm="", n=1
         ):
             print(f"      {line}")
 PY

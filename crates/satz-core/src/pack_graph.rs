@@ -49,7 +49,7 @@ impl PackGraph {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
-    /// `estate-core.satz`: the day-0 params, the one pack every estate starts with
+    /// `estate-core.satz`: the bootstrap params, the one pack every estate starts with
     Core,
     /// `estate-map.satz`: the choices and the `offers` entries
     Map,
@@ -105,7 +105,7 @@ pub struct Notice {
     pub param: String,
     pub text: String,
     pub run: String,
-    /// `error` · `warning` · `info`: what a command that writes to the organisation
+    /// `error` · `warning` · `info`: what a command that writes to the organization
     /// does while the notice is open — refuse, print and go on, nothing
     pub severity: String,
 }
@@ -119,7 +119,7 @@ pub enum EdgeKind {
     /// `requires` edges from one node to packs that exclude one another are one
     /// requirement: any one of them meets it.
     Requires,
-    /// `from` reads a param `to` declares (`params` names them); the compile stops
+    /// `from` reads a param `to` declares (`params` names them); the transpile stops
     /// with `unknown param` while `to` is off, unless the estate binds the reading
     /// param itself. A param several packs declare gives one edge to each; packs
     /// that exclude one another are alternatives.

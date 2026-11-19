@@ -9,7 +9,7 @@ CIS 5.0 §6.6 / §6.9 — Cloud SQL instances sign database users in through IAM
 and cannot be deleted while deletion protection is on. Both are new in 5.0.
 
 Two custom constraints on `sqladmin.googleapis.com/Instance`, each enforced by a
-policy on the organisation. A custom constraint is checked when an instance is
+policy on the organization. A custom constraint is checked when an instance is
 created or updated, never against one that exists: an existing instance that
 breaks either is refused its next update, until that update fixes it.
 
@@ -17,7 +17,7 @@ IAM database authentication is a database flag — `cloudsql.iam_authentication`
 on PostgreSQL, `cloudsql_iam_authentication` on MySQL. SQL Server has no such
 flag, and the IAM constraint lets SQL Server instances through.
 
-Opt-in because every Cloud SQL create and update in the organisation must then
+Opt-in because every Cloud SQL create and update in the organization must then
 carry both settings; tooling that creates instances without them fails.
 Prowler has no check for either control, so report-compliance verifies them
 through the two policies only.
@@ -44,11 +44,11 @@ _None — the pack takes everything from the estate's params._
 
 ## Notices
 
-What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organisation refuses while one whose severity is `error` is open.
+What to run once this pack is switched on. satz shows each notice when the pack goes on and until the estate binds its param `true`; every command that writes to the organization refuses while one whose severity is `error` is open.
 
 | param | run | severity | what and why |
 |---|---|---|---|
-| `cis_cloud_sql_iam_and_deletion_protection_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organisation, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
+| `cis_cloud_sql_iam_and_deletion_protection_adopted` | `satz adopt <estate> --execute --import` | error | Google may already hold a policy this pack declares on the organization, set by an administrator or by default, and an apply that creates a policy that exists stops on 409 POLICY_ALREADY_EXISTS. Run satz adopt once the pack is on, so every live policy is in the state before the apply; with --import it binds this param itself when it has run. |
 
 ## Contributes
 

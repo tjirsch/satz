@@ -59,7 +59,7 @@ default-region = "europe-west3"
   provider = google.google
   provider = google.google
   }
-# The values this estate reads from the central estate `corpus_central` (interface.satz), as `local.interface.<export>`.
+# The values this estate reads from the organization's estate `corpus_central` (interface.satz), as `local.interface.<export>`.
 # `data` blocks below and reaches `local.interface` alone.
 # `local.interface_static` holds the ones satz knows, which the providers read: a provider is
 # configured before any data source is read. A value only the cloud knows is read back by the

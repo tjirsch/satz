@@ -309,7 +309,7 @@ const NEVER_A_TYPE_KEY: &[&str] = &[
 ///
 /// A discovered document names its containers the way the `Config` shape spells
 /// them, without the prefix; Satz names every Terraform type in full, so a
-/// verbatim key would not compile. Operates on the printer's own output, whose
+/// verbatim key would not transpile. Operates on the printer's own output, whose
 /// formatting is known: a block opener is `<indent><ident> {` on its own line.
 /// `is_type` answers from the provider schemas — a key is only rewritten when
 /// the prefixed form is a real type and the bare form is not, so `labels { … }`
@@ -366,7 +366,7 @@ pub fn interpolated(template: &str, params: &[&str]) -> serde_yaml::Value {
 }
 
 /// The Satz param name for an HCL identifier: `-` and `.` become `_`, the same
-/// normalisation every other printed reference gets.
+/// normalization every other printed reference gets.
 pub fn param_name(name: &str) -> String {
     ident_from_name(name)
 }
@@ -591,7 +591,7 @@ mod tests {
 #[cfg(test)]
 mod type_key_tests {
     //! A discovered document names its containers without the provider prefix.
-    //! Satz names every type in full, so the printer's output is normalised
+    //! Satz names every type in full, so the printer's output is normalized
     //! against the schemas before it is written.
     use super::*;
 

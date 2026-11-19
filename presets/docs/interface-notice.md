@@ -13,8 +13,8 @@ interface_notice`, with one option per delivery form; Pub/Sub is the one satz ha
 and this pack is it. A second form — a webhook, a push of the interface to a
 customer repository — is a second option and a pack of its own beside this one.
 
-The estate's exports (`export` statements, interfaces/outgoing/) are what the projects beside
-it read, in their own state and their own pipelines. This pack puts a notice behind
+The estate's exports (`export` statements, interfaces/outgoing/) are what the workload estates
+beside it read, in their own state and their own pipelines. This pack puts a notice behind
 them, in four pieces in the infrastructure project:
 
 1. a bucket that holds one object, `interface.json` — not the state bucket;
@@ -25,7 +25,7 @@ publishes one message to the topic.
 
 The object is the estate's exported values as JSON (`interface`, `estate`, `core`, and
 `interfaces` with one map per interface),
-written from the root module's `local.satz_interface`, which satz emits beside the
+written from the HCL code's `local.satz_interface`, which satz writes beside the
 outputs. Terraform rewrites the object only when its content changes, so an apply that
 changes an exported value publishes one message and an apply that changes nothing
 publishes none. The message names the object; the object holds the new values.
@@ -102,7 +102,7 @@ What to ask before this pack is configured, and what changing the answer costs.
 
 ## Exports
 
-Outputs of the root module and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
+Outputs of the HCL code and values of the interfaces under `interfaces/outgoing/` in every estate that uses this pack: a `core` export is carried by every interface, another one by its own interface and every interface that uses it. An interface a pack declares is common: every project's folder carries it.
 
 | interface | output | value | description |
 |---|---|---|---|

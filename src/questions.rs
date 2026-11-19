@@ -55,7 +55,7 @@ pub(crate) struct QuestionRow {
     pub default: Option<serde_yaml::Value>,
     /// Unanswered AND no usable default: this cannot be settled by accepting
     /// anything; a value has to be typed before the estate may touch an
-    /// organisation.
+    /// organization.
     pub blocking: bool,
     /// The shape the pack declares for the param — `string`, `number`, `bool`, `list`
     /// or `map` — and so the shape an answer must have. A param declared `[]` has no
@@ -117,7 +117,7 @@ pub(crate) struct QuestionsSummary {
 }
 
 /// How the schema-free walks find a `use`d file: beside the estate, then in the include
-/// dirs — the compile's order.
+/// dirs — the transpile's order.
 pub(crate) fn loader(input: &Path, runtime: &ToolConfig) -> impl Fn(&str) -> Result<String, String> {
     let base = input.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let include_dirs = runtime.include_dirs.clone();
@@ -270,7 +270,7 @@ pub(crate) fn questions_report(
 }
 
 /// The gate. An estate may be transpiled and revised in as many passes as it
-/// takes; it may not touch an organisation while a question is open. Names the
+/// takes; it may not touch an organization while a question is open. Names the
 /// open ones — the ones that need a typed value first — and both ways to answer.
 pub(crate) fn require_complete(input: &Path, runtime: &ToolConfig, action: &str) -> Result<(), String> {
     let r = questions_report(input, runtime).map_err(|e| e.to_string())?;
@@ -285,7 +285,7 @@ pub(crate) fn require_complete(input: &Path, runtime: &ToolConfig, action: &str)
         .collect();
     Err(format!(
         "{} refused: {} question(s) unanswered — {}. Every question must be answered before the \
-         estate touches an organisation. `satz questions {} --unanswered --format text --out -` \
+         estate touches an organization. `satz questions {} --unanswered --format text --out -` \
          lists them with their \
          defaults; write the answer (or the default) into the estate's params.",
         action,
@@ -407,9 +407,9 @@ pub(crate) fn rename_to(estate: &Path, r: &QuestionsReport) -> Option<String> {
 /// Whether the estate's own binding of a param is no answer at all. Two shapes are:
 ///
 /// - The pack declares the param `""` because no default is possible — the identity
-///   params in `presets/estate-core.satz`, organisation, directory customer, domain,
+///   params in `presets/estate-core.satz`, organization, directory customer, domain,
 ///   billing account. `satz init` writes `""` for the ones it could not derive, and
-///   `bootstrap`'s day-0 gate refuses that value by name, so the question has to
+///   `bootstrap`'s gate refuses that value by name, so the question has to
 ///   agree with the gate or the interview asks nothing while bootstrap refuses.
 /// - The pack DERIVES the param from others — `infra_project_name =
 ///   "{customer_shortname}-infra-001"`. init writes `""` when the shortname is not
@@ -622,7 +622,7 @@ pub(crate) fn cost_in_words(q: &QuestionRow) -> String {
         _ => "an edit to the estate",
     };
     let who = match q.blast {
-        "high" => "and the running organisation feels it",
+        "high" => "and the running organization feels it",
         "low" => "with little effect on what is running",
         _ => "and nothing running notices",
     };
@@ -633,7 +633,7 @@ pub(crate) fn cost_in_words(q: &QuestionRow) -> String {
 /// customer keeps afterwards. Grouped by pack, each pack introduced by its own
 /// description, each question with the answer the estate carries or the default it would
 /// accept, WHY it is asked at all, and what changing it later costs. Markdown, because it
-/// is handed over.
+/// is given to the customer.
 pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
     let mut out = format!(
         "# Decisions — {}\n\nEvery decision this estate rests on: what was asked, what it is set to, \
@@ -727,7 +727,7 @@ mod render_tests {
 
     /// The rule that made `init --interview` ask nothing: an estate that binds an
     /// identity param to `""` has restated the pack's own "no default possible", and
-    /// the question is still open — the day-0 gate refuses the same value by name.
+    /// the question is still open — the bootstrap's gate refuses the same value by name.
     /// A param whose pack default is NOT empty is different: `""` there is a choice.
     /// Found on a fresh estate: the shortname was answered in the interview, after
     /// init had written `""` for the project and bucket derived from it, and neither
@@ -801,7 +801,7 @@ mod render_tests {
                 default: Some(serde_yaml::Value::String("europe-west3".into())),
                 blocking: false,
                 pack: "estate_core".into(),
-                pack_description: "day 0".into(),
+                pack_description: "the bootstrap".into(),
                 ..Default::default()
             },
             QuestionRow {
