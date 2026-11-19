@@ -1364,11 +1364,13 @@ lookup. Everything else the account holds, it holds on a target.
 | `billing_account` | the billing account a project the team creates is linked to, and a budget is created on |
 | `delegated_billing_roles`, `delegated_apis` | what was delegated to the account beside its targets: its roles on the billing account, and the APIs of its infrastructure project |
 
-`satz init --from <hand-over folder>…` writes the team's estate from the delegation's
-folder and those of its targets: it copies each into `interfaces/incoming/` of the current
-directory unless it stands there already, and the estate it writes runs as the delegation's
-account and keeps its state under `<estate name>/state` in the delegation's bucket.
-Exactly one of the folders is a delegation's own.
+`satz init --from <interface folder>…` writes the workload estate from the delegation's
+interface folder and those of its targets, any number of them: it copies each into
+`interfaces/incoming/` of the current directory unless it stands there already, and the
+estate it writes runs as the delegation's account and keeps its state under `<estate
+name>/state` in the delegation's bucket. Exactly one of the folders is a delegation's own.
+The estate reads a value by the name of its interface folder:
+`${{interface.delegation-shop.billing_account}}`, `${{interface.shop.delegated_folder}}`.
 
 The README satz writes into each of these folders opens with what it hands over — the
 account, who may act as it, what it holds — and the receiving team's next steps, so the
@@ -1571,7 +1573,9 @@ the delegation's `apis`.
 The account, the state bucket and the APIs of the project the calls are billed to are in
 the delegation's interface, `delegation-<name>`; `satz init --from
 interfaces/outgoing/delegation-shop interfaces/outgoing/shop-backend` takes both and writes
-the team's estate. A project's name is an interface's name: no folder of
+the workload estate, which names the project `${{interface.shop-backend.project_id}}`. An
+account with several projects passes one interface folder per project, and each is read by
+its own name. A project's name is an interface's name: no folder of
 `delegated-folders.satz` carries the same. The organisation's estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — since an interface declared in two files is one.

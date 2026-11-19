@@ -92,7 +92,7 @@ kinds! {
     Consumer => "consumer",
     /// a project estate's compile: a resource that uses a central estate's interface where
     /// the interface file does not let it — the rules of `consumer`, on the project's own
-    /// resources — or a `${{interface.<export>}}` no used interface file carries
+    /// resources — or a `${{interface.<folder>.<value>}}` no used interface folder carries
     InterfaceUse => "interface-use",
     /// `review-preset`: a rule the preset library holds, judged on one pack
     Pack => "pack",

@@ -165,19 +165,22 @@ params {
 }
 ```
 
-**One account working in several projects.** One more entry of `delegated_projects` per
-project, each naming the same delegation — here `shop`, the delegation of the first case:
+**One account working in several projects.** One entry of `delegated_projects` per
+project, each naming the same delegation — here the delegation `data` with the projects
+`data-lake` and `data-mart`:
 
 ```bash
-satz add-entry C0example.satz delegated_projects name=shop-backend delegation=shop
-satz add-entry C0example.satz delegated_projects name=shop-frontend delegation=shop
+satz add-entry C0example.satz delegations name=data owner_group=data-owners@example.com
+satz add-entry C0example.satz delegated_projects name=data-lake delegation=data
+satz add-entry C0example.satz delegated_projects name=data-mart delegation=data
 ```
 
 ```
 params {
+  delegations        = [{ name = "data" owner_group = "data-owners@example.com" }]
   delegated_projects = [
-    { name = "shop-backend" delegation = "shop" },
-    { name = "shop-frontend" delegation = "shop" },
+    { name = "data-lake" delegation = "data" },
+    { name = "data-mart" delegation = "data" },
   ]
 }
 ```
@@ -265,7 +268,7 @@ Every transpile writes `interfaces/outgoing/` beside the estate. Hand over these
 |---|---|
 | a team with folders | `interfaces/outgoing/delegation-shop/` and one per folder, `interfaces/outgoing/shop/` |
 | a team with one project | `interfaces/outgoing/delegation-payments/` and `interfaces/outgoing/payments/` |
-| one account working in several projects | `interfaces/outgoing/delegation-shop/` and one per project, `interfaces/outgoing/shop-backend/` and `interfaces/outgoing/shop-frontend/` |
+| one account working in several projects | `interfaces/outgoing/delegation-data/` and one per project, `interfaces/outgoing/data-lake/` and `interfaces/outgoing/data-mart/` |
 
 `delegation-<name>/` is the delegation's own folder: the account, the infrastructure
 project, the state bucket, the group. Each other folder is one target. A copy is enough;
@@ -299,10 +302,11 @@ In the team's own repository, which is empty, with the folders of step 5 within 
 satz init --from <the organisation>/interfaces/outgoing/delegation-shop <the organisation>/interfaces/outgoing/shop
 ```
 
-`init --from` takes the delegation's own folder and the folder of one target. Exactly one
-of the folders is a delegation's own: an estate runs as one account. It copies each
-folder into `interfaces/incoming/` unless it stands there already, fetches the provider
-schemas, and writes the team's estate under the delegation's name:
+`init --from` takes the delegation's own interface folder and the interface folder of
+every place the estate works in. Exactly one of the folders is a delegation's own: an
+estate runs as one account. It copies each folder into `interfaces/incoming/` unless it
+stands there already, fetches the provider schemas, and writes the workload estate under
+the delegation's name:
 
 ```text
 shop/
@@ -336,21 +340,31 @@ use "interfaces/incoming/shop/shop/satz/interface.satz"
 ```
 
 Below these it writes the `gcs` backend on the bucket and the providers on the
-infrastructure project. The team adds what it builds:
+infrastructure project, and at the end, as a comment, the read for each place: `folder_id
+= "${{interface.shop.delegated_folder}}"`. The team adds what it builds:
 
 ```
 google_project {
   shop_dev {
     name            = "shop-dev"
     project_id      = "${{interface.customer_shortname}}-shop-dev"
-    folder_id       = "${{interface.delegated_folder}}"
-    billing_account = "${{interface.billing_account}}"
+    folder_id       = "${{interface.shop.delegated_folder}}"
+    billing_account = "${{interface.delegation-shop.billing_account}}"
     project_service = ["cloudresourcemanager.googleapis.com"]
   }
 }
 ```
 
-Everything a team with a folder creates stands under `${{interface.delegated_folder}}`.
+**A value is read by the name of its interface folder**,
+`${{interface.<folder>.<value>}}`: the delegated folder from `shop`, the billing account
+from `delegation-shop`. The name is the folder's name under `interfaces/incoming/`.
+`customer_shortname` is written without a folder's name because the organisation says it
+once: every interface folder carries it with the same content, and such a value — the
+short name, the domain, the default region — is read as `${{interface.<value>}}`
+([language §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
+
+Everything a team with a folder creates stands under
+`${{interface.shop.delegated_folder}}`.
 
 **A team with one project** names its two folders the same way:
 
@@ -358,21 +372,56 @@ Everything a team with a folder creates stands under `${{interface.delegated_fol
 satz init --from <the organisation>/interfaces/outgoing/delegation-payments <the organisation>/interfaces/outgoing/payments
 ```
 
-Its resources name the project as `project = "${{interface.project_id}}"`, and an API a
-resource needs inside the project is a `google_project_service` there.
+Its resources name the project as `project = "${{interface.payments.project_id}}"`, and
+an API a resource needs inside the project is a `google_project_service` there.
 
-**One estate works in one target.** An account that works in several projects, or in
-several folders, has one estate per target, and `--name` names each. They can share a
-repository: a folder that stands in `interfaces/incoming/` already is left as it is.
+**One account, several places.** One estate works in any number of delegated folders and
+projects: `init --from` takes the delegation's own interface folder and one per place.
+The delegation `data` with the projects `data-lake` and `data-mart`:
 
 ```bash
-satz init --from <the organisation>/interfaces/outgoing/delegation-shop <the organisation>/interfaces/outgoing/shop-backend --name shop-backend
-satz init --from <the organisation>/interfaces/outgoing/delegation-shop <the organisation>/interfaces/outgoing/shop-frontend --name shop-frontend
+satz init --from <the organisation>/interfaces/outgoing/delegation-data <the organisation>/interfaces/outgoing/data-lake <the organisation>/interfaces/outgoing/data-mart
 ```
 
-These write `satz/shop_backend.satz` and `satz/shop_frontend.satz`. Both run as
-`svc-deploy-shop`, and each keeps its own state in the delegation's bucket, under
-`shop_backend/state` and `shop_frontend/state`.
+This writes `satz/data.satz` with three `use` lines. It runs as `svc-deploy-data` and
+keeps its state under `data/state` in the delegation's bucket. Its last lines are the
+read for each place:
+
+```
+use "interfaces/incoming/delegation-data/delegation-data/satz/interface.satz"
+use "interfaces/incoming/data-lake/data-lake/satz/interface.satz"
+use "interfaces/incoming/data-mart/data-mart/satz/interface.satz"
+
+// The estate's own resources. A value is read by the name of its interface folder:
+//   in the project `data-lake`:    project   = "${{interface.data-lake.project_id}}"
+//   in the project `data-mart`:    project   = "${{interface.data-mart.project_id}}"
+```
+
+Each resource says which project it stands in by the folder's name:
+
+```
+google_storage_bucket {
+  raw {
+    project  = "${{interface.data-lake.project_id}}"
+    name     = "${{interface.customer_shortname}}-data-lake-raw"
+    location = "${{interface.default_region}}"
+  }
+}
+
+google_project_service "mart_bigquery" {
+  project = "${{interface.data-mart.project_id}}"
+  service = "bigquery.googleapis.com"
+}
+```
+
+Both folders carry a `project_id`, and the two differ, so `${{interface.project_id}}` is
+refused here: the message names `data-lake` and `data-mart` and the two reads to choose
+from. `default_region` is the same in all three folders and keeps its short form.
+
+Exactly one of the folders is a delegation's own. Work for a second account is a second
+estate, written by its own `init --from`; `--name` names an estate, which otherwise takes
+the delegation's name, and two estates of one delegation keep their states apart in the
+delegation's bucket, each under its own name.
 
 ## 7. Workload team: compile
 
@@ -396,12 +445,18 @@ holds that project's access control:
 
 ```
 google_project_iam_member {
-  project = "${{interface.project_id}}"
+  project = "${{interface.payments.project_id}}"
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
     "roles/storage.admin",
   ]
 }
 ```
+
+**An estate with several places.** The compile does not judge which place a resource
+stands in. A role counts as delegated when it was delegated on every place of its kind —
+on every delegated project the estate uses, on every delegated folder — and budgets count
+as delegated when every interface folder that speaks of budgets says yes. A role the
+account holds on one project and lacks on another is reported.
 
 `satz update-prerequisites shop.satz --report-only` prints the same as a list, with what
 was delegated. Nothing at the organisation is ever proposed, and `satz update-prerequisites`

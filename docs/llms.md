@@ -325,8 +325,15 @@ An estate publishes values with `export "<name>" = <value> [attach ["<type>", �
 [under <type>.<label>]` publishes a map keyed by label; `private = true` in a body or
 `private <type>.<label>` keeps a resource out. `satz transpile` writes `interfaces/outgoing/` beside
 `hcl/`: `common/` and one folder per project, each interface as an HCL module and as
-`satz/interface.satz`, which a project estate `use`s and reads as `"${{interface.<name>}}"`
-— in a resource body only; inside `hcl { }` it is refused (kind `interface-use`).
+`satz/interface.satz`, which another estate `use`s. It reads a value by the name of its
+interface folder, `"${{interface.<folder>.<value>}}"` — `<folder>` is the interface's name,
+the folder's name under `interfaces/incoming/`: `"${{interface.payments.project_id}}"`.
+Write this form always. `"${{interface.<value>}}"` reads only a value every used folder
+carries with the same content (`default_region`, `customer_domain`); two folders that
+carry it differently refuse it. One estate uses one delegation's folder and any number of
+delegated folders and projects. A read stands in a resource body, in `terraform` and
+`providers`, or as the value of an `export`; inside `hcl { }` it is refused (kind
+`interface-use`).
 `CHANGES.md` beside an interface's README says what the last transpile changed for it.
 
 `each <list param> by <field> { … }` inside a resource type map writes one labelled body per
@@ -457,7 +464,9 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | the account … was not delegated roles …, kind `prerequisites` | a team's estate (it reads the interface of a delegation, `delegation-<name>`) needs a role its account was not given; nothing in this estate can grant it — ask for the role in `delegated_folders_roles` of `presets/delegated-folders.satz`, or in `billing_roles` of the delegation's entry in `delegations` of `presets/delegation.satz`, in the organisation's estate. There is no `fix` |
 | … API(s) … not enabled on …, the workload's infrastructure project …, kind `prerequisites` | a team's estate needs an API on the project its calls are billed to, the delegation's infrastructure project, which the organisation's estate declares; ask for it in `apis` of the delegation's entry in `delegations`. There is no `fix`, and `apply` refuses until it is delegated |
 | `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-preset` that switches the needed one on |
-| `"${{interface.x}}"` names no export, kind `interface-use` | the interface file the estate `use`s has no export `x`; the message lists what it has |
+| `"${{interface.x}}"`: no used interface folder has a value `x`, kind `interface-use` | no interface file the estate `use`s has a value `x`; the message lists what they have |
+| `"${{interface.x}}"`: the interface folders `a`, `b` each have a `x` and they differ, kind `interface-use` | two used folders carry the value with different content; name the folder, `"${{interface.a.x}}"` or `"${{interface.b.x}}"` — the message writes both |
+| `"${{interface.f.x}}"`: no used interface folder is named `f`, or the folder `f` has no value `x`, kind `interface-use` | the folder's name is the interface's name, the folder under `interfaces/incoming/`; the message lists the folders the estate uses, or the values the folder has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
 | `request <param>: entry … has <field>, which is no field of this request` | a request file carries a field the request point does not declare; the message lists its fields |
 | `request <param>: entry … has <field> = "…", which the request point's pattern … does not match` | the field's value is not of the form the request point's `patterns` sets — `owner_group` of `projects` is an address `<name>@<domain>`; write the value in that form |

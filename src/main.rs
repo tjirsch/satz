@@ -282,9 +282,10 @@ pub(crate) enum Commands {
         /// customer's and the projects' folders. Without it they live at the organisation
         #[arg(long)]
         workload_folder_name: Option<String>,
-        /// Write a TEAM's estate instead, from the hand-over folders a central estate wrote
-        /// for a delegation: the delegation's own folder of its `interfaces/outgoing/`,
-        /// `delegation-<name>`, and that of the one folder or project this estate works in
+        /// Write a WORKLOAD estate instead, from the interface folders an organisation's
+        /// estate wrote for a delegation: the delegation's own folder of its
+        /// `interfaces/outgoing/`, `delegation-<name>`, and that of every folder and project
+        /// this estate works in
         /// (`presets/delegation.satz`, `presets/delegated-folders.satz`,
         /// `presets/delegated-projects.satz`). Each is copied to `interfaces/incoming/`
         /// here, unless it is already there, and the estate runs as the delegation's account
@@ -3362,7 +3363,14 @@ fn interface_of(
         return None;
     };
     let estate = fe.estate.clone().unwrap_or_default();
-    match crate::interface::build(&estate, &fe.exports, &fe.interfaces, manifest, source, provider_versions.get("google").map(String::as_str)) {
+    let mut exports = fe.exports.clone();
+    if let Err(errors) = satz_core::pipeline::resolve_interface_in_exports(&mut exports, &fe.interface_files) {
+        for e in errors {
+            f.push(Finding::new(Severity::Error, Kind::Export, e.msg).in_group(group).located(e.file, e.line as u32));
+        }
+        return None;
+    }
+    match crate::interface::build(&estate, &exports, &fe.interfaces, manifest, source, provider_versions.get("google").map(String::as_str)) {
         Ok(i) => Some(i),
         Err(refusals) => {
             for r in refusals {

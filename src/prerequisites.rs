@@ -691,16 +691,24 @@ const BUDGET_PERMISSION: &str = "billing.budgets.create";
 /// interface (`delegated_folder`): an account that was given no folder, or an estate that
 /// works in a project the organisation's estate created, creates no project of its own.
 pub(crate) fn delegation(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Option<Delegation> {
-    let list = |name: &str| -> Option<(BTreeSet<String>, &str)> {
-        files.iter().find_map(|f| {
-            f.interface.outputs.iter().find(|o| o.name == name).map(|o| {
-                let values = match &o.value {
-                    serde_yaml::Value::Sequence(s) => s.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
-                    _ => BTreeSet::new(),
-                };
-                (values, f.interface.name.as_str())
+    // An estate may work in several places. Which of them a resource stands in is not
+    // judged, so a role counts when it was delegated on every place that names its kind.
+    let list = |name: &str| -> Option<(BTreeSet<String>, String)> {
+        let carried: Vec<(BTreeSet<String>, &str)> = files
+            .iter()
+            .filter_map(|f| {
+                f.interface.outputs.iter().find(|o| o.name == name).map(|o| {
+                    let values: BTreeSet<String> = match &o.value {
+                        serde_yaml::Value::Sequence(s) => s.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+                        _ => BTreeSet::new(),
+                    };
+                    (values, f.interface.name.as_str())
+                })
             })
-        })
+            .collect();
+        let (first, _) = carried.first()?;
+        let on_every = carried.iter().fold(first.clone(), |acc, (v, _)| acc.intersection(v).cloned().collect());
+        Some((on_every, carried.iter().map(|(_, n)| *n).collect::<Vec<_>>().join("`, `")))
     };
     let folder = list(DELEGATED_FOLDER_ROLES);
     let project = list(DELEGATED_PROJECT_ROLES);
@@ -711,20 +719,21 @@ pub(crate) fn delegation(files: &[satz_core::pipeline::UsedInterfaceFile]) -> Op
     let billing = list(DELEGATED_BILLING_ROLES);
     let apis = list(DELEGATED_APIS);
     let mut names: Vec<&str> = Vec::new();
-    for n in [&folder, &project, &billing, &apis].into_iter().flatten().map(|(_, n)| *n) {
+    for n in [&folder, &project, &billing, &apis].into_iter().flatten().flat_map(|(_, n)| n.split("`, `")) {
         if !names.contains(&n) {
             names.push(n);
         }
     }
+    // budgets likewise: delegated when every interface that speaks of them says yes
+    let budgets: Vec<bool> =
+        files.iter().filter_map(|f| f.interface.outputs.iter().find(|o| o.name == DELEGATED_BUDGETS)).map(|o| o.value == serde_yaml::Value::Bool(true)).collect();
     Some(Delegation {
         interface: names.join("`, `"),
         folder_roles: folder.map(|(r, _)| r).filter(|_| works_in_a_folder).unwrap_or_default(),
         project_roles: project.map(|(r, _)| r).unwrap_or_default(),
         billing_roles: billing.map(|(r, _)| r).unwrap_or_default(),
         apis: apis.map(|(r, _)| r).unwrap_or_default(),
-        budgets: files
-            .iter()
-            .any(|f| f.interface.outputs.iter().any(|o| o.name == DELEGATED_BUDGETS && o.value == serde_yaml::Value::Bool(true))),
+        budgets: !budgets.is_empty() && budgets.iter().all(|b| *b),
     })
 }
 

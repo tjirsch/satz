@@ -1021,7 +1021,8 @@ Every interface has the same two forms, with the same values:
   It needs the `google` provider in the calling configuration, at the version the estate
   pins (`versions.tf`).
 - **`<name>/satz/interface.satz`** is a file a project estate written in Satz `use`s at
-  the top level; the estate names a value `"${{interface.<export>}}"`:
+  the top level; the estate names a value by the name of its interface folder,
+  `"${{interface.<folder>.<value>}}"`:
 
   ```
   use "interfaces/incoming/payments/payments/satz/interface.satz"
@@ -1030,7 +1031,7 @@ Every interface has the same two forms, with the same values:
     payments_work {
       name            = "payments-work"
       project_id      = "acme-payments-work-001"
-      folder_id       = "${{interface.folder}}"
+      folder_id       = "${{interface.payments.folder}}"
       billing_account = billing_account_infra
     }
   }
@@ -1038,9 +1039,13 @@ Every interface has the same two forms, with the same values:
 
   Every value the estate reads lands in `interface.tf` of its emitted `hcl/` — a static
   one as its literal, a looked-up one as the same `data` source the module reads — as
-  `local.interface.<export>`, which `main.tf` and `providers.tf` reference ([language
+  `local.interface.<folder>__<value>`, the folder's `-` written `_`, which `main.tf` and
+  `providers.tf` reference ([language
   §6.17](language.md#617-export-and-interface--what-the-estate-publishes-to-the-projects-beside-it)).
-  An export no used file carries is refused at the line that reads it.
+  A value every used folder carries with the same content — the organisation's region, its
+  domain — is also read without the folder's name, `"${{interface.default_region}}"`, and
+  is `local.interface.default_region`. A folder the estate does not use, and a value the
+  folder does not have, are refused at the line that reads it.
 
 `<name>/README.md` travels with both: the snippets above, every value with the interface
 it comes from, how it is obtained and what it takes. The root module's `tofu output`
@@ -1084,7 +1089,7 @@ folder here; empty is the organisation — with no account and no bucket in it, 
 its own account the rest, on the project), and the project's interface, written once per
 entry. A second entry that names the same delegation, `{ name = "shop-backend" delegation
 = "shop" }`, is a second project for the same account: one account works in several
-projects. The team's calls are billed to the delegation's infrastructure project, so an
+projects, and one estate reads them all, each by the name of its interface folder. The team's calls are billed to the delegation's infrastructure project, so an
 API a call needs is in `apis` of the delegation's entry. The compile refuses
 an entry whose `owner_group` is not an address `<name>@<domain>` or whose `name` is not
 lowercase letters, digits and `-` starting with a letter, naming the entry and the value,
@@ -1133,7 +1138,8 @@ interface "payments" {
 A workload, in HCL or in Satz, that brings its own Google project gets an interface
 written by hand, `interface "billing" { … }`, and no entry.
 
-**A project on satz** starts from the two hand-over folders. In its own directory:
+**A project on satz** starts from its interface folders: the delegation's own and one
+per place the estate works in. In its own directory:
 
 ```bash
 satz init --from <the estate>/interfaces/outgoing/delegation-payments <the estate>/interfaces/outgoing/payments
@@ -1142,18 +1148,25 @@ satz transpile payments.satz
 
 `init --from` copies each folder into `interfaces/incoming/`, unless it stands there
 already, and writes `config.toml` and `satz/payments.satz` from the interface files — no
-credential is read. Exactly one of the folders is a delegation's own; `--name` names the
-estate, which otherwise takes the delegation's name. It reads `deploy_project_id`,
+credential is read. Exactly one of the folders is a delegation's own, because an estate
+runs as one account; every other is a delegated folder or project, any number of them.
+`--name` names the estate, which otherwise takes the delegation's name. It reads `deploy_project_id`,
 `iac_account`, `state_bucket` and the core export `default_region` (a central estate
 without `estate-core.satz` publishes none and is refused), and writes `default_region`,
 `default_zone` and `deployment_engine` beside these: `infra_project_name` is the
 delegation's infrastructure project, `infra_bucket_name` its state bucket,
 `svc_iac_account` its account, `deployment_mode = "cloud"`, the `gcs` backend on the
-bucket under `<name>/state`, the providers, and the `use` of each interface file. The
-estate compiles as the delegation's account, and the project's
-resources read the central estate as `${{interface.<export>}}` — `project =
-"${{interface.project_id}}"` on each — and are held to the interface's rules at every
-compile. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
+bucket under `<name>/state`, the providers, the `use` of each interface file, and at the
+end, as comments, the read for each place. The
+estate compiles as the delegation's account, and its
+resources read a value by the name of its interface folder,
+`${{interface.<folder>.<value>}}` — `project = "${{interface.payments.project_id}}"` on
+each — and are held to the interface's rules at every
+compile. An estate with several places names each the same way,
+`${{interface.data-lake.project_id}}` beside `${{interface.data-mart.project_id}}`; the
+check of what was delegated then counts a role as delegated when it was delegated on
+every place of its kind, and budgets when every interface folder that speaks of them says
+yes. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
 it, after a change of the central estate, says what to do about it. After such a change
 the project copies the folders into `interfaces/incoming/` again.
 
@@ -1197,8 +1210,9 @@ interface holds only the lookups its own values read.
 
 A project written in Satz gets both through `interface.tf` in its emitted `hcl/`:
 `locals { interface = { … } }` holding every value it read, and the `data` blocks the
-looked-up ones need. `main.tf` reads `local.interface.<export>`, `providers.tf` reads
-`local.interface_static.<export>` (the values satz knows — a provider cannot wait for a
+looked-up ones need. `main.tf` reads `local.interface.<folder>__<value>` — or
+`local.interface.<value>` for a value read without a folder's name — `providers.tf` reads
+the same names under `local.interface_static` (the values satz knows — a provider cannot wait for a
 lookup it runs), and neither carries a value of the organisation itself, so that file is
 the one place the organisation stands in the project's HCL — and the one file that changes
 when the project is pointed at another organisation.
@@ -1283,7 +1297,8 @@ the estate; an agent runs `satz_check_consumer`.
 
 **A project written in Satz: its own compile**, against the interface files it uses —
 they carry the attach points and the central resources the rules need, so the central
-estate is not read. A value reads the central estate when it is `"${{interface.<export>}}"`
+estate is not read. A value reads the central estate when it is
+`"${{interface.<folder>.<value>}}"`, `"${{interface.<value>}}"`
 or a literal equal to a value it publishes or an identity it writes. Each finding is an
 error of the kind `interface-use` at the resource's line, and `satz transpile` refuses
 the estate as it refuses any other error.

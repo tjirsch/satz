@@ -62,8 +62,8 @@ fn same(fact: &str, mine: &str) -> bool {
 /// One export, as far as the rules read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FactOutput {
-    /// the interface that declares it; `None` for a core export, and for one read from an
-    /// interface file, whose names are unique
+    /// the interface that declares it, or the interface file it was read from; `None` for
+    /// a core export
     pub interface: Option<String>,
     pub name: String,
     pub attach: Vec<String>,
@@ -170,15 +170,18 @@ impl Facts {
             }
             organizations.extend(i.organizations.iter().cloned());
             for o in &i.outputs {
-                if outputs.iter().any(|x| x.name == o.name) {
+                // what every folder carries alike is one value; two folders' values of one
+                // name are two, told apart by the folder
+                let static_text = interface::static_text(&o.value);
+                if outputs.iter().any(|x| x.name == o.name && x.targets == o.targets && x.static_text == static_text) {
                     continue;
                 }
                 outputs.push(FactOutput {
-                    interface: None,
+                    interface: Some(i.name.clone()),
                     name: o.name.clone(),
                     attach: o.attach.clone(),
                     targets: o.targets.clone(),
-                    static_text: interface::static_text(&o.value),
+                    static_text,
                 });
             }
             for m in &i.managed {
@@ -256,7 +259,12 @@ impl<'a> Check<'a> {
                     for (prefix, idx) in &self.readers {
                         let Some(rest) = r.strip_prefix(prefix.as_str()).and_then(|x| x.strip_prefix('.')) else { continue };
                         let name = rest.split(['.', '[']).next().unwrap_or_default();
-                        if let Some(o) = idx.iter().map(|i| &self.facts.outputs[*i]).find(|o| o.name == name) {
+                        // `<value>`, or `<folder>__<value>` as a read by the folder's name is written
+                        let named = |o: &&FactOutput| {
+                            o.name == name
+                                || o.interface.as_deref().is_some_and(|i| name.strip_suffix(o.name.as_str()).and_then(|f| f.strip_suffix("__")) == Some(i.replace('-', "_").as_str()))
+                        };
+                        if let Some(o) = idx.iter().map(|i| &self.facts.outputs[*i]).find(named) {
                             out.push(Hit { written: format!("{}.{}", prefix, name), output: Some(o), resources: o.targets.clone() });
                         }
                     }

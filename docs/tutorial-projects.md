@@ -174,16 +174,20 @@ use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop/shop/satz/interface.satz"
 ```
 
-**The interface files**, from the two folders the team took, read as
-`${{interface.<export>}}`: the delegation's identity with what was delegated to it, and the
-folder it works in. Each carries the organisation's core values too.
+**The interface files**, from the two interface folders the team took: the delegation's
+identity with what was delegated to it, and the folder it works in. A value is read by
+the name of its interface folder, `${{interface.<folder>.<value>}}` — the delegated folder
+is `${{interface.shop.delegated_folder}}`. Each folder carries the organisation's core
+values too, with the same content, and a value the organisation says once — the short
+name, the domain, the region — is read without a folder's name,
+`${{interface.customer_shortname}}`.
 
 ```
 google_project {
   project {
     name            = "{application}-{stage}"
     project_id      = "${{interface.customer_shortname}}-{application}-{stage}"
-    folder_id       = "${{interface.delegated_folder}}"
+    folder_id       = "${{interface.shop.delegated_folder}}"
     billing_account = billing_account
     labels          = { cost_centre = cost_centre }
     project_service = ["cloudresourcemanager.googleapis.com"]
@@ -372,7 +376,7 @@ satz init --from <the organisation>/interfaces/outgoing/delegation-payments <the
 `satz/payments.satz`: an estate that runs as `svc-deploy-payments`, bills its calls to
 `acme-deploy-payments`, keeps its state under `payments/state` in the delegation's bucket
 and reads the organisation through the two interface files. Its resources name the
-project as `project = "${{interface.project_id}}"`.
+project as `project = "${{interface.payments.project_id}}"`.
 
 **What the account lacks on its project, it grants itself.** A bucket needs
 `roles/storage.admin`, which the pack did not delegate. The compile says so on the
@@ -381,7 +385,7 @@ team writes the grant in its own estate, which the interface allows on `project_
 
 ```
 google_project_iam_member {
-  project = "${{interface.project_id}}"
+  project = "${{interface.payments.project_id}}"
   "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [
     "roles/storage.admin",
   ]
@@ -392,67 +396,88 @@ Anything else — a folder, an organisation policy — is reported as `outside t
 this account does not get it. An API a call needs and the infrastructure project lacks is
 what to ask the organisation for: `apis` of the delegation's entry.
 
-**One account for several projects.** The team `shop` of the steps above has a delegation
-already. The organisation gives its account two projects:
+**One account, several places.** One account works in any number of delegated folders
+and projects, and one estate reads them all. The organisation gives the delegation `data`
+two projects, `data-lake` and `data-mart`:
 
 ```bash
-satz add-entry C0example.satz delegated_projects name=shop-backend delegation=shop
-satz add-entry C0example.satz delegated_projects name=shop-frontend delegation=shop
+satz add-entry C0example.satz delegations name=data owner_group=data-owners@example.com
+satz add-entry C0example.satz delegated_projects name=data-lake delegation=data
+satz add-entry C0example.satz delegated_projects name=data-mart delegation=data
 ```
 
 ```
 params {
+  delegations        = [
+    { name = "shop" owner_group = "gcp-shop-admins@example.com" },
+    { name = "payments" owner_group = "payments-owners@example.com" },
+    { name = "data" owner_group = "data-owners@example.com" },
+  ]
   delegated_projects = [
     { name = "payments" delegation = "payments" },
-    { name = "shop-backend" delegation = "shop" },
-    { name = "shop-frontend" delegation = "shop" },
+    { name = "data-lake" delegation = "data" },
+    { name = "data-mart" delegation = "data" },
   ]
 }
 ```
 
-On each, `svc-deploy-shop` gets the same two roles. The entry names the account by its
-delegation, and one that names a delegation nobody declared is refused by the compile,
+On each project, `svc-deploy-data` gets the same two roles. The entry names the account by
+its delegation, and one that names a delegation nobody declared is refused by the compile,
 which lists the accounts that exist. An account that works in projects only is a
 `delegations` entry without a folder.
 
-The estate that works in `shop-backend` reads two interfaces — the account from
-`delegation-shop`, the project from `shop-backend`:
+The workload estate is written from three interface folders — the account from
+`delegation-data`, a project each from `data-lake` and `data-mart`:
 
 ```bash
-satz init --from <the organisation>/interfaces/outgoing/delegation-shop <the organisation>/interfaces/outgoing/shop-backend --name shop-backend
+satz init --from <the organisation>/interfaces/outgoing/delegation-data <the organisation>/interfaces/outgoing/data-lake <the organisation>/interfaces/outgoing/data-mart
 ```
 
-`--name` names the estate, which otherwise takes the delegation's name: this writes
-`satz/shop_backend.satz`, with the two `use` lines, and the team adds its resources:
+This writes `satz/data.satz` with the three `use` lines and, as comments at its end, the
+read for each place. The team adds its resources, each naming its project by the folder:
 
 ```
-use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
-use "interfaces/incoming/shop-backend/shop-backend/satz/interface.satz"
+use "interfaces/incoming/delegation-data/delegation-data/satz/interface.satz"
+use "interfaces/incoming/data-lake/data-lake/satz/interface.satz"
+use "interfaces/incoming/data-mart/data-mart/satz/interface.satz"
 
 google_storage_bucket {
-  assets {
-    project  = "${{interface.project_id}}"
-    name     = "acme-shop-backend-assets"
-    location = "EU"
+  raw {
+    project  = "${{interface.data-lake.project_id}}"
+    name     = "${{interface.customer_shortname}}-data-lake-raw"
+    location = "${{interface.default_region}}"
   }
+}
+
+google_project_service "mart_bigquery" {
+  project = "${{interface.data-mart.project_id}}"
+  service = "bigquery.googleapis.com"
 }
 ```
 
-It runs as `svc-deploy-shop` and keeps its state under `shop_backend/state` in the
-delegation's bucket. One estate works in one project; two projects are two estates that
-run as the same account.
+It runs as `svc-deploy-data` and keeps its state under `data/state` in the delegation's
+bucket. In `main.tf` the two projects are `local.interface.data_lake__project_id` and
+`local.interface.data_mart__project_id`. `${{interface.project_id}}` is refused in this
+estate: both folders carry a `project_id` and the two differ, and the message names the
+two reads to choose from. The check of what was delegated does not judge which place a
+resource stands in: a role counts as delegated when it was delegated on every project the
+estate uses.
+
+Exactly one folder is a delegation's own, because an estate runs as one account. `--name`
+names the estate, which otherwise takes the delegation's name; two estates of one
+delegation keep their states apart in the delegation's bucket.
 
 ## What the two ways share
 
 | | the Satz way | the HCL way |
 |---|---|---|
-| the truth about the organisation | the two `interface.satz` files under `interfaces/incoming/` | `interface.tf` |
+| the truth about the organisation | the `interface.satz` files under `interfaces/incoming/` | `interface.tf` |
 | the values that change per instance | `params { }` of a thin estate, or `--input` | `terraform.tfvars`, or `-var` |
 | the identity | the delegation's account, in `params` of the template | the delegation's account, in `providers.tf` |
 | the state | the team's bucket, `gcs` backend | the same |
 | the organisation's state | never read | never read |
 | held to the interface by | the compile | `satz check-consumer` |
-| after the organisation changes | take the two interface folders again, transpile | take `interface.tf` again |
+| after the organisation changes | take the interface folders again, transpile | take `interface.tf` again |
 
 One template, one interface, one identity per team; what differs is who runs the
 compiler.

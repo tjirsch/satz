@@ -1045,8 +1045,6 @@ pub const INTERFACE_STATIC_LOCAL: &str = "local.interface_static";
 /// object spliced into a longer string, and a reference in a resource's label are refused,
 /// each at the resource that writes it.
 pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceFile]) -> Result<Vec<String>, Vec<PipelineError>> {
-    let outputs: BTreeMap<&str, &satz::OfferedOutput> =
-        files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let mut errors: Vec<PipelineError> = Vec::new();
     let mut read: Vec<String> = Vec::new();
     let mut relabel: Vec<Address> = Vec::new();
@@ -1069,7 +1067,7 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                 // the interface values are rendered into; a body that read none starts
                 // from the judged body
                 let mut twin = e.rendering.as_ref().and_then(|r| r.attrs.clone()).unwrap_or_else(|| v.clone());
-                match substitute_value(v, &outputs, files, &mut read) {
+                match substitute_value(v, files, &mut read) {
                     Ok(true) => {
                         render_interface_value(&mut twin, INTERFACE_LOCAL);
                         e.rendering = Some(Rendering { attrs: Some(twin), scope: None });
@@ -1084,7 +1082,7 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
                     let rendered_member = render_interface_text(&ed.member, INTERFACE_LOCAL);
                     let rendered_role = render_interface_text(&ed.role, INTERFACE_LOCAL);
                     for text in [&mut ed.member, &mut ed.role, &mut ed.condition] {
-                        match substitute_text(text, &outputs, files, &mut read) {
+                        match substitute_text(text, files, &mut read) {
                             Ok(Some(t)) => *text = t,
                             Ok(None) => {}
                             Err(m) => fail(m),
@@ -1102,7 +1100,7 @@ pub fn resolve_interface_references(folded: &mut Folded, files: &[UsedInterfaceF
         // and the pin's rendering kept beside the entity
         if matches!(e.body, Body::Grant(_)) {
             let scope = pin_value_of_label(&e.addr.label).and_then(|v| render_interface_text(&v, INTERFACE_LOCAL));
-            match substitute_text(&e.addr.label, &outputs, files, &mut read) {
+            match substitute_text(&e.addr.label, files, &mut read) {
                 Ok(Some(label)) => {
                     e.addr.label = label;
                     relabel.push(e.addr.clone());
@@ -1166,7 +1164,7 @@ fn render_interface_text(s: &str, root: &str) -> Option<String> {
         };
         let inner = after[..end].trim();
         match inner.strip_prefix(INTERFACE_ROOT).and_then(|r| r.strip_prefix('.')) {
-            Some(name) => out.push_str(&format!("${{{}.{}}}", root, name)),
+            Some(name) => out.push_str(&format!("${{{}.{}}}", root, interface_local_attr(name))),
             None => out.push_str(&rest[i..i + 2 + end + 1]),
         }
         rest = &after[end + 1..];
@@ -1182,7 +1180,7 @@ fn render_interface_value(v: &mut serde_yaml::Value, root: &str) {
     match v {
         serde_yaml::Value::String(s) => {
             if let Some(name) = whole_interface_reference(s) {
-                let expr = format!("{}.{}", root, name);
+                let expr = format!("{}.{}", root, interface_local_attr(name));
                 *v = serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new("expr"), value: serde_yaml::Value::String(expr) }));
             } else if let Some(t) = render_interface_text(s, root) {
                 *s = t;
@@ -1215,8 +1213,6 @@ pub struct InterfaceLocals {
 /// [`resolve_interface_in_config`] return them). A lookup a value reads that no used file
 /// carries, and lookups that read each other in a cycle, are refused at the export's line.
 pub fn interface_locals(read: &[String], files: &[UsedInterfaceFile]) -> Result<InterfaceLocals, PipelineError> {
-    let outputs: BTreeMap<&str, &satz::OfferedOutput> =
-        files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let lookups: BTreeMap<&str, &satz::OfferedLookup> =
         files.iter().flat_map(|f| f.interface.lookups.iter().map(|l| (l.address.as_str(), l))).collect();
     let mut names: Vec<&str> = read.iter().map(|s| s.as_str()).collect();
@@ -1250,22 +1246,44 @@ pub fn interface_locals(read: &[String], files: &[UsedInterfaceFile]) -> Result<
     }
     let mut values = Vec::new();
     for export in names {
-        let Some(o) = outputs.get(export) else {
-            return Err(PipelineError { file: String::new(), line: 0, msg: format!("`interface.{}` was read, and no used interface file exports it", export) });
-        };
+        let o = interface_output(export, files).map_err(|msg| PipelineError { file: String::new(), line: 0, msg })?;
+        let attr = interface_local_attr(export);
+        if let Some((other, _)) = values.iter().find(|(a, _): &&(String, serde_yaml::Value)| *a == attr) {
+            return Err(PipelineError {
+                file: String::new(),
+                line: 0,
+                msg: format!("`interface.{}` and another value read here are both written as `local.interface.{}` — two interface folders whose names differ only in `-` and `_`, or a value named like one of them; rename one folder", export, other),
+            });
+        }
         let mut texts = Vec::new();
         collect_strings(&o.value, &mut texts);
         for t in texts {
             for d in data_addresses(t) {
                 if let Err(msg) = visit(&d, &lookups, &mut needed, &mut Vec::new()) {
-                    let file = files.iter().find(|f| f.interface.outputs.iter().any(|x| x.name == *export)).map(|f| f.file.clone()).unwrap_or_default();
+                    let file = files.iter().find(|f| f.interface.outputs.iter().any(|x| std::ptr::eq(x, o))).map(|f| f.file.clone()).unwrap_or_default();
                     return Err(PipelineError { file, line: o.line, msg });
                 }
             }
         }
-        values.push((export.to_string(), o.value.clone()));
+        values.push((attr, o.value.clone()));
     }
     Ok(InterfaceLocals { values, lookups: needed })
+}
+
+/// Every `${interface.…}` in the values the estate publishes, replaced by the value: an
+/// estate may pass on what it read, such as the id of the project it was given.
+pub fn resolve_interface_in_exports(exports: &mut [ResolvedExport], files: &[UsedInterfaceFile]) -> Result<(), Vec<PipelineError>> {
+    let mut errors = Vec::new();
+    for x in exports.iter_mut() {
+        if let Err(msg) = substitute_value(&mut x.value, files, &mut Vec::new()) {
+            errors.push(PipelineError { file: x.file.clone(), line: x.line, msg: format!("export \"{}\": {}", x.name, msg) });
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// What [`resolve_interface_in_config`] leaves beside the substituted blocks: the
@@ -1290,8 +1308,6 @@ pub fn resolve_interface_in_config(
     files: &[UsedInterfaceFile],
     prior: &BTreeMap<String, serde_yaml::Value>,
 ) -> Result<ConfigRendering, Vec<PipelineError>> {
-    let outputs: BTreeMap<&str, &satz::OfferedOutput> =
-        files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| (o.name.as_str(), o))).collect();
     let mut errors = Vec::new();
     let mut out = ConfigRendering::default();
     for (block, value) in config.iter_mut() {
@@ -1299,12 +1315,14 @@ pub fn resolve_interface_in_config(
         let mut read = Vec::new();
         // the block as written so far — an input's rendering, when one is read in it
         let mut twin = prior.get(block).cloned().unwrap_or_else(|| value.clone());
-        let msg = match substitute_value(value, &outputs, files, &mut read) {
+        let msg = match substitute_value(value, files, &mut read) {
             Err(m) => Some(m),
             Ok(changed) => {
                 let looked_up = read.iter().find(|name| {
                     let mut texts = Vec::new();
-                    collect_strings(&outputs[name.as_str()].value, &mut texts);
+                    if let Ok(o) = interface_output(name, files) {
+                        collect_strings(&o.value, &mut texts);
+                    }
                     texts.iter().any(|t| !data_addresses(t).is_empty())
                 });
                 match looked_up {
@@ -1359,7 +1377,6 @@ fn data_addresses(text: &str) -> Vec<String> {
 /// One value with its `${interface.…}` references replaced; `true` when it held any.
 fn substitute_value(
     v: &mut serde_yaml::Value,
-    outputs: &BTreeMap<&str, &satz::OfferedOutput>,
     files: &[UsedInterfaceFile],
     read: &mut Vec<String>,
 ) -> Result<bool, String> {
@@ -1367,23 +1384,23 @@ fn substitute_value(
     match v {
         serde_yaml::Value::String(s) => {
             if let Some(name) = whole_interface_reference(s) {
-                let o = interface_output(name, outputs, files)?;
+                let o = interface_output(name, files)?;
                 note_read(read, name);
                 *v = o.value.clone();
                 changed = true;
-            } else if let Some(t) = substitute_text(s, outputs, files, read)? {
+            } else if let Some(t) = substitute_text(s, files, read)? {
                 *s = t;
                 changed = true;
             }
         }
         serde_yaml::Value::Sequence(items) => {
             for i in items {
-                changed |= substitute_value(i, outputs, files, read)?;
+                changed |= substitute_value(i, files, read)?;
             }
         }
         serde_yaml::Value::Mapping(m) => {
             for (_, val) in m.iter_mut() {
-                changed |= substitute_value(val, outputs, files, read)?;
+                changed |= substitute_value(val, files, read)?;
             }
         }
         _ => {}
@@ -1397,17 +1414,32 @@ fn note_read(read: &mut Vec<String>, name: &str) {
     }
 }
 
-/// `Some(export)` when the text is one `${interface.<export>}` and nothing else.
+/// `Some(key)` when the text is one `${interface.<value>}` or
+/// `${interface.<folder>.<value>}` and nothing else. The key is what stands after
+/// `interface.`: the value's name, or the interface folder's name, a dot and the value's.
 fn whole_interface_reference(s: &str) -> Option<&str> {
     let inner = s.strip_prefix("${")?.strip_suffix('}')?.trim();
-    let name = inner.strip_prefix(INTERFACE_ROOT)?.strip_prefix('.')?;
-    (!name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(name)
+    let key = inner.strip_prefix(INTERFACE_ROOT)?.strip_prefix('.')?;
+    let (folder, value) = match key.rsplit_once('.') {
+        Some((f, v)) => (Some(f), v),
+        None => (None, key),
+    };
+    let word = |t: &str, dash: bool| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || (dash && c == '-'));
+    (word(value, false) && folder.is_none_or(|f| word(f, true))).then_some(key)
+}
+
+/// The attribute of `local.interface` a key is written as: the value's name, or
+/// `<folder>__<value>` with the folder's `-` as `_`.
+pub fn interface_local_attr(key: &str) -> String {
+    match key.rsplit_once('.') {
+        Some((folder, value)) => format!("{}__{}", folder.replace('-', "_"), value),
+        None => key.to_string(),
+    }
 }
 
 /// The text with every `${interface.<export>}` in it spliced, or `None` when it has none.
 fn substitute_text(
     s: &str,
-    outputs: &BTreeMap<&str, &satz::OfferedOutput>,
     files: &[UsedInterfaceFile],
     read: &mut Vec<String>,
 ) -> Result<Option<String>, String> {
@@ -1431,11 +1463,11 @@ fn substitute_text(
         let whole = format!("${{{}}}", inner);
         let Some(name) = whole_interface_reference(&whole) else {
             return Err(format!(
-                "`${{{}}}` is no value of an interface — a project reads one as `${{{{interface.<export>}}}}`",
+                "`${{{}}}` is no value of an interface — one is read as `${{{{interface.<folder>.<value>}}}}`",
                 inner
             ));
         };
-        let o = interface_output(name, outputs, files)?;
+        let o = interface_output(name, files)?;
         note_read(read, name);
         match &o.value {
             serde_yaml::Value::String(t) => out.push_str(t),
@@ -1454,22 +1486,48 @@ fn substitute_text(
     Ok(Some(out))
 }
 
-fn interface_output<'a>(name: &str, outputs: &BTreeMap<&str, &'a satz::OfferedOutput>, files: &[UsedInterfaceFile]) -> Result<&'a satz::OfferedOutput, String> {
-    if let Some(o) = outputs.get(name) {
-        return Ok(o);
-    }
+/// The value a key names. `<folder>.<value>` is the value of the interface folder of that
+/// name. A bare `<value>` is the one every used folder that carries it agrees on — what the
+/// organisation says once, such as its region; a value two folders carry differently has no
+/// bare name, and the message says how to name it.
+fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a satz::OfferedOutput, String> {
     if files.is_empty() {
         return Err(format!(
-            "`${{interface.{}}}` reads a central estate's interface, and this estate uses no interface file — `use \"<path>/interface.satz\"` brings one in",
-            name
+            "`${{interface.{}}}` reads an interface folder, and this estate uses none — `use \"<path>/interface.satz\"` brings one in",
+            key
         ));
     }
-    Err(format!(
-        "`${{interface.{}}}`: no used interface file exports `{}` — they export {}",
-        name,
-        name,
-        outputs.keys().map(|k| format!("`{}`", k)).collect::<Vec<_>>().join(", ")
-    ))
+    let folders = || files.iter().map(|f| format!("`{}`", f.interface.name)).collect::<Vec<_>>().join(", ");
+    let values = |f: &UsedInterfaceFile| f.interface.outputs.iter().map(|o| format!("`{}`", o.name)).collect::<Vec<_>>().join(", ");
+    if let Some((folder, value)) = key.rsplit_once('.') {
+        let Some(f) = files.iter().find(|f| f.interface.name == folder) else {
+            return Err(format!("`${{interface.{}}}`: no used interface folder is named `{}` — the estate uses {}", key, folder, folders()));
+        };
+        return f
+            .interface
+            .outputs
+            .iter()
+            .find(|o| o.name == value)
+            .ok_or_else(|| format!("`${{interface.{}}}`: the interface folder `{}` has no value `{}` — it has {}", key, folder, value, values(f)));
+    }
+    let carriers: Vec<(&UsedInterfaceFile, &satz::OfferedOutput)> =
+        files.iter().filter_map(|f| f.interface.outputs.iter().find(|o| o.name == key).map(|o| (f, o))).collect();
+    let Some((_, first)) = carriers.first() else {
+        let mut all: Vec<String> = files.iter().flat_map(|f| f.interface.outputs.iter().map(|o| format!("`{}`", o.name))).collect();
+        all.sort();
+        all.dedup();
+        return Err(format!("`${{interface.{}}}`: no used interface folder has a value `{}` — they have {}", key, key, all.join(", ")));
+    };
+    if carriers.iter().any(|(_, o)| o.value != first.value) {
+        return Err(format!(
+            "`${{interface.{}}}`: the interface folders {} each have a `{}` and they differ — name the folder: {}",
+            key,
+            carriers.iter().map(|(f, _)| format!("`{}`", f.interface.name)).collect::<Vec<_>>().join(", "),
+            key,
+            carriers.iter().map(|(f, _)| format!("`${{{{interface.{}.{}}}}}`", f.interface.name, key)).collect::<Vec<_>>().join(" or ")
+        ));
+    }
+    Ok(first)
 }
 
 /// Every string in a value, however deeply nested.
@@ -2093,33 +2151,23 @@ pub fn compile_estate_bound(
     Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
-/// The interface files the estate uses, each once. The same file used twice is one; one
-/// export name from two files is one value when both carry the same, and an error naming
-/// both files when they differ — the rule one name in two files follows everywhere. A
-/// lookup two files carry follows the same rule, because both are emitted as one `data`
-/// block.
+/// The interface files the estate uses, each once. The same file used twice is one. Two
+/// files may carry a value of one name: read by its bare name it must be the same in both,
+/// which the read judges (`interface_output`). A lookup two files carry must read the same,
+/// because both are emitted as one `data` block; two files of one interface name are
+/// refused, because the name is how a value is told apart.
 fn merge_interface_files(used: Vec<UsedInterfaceFile>) -> Result<Vec<UsedInterfaceFile>, PipelineError> {
     let mut out: Vec<UsedInterfaceFile> = Vec::new();
     for u in used {
         if out.iter().any(|o| o.file == u.file) {
             continue;
         }
-        for o in &u.interface.outputs {
-            for earlier in &out {
-                if let Some(first) = earlier.interface.outputs.iter().find(|x| x.name == o.name) {
-                    let same = first.value == o.value && first.attach == o.attach && first.targets == o.targets && first.description == o.description;
-                    if !same {
-                        return perr(
-                            &u.file,
-                            o.line,
-                            format!(
-                                "interface.{}: two used interface files export it with different values — {}:{} and {}:{}; use one of them",
-                                o.name, earlier.file, first.line, u.file, o.line
-                            ),
-                        );
-                    }
-                }
-            }
+        if let Some(first) = out.iter().find(|o| o.interface.name == u.interface.name) {
+            return perr(
+                &u.file,
+                u.interface.line,
+                format!("two used interface files are both named `{}` — {} and {}; a value is read by that name, so use one of them", u.interface.name, first.file, u.file),
+            );
         }
         for l in &u.interface.lookups {
             for earlier in &out {
@@ -4762,7 +4810,7 @@ mod estate_channel_tests {
         assert_eq!((e.file.as_str(), e.line), ("p.satz", 4));
         assert!(e.msg.starts_with("providers: `interface.folder` is a value the central estate looks up"), "{}", e.msg);
         let e = run("${{interface.nope}}").unwrap_err();
-        assert!(e.msg.contains("no used interface file exports `nope`"), "{}", e.msg);
+        assert!(e.msg.contains("no used interface folder has a value `nope`"), "{}", e.msg);
     }
 
     /// Beside the judged body, an entity that read a value carries its rendering: the same
@@ -4886,15 +4934,26 @@ mod estate_channel_tests {
         };
         let with = "use \"i/pay.satz\"\n";
         let e = run("${{interface.nope}}", with).unwrap_err();
-        assert!(e.contains("no used interface file exports `nope`") && e.contains("`folder`"), "{}", e);
-        let e = run("${{interface.org_id.x}}", with).unwrap_err();
+        assert!(e.contains("no used interface folder has a value `nope`") && e.contains("`folder`"), "{}", e);
+        let e = run("${{interface.org_id[0]}}", with).unwrap_err();
         assert!(e.contains("is no value of an interface"), "{}", e);
+        // by the folder's name: a folder the estate does not use, a value the folder lacks
+        let e = run("${{interface.org_id.x}}", with).unwrap_err();
+        assert!(e.contains("no used interface folder is named `org_id`") && e.contains("`pay`"), "{}", e);
+        let e = run("${{interface.pay.nope}}", with).unwrap_err();
+        assert!(e.contains("the interface folder `pay` has no value `nope`") && e.contains("`org_id`"), "{}", e);
+        run("${{interface.pay.org_id}}", with).expect("read by the folder's name");
         let e = run("r-${{interface.regions}}", with).unwrap_err();
         assert!(e.contains("is a list or a map"), "{}", e);
         let e = run("${{interface.org_id}}", "").unwrap_err();
-        assert!(e.contains("uses no interface file"), "{}", e);
-        let e = run("${{interface.org_id}}", "use \"i/pay.satz\"\nuse \"i/other.satz\"\n").unwrap_err();
-        assert!(e.contains("interface.org_id: two used interface files export it with different values") && e.contains("i/pay.satz:") && e.contains("i/other.satz:"), "{}", e);
+        assert!(e.contains("this estate uses none"), "{}", e);
+        // two folders that carry one name differently: the bare name is refused naming both
+        // reads, each read by its folder's name is what that folder says
+        let both = "use \"i/pay.satz\"\nuse \"i/other.satz\"\n";
+        let e = run("${{interface.org_id}}", both).unwrap_err();
+        assert!(e.contains("they differ") && e.contains("`${{interface.pay.org_id}}` or `${{interface.other.org_id}}`"), "{}", e);
+        run("${{interface.other.org_id}}", both).expect("the other folder's value");
+        run("${{interface.folder}}", both).expect("a value both folders agree on keeps its bare name");
         // an interface file is used at the top level, and is no estate
         let e = compile_estate("p.satz", "estate p\ngoogle_org_policy_policy {\n  use \"i/pay.satz\"\n}\n", &Table, &project_load).err().expect("refused");
         assert!(e.msg.contains("is used at the top level"), "{}", e.msg);

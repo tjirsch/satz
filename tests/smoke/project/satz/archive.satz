@@ -1,7 +1,7 @@
 // A project beside the showcase estate: its own repository, config, state and
 // pipeline. It takes the folder interfaces/outgoing/archive/ of the showcase whole — here
 // interfaces/incoming/archive/ — and reads the central estate's values as
-// `${{interface.<export>}}`. A static value becomes its literal; a looked-up one
+// `${{interface.<folder>.<value>}}`. A static value becomes its literal; a looked-up one
 // becomes the same `data` source the HCL module reads, written once into hcl/.
 
 estate archive_project
@@ -46,7 +46,7 @@ google_project {
 // A grant on the central estate's Google project, at its attach point.
 google_project_iam_member {
   archive_readers {
-    project = "${{interface.archive_project_id}}"
+    project = "${{interface.archive.archive_project_id}}"
     role    = "roles/viewer"
     member  = "group:gcp-auditors@example.com"
   }
