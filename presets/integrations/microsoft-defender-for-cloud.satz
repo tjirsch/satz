@@ -40,7 +40,7 @@
 // that onboards it another way adds that account to `allowed_policy_member_subjects`
 // itself, or the managed §1.1 constraint refuses the grant.
 
-pack integrations.microsoft_defender_for_cloud version "0.7"
+pack integrations.microsoft_defender_for_cloud version "0.8"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the

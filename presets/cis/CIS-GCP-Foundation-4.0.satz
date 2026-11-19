@@ -12,7 +12,7 @@
 // Google's constraint catalog:
 // https://docs.cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints
 
-pack CIS_GCP_Foundation_4_0 version "2.19"
+pack CIS_GCP_Foundation_4_0 version "2.20"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_baseline_adopted = false

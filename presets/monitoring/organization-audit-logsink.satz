@@ -5,7 +5,7 @@
 // Params are overridable defaults: define the same param in the estate to
 // override one. Claims are read from this source by the compliance plane.
 
-pack monitoring.organization_audit_logsink version "1.8"
+pack monitoring.organization_audit_logsink version "1.9"
 
 params {
   logsink_name                 = "{customer_shortname}-organization-audit-gcs"

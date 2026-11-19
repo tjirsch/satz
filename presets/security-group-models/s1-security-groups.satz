@@ -29,7 +29,7 @@
 // beyond Writer — and the rest of the list; the plan then shows two destroys and four creates.
 // The API and gcloud grant Writer; the console cannot. ADR 0090.
 
-pack s1_security_groups version "1.4"
+pack s1_security_groups version "1.5"
 
 params {
   gcp_organization_admins_name = "gcp-organization-admins"

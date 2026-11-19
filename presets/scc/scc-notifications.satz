@@ -38,7 +38,7 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing and `report-compliance` says nothing about it.
 
-pack scc_notifications version "1.2"
+pack scc_notifications version "1.3"
 
 params {
   // The subscriber a customer attaches is theirs; the topic is the contract.

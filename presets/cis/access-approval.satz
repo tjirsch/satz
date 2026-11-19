@@ -14,7 +14,7 @@
 //
 // Deleting these settings switches Access Approval off for the organization.
 
-pack cis_extensions.access_approval version "1.1"
+pack cis_extensions.access_approval version "1.2"
 
 params {
   // Who receives approval requests. The pack cannot know; empty blocks the

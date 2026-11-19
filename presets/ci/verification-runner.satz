@@ -46,7 +46,7 @@
 // with an asset-viewer role at organization level — the same two read
 // dependencies `report-compliance` needs from a workstation.
 
-pack ci.verification_runner version "1.1"
+pack ci.verification_runner version "1.2"
 
 params {
   // The project that hosts the triggers and the runner service account. For a

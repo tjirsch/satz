@@ -54,7 +54,7 @@
 // 22 still fails there, and report-compliance shows the row CONTESTED. Such a rule has
 // no effect while the policy is attached; deleting it settles the row.
 
-pack cis_extensions.internet_ssh_rdp version "1.2"
+pack cis_extensions.internet_ssh_rdp version "1.3"
 
 params {
   // Ranges whose SSH and RDP traffic passes to the VPC firewall rules, which then

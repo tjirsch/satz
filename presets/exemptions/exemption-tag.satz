@@ -88,7 +88,7 @@
 // impersonation and leave the control intact. The tag route is the exception with a
 // named owner, never the default.
 
-pack exemptions.exemption_tag version "2.0"
+pack exemptions.exemption_tag version "2.1"
 
 google_tags_tag_key {
   "exemption" {

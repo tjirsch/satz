@@ -12,7 +12,7 @@
 // are non-empty and limited to `allowed_api_key_services`, which is what the
 // control asks for.
 
-pack cis_extensions.api_key_services version "1.4"
+pack cis_extensions.api_key_services version "1.5"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_api_key_services_adopted = false

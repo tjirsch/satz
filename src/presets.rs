@@ -2204,3 +2204,72 @@ mod pack_version_tests {
         assert_eq!(satz_version("ok.satz", "pack ok version \"1.2\"\n").unwrap(), Some("1.2".into()));
     }
 }
+
+#[cfg(test)]
+mod release_version_tests {
+    //! A pack whose meaning changed since the last release carries a new version.
+    //! `merge-presets` trusts that version: a pack that changed under the same one is
+    //! reported to every estate as an upstream release-hygiene bug, and forked. This
+    //! holds the rule where the change is made — every pack on disk against its text
+    //! at the newest release tag reachable from HEAD (`SATZ_PACK_BASE` names another
+    //! ref), judged by `classify_source`, the comparison `check-presets` and
+    //! `merge-presets` make, so anything but a comment or a format change counts.
+    use super::*;
+
+    fn git(root: &Path, args: &[&str]) -> std::process::Output {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git: the last release is read from the repository, so git must run")
+    }
+
+    #[test]
+    fn a_pack_whose_meaning_changed_since_the_last_release_carries_a_new_version() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let base = match std::env::var("SATZ_PACK_BASE") {
+            Ok(b) => b,
+            Err(_) => {
+                let out = git(root, &["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"]);
+                assert!(
+                    out.status.success(),
+                    "no release tag is reachable from HEAD ({}) — fetch the history and the tags (`git fetch --tags --unshallow`), or name a ref in SATZ_PACK_BASE",
+                    String::from_utf8_lossy(&out.stderr).trim()
+                );
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+        };
+        let out = git(root, &["ls-files", "-z", "--", "presets", "packs"]);
+        assert!(out.status.success(), "git ls-files failed: {}", String::from_utf8_lossy(&out.stderr));
+        let files: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .split('\0')
+            .filter(|f| f.ends_with(".satz") && !f.ends_with(".local.satz") && !f.ends_with(".diff.satz"))
+            .map(str::to_string)
+            .collect();
+        assert!(files.len() > 20, "the packs went missing: {} files", files.len());
+
+        let mut stale = Vec::new();
+        for rel in &files {
+            let now = std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            let then = git(root, &["show", &format!("{base}:{rel}")]);
+            if !then.status.success() {
+                continue; // a pack the release did not have: its first version
+            }
+            let then = String::from_utf8(then.stdout).unwrap_or_else(|e| panic!("{base}:{rel}: {e}"));
+            let v_now = satz_version(rel, &now).unwrap_or_else(|e| panic!("{e}"));
+            let v_then = satz_version(&format!("{base}:{rel}"), &then).ok().flatten();
+            if v_now.is_none() || v_now != v_then {
+                continue;
+            }
+            let drift = classify_source(&now, &then);
+            if drift != Drift::Clean {
+                stale.push(format!("  {rel} (version {}): {drift:?}", v_now.unwrap_or_default()));
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "these packs changed in meaning since {base} but kept their version — bump `pack … version` and add the row to presets/CHANGELOG.md:\n{}",
+            stale.join("\n")
+        );
+    }
+}

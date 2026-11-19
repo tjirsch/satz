@@ -12,7 +12,7 @@
 // filters reference metric names (dependency edge) and pin resource.type=
 // "logging_bucket" (bucket-scoped metrics report against it — verified live).
 
-pack monitoring.organization_cis_log_alerts_central version "1.7"
+pack monitoring.organization_cis_log_alerts_central version "1.8"
 
 params {
   // The logsink pack's project, BY REFERENCE — not a repeated literal. One

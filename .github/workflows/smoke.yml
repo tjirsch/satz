@@ -38,7 +38,11 @@ jobs:
   checks:
     runs-on: ubuntu-24.04
     steps:
+      # the whole history and its tags: a test compares every pack with its text at the
+      # last release tag, and a pack changed in meaning under the same version fails it
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -99,6 +103,8 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
