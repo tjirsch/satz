@@ -403,7 +403,8 @@ pub(crate) enum State {
     Edited,
     /// fetched, and the source holds it no longer
     Gone,
-    /// fetched from another source than the one `--source` names
+    /// fetched and unchanged since, and its source was not read: `--source` names another
+    /// one, or `--local` reads none
     NotChecked,
     /// the source holds it and `packs_dir` does not
     Available,
@@ -900,9 +901,24 @@ pub(crate) struct Estate {
     pub interfaces: Vec<satz_core::pipeline::UsedInterfaceFile>,
 }
 
+/// One interface folder the estate uses: its name, the organization's estate that wrote it
+/// and the values it exports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct InterfaceFolder {
+    /// the folder's name, the one a named read writes: `${{interface.<name>.<value>}}`
+    pub name: String,
+    /// the name of the organization's estate that wrote it
+    pub estate: String,
+    /// the names of the values it exports, as it writes them
+    pub exports: Vec<String>,
+}
+
 impl Estate {
-    pub(crate) fn folders(&self) -> Vec<String> {
-        self.interfaces.iter().map(|f| f.interface.name.clone()).collect()
+    pub(crate) fn folders(&self) -> Vec<InterfaceFolder> {
+        self.interfaces
+            .iter()
+            .map(|f| InterfaceFolder { name: f.interface.name.clone(), estate: f.interface.estate.clone(), exports: f.interface.outputs.iter().map(|o| o.name.clone()).collect() })
+            .collect()
     }
 }
 
@@ -1134,18 +1150,23 @@ pub(crate) struct PacksReport {
     pub packs_dir: String,
     /// the estate the reads are matched against
     pub estate: String,
-    /// the interface folders that estate uses, by name
-    pub interface_folders: Vec<String>,
-    /// the pack sources read: every one, or the one `--source` names
+    /// the interface folders that estate uses, each with the organization's estate that wrote
+    /// it and the values it exports
+    pub interface_folders: Vec<InterfaceFolder>,
+    /// the pack sources read: every one, or the one `--source` names; none with `--local`
     pub sources: Vec<SourceRead>,
     pub packs: Vec<PackRow>,
 }
 
 /// Every pack in `packs_dir` with its state, and every pack a source holds that
 /// `packs_dir` does not — one row per source that holds it. Reads every pack source,
-/// the built-in one first, or only the one `only` names. Each row carries what the pack
-/// declares, its reads matched against `estate`.
-pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, estate: &Estate) -> Result<PacksReport, String> {
+/// the built-in one first, or only the one `only` names; `local` reads none and lists
+/// only `packs_dir`, each fetched pack `edited` or `not-checked` by its recorded sha256.
+/// Each row carries what the pack declares, its reads matched against `estate`.
+pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, estate: &Estate) -> Result<PacksReport, String> {
+    if local && only.is_some() {
+        return Err("--local reads no pack source and --source names one to read — give one of the two".to_string());
+    }
     let packs_dir = Path::new(&runtime.packs_dir);
     let rows = read_record(packs_dir)?;
     for row in &rows {
@@ -1153,6 +1174,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, estate: &Esta
     }
     check_rows(runtime, &rows)?;
     let defs = match only {
+        _ if local => Vec::new(),
         Some(name) => vec![crate::pack_sources::find(runtime, name)?],
         None => crate::pack_sources::all(runtime)?,
     };
@@ -1217,22 +1239,33 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, estate: &Esta
 }
 
 pub(crate) fn render_list(r: &PacksReport) -> String {
-    let against = r
-        .sources
-        .iter()
-        .map(|s| match &s.commit {
-            Some(c) => format!("{} ({} at {})", s.name, s.location, &c[..12.min(c.len())]),
-            None => format!("{} ({})", s.name, s.location),
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let folders = match r.interface_folders.as_slice() {
-        [] => "no interface folder".to_string(),
-        f => format!("the interface folders {}", f.join(", ")),
+    let against = match r.sources.as_slice() {
+        [] => "no pack source read".to_string(),
+        sources => format!(
+            "against {}",
+            sources
+                .iter()
+                .map(|s| match &s.commit {
+                    Some(c) => format!("{} ({} at {})", s.name, s.location, &c[..12.min(c.len())]),
+                    None => format!("{} ({})", s.name, s.location),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     };
-    let mut out = format!("packs in {} against {against}\nreads matched against {}, which uses {folders}\n", r.packs_dir, r.estate);
+    let mut out = match r.interface_folders.as_slice() {
+        [] => format!("packs in {}, {against}\nreads matched against {}, which uses no interface folder\n", r.packs_dir, r.estate),
+        folders => {
+            let mut out = format!("packs in {}, {against}\nreads matched against {}, which uses the interface folders\n", r.packs_dir, r.estate);
+            for f in folders {
+                let exports = if f.exports.is_empty() { "nothing".to_string() } else { f.exports.join(", ") };
+                out.push_str(&format!("  {}, written by {}, exports {exports}\n", f.name, f.estate));
+            }
+            out
+        }
+    };
     if r.packs.is_empty() {
-        out.push_str("  none here, and the sources hold none\n");
+        out.push_str(if r.sources.is_empty() { "  none here\n" } else { "  none here, and the sources hold none\n" });
         return out;
     }
     let width = r.packs.iter().map(|p| p.id.len()).max().unwrap_or(0);
@@ -1244,7 +1277,7 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
             State::Behind => "behind",
             State::Edited => "edited",
             State::Gone => "gone from the source",
-            State::NotChecked => "not checked (another source)",
+            State::NotChecked => "not checked (source not read)",
             State::Available => "available",
         };
         let version = match (&p.version, &p.upstream_version) {
@@ -1800,6 +1833,65 @@ mod tests {
         assert!(err.contains("not formatted") && err.contains("satz review-pack"), "{err}");
         assert!(!dir.join("shared/team/logs.satz").exists(), "a refused pack was copied");
         assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refused pack was recorded");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `--local` lists `packs_dir` alone: the repository's own pack `own`, a fetched one whose
+    /// file still has its recorded sha256 `not-checked`, a changed one `edited` — with the
+    /// row's source and commit — and reads no source: the two configured here cannot be read,
+    /// a folder that is not there and a repository nobody has, and the listing succeeds.
+    #[tokio::test]
+    async fn local_lists_packs_dir_and_reads_no_source() {
+        let (dir, mut cfg, _) = publishing_estate("local");
+        let config = "[[pack_source]]\nname = \"gone\"\ndir = \"no-such-folder\"\n\n[[pack_source]]\nname = \"remote\"\ngithub = \"acme/no-such-repository\"\n";
+        cfg.pack_source = toml::from_str::<ToolConfig>(config).unwrap().pack_source;
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let fetched = |id: &str, text: &str| {
+            std::fs::write(dir.join(format!("packs/team/{id}.satz")), text).unwrap();
+            Row { id: format!("team/{id}"), source: "remote".into(), github: Some("acme/no-such-repository".into()), path: None, commit: Some(commit.into()), dir: None, version: "1.0".into(), sha256: sha256(text) }
+        };
+        let kept = fetched("kept", &DECLARING.replace("declaring", "kept"));
+        let changed = Row { source: "gone".into(), github: None, commit: None, dir: Some("no-such-folder".into()), ..fetched("changed", &LOGS.replace("logs", "changed")) };
+        std::fs::write(dir.join("packs/team/changed.satz"), LOGS.replace("logs", "changed") + "// changed here\n").unwrap();
+        write_record(&dir.join("packs"), vec![kept, changed]).unwrap();
+        let against = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1")]), ("vm-users", &[("zone", "europe-west3-a"), ("project_id", "acme-vm")])]);
+
+        let report = list(&cfg, None, true, &against).await.unwrap();
+        assert!(report.sources.is_empty(), "{:?}", report.sources);
+        let states: Vec<(&str, State, Option<&str>, Option<&str>)> = report.packs.iter().map(|p| (p.id.as_str(), p.state, p.source.as_deref(), p.commit.as_deref())).collect();
+        assert_eq!(
+            states,
+            [("team/changed", State::Edited, Some("gone"), None), ("team/kept", State::NotChecked, Some("remote"), Some(commit)), ("team/logs", State::Own, None, None)]
+        );
+        let kept = report.packs.iter().find(|p| p.id == "team/kept").unwrap();
+        assert_eq!(kept.upstream_version, None);
+        assert_eq!(kept.declarations.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["region", "project", "owner", "sizes", "stores"]);
+        assert_eq!(read(&kept.declarations, "instance_name").met_by, ["delegation-vm"]);
+        assert!(render_list(&report).contains("no pack source read"), "{}", render_list(&report));
+
+        // the same configuration read for real fails: the source is not there
+        let err = list(&cfg, Some("gone"), false, &against).await.unwrap_err();
+        assert!(err.contains("no-such-folder"), "{err}");
+        let err = list(&cfg, Some("gone"), true, &against).await.unwrap_err();
+        assert!(err.contains("--local reads no pack source and --source names one"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The report lists each interface folder the estate uses by name, with the organization's
+    /// estate that wrote it and the names of the values it exports.
+    #[tokio::test]
+    async fn the_report_lists_the_interface_folders_with_their_exports() {
+        let (dir, cfg, _) = publishing_estate("folders");
+        let against = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1")]), ("vm-users", &[])]);
+        let report = list(&cfg, None, true, &against).await.unwrap();
+        let want = vec![
+            InterfaceFolder { name: "delegation-vm".into(), estate: "acme".into(), exports: vec!["instance_name".into()] },
+            InterfaceFolder { name: "vm-users".into(), estate: "acme".into(), exports: Vec::new() },
+        ];
+        assert_eq!(report.interface_folders, want);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["interface_folders"][0], serde_json::json!({ "name": "delegation-vm", "estate": "acme", "exports": ["instance_name"] }));
+        assert!(render_list(&report).contains("delegation-vm, written by acme, exports instance_name"), "{}", render_list(&report));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

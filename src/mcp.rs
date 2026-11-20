@@ -715,6 +715,10 @@ pub(crate) struct PacksArgs {
     /// Read only this pack source — `satz`, or a name `satz_pack_sources` lists — instead of every one
     #[serde(default)]
     pub source: Option<String>,
+    /// Read no pack source: only the packs in packs_dir, each fetched one `edited` or
+    /// `not-checked` by its recorded sha256. Refused together with `source`
+    #[serde(default)]
+    pub local: bool,
     /// The estate the packs' reads are matched against, e.g. `team.satz`. Omit to use the open estate
     #[serde(default)]
     pub estate: Option<String>,
@@ -1962,7 +1966,7 @@ impl SatzMcp {
         description = "The workload packs of the open estate's packs_dir, as `satz packs` lists them: each with its \
                        `state` — `own` (no recorded origin: the repository's own, which no tool writes), `current`, \
                        `behind`, `edited` (changed here since it was fetched), `gone` (the source holds it no longer), \
-                       `not-checked` (fetched from another source than `source` names) — its `source`, its version, the \
+                       `not-checked` (unchanged since it was fetched, its source not read) — its `source`, its version, the \
                        source's version and the `use` line that reads it; and every pack a source holds that \
                        packs_dir does not, as `available`, one row per source. Each row carries what the pack \
                        declares: `params` (`name`, `default` in Satz or null, `question`, `prompt`), `list_params` \
@@ -1971,7 +1975,10 @@ impl SatzMcp {
                        makes (`folder` null for the bare form, `param` whose value it is) matched against the \
                        interface folders the estate uses: `met_by` the folders that give it, `unmet_reason` the \
                        transpile's refusal where none does, `bound_by_estate` where the estate binds the param. \
-                       Reads every pack source `satz_pack_sources` lists, or the one `source` names.",
+                       `interface_folders` lists the folders the estate uses: `name`, `estate` (the organization's \
+                       estate that wrote it), `exports` (the names of its values). Reads every pack source \
+                       `satz_pack_sources` lists, or the one `source` names; `local` reads none (no network), lists \
+                       only packs_dir, `sources` empty.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn workload_packs(
@@ -1990,7 +1997,7 @@ impl SatzMcp {
             Ok(e) => e,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::workload_packs::list(&open.runtime, args.source.as_deref(), &estate).await {
+        match crate::workload_packs::list(&open.runtime, args.source.as_deref(), args.local, &estate).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
         }

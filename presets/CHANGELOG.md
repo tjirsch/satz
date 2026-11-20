@@ -13,6 +13,19 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.108.0
+
+**`interface_folders` of `satz packs --format json` (and of `satz_packs`) lists objects
+instead of names** (ADR 0100). Each entry is `{name, estate, exports}`: the interface
+folder's name, the organization's estate that wrote it and the names of the values it
+exports. A script that reads the list as names reads `name` of each entry.
+
+| before | now | where |
+|---|---|---|
+| `interface_folders: ["payments"]` | `interface_folders: [{"name": "payments", "estate": "c0example", "exports": ["project_id", …]}]` | scripts and agents that read `satz packs --format json` or `satz_packs` |
+
+The plan does not move.
+
 ### v0.107.0
 
 **`satz packs` and `satz get-pack` match a pack against an estate, and `satz packs` reports

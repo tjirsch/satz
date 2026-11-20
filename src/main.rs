@@ -870,13 +870,19 @@ pub(crate) enum Commands {
     /// records the ones `get-pack` fetched and the pack source of each; a pack without a
     /// row is the repository's own. Reads every pack source — `satz`, the satz
     /// repository's `packs/`, and each `[[pack_source]]` of config.toml — or the one
-    /// `--source` names. Each pack is described by what it declares — its params with
-    /// their defaults and questions, its list params, its exports — and the interface
-    /// values it reads, each matched against the interface folders the estate uses.
+    /// `--source` names; `--local` reads none. Each pack is described by what it
+    /// declares — its params with their defaults and questions, its list params, its
+    /// exports — and the interface values it reads, each matched against the interface
+    /// folders the estate uses, which the report lists with the organization's estate
+    /// that wrote each and the values it exports.
     Packs {
         /// Read only this pack source: `satz`, or a name `satz pack-source list` lists
         #[arg(long, value_name = "NAME")]
         source: Option<String>,
+        /// Read no pack source: only the packs in `packs_dir`, each fetched one `edited`
+        /// or `not-checked` by the sha256 its origin row records
+        #[arg(long)]
+        local: bool,
         /// The estate each pack's reads are matched against (.satz, inside yaml_dir if
         /// relative); the one estate in yaml_dir when left out
         #[arg(long, value_name = "ESTATE")]
@@ -2094,10 +2100,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(())
         }
-        Commands::Packs { source, estate, format, out } => {
+        Commands::Packs { source, local, estate, format, out } => {
             let out = crate::out::target(out, format)?;
             let estate = pack_estate(&named_or_sole_estate(estate, &runtime_config)?, &runtime_config)?;
-            let report = crate::workload_packs::list(&runtime_config, source.as_deref(), &estate).await?;
+            let report = crate::workload_packs::list(&runtime_config, source.as_deref(), local, &estate).await?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
                 _ => crate::workload_packs::render_list(&report),
