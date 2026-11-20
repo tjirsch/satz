@@ -13,6 +13,16 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.105.0
+
+**A param whose read of an interface folder does not resolve is refused at the param,
+whether or not a resource reads it.** `terraform.tfvars` writes such a param as its value,
+and an unresolved read has none. The error names the param, the read and the values the
+folder has: ``param `<name>`: `${interface.<folder>.<value>}`: the interface folder `<folder>`
+has no value `<value>` — it has …``. Write a value the folder publishes, copy the interface
+folder again if the organization's estate renamed the value, or bind the param as a
+literal. The plan does not move: no resource reads the variable.
+
 ### v0.103.0
 
 **Workload packs come from named pack sources, kept in `config.toml`; `--from` is gone and

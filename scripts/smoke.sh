@@ -839,10 +839,22 @@ google_project_service "ledger_storage" {
 
 export "ledger_project" = "${{interface.ledger.project_id}}" description "The ledger's project, passed on"
 SATZ
+# a param that reads a value the organization's estate looks up: no literal before the plan
+python3 - "$two" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+o = '  infra_project_name = "${{interface.delegation-payments.infrastructure_project_id}}"\n'
+assert o in s, s
+open(p, "w", encoding="utf-8").write(s.replace(o, o + '  ledger_project_number = "${{interface.ledger.project_number}}"\n'))
+PY
 "$satz" --config tmp/two/config.toml transpile payments.satz > tmp/two-transpile.txt 2>&1 || fail "the estate over two projects does not transpile:\n$(cat tmp/two-transpile.txt)"
 grep -q 'local.interface.payments__project_id' tmp/two/hcl/main.tf && grep -q 'local.interface.ledger__project_id' tmp/two/hcl/main.tf || fail "the two projects are not read by their folder's name:\n$(cat tmp/two/hcl/main.tf)"
 grep -q 'ledger__project_id *= *"corp-ledger-001"' tmp/two/hcl/interface.tf || fail "interface.tf does not hold the ledger's project:\n$(cat tmp/two/hcl/interface.tf)"
 grep -q '"corp-ledger-001"' tmp/two/interfaces/outgoing/common/core/satz/interface.satz || fail "the value read was not passed on:\n$(find tmp/two/interfaces/outgoing -name interface.satz | head)"
+grep -q '^infra-project-name = "corp-deploy-payments"$' tmp/two/hcl/terraform.tfvars || fail "terraform.tfvars does not bind the read param to the export's value:\n$(cat tmp/two/hcl/terraform.tfvars)"
+grep -q 'interface\.' tmp/two/hcl/terraform.tfvars && fail "terraform.tfvars holds a read as text:\n$(cat tmp/two/hcl/terraform.tfvars)"
+grep -q 'ledger-project-number' tmp/two/hcl/terraform.tfvars tmp/two/hcl/variables.tf && fail "a param that reads a looked-up value is written:\n$(cat tmp/two/hcl/terraform.tfvars)"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/two/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate over two projects does not validate"
 fi

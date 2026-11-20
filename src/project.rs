@@ -414,6 +414,55 @@ mod tests {
         assert!(e.msg.contains("`infra_project_name`") && e.msg.contains("looks up"), "{}", e.msg);
     }
 
+    /// `terraform.tfvars` and `variables.tf` hold each param as the HCL code reads it: a
+    /// named read of a value the interface folder publishes is the export's value, a read of
+    /// a value the organization's estate looks up has no literal before the plan and leaves
+    /// the param out of both files, and a read that does not resolve is refused at its param.
+    #[test]
+    fn tfvars_binds_a_named_read_as_the_exports_value() {
+        let taken = published();
+        let (base, project) = (taken("delegation-data"), taken("data-lake"));
+        let files = vec![(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone())];
+        let written = estate("data-lake", &files).unwrap();
+        let with = |extra: &str| {
+            written
+                .lines()
+                .map(|l| match l.split_whitespace().next() {
+                    Some("infra_project_name") => format!("  infra_project_name = \"${{{{interface.delegation-data.infrastructure_project_id}}}}\"\n{}", extra),
+                    _ => l.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let src = with("  lake_project_id = \"${{interface.data-lake.project_id}}\"\n  lake_project_number = \"${{interface.data-lake.project_number}}\"");
+        assert!(src.contains("lake_project_number = \"${{interface.data-lake.project_number}}\""), "{}", src);
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let load = |p: &str| [&base, &project].iter().find(|t| t.0 == p).map(|t| t.1.clone()).ok_or_else(|| format!("no {}", p));
+        let fe = satz_core::pipeline::compile_estate("data_lake.satz", &src, &resolver, &load).unwrap_or_else(|e| panic!("{}\n{}", e, src));
+        let tfvars = crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs);
+        let variables = crate::emitter::emit_variables(&fe.tfvars, &Default::default(), &fe.inputs);
+        assert!(!tfvars.contains("interface."), "no read is written as text:\n{}", tfvars);
+        assert!(tfvars.contains("infra-project-name = \"acme-deploy-data\"\n"), "{}", tfvars);
+        assert!(tfvars.contains("lake-project-id = \"acme-data-lake-001\"\n"), "{}", tfvars);
+        assert!(variables.contains("variable \"lake-project-id\""), "{}", variables);
+        assert!(!tfvars.contains("lake-project-number"), "a looked-up value has no literal:\n{}", tfvars);
+        assert!(!variables.contains("lake-project-number"), "and no variable without one:\n{}", variables);
+
+        let unresolved = with("  lake_project_id = \"${{interface.data-lake.nope}}\"");
+        let e = satz_core::pipeline::compile_estate("data_lake.satz", &unresolved, &resolver, &load).err().expect("an unresolved read is refused");
+        assert!(e.msg.contains("`lake_project_id`") && e.msg.contains("no value `nope`"), "{}", e.msg);
+        assert_eq!(e.line, crate::findings::param_line(&unresolved, "lake_project_id").unwrap() as usize, "{}", e);
+
+        // an input is the variable the resources read: a static read is its value, a looked-up one is refused
+        let input = |read: &str| format!("{}\ninputs {{\n  lake = \"${{{{interface.data-lake.{}}}}}\"\n}}\n", with(""), read);
+        let fe = satz_core::pipeline::compile_estate("data_lake.satz", &input("project_id"), &resolver, &load).unwrap_or_else(|e| panic!("{}", e));
+        let tfvars = crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs);
+        assert!(tfvars.contains("lake = \"acme-data-lake-001\"\n"), "{}", tfvars);
+        let e = satz_core::pipeline::compile_estate("data_lake.satz", &input("project_number"), &resolver, &load).err().expect("a looked-up input is refused");
+        assert!(e.msg.contains("input `lake`") && e.msg.contains("looks up"), "{}", e.msg);
+    }
+
     /// `init --from` writes an estate from the delegation's interface and those of what
     /// it works in, in the canonical layout, that transpiles as the delegation's account.
     #[test]

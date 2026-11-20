@@ -764,8 +764,9 @@ pub struct FrontEnd {
     /// Every input the estate and its used files declare, by name.
     pub inputs: Vec<DeclaredInput>,
     /// Union of every included file's declared params (resolved values), first
-    /// definition wins — the estate declares before its packs. Feeds tfvars
-    /// emission.
+    /// definition wins — the estate declares before its packs, each read of an interface
+    /// folder as [`resolve_interface_in_tfvars`] leaves it. Feeds `variables.tf` and
+    /// `terraform.tfvars`.
     pub tfvars: Env,
     /// Resolved estate-level suppressions (subtractive override channel).
     pub suppressions: Vec<ResolvedSuppression>,
@@ -1306,6 +1307,42 @@ pub fn resolve_interface_in_exports(exports: &mut [ResolvedExport], files: &[Use
 /// estate's calls are billed to.
 pub const COMPOSED_PARAMS: [&str; 2] = ["svc_iac_account", "infra_project_name"];
 
+/// What a param that reads an interface folder, `${interface.…}`, reads as.
+enum ParamRead {
+    /// Every read resolved: the value with each read replaced by the export's value.
+    Resolved(serde_yaml::Value),
+    /// A read of a value the organization's estate looks up, named by its export: known
+    /// only at plan time.
+    LookedUp(String),
+    /// A read that does not resolve, with the message saying why.
+    Unresolved(String),
+}
+
+/// Every param whose value reads an interface folder, with what it reads as. A param that
+/// reads none is not in the list.
+fn param_reads(env: &Env, files: &[UsedInterfaceFile]) -> Vec<(String, ParamRead)> {
+    let opener = format!("${{{}", INTERFACE_ROOT);
+    let mut out = Vec::new();
+    for (name, value) in env {
+        let mut texts = Vec::new();
+        collect_strings(value, &mut texts);
+        if !texts.iter().any(|t| t.contains(&opener)) {
+            continue;
+        }
+        let mut resolved = value.clone();
+        let mut read = Vec::new();
+        let outcome = match substitute_value(&mut resolved, files, &mut read) {
+            Err(msg) => ParamRead::Unresolved(msg),
+            Ok(_) => match read.iter().find(|r| interface_output(r, files).is_ok_and(|o| reads_lookup(&o.value))) {
+                Some(r) => ParamRead::LookedUp(r.clone()),
+                None => ParamRead::Resolved(resolved),
+            },
+        };
+        out.push((name.clone(), outcome));
+    }
+    out
+}
+
 /// Every param whose value reads an interface folder, `${interface.…}`, with the read
 /// replaced by the export's value: what satz itself reads a param as where it composes
 /// one into text. A resource body keeps the read, because the front end spliced the
@@ -1316,31 +1353,14 @@ pub const COMPOSED_PARAMS: [&str; 2] = ["svc_iac_account", "infra_project_name"]
 /// [`COMPOSED_PARAMS`] it is refused, naming the param and the value, because the estate
 /// account is named before any lookup is read. The error is the param and the message.
 pub fn resolve_interface_in_params(env: &mut Env, files: &[UsedInterfaceFile]) -> Result<(), (String, String)> {
-    let opener = format!("${{{}", INTERFACE_ROOT);
-    for (name, value) in env.iter_mut() {
-        let mut texts = Vec::new();
-        collect_strings(value, &mut texts);
-        if !texts.iter().any(|t| t.contains(&opener)) {
-            continue;
-        }
+    for (name, outcome) in param_reads(env, files) {
         let composed = COMPOSED_PARAMS.contains(&name.as_str());
-        let mut resolved = value.clone();
-        let mut read = Vec::new();
-        if let Err(msg) = substitute_value(&mut resolved, files, &mut read) {
-            if composed {
-                return Err((name.clone(), format!("param `{}`: {}", name, msg)));
+        match outcome {
+            ParamRead::Resolved(v) => {
+                env.insert(name, v);
             }
-            continue;
-        }
-        let looked_up = read.iter().find(|r| {
-            let mut texts = Vec::new();
-            if let Ok(o) = interface_output(r, files) {
-                collect_strings(&o.value, &mut texts);
-            }
-            texts.iter().any(|t| !data_addresses(t).is_empty())
-        });
-        match looked_up {
-            Some(r) if composed => {
+            ParamRead::Unresolved(msg) if composed => return Err((name.clone(), format!("param `{}`: {}", name, msg))),
+            ParamRead::LookedUp(r) if composed => {
                 return Err((
                     name.clone(),
                     format!(
@@ -1349,8 +1369,39 @@ pub fn resolve_interface_in_params(env: &mut Env, files: &[UsedInterfaceFile]) -
                     ),
                 ))
             }
-            Some(_) => {}
-            None => *value = resolved,
+            ParamRead::Unresolved(_) | ParamRead::LookedUp(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// The params as `variables.tf` declares them and `terraform.tfvars` binds them: a read of
+/// an interface folder is replaced by the export's value, the value `interface.tf` holds and
+/// the rest of the HCL code reads. A param that reads a value the organization's estate
+/// looks up has no literal before the plan, and the HCL code reads no `var.<param>`: it is
+/// left out of both files. An input is the exception, since the resources read
+/// `var.<input>`: one bound to a looked-up value is refused. A read that does not resolve
+/// is refused, naming the param, since either file would hold it as text. The error is the
+/// param and the message.
+pub fn resolve_interface_in_tfvars(tfvars: &mut Env, inputs: &[DeclaredInput], files: &[UsedInterfaceFile]) -> Result<(), (String, String)> {
+    for (name, outcome) in param_reads(tfvars, files) {
+        match outcome {
+            ParamRead::Resolved(v) => {
+                tfvars.insert(name, v);
+            }
+            ParamRead::LookedUp(r) if inputs.iter().any(|i| i.name == name) => {
+                return Err((
+                    name.clone(),
+                    format!(
+                        "input `{}`: `interface.{}` is a value the organization's estate looks up, and `terraform.tfvars` binds the variable `var.{}` the resources read before any lookup is read — read a value the folder publishes as written, or read the looked-up value in the resource",
+                        name, r, name
+                    ),
+                ))
+            }
+            ParamRead::LookedUp(_) => {
+                tfvars.remove(&name);
+            }
+            ParamRead::Unresolved(msg) => return Err((name.clone(), format!("param `{}`: {}", name, msg))),
         }
     }
     Ok(())
@@ -2295,11 +2346,12 @@ pub fn compile_estate_bound(
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
     let requests = resolve_requests(&declared_requests, &tfvars)?;
-    let inputs = w.inputs.into_values().collect();
+    let inputs: Vec<DeclaredInput> = w.inputs.into_values().collect();
     let config_rendering = w.config_rendering;
     // what satz composes from the params reads each one as its value, the read resolved
     let mut env = env;
     resolve_interface_in_params(&mut env, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
+    resolve_interface_in_tfvars(&mut tfvars, &inputs, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
