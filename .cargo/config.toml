@@ -1,0 +1,8 @@
+# Windows gives a program's main thread 1 MiB of stack. clap's builder for satz's
+# command tree is deep enough to overflow that in a debug build, so the binary asks
+# the linker for 8 MiB on Windows; other platforms already start with 8 MiB.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]

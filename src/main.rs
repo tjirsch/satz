@@ -6716,6 +6716,12 @@ mod command_groups {
     /// them, at any depth, whichever way the help is asked for.
     #[test]
     fn a_command_s_help_leaves_the_global_options_to_the_root() {
+        // the walk renders every command's help; on Windows a test thread's 2 MiB of stack
+        // is not enough for clap's builder over the whole tree in a debug build
+        std::thread::Builder::new().stack_size(8 << 20).spawn(help_leaves_the_global_options_to_the_root).unwrap().join().unwrap();
+    }
+
+    fn help_leaves_the_global_options_to_the_root() {
         let mut cmd = cli_command();
         cmd.build();
         let globals: Vec<String> = Cli::command()
