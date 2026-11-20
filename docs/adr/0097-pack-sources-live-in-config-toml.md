@@ -98,3 +98,5 @@ Option 1 for the sources and option 1 for the library.
   to the last release tag — belong to the library's repository and run there.
 - satz-studio passes `--source` where it passed `--from`, and reads the source names and
   the `sources` of the pack reports.
+- A pack the repository wrote is copied into a folder source by `satz publish-pack`, which
+  writes its row as `get-pack --source` does ([ADR 0099](0099-a-pack-the-repository-wrote-is-published-to-a-folder-source.md)).

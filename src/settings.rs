@@ -487,7 +487,7 @@ pub(crate) fn config_file_path(
                 | Commands::Presets { .. } | Commands::AddPreset { .. } | Commands::AddEntry { .. } | Commands::Interfaces { .. } | Commands::CheckRequest { .. } | Commands::RemovePreset { .. } | Commands::CheckConsumer { .. }
                 | Commands::Plan { .. } | Commands::Apply { .. } | Commands::HclInit { .. }
                 | Commands::ReviewPreset { .. }
-                | Commands::Packs { .. } | Commands::GetPack { .. } | Commands::UpdatePack { .. } | Commands::DetachPack { .. } | Commands::PackSource { .. } | Commands::ReviewPack { .. }
+                | Commands::Packs { .. } | Commands::GetPack { .. } | Commands::UpdatePack { .. } | Commands::DetachPack { .. } | Commands::PublishPack { .. } | Commands::PackSource { .. } | Commands::ReviewPack { .. }
                 | Commands::PresetGraph { presets_dir: None, .. }
                 // the estate tier lives in the estate's config.toml. `--machine` needs
                 // none, and a bare `list` says what this machine silences from anywhere

@@ -205,8 +205,9 @@ the satz repository, or a repository or folder the estate's `config.toml` names,
 `satz_get_pack` fetches one (`source` names where from) and records its origin in
 `packs_dir/origin.toml`,
 `satz_update_pack` brings a fetched one up to date and leaves an edited one as it is
-(`report_only` first), `satz_detach_pack` makes one the repository's own, and
-`satz_review_pack` judges one. A pack with no row in `origin.toml` is the repository's own:
+(`report_only` first), `satz_detach_pack` makes one the repository's own,
+`satz_publish_pack` copies one of the repository's own into a folder source and records it
+as fetched from there, and `satz_review_pack` judges one. A pack with no row in `origin.toml` is the repository's own:
 no tool writes it, and you edit it as you edit the estate. A source is added with `satz
 pack-source add`, which the human runs; a refusal that names a source `config.toml` lacks is
 theirs to resolve.

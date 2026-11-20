@@ -196,8 +196,15 @@ pub(crate) fn valid_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A pack's file: its id's `/`-separated segments joined as path parts, so the
+/// path is written in the platform's own form.
 fn pack_file(packs_dir: &Path, id: &str) -> PathBuf {
-    packs_dir.join(format!("{id}.satz"))
+    let mut file = packs_dir.to_path_buf();
+    let mut segments: Vec<&str> = id.split('/').collect();
+    let last = segments.pop().unwrap_or_default();
+    file.extend(segments);
+    file.push(format!("{last}.satz"));
+    file
 }
 
 fn sha256(text: &str) -> String {
@@ -240,19 +247,25 @@ impl Source {
                 Place::Github { repo, path: path.clone(), commit, http }
             }
             Location::Dir(written) => {
-                let folder = crate::pack_sources::folder(runtime, written);
-                if !folder.is_dir() {
-                    return Err(format!(
-                        "pack source `{}`: dir = \"{written}\" is no folder ({}) — correct it in config.toml, or remove the source with `satz pack-source remove {}`",
-                        def.name,
-                        folder.display(),
-                        def.name
-                    ));
-                }
-                Place::Dir { written: written.clone(), folder }
+                let written = written.clone();
+                return Source::open_dir(def, &written, runtime);
             }
         };
         Ok(Source { def, place })
+    }
+
+    /// A folder source ready to read: its folder found. Nothing to wait for.
+    fn open_dir(def: Def, written: &str, runtime: &ToolConfig) -> Result<Source, String> {
+        let folder = crate::pack_sources::folder(runtime, written);
+        if !folder.is_dir() {
+            return Err(format!(
+                "pack source `{}`: dir = \"{written}\" is no folder ({}) — correct it in config.toml, or remove the source with `satz pack-source remove {}`",
+                def.name,
+                folder.display(),
+                def.name
+            ));
+        }
+        Ok(Source { def, place: Place::Dir { written: written.to_string(), folder } })
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -1023,6 +1036,141 @@ pub(crate) fn detach(runtime: &ToolConfig, id: &str) -> Result<Detached, String>
     Ok(Detached { id: row.id, source: row.source })
 }
 
+// ---------------------------------------------------------------------------
+// publish-pack
+// ---------------------------------------------------------------------------
+
+/// What `publish-pack` did with the file in the source's folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum PublishAction {
+    /// the folder held no file of that id: the pack was copied there
+    Copied,
+    /// the folder held the same file: nothing was copied
+    Identical,
+    /// `force`: the folder held another file, and the pack was copied over it
+    Overwritten,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct Published {
+    pub id: String,
+    /// the version the pack states
+    pub version: String,
+    /// the name of the folder source it was copied to
+    pub source: String,
+    /// that source's folder, as config.toml writes it
+    pub location: String,
+    /// the file in the source's folder, where `get-pack --source <source>` reads it
+    pub path: String,
+    pub action: PublishAction,
+    /// the estate the pack was checked in
+    pub estate: String,
+}
+
+/// Copy one of the repository's own packs into a folder source, and record it as fetched
+/// from there, so `update-pack` compares it with the source from then on. Refused for a
+/// GitHub source, for a pack fetched from somewhere (a row in the origin record), for a
+/// source file of that id that differs unless `force`, and for a pack that does not clear
+/// `review-pack`'s bar inside `estate` — formatted, and the estate transpiles with it.
+pub(crate) fn publish(tool: &ToolConfig, runtime: &ToolConfig, id: &str, source: &str, estate: &Path, force: bool) -> Result<Published, String> {
+    valid_id(id)?;
+    let packs_dir = Path::new(&runtime.packs_dir);
+    let mut rows = read_record(packs_dir)?;
+    check_rows(runtime, &rows)?;
+    let def = crate::pack_sources::find(runtime, source)?;
+    let written = match &def.location {
+        Location::Dir(written) => written.clone(),
+        Location::Github { .. } => {
+            return Err(format!(
+                "`{}` is the GitHub source {} — a GitHub source is written by a pull request to its repository; publish-pack writes only a folder source",
+                def.name,
+                def.describe()
+            ))
+        }
+    };
+    let local = pack_file(packs_dir, id);
+    if !local.is_file() {
+        return Err(format!("`{id}` is not in {} — publish-pack copies a pack of packs_dir, named by its path there without `.satz`", packs_dir.display()));
+    }
+    if let Some(row) = rows.iter().find(|r| r.id == id) {
+        return Err(format!("the pack `{id}` came from `{}`; detach it first (`satz detach-pack {id}`) to publish it as your own", row.source));
+    }
+    let text = fsx::read_to_string(&local).map_err(|e| format!("{}: {}", local.display(), e))?;
+    let version = crate::presets::pack_version(&text).ok_or_else(|| format!("{}: no `pack <id> version \"…\"` statement, so it is no pack", local.display()))?;
+
+    let source = Source::open_dir(def, &written, runtime)?;
+    let target = pack_file(&crate::pack_sources::folder(runtime, &written), id);
+    let action = if !target.exists() {
+        PublishAction::Copied
+    } else {
+        let there = fsx::read_to_string(&target).map_err(|e| format!("{}: {}", target.display(), e))?;
+        match (there == text, force) {
+            (true, _) => PublishAction::Identical,
+            (false, true) => PublishAction::Overwritten,
+            (false, false) => {
+                return Err(format!(
+                    "{} holds another `{id}` than {} — compare the two files; `--force` copies this one over it",
+                    target.display(),
+                    local.display()
+                ))
+            }
+        }
+    };
+
+    if !estate.is_file() {
+        return Err(format!("no estate file at {} — the pack is checked in the estate it was tested in", estate.display()));
+    }
+    // the bar a pack is published with: review-pack's, inside the estate it was tested in
+    let review = crate::review_pack::review(&local, Some(estate), crate::review_pack::Bar::Workload, tool, runtime).map_err(|e| format!("{}: {}", local.display(), e))?;
+    if !review.passed() {
+        let errors: Vec<String> = review
+            .findings
+            .iter()
+            .filter(|f| f.severity == crate::findings::Severity::Error)
+            .map(|f| match f.line {
+                Some(line) => format!("  line {line}: {}", f.message),
+                None => format!("  {}", f.message),
+            })
+            .collect();
+        return Err(format!(
+            "{} does not clear review-pack's bar inside {}, so it is not published:\n{}\n`satz review-pack {} --against {} --format text --out -` lists every finding",
+            local.display(),
+            estate.display(),
+            errors.join("\n"),
+            local.display(),
+            estate.display()
+        ));
+    }
+
+    if action != PublishAction::Identical {
+        if let Some(parent) = target.parent() {
+            fsx::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fsx::write_verbatim(&target, text.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    rows.push(source.row(id, &version, &text));
+    write_record(packs_dir, rows)?;
+    Ok(Published {
+        id: id.to_string(),
+        version,
+        source: source.def.name.clone(),
+        location: written,
+        path: target.display().to_string(),
+        action,
+        estate: estate.display().to_string(),
+    })
+}
+
+pub(crate) fn render_publish(p: &Published) -> String {
+    let what = match p.action {
+        PublishAction::Copied => format!("published {} {} to `{}` ({}) → {}", p.id, p.version, p.source, p.location, p.path),
+        PublishAction::Identical => format!("published {} {}: `{}` ({}) holds the same file, nothing copied → {}", p.id, p.version, p.source, p.location, p.path),
+        PublishAction::Overwritten => format!("published {} {} to `{}` ({}), over the file that was there → {}", p.id, p.version, p.source, p.location, p.path),
+    };
+    format!("{what}\n    checked in {}; packs_dir/origin.toml records it as fetched from `{}`, so `satz update-pack {}` follows the source\n", p.estate, p.source, p.id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1122,6 +1270,122 @@ mod tests {
         assert!(err.contains("is a GitHub repository"), "{err}");
         let err = check_rows(&config, &[Row { github: Some("acme/packs".into()), commit, dir: None, ..row(V1) }]).unwrap_err();
         assert!(err.contains("is a folder"), "{err}");
+    }
+
+    /// An estate whose own pack `team/logs` it uses, a folder source `shared`, a GitHub
+    /// source `remote`, and the configuration that reads them.
+    fn publishing_estate(name: &str) -> (PathBuf, ToolConfig, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("satz-publish-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("satz")).unwrap();
+        std::fs::create_dir_all(dir.join("packs/team")).unwrap();
+        std::fs::create_dir_all(dir.join("shared")).unwrap();
+        let config = dir.join("config.toml");
+        std::fs::write(
+            &config,
+            "yaml_dir = \"satz\"\npacks_dir = \"packs\"\ninclude_dirs = [\".\", \"satz\"]\n\n\
+             [[pack_source]]\nname = \"shared\"\ndir = \"shared\"\n\n[[pack_source]]\nname = \"remote\"\ngithub = \"acme/packs\"\n",
+        )
+        .unwrap();
+        let mut cfg = crate::settings::resolved_config(&crate::settings::parse_tool_config(&config).unwrap(), &dir);
+        cfg.schema_dir = crate::corpus::schema_dir();
+        std::fs::write(dir.join("packs/team/logs.satz"), LOGS).unwrap();
+        let estate = dir.join("satz/team.satz");
+        std::fs::write(
+            &estate,
+            "estate team\n\nparams {\n  customer_organization_id = \"123456789012\"\n}\n\n\
+             terraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n\nuse \"packs/team/logs.satz\"\n",
+        )
+        .unwrap();
+        (dir, cfg, estate)
+    }
+
+    const LOGS: &str = "// A log bucket for the team.\npack logs version \"1.0\"\n\n\
+                        google_storage_bucket {\n  logs {\n    name     = \"acme-logs\"\n    location = \"EU\"\n  }\n}\n";
+
+    /// The pack lands where `get-pack --source shared` reads it, and the row is the one that
+    /// fetch would write, so the estate follows the source from then on. Published again
+    /// over the same file, nothing is copied.
+    #[test]
+    fn a_published_pack_is_copied_to_the_folder_and_recorded_as_fetched_from_it() {
+        let (dir, cfg, estate) = publishing_estate("ok");
+        let published = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap();
+        assert_eq!(published.action, PublishAction::Copied);
+        assert_eq!((published.version.as_str(), published.location.as_str()), ("1.0", "shared"));
+        assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), LOGS);
+        let rows = read_record(&dir.join("packs")).unwrap();
+        let want = Row { id: "team/logs".into(), source: "shared".into(), github: None, path: None, commit: None, dir: Some("shared".into()), version: "1.0".into(), sha256: sha256(LOGS) };
+        assert_eq!(rows, vec![want]);
+        check_rows(&cfg, &rows).unwrap();
+        assert_eq!(classify(rows.first(), Some(LOGS), Upstream::Found(LOGS)), Some(State::Current));
+
+        // the row is there now: publishing a fetched pack is refused until it is detached
+        let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
+        assert!(err.contains("the pack `team/logs` came from `shared`; detach it first (`satz detach-pack team/logs`)"), "{err}");
+        detach(&cfg, "team/logs").unwrap();
+        let again = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap();
+        assert_eq!(again.action, PublishAction::Identical);
+        assert_eq!(read_record(&dir.join("packs")).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An id's segments are path parts, and a dot inside an id stays part of its name.
+    #[test]
+    fn a_pack_file_is_its_ids_segments_with_satz_appended() {
+        let base = Path::new("packs");
+        assert_eq!(pack_file(base, "team/logs"), base.join("team").join("logs.satz"));
+        assert_eq!(pack_file(base, "budget.v2"), base.join("budget.v2.satz"));
+    }
+
+    #[test]
+    fn a_different_file_in_the_folder_is_refused_unless_forced() {
+        let (dir, cfg, estate) = publishing_estate("force");
+        std::fs::create_dir_all(dir.join("shared/team")).unwrap();
+        let theirs = LOGS.replace("1.0", "0.9");
+        std::fs::write(dir.join("shared/team/logs.satz"), &theirs).unwrap();
+        let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
+        let there = dir.join("shared").join("team").join("logs.satz");
+        let here = dir.join("packs").join("team").join("logs.satz");
+        assert!(err.contains(&format!("{} holds another `team/logs` than {}", there.display(), here.display())) && err.contains("--force"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), theirs, "a refusal wrote the file");
+        assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refusal wrote a row");
+        let forced = publish(&cfg, &cfg, "team/logs", "shared", &estate, true).unwrap();
+        assert_eq!(forced.action, PublishAction::Overwritten);
+        assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), LOGS);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_writes_only_a_folder_source_it_knows() {
+        let (dir, cfg, estate) = publishing_estate("sources");
+        for github in ["remote", "satz"] {
+            let err = publish(&cfg, &cfg, "team/logs", github, &estate, false).unwrap_err();
+            assert!(err.contains("a GitHub source is written by a pull request to its repository; publish-pack writes only a folder source"), "{github}: {err}");
+        }
+        let err = publish(&cfg, &cfg, "team/logs", "nowhere", &estate, false).unwrap_err();
+        assert!(err.contains("no pack source `nowhere`"), "{err}");
+        let err = publish(&cfg, &cfg, "team/none", "shared", &estate, false).unwrap_err();
+        assert!(err.contains("`team/none` is not in"), "{err}");
+        assert!(!dir.join("shared/team").exists() && read_record(&dir.join("packs")).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The estate does not transpile with the pack, or the pack is not formatted: nothing is
+    /// copied and no row is written, and the refusal says why.
+    #[test]
+    fn a_pack_that_does_not_clear_the_bar_is_not_published() {
+        let (dir, cfg, estate) = publishing_estate("bar");
+        let broken = LOGS.replace("location = \"EU\"", "shade    = \"EU\"");
+        std::fs::write(dir.join("packs/team/logs.satz"), &broken).unwrap();
+        let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
+        assert!(err.contains("does not clear review-pack's bar") && err.contains("does not transpile"), "{err}");
+        let unformatted = LOGS.replace("name     =", "name =");
+        std::fs::write(dir.join("packs/team/logs.satz"), &unformatted).unwrap();
+        let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
+        assert!(err.contains("not formatted") && err.contains("satz review-pack"), "{err}");
+        assert!(!dir.join("shared/team/logs.satz").exists(), "a refused pack was copied");
+        assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refused pack was recorded");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
