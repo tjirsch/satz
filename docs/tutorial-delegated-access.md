@@ -312,7 +312,8 @@ satz init --from <the organization>/interfaces/outgoing/delegation-shop <the org
 every delegated resource the estate works in. Exactly one of the folders is a delegation's own: an
 estate runs as one account. It copies each folder into `interfaces/incoming/` unless it
 stands there already, fetches the provider schemas, and writes the workload estate under
-the delegation's name:
+the delegation's name. A refused run writes nothing, so the corrected run succeeds in the
+same folder:
 
 ```text
 shop/

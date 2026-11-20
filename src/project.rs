@@ -196,7 +196,7 @@ providers {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::Path;
 
@@ -326,7 +326,7 @@ mod tests {
     /// The interface folders the organization's estate publishes for `delegations` and
     /// `delegated_projects`, as a workload repository takes them: `taken(name)` is the path
     /// the estate `use`s, the file's text and the file parsed.
-    fn published() -> impl Fn(&str) -> (String, String, InterfaceFile) {
+    pub(crate) fn published() -> impl Fn(&str) -> (String, String, InterfaceFile) {
         // the region is estate-core's export, which the estate `init` writes switches on later
         let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", DELEGATIONS, PROJECTS, ""));
         let (manifest, i) = compile(&src, &presets);

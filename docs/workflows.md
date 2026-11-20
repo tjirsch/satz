@@ -1145,7 +1145,8 @@ satz transpile payments.satz
 
 `init --from` copies each folder into `interfaces/incoming/`, unless it stands there
 already, and writes `config.toml` and `satz/payments.satz` from the interface files — no
-sign-in is needed. Exactly one of the folders is a delegation's own, because an estate
+sign-in is needed. A refused run writes nothing, so the corrected run succeeds in the same
+folder without `--force`. Exactly one of the folders is a delegation's own, because an estate
 runs as one estate account;
  every other is a delegated folder or project, any number of them.
 `--name` names the estate, which otherwise takes the delegation's name. It writes the

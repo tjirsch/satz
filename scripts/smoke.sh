@@ -845,10 +845,12 @@ done
 grep -q 'resource "google_project" "payments"' tmp/showcase-hcl/main.tf || fail "the project is not written"
 out="$PWD/interfaces/outgoing"
 rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
-# a target alone carries no identity, and nothing is written for it
+# a delegated project's folder alone carries no estate account: refused, and the refused run
+# writes nothing, so the corrected run below succeeds in the same folder without --force
+before=$(cd tmp/payments && find . | sort)
 (cd tmp/payments && "$satz" init --from "$out/payments" > ../init-alone.txt 2>&1) && fail "init wrote an estate from a folder that carries no account"
 grep -q "none of the folders is a delegation's own" tmp/init-alone.txt || fail "the refusal does not say which folder is missing:\n$(cat tmp/init-alone.txt)"
-rm -rf tmp/payments && mkdir -p tmp/payments && seed_schemas tmp/payments
+[ "$(cd tmp/payments && find . | sort)" = "$before" ] || fail "the refused init --from wrote into the folder:\n$(cd tmp/payments && find . | sort)"
 (cd tmp/payments && "$satz" init --from "$out/delegation-payments" "$out/payments" > ../init-project.txt 2>&1) || fail "init could not write the workload estate:\n$(cat tmp/init-project.txt)"
 for f in delegation-payments payments; do
   [ -f "tmp/payments/interfaces/incoming/$f/$f/satz/interface.satz" ] && [ -f "tmp/payments/interfaces/incoming/$f/core/satz/interface.satz" ] || fail "init did not take the folder $f whole into interfaces/incoming/:\n$(find tmp/payments/interfaces 2>/dev/null)"
