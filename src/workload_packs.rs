@@ -841,6 +841,9 @@ pub(crate) struct ParamDecl {
     pub question: bool,
     /// the question's prompt, where one asks for it
     pub prompt: Option<String>,
+    /// the question's `why`, what getting the answer wrong costs; none where no question
+    /// asks for the param or the question has no `why`
+    pub why: Option<String>,
 }
 
 /// One `entries <list param> { … }` of a pack: what a team may add to a list param.
@@ -862,6 +865,8 @@ pub(crate) struct ExportDecl {
     /// `each` writes is named by its pattern, `ks-{each.id}`; none for a core export
     pub interface: Option<String>,
     pub name: String,
+    /// the export's `description "…"`; none where it has none
+    pub description: Option<String>,
 }
 
 /// One value a pack reads from the interface folders the estate uses,
@@ -881,6 +886,9 @@ pub(crate) struct ReadDecl {
     pub met_by: Vec<String>,
     /// why the estate does not give it, in the words the transpile refuses the read with
     pub unmet_reason: Option<String>,
+    /// the description of the export that gives the value, from the first folder of
+    /// `met_by`; none where the estate does not give it or the export has none
+    pub description: Option<String>,
 }
 
 /// What a pack declares, read from its parse: its params, its list params, its exports and
@@ -909,15 +917,27 @@ pub(crate) struct InterfaceFolder {
     pub name: String,
     /// the name of the organization's estate that wrote it
     pub estate: String,
-    /// the names of the values it exports, as it writes them
-    pub exports: Vec<String>,
+    /// the values it exports, as it writes them
+    pub exports: Vec<FolderExport>,
+}
+
+/// One value an interface folder exports: its name and its description.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct FolderExport {
+    pub name: String,
+    /// the export's description; none where it has none
+    pub description: Option<String>,
 }
 
 impl Estate {
     pub(crate) fn folders(&self) -> Vec<InterfaceFolder> {
         self.interfaces
             .iter()
-            .map(|f| InterfaceFolder { name: f.interface.name.clone(), estate: f.interface.estate.clone(), exports: f.interface.outputs.iter().map(|o| o.name.clone()).collect() })
+            .map(|f| InterfaceFolder {
+                name: f.interface.name.clone(),
+                estate: f.interface.estate.clone(),
+                exports: f.interface.outputs.iter().map(|o| FolderExport { name: o.name.clone(), description: o.description.clone() }).collect(),
+            })
             .collect()
     }
 }
@@ -1043,6 +1063,7 @@ pub(crate) fn declarations(file: &satz_core::satz::File) -> Declarations {
             default: (!is_unset(v)).then(|| satz_text(v)),
             question: asked(name).is_some(),
             prompt: asked(name).map(|q| q.prompt.clone()),
+            why: asked(name).and_then(|q| q.why.clone()),
         })
         .collect();
     let list_params = file
@@ -1050,9 +1071,9 @@ pub(crate) fn declarations(file: &satz_core::satz::File) -> Declarations {
         .iter()
         .map(|r| ListParamDecl { param: r.param.clone(), key: r.key.clone(), fields: r.fields.clone(), defaults: r.defaults.iter().map(|(f, v, _)| (f.clone(), satz_text(v))).collect() })
         .collect();
-    let mut exports: Vec<ExportDecl> = file.exports.iter().map(|e| ExportDecl { interface: None, name: e.name.clone() }).collect();
+    let mut exports: Vec<ExportDecl> = file.exports.iter().map(|e| ExportDecl { interface: None, name: e.name.clone(), description: e.description.clone() }).collect();
     for i in &file.interfaces {
-        exports.extend(i.exports.iter().map(|e| ExportDecl { interface: Some(i.name.clone()), name: e.name.clone() }));
+        exports.extend(i.exports.iter().map(|e| ExportDecl { interface: Some(i.name.clone()), name: e.name.clone(), description: e.description.clone() }));
     }
 
     // the texts a read can stand in, each with the param it is the value of
@@ -1082,7 +1103,7 @@ pub(crate) fn declarations(file: &satz_core::satz::File) -> Declarations {
     let mut reads: Vec<ReadDecl> = Vec::new();
     for (param, text) in texts {
         for (folder, value) in reads_in(&text) {
-            let read = ReadDecl { folder, value, param: param.clone(), bound_by_estate: false, met_by: Vec::new(), unmet_reason: None };
+            let read = ReadDecl { folder, value, param: param.clone(), bound_by_estate: false, met_by: Vec::new(), unmet_reason: None, description: None };
             if !reads.contains(&read) {
                 reads.push(read);
             }
@@ -1112,7 +1133,10 @@ pub(crate) fn matched(mut d: Declarations, estate: &Estate) -> Declarations {
             None => r.value.clone(),
         };
         match satz_core::pipeline::interface_read(&key, &estate.interfaces) {
-            Ok((folders, _)) => r.met_by = folders.into_iter().map(str::to_string).collect(),
+            Ok((folders, export)) => {
+                r.met_by = folders.into_iter().map(str::to_string).collect();
+                r.description = export.description.clone();
+            }
             Err(e) => r.unmet_reason = Some(e),
         }
     }
@@ -1258,7 +1282,7 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
         folders => {
             let mut out = format!("packs in {}, {against}\nreads matched against {}, which uses the interface folders\n", r.packs_dir, r.estate);
             for f in folders {
-                let exports = if f.exports.is_empty() { "nothing".to_string() } else { f.exports.join(", ") };
+                let exports = if f.exports.is_empty() { "nothing".to_string() } else { f.exports.iter().map(|e| e.name.as_str()).collect::<Vec<_>>().join(", ") };
                 out.push_str(&format!("  {}, written by {}, exports {exports}\n", f.name, f.estate));
             }
             out
@@ -1518,6 +1542,7 @@ mod tests {
         }\n\n\
         question owner {\n\
           prompt   = \"The group that owns it\"\n\
+          why      = \"Its members are the ones paged\"\n\
           reversal = edit\n\
           blast    = low\n\
         }\n\n\
@@ -1532,7 +1557,7 @@ mod tests {
             project = project\n\
           }\n\
         }\n\n\
-        export \"vm_name\" = \"${{google_compute_instance.vm.name}}\"\n\n\
+        export \"vm_name\" = \"${{google_compute_instance.vm.name}}\" description \"The VM's name\"\n\n\
         interface \"vm-users\" {\n\
           export \"vm_zone\" = \"${{interface.zone}}\"\n\
         }\n";
@@ -1540,12 +1565,22 @@ mod tests {
     /// A parameter of the estate a pack is matched against: interface folders by name, each
     /// with its values.
     fn estate(bound: &[&str], folders: &[(&str, &[(&str, &str)])]) -> Estate {
+        let folders: Vec<DescribedFolder> = folders.iter().map(|(name, values)| (*name, values.iter().map(|(v, value)| (*v, *value, None)).collect())).collect();
+        described_estate(bound, &folders)
+    }
+
+    /// An interface folder by name, each value with its description or none.
+    type DescribedFolder<'a> = (&'a str, Vec<(&'a str, &'a str, Option<&'a str>)>);
+
+    /// `estate`, each value with the description its folder gives it, or none.
+    fn described_estate(bound: &[&str], folders: &[DescribedFolder]) -> Estate {
         let interfaces = folders
             .iter()
             .map(|(name, values)| {
                 let mut text = format!("interface \"{name}\"\n\ncentral {{\n  estate        = \"acme\"\n  organizations = [\"organizations/123456789012\"]\n}}\n");
-                for (v, value) in *values {
-                    text.push_str(&format!("\noutput \"{v}\" {{\n  value = \"{value}\"\n}}\n"));
+                for (v, value, description) in values {
+                    let description = description.map(|d| format!("  description = \"{d}\"\n")).unwrap_or_default();
+                    text.push_str(&format!("\noutput \"{v}\" {{\n  value = \"{value}\"\n{description}}}\n"));
                 }
                 let interface = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
                 satz_core::pipeline::UsedInterfaceFile { file: format!("interfaces/{name}/satz/interface.satz"), interface }
@@ -1571,7 +1606,8 @@ mod tests {
         assert_eq!(param("sizes").default.as_deref(), Some("[1, 2]"));
         assert_eq!(param("owner").default, None, "a param written \"\" has no default");
         assert!(param("owner").question && param("owner").prompt.as_deref() == Some("The group that owns it"));
-        assert!(!param("region").question && param("region").prompt.is_none());
+        assert_eq!(param("owner").why.as_deref(), Some("Its members are the ones paged"));
+        assert!(!param("region").question && param("region").prompt.is_none() && param("region").why.is_none());
 
         assert_eq!(d.list_params.len(), 1);
         let l = &d.list_params[0];
@@ -1580,7 +1616,10 @@ mod tests {
 
         assert_eq!(
             d.exports,
-            [ExportDecl { interface: None, name: "vm_name".into() }, ExportDecl { interface: Some("vm-users".into()), name: "vm_zone".into() }]
+            [
+                ExportDecl { interface: None, name: "vm_name".into(), description: Some("The VM's name".into()) },
+                ExportDecl { interface: Some("vm-users".into()), name: "vm_zone".into(), description: None }
+            ]
         );
 
         assert_eq!(
@@ -1602,6 +1641,30 @@ mod tests {
         let two = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "z"), ("project_id", "p")]), ("vm", &[("zone", "z")])]);
         let d = matched(declarations_of(DECLARING, "declaring.satz").unwrap(), &two);
         assert_eq!(read(&d, "zone").met_by, ["delegation-vm", "vm"]);
+    }
+
+    /// A read carries the description of the export that gives it: the first folder's where
+    /// several give it, none where the export has none or the estate does not give the value.
+    #[test]
+    fn a_read_carries_the_description_of_the_export_that_gives_it() {
+        let d = matched(
+            declarations_of(DECLARING, "declaring.satz").unwrap(),
+            &described_estate(
+                &[],
+                &[
+                    ("delegation-vm", vec![("instance_name", "vm-1", Some("The VM's name")), ("zone", "z", Some("The VM's zone"))]),
+                    ("vm", vec![("zone", "z", Some("The zone of the VM"))]),
+                ],
+            ),
+        );
+        assert_eq!(read(&d, "instance_name").description.as_deref(), Some("The VM's name"));
+        assert_eq!((read(&d, "zone").met_by.clone(), read(&d, "zone").description.as_deref()), (vec!["delegation-vm".to_string(), "vm".to_string()], Some("The VM's zone")));
+        let r = read(&d, "project_id");
+        assert!(r.met_by.is_empty() && r.unmet_reason.is_some() && r.description.is_none(), "{r:?}");
+        // met by an export without a description
+        let d = matched(declarations_of(DECLARING, "declaring.satz").unwrap(), &estate(&[], &[("delegation-vm", &[("instance_name", "vm-1")])]));
+        let r = read(&d, "instance_name");
+        assert!(r.met_by == ["delegation-vm"] && r.description.is_none(), "{r:?}");
     }
 
     #[test]
@@ -1882,16 +1945,23 @@ mod tests {
     #[tokio::test]
     async fn the_report_lists_the_interface_folders_with_their_exports() {
         let (dir, cfg, _) = publishing_estate("folders");
-        let against = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1")]), ("vm-users", &[])]);
+        let against = described_estate(&[], &[("delegation-vm", vec![("instance_name", "vm-1", Some("The VM's name")), ("zone", "z", None)]), ("vm-users", vec![])]);
         let report = list(&cfg, None, true, &against).await.unwrap();
+        let export = |name: &str, description: Option<&str>| FolderExport { name: name.into(), description: description.map(str::to_string) };
         let want = vec![
-            InterfaceFolder { name: "delegation-vm".into(), estate: "acme".into(), exports: vec!["instance_name".into()] },
+            InterfaceFolder { name: "delegation-vm".into(), estate: "acme".into(), exports: vec![export("instance_name", Some("The VM's name")), export("zone", None)] },
             InterfaceFolder { name: "vm-users".into(), estate: "acme".into(), exports: Vec::new() },
         ];
         assert_eq!(report.interface_folders, want);
         let json = serde_json::to_value(&report).unwrap();
-        assert_eq!(json["interface_folders"][0], serde_json::json!({ "name": "delegation-vm", "estate": "acme", "exports": ["instance_name"] }));
-        assert!(render_list(&report).contains("delegation-vm, written by acme, exports instance_name"), "{}", render_list(&report));
+        assert_eq!(
+            json["interface_folders"][0],
+            serde_json::json!({ "name": "delegation-vm", "estate": "acme", "exports": [
+                { "name": "instance_name", "description": "The VM's name" },
+                { "name": "zone", "description": null }
+            ] })
+        );
+        assert!(render_list(&report).contains("delegation-vm, written by acme, exports instance_name, zone"), "{}", render_list(&report));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

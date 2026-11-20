@@ -13,6 +13,21 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.109.0
+
+**`interface_folders[].exports` of `satz packs --format json` (and of `satz_packs`) lists
+objects instead of names.** Each entry is `{name, description}`: the value's name and the
+description its export gives, or `null`. A script that reads the list as names reads `name`
+of each entry. Each row also carries descriptions where it did not: `exports[].description`,
+`reads[].description` (the description of the export that gives the value) and
+`params[].why` (the `why` of the question that asks for the param).
+
+| before | now | where |
+|---|---|---|
+| `interface_folders[].exports: ["project_id", …]` | `interface_folders[].exports: [{"name": "project_id", "description": "The project's Google project"}, …]` | scripts and agents that read `satz packs --format json` or `satz_packs` |
+
+The plan does not move.
+
 ### v0.108.0
 
 **`interface_folders` of `satz packs --format json` (and of `satz_packs`) lists objects
