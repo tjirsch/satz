@@ -25,6 +25,8 @@ each row of `satz packs --format json` (and of `satz_packs`) is gone, and so is 
 
 | before | now | where |
 |---|---|---|
+| `works_in`: `organization`, `folder` or `project` | `works_in`: `organization` or `workload` — a workload estate is one that uses interface files; what it was delegated is what those files export | `satz presets --format json`, `satz_presets`; the text line `works in: …` is now `kind: …` |
+| `delegated_by[]`: `project`, `folder` | `delegated_by[].exports`: the names of the values the interface file exports | `satz presets --format json`, `satz_presets` |
 | `needs: ["folder"]`, `needs: ["project"]` | `reads`: each `{folder, value, param, bound_by_estate, met_by, unmet_reason}` the pack reads — the folders of the estate that give it, or why none does | scripts and agents that read `satz packs --format json` |
 | — | `params` (`name`, `default`, `question`, `prompt`), `list_params` (`param`, `key`, `fields`, `defaults`), `exports` (`interface`, `name`); `estate` and `interface_folders` on the report | the same |
 | `satz packs` or `satz get-pack` in a repository without one estate in `yaml_dir` | add `--estate <file>` | scripts, CI |

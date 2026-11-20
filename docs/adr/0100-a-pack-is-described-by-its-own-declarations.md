@@ -68,3 +68,4 @@ Option 2.
   binds the param that holds it, which is the edit ADR 0094 asks for.
 - `review-pack` without `--against` gives a pack that names folders one stand-in folder
   per name, so a pack written with named reads clears the bar it is reviewed against.
+- The same holds for an estate: `satz presets` reports an estate as an organization's estate or a workload estate (`works_in: organization | workload`), and the interface files it reads by the values they export (`delegated_by[].exports`); `folder` and `project` are no kinds of estate.

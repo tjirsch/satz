@@ -669,8 +669,8 @@ grep -A4 '^resource "google_project_service" "budget_api"' "$bt" | grep -q 'disa
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/bud/team/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the workload estate with the budget pack does not validate"
 fi
-"$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated project' || fail "the presets report does not say the estate works in a delegated project"
-"$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated folder' || fail "the presets report does not say the example works in a delegated folder"
+"$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'kind: a workload estate' || fail "the presets report does not say the estate is a workload estate"
+"$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'kind: a workload estate' || fail "the presets report does not say the example is a workload estate"
 "$satz" --config "$pt" presets simple-project.satz --format json --out tmp/pt-presets.json >/dev/null 2>&1 || fail "the presets report of the example workload estate failed"
 python3 - tmp/pt-presets.json <<'PY2' || fail "the presets report does not say who delegated:\n$(cat tmp/pt-presets.json)"
 import json, sys
@@ -678,10 +678,10 @@ by = {d["interface"]: d for d in json.load(open(sys.argv[1]))["delegated_by"]}
 base, folder = by["delegation-shop"], by["shop"]
 assert base["estate"] == "c0example" and base["organizations"] == ["organizations/123456789012"], base
 assert base["estate_account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com" and base["infrastructure_project"] == "acme-deploy-shop", base
-assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
-assert folder["folder"] is True and "account" not in folder, folder
+assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and "estate_account" in base["exports"], base
+assert "delegated_folder" in folder["exports"] and "estate_account" not in folder, folder
 PY2
-"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
+"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q "kind: an organization's estate" || fail "the presets report does not say the organization's estate works in the organization"
 "$satz" --config tmp/bud/team pack-source add repo --dir "$root/packs" > /dev/null 2>&1 || fail "pack-source add failed on the workload estate"
 "$satz" --config tmp/bud/team packs --source repo --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
 grep -q 'reads: project_id from payments, project_number from payments, billing_account from ' tmp/bud-packs.txt && grep -q 'not given: .*delegated_folder' tmp/bud-packs.txt \
