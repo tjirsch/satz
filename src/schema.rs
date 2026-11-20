@@ -293,9 +293,19 @@ impl ResourceRegistry {
         None
     }
 
+    /// Fetch `provider`'s schema with `tool` into `output_path`, in a work directory that is
+    /// removed whether the fetch succeeds or fails.
     pub fn generate_schema(tool: &str, provider: &str, version: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let work_dir = format!(".temp_schema_gen_{}", provider);
-        crate::fsx::create_dir_all(&work_dir)?;
+        let fetched = Self::fetch_schema_in(&work_dir, tool, provider, version, output_path);
+        if std::path::Path::new(&work_dir).exists() {
+            crate::fsx::remove_dir_all(&work_dir)?;
+        }
+        fetched
+    }
+
+    fn fetch_schema_in(work_dir: &str, tool: &str, provider: &str, version: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        crate::fsx::create_dir_all(work_dir)?;
 
         let (name, full_source) = derive_registry_source(provider);
 
@@ -322,7 +332,7 @@ impl ResourceRegistry {
         );
         let status = Command::new(tool)
             .arg("init")
-            .current_dir(&work_dir)
+            .current_dir(work_dir)
             .status()?;
 
         if !status.success() {
@@ -331,7 +341,7 @@ impl ResourceRegistry {
 
         let output = Command::new(tool)
             .args(["providers", "schema", "-json"])
-            .current_dir(&work_dir)
+            .current_dir(work_dir)
             .output()?;
 
         if !output.status.success() {
@@ -350,7 +360,6 @@ impl ResourceRegistry {
                 .and_then(|p| p.as_object())
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
-            crate::fsx::remove_dir_all(&work_dir)?;
             return Err(format!(
                 "schema fetch for '{}' delivered the wrong provider: requested source '{}', \
                  got {:?}. The name-to-source derivation is probably wrong for this provider.",
@@ -360,8 +369,6 @@ impl ResourceRegistry {
         }
 
         crate::fsx::write(output_path, output.stdout)?;
-        crate::fsx::remove_dir_all(&work_dir)?;
-
         Ok(())
     }
 }

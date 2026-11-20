@@ -186,7 +186,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 
 | Command | Options / Arguments |
 |---------|---------------------|
-| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from <folder>…` with `--name <estate name>` (a workload estate, from the interface folders the organization's estate wrote for a delegation and for each folder and project its account works in), `--force` (rewrite an existing estate instead of merging into it), `--interview` (ask for what is still unbound) |
+| `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from <folder>…` with `--name <estate name>` (a workload estate, from the interface folders the organization's estate wrote for a delegation and for each folder and project its account works in), `--force` (rewrite the estate file this run writes instead of merging into it or refusing; `config.toml`, `.gitignore` and the schemas are kept), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a workload team's request file — a pack of `contributes_<param>` entries for the estate's list params — checked before it is copied into the estate: lists only, each entry shaped (its fields, and each value its field's pattern matches), no key the list holds for another entry, and the estate transpiled with the file in place |
 | `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a workload estate reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every list param with its key, fields, patterns, defaults and entries; the json form is what satz-studio reads |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the prerequisites check), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
@@ -283,10 +283,10 @@ satz init \
 ```
 
 **Parameters:**
-- `--defaults <LIST>`: Default provider sets to include (e.g., `google`).
-- `--providers <LIST>`: Explicit providers to include (e.g., `aws`, `azure`, `google`).
+- `--defaults <LIST>`: Default provider sets to include: `google`, the one set there is; another value is refused.
+- `--providers <LIST>`: Explicit providers to include (e.g., `aws`, `azure`, `google`); a value that names none of google, aws, azure or alibaba is refused.
 - `--tf-tool <TOOL>`: Terraform binary to use (default: `tofu`).
-- `--customer-id <ID>`: Workspace Organization ID (e.g., `C01234567`).
+- `--customer-id <ID>`: Workspace Organization ID (e.g., `C01234567`): letters and digits, since it names the estate file.
 - `--customer-shortname <NAME>`: Short slug for the customer.
 - `--billing-account-infra <ID>`: Billing account ID.
 - `--customer-organization-id <ID>`: GCP Organization ID.
@@ -299,7 +299,8 @@ satz init \
 - Values come from three places and no fourth: what you state on the command line, what the signed-in person's identity can answer, or empty. Derivation is automatic and needs no flag — the identity gives `first_admin` and `customer_domain`, `organizations:search` gives `customer_organization_id` and the `C0…` directory customer, `billingAccounts.list` gives the account when exactly one is open, and `infra_project_name` / `infra_bucket_name` follow from `customer_shortname`. Each derived value is printed with the source it came from. What nothing can answer is written `""` and named, and `satz bootstrap` refuses by param until it is set — a placeholder would look like an answer. `--from-live` is accepted and ignored.
 - `--interview`: a bootstrap param is stated, derived or ASKED — there is no fourth state where the estate is simply born incomplete. With this flag init passes the estate it just wrote to `satz interview`, which asks for whatever is still unbound. It is a flag rather than the default because the interview is interactive and a scripted run must not block on it.
 - The pack menu — one commented `use … when` line per pack, under the phase it can be adopted in — is written from `pack-graph.json` in `presets_dir`, the pack graph that ships with the presets. With no graph there the estate is written without pack lines, and init says so: `satz get-presets`, then `satz merge-presets`, write them where the menu goes. A graph a newer library wrote is read as data; `satz self-update` brings the binary that knows its packs.
-- Running `init` again on an estate that exists MERGES: the params this command line names are written in, every other line is left exactly as it is, and each one is reported as set, changed or kept. `--force` rewrites the file instead.
+- Running `init` again on an estate that exists MERGES: the params this command line names are written in, every other line is left exactly as it is, and each one is reported as set, changed or kept. `--force` rewrites the estate file instead; `config.toml`, `.gitignore` and a schema that exist are kept with or without it.
+- A refused run writes nothing: every flag, every interface folder `--from` names, the estate's name and text and the estate file it would write are checked before the first write, so the corrected run succeeds in the same folder without `--force`. A run that fails while writing — a schema that cannot be fetched — removes what it wrote, puts back a folder it replaced and says so.
 
 **Under the Hood:**
 - Creates the standardized directory structure: `satz/`, `hcl/`, `schemas/`.
@@ -314,7 +315,8 @@ organization's estate wrote under its `interfaces/outgoing/` — the delegation'
 (`presets/delegated-folders.satz`, `presets/delegated-projects.satz`). Exactly one of the
 folders is a delegation's own, because an estate runs as one account; the delegated resources are any
 number of delegated folders and projects. Each folder is copied into
-`interfaces/incoming/` of the current directory, unless it stands there already. The
+`interfaces/incoming/` of the current directory, unless it stands there already. A refused
+run writes nothing — no `config.toml`, no copied folder. The
 estate is named by `--name`, or after the delegation; it runs in cloud mode as the
 delegation's account, keeps its state under `<estate name>/state` in the delegation's
 bucket, and `use`s the interface files. Its resources read a value by the name of its
@@ -419,7 +421,7 @@ and copied into the estate by pull request; the pull request is the request's re
 transpile` then writes `interfaces/outgoing/delegation-payments/` and
 `interfaces/outgoing/payments/`, and the workload estate is `satz init --from
 <central>/interfaces/outgoing/delegation-payments <central>/interfaces/outgoing/payments`
-in its directory; it reads the project as `${{interface.payments.project_id}}`, and the
+in its directory, where a refused run writes nothing; it reads the project as `${{interface.payments.project_id}}`, and the
 estate account it runs as and its state bucket by the delegation's folder:
 `svc_iac_account = "${{interface.delegation-payments.estate_account_id}}"`,
 `infra_project_name = "${{interface.delegation-payments.infrastructure_project_id}}"`,

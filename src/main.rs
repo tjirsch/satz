@@ -27,6 +27,7 @@ mod bootstrap;
 mod preflight;
 mod day_zero;
 mod default_grants;
+mod init;
 mod init_params;
 mod prerequisites;
 mod review_pack;
@@ -294,7 +295,11 @@ pub(crate) enum Commands {
         /// Accepted and ignored: deriving from the signed-in person's access is what init does by default
         #[arg(long, hide = true)]
         from_live: bool,
-        /// Overwrite an existing estate instead of merging the params named here into it
+        /// Rewrite the estate file this run writes — `<yaml_dir>/<customer-id>.satz`, or with
+        /// `--from` `<yaml_dir>/<name>.satz` — when it exists, instead of merging the params
+        /// named here into it (an organization's estate) or refusing (a workload estate). No
+        /// other file is rewritten: `config.toml`, `.gitignore` and a schema that exist are
+        /// kept, with or without it
         #[arg(long)]
         force: bool,
         /// Ask for what is still unbound: hand the estate to `satz interview` when a
@@ -1453,383 +1458,41 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             iac_user,
             from,
             name,
-            from_live,
+            from_live: _,
             force,
             interview,
         } => {
-            let mut final_google = Vec::new();
-            let mut final_aws = Vec::new();
-            let mut final_azure = Vec::new();
-            let mut final_alibaba = Vec::new();
-
-            if let Some(defs) = defaults {
-                for d in defs {
-                    if d.as_str() == "google" {
-                        final_google.extend(vec!["google".to_string(), "google-beta".to_string()]);
-                    }
-                }
-            }
-
-            if let Some(provs) = providers {
-                // For explicit providers, we'll put them in google for now if they start with google, or general
-                for p in provs {
-                    if p.starts_with("google") { final_google.push(p); }
-                    else if p.starts_with("aws") { final_aws.push(p); }
-                    else if p.starts_with("az") { final_azure.push(p); }
-                    else if p.starts_with("ali") { final_alibaba.push(p); }
-                }
-            }
-
-            // Deduplicate
-            final_google.sort(); final_google.dedup();
-
-            let tool = tf_tool.unwrap_or_else(|| tool_config.tf_tool.clone());
-
-            // 1. Create Directories
-            //
             // Everything init produces is anchored to config.toml: its directory when the
-            // file names no locations, or the locations it names when it does. Both are
-            // already folded into runtime_config, so using it here keeps the directories,
-            // the config file and the customer template in one place. Reading the raw
-            // tool_config instead created ./yaml while writing the template to
-            // ../yaml/X.yaml, which then failed because that directory never existed.
-            let dirs = vec![
-                &runtime_config.yaml_dir,
-                &runtime_config.hcl_dir,
-                &runtime_config.schema_dir,
-            ];
-            for d in dirs {
-                fsx::create_dir_all(d)?;
-                println!("Created directory: {}", d);
-            }
-
-            // 2. Generate config.toml if missing.
-            // Written to the path --config names (default ./config.toml), and holding the
-            // raw relative values, since they are interpreted from this file's directory.
-            if !config_file_path.exists() {
-                let mut config_lines = vec![
-                    format!("schema_dir = \"{}\"", tool_config.schema_dir),
-                    format!("presets_dir = \"{}\"", tool_config.presets_dir),
-                    format!("yaml_dir = \"{}\"", tool_config.yaml_dir),
-                    format!("hcl_dir = \"{}\"", tool_config.hcl_dir),
-                    format!("interfaces_dir = \"{}\"", tool_config.interfaces_dir),
-                    // From the same source as the serde default, so the generated file
-                    // and an omitted key can never disagree again.
-                    format!("include_dirs = {:?}", tool_config.include_dirs),
-                    format!("tf_tool = \"{}\"", tool),
-                ];
-
-                if !final_google.is_empty() {
-                    config_lines.push(format!("google_providers = {:?}", final_google));
-                }
-                if !final_aws.is_empty() {
-                    config_lines.push(format!("aws_providers = {:?}", final_aws));
-                }
-                if !final_azure.is_empty() {
-                    config_lines.push(format!("azure_providers = {:?}", final_azure));
-                }
-                if !final_alibaba.is_empty() {
-                    config_lines.push(format!("alibaba_providers = {:?}", final_alibaba));
-                }
-
-                config_lines.push(format!("provider_version = \"{}\"", tool_config.provider_version));
-                config_lines.push(format!("auto_explode = {:?}", tool_config.auto_explode));
-                config_lines.push(format!("validation_level = \"{}\"", tool_config.validation_level));
-
-                fsx::write(&config_file_path, config_lines.join("\n"))?;
-                println!("Generated {}", config_file_path.display());
-            }
-
-            // 3. Generate .gitignore if missing, next to config.toml — it is the project
-            // root that the generated directories hang off, not wherever init was run.
-            let gitignore_path = config_dir.join(".gitignore");
-            if !gitignore_path.exists() {
-                let gitignore_content = r#"# Terraform / OpenTofu
-.terraform/
-*.tfstate
-*.tfstate.backup
-
-# Tool Cache
-schemas/
-
-# OS files
-.DS_Store
-Thumbs.db
-"#;
-                fsx::write(&gitignore_path, gitignore_content)?;
-                println!("Created {}", gitignore_path.display());
-            }
-
-            if !from.is_empty() {
-                // A workload estate: written from the interface folders — the delegation's
-                // account, infrastructure project and state bucket, and the core export
-                // `default_region` — so nothing is derived from the sign-in: the organization's
-                // estate answered it all.
-                let base = if config_dir.as_os_str().is_empty() { Path::new(".") } else { config_dir.as_path() };
-                let incoming = PathBuf::from(&runtime_config.interfaces_dir).join(crate::interface::INCOMING);
-                let mut files = Vec::new();
-                for folder in &from {
-                    let (use_path, file) = take_interface(folder, &incoming, base)?;
-                    files.push((use_path, file));
-                }
-                let name = match name {
-                    Some(n) => n,
-                    None => crate::project::default_name(&files).ok_or("init --from: none of the folders is a delegation's own (`delegation-<name>`), so the estate has no name to take — take that folder too, or give `--name`")?,
-                };
-                let src = crate::project::estate(&name, &files)?;
-                let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", crate::project::label(&name)));
-                if yaml_path.exists() && !force {
-                    return Err(format!("{} exists — `--force` rewrites it", yaml_path.display()).into());
-                }
-                fsx::write_generated_satz(&yaml_path, &src)?;
-                println!(
-                    "Generated the workload estate: {} — read through {}; next: `satz transpile {}.satz`",
-                    yaml_path.display(),
-                    files.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", "),
-                    crate::project::label(&name)
-                );
-            } else {
-                // 3b. What the operator TYPED, before anything is derived: a re-run
-                // merges exactly these into an estate that already exists, and
-                // nothing else, so a value somebody put there by hand survives.
-                let stated = crate::init_params::Stated {
-                    customer_id: customer_id.clone(),
-                    customer_shortname: customer_shortname.clone(),
-                    billing_account_infra: billing_account_infra.clone(),
-                    default_region: default_region.clone(),
-                    customer_organization_id: customer_organization_id.clone(),
-                    customer_domain: customer_domain.clone(),
-                    infra_project_name: infra_project_name.clone(),
-                    infra_bucket_name: infra_bucket_name.clone(),
-                    iac_user: iac_user.clone(),
-                };
-
-                // Derivation from the sign-in is the DEFAULT, not a flag: every
-                // value below is readable by the person already
-                // signed in. Stated wins, derived fills the rest and says
-                // where it came from, and what nothing can answer stays EMPTY —
-                // never a placeholder. `--from-live` is accepted and ignored.
-                let _ = from_live;
-                let (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user) = {
-                    let need_org = customer_organization_id.is_none() || customer_id.is_none();
-                    let need_billing = billing_account_infra.is_none();
-                    match crate::gcp::identity::live_defaults(need_org, need_billing, None, None).await {
-                        Ok(live) => {
-                            let mut note = crate::init_params::Derivations::default();
-                            let customer_domain = note.fill(
-                                "customer_domain",
-                                customer_domain,
-                                live.customer_domain.clone(),
-                                "the signed-in person",
-                            );
-                            let iac_user = note.fill(
-                                "first_admin",
-                                iac_user,
-                                live.first_admin.as_ref().zip(live.customer_domain.as_ref()).map(|(a, d)| format!("{}@{}", a, d)),
-                                "the signed-in person",
-                            );
-                            let customer_id =
-                                note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
-                            // No organization visible is the greenfield case: the id
-                            // stays empty and `bootstrap --greenfield` fills it in.
-                            let customer_organization_id = note.fill(
-                                "customer_organization_id",
-                                customer_organization_id,
-                                live.org_id.clone(),
-                                "organizations:search",
-                            );
-                            let billing_account_infra = note.fill(
-                                "billing_account_infra",
-                                billing_account_infra,
-                                live.billing_account.clone(),
-                                "billingAccounts.list (the one open account)",
-                            );
-                            // nothing on the platform names the customer: it is
-                            // reported as unanswered rather than guessed at
-                            let customer_shortname = note.fill("customer_shortname", customer_shortname, None, "");
-                            note.report();
-                            (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                        }
-                        Err(why) => {
-                            eprintln!("init: nothing could be derived from the sign-in — {}", why);
-                            eprintln!(
-                                "      what you did not pass is written empty; `satz bootstrap` names each one, and \
-                                 `satz init` merges them in later."
-                            );
-                            (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
-                        }
-                    }
-                };
-
-                // 4. Generate the template estate if customer_id provided
-                if let Some(c_id) = customer_id {
-                    // Every bootstrap question lives in presets/estate-core.satz, and the pack lines
-                    // come from the graph beside it: `--interview` fetches the library before the
-                    // file is written, so the estate it asks about carries the menu.
-                    if interview {
-                        let core = Path::new(&runtime_config.presets_dir).join("estate-core.satz");
-                        if !core.exists() {
-                            println!("\nfetching the preset library — the bootstrap questions are read from {}", core.display());
-                            crate::presets::get_presets(&runtime_config.presets_dir, &runtime_config, false, None)
-                                .await
-                                .map_err(|e| {
-                                    format!(
-                                        "init --interview: the questions live in {}, which is not here and could not be \
-                                         fetched ({}) — run `satz get-presets`, then `satz interview {}.satz`",
-                                        core.display(),
-                                        e,
-                                        c_id
-                                    )
-                                })?;
-                        }
-                    }
-                    let yaml_path = PathBuf::from(&runtime_config.yaml_dir).join(format!("{}.satz", c_id));
-                    if yaml_path.exists() && !force {
-                        // A re-run MERGES: it used to print "Template already exists",
-                        // change nothing, and still sign off with "Initialization
-                        // complete" — so a param somebody added to the command line
-                        // never landed and nothing said so.
-                        let src = crate::fsx::read_to_string(&yaml_path)?;
-                        let (merged, log) = crate::init_params::merge(&src, &stated)?;
-                        if log.is_empty() {
-                            println!(
-                                "{} exists and this command named no params to merge into it (`--force` rewrites it).",
-                                yaml_path.display()
-                            );
-                        } else {
-                            for entry in &log {
-                                match entry {
-                                    crate::init_params::Merged::Changed { param, from, to } if from.is_empty() => {
-                                        println!("  set     {} = {:?}", param, to)
-                                    }
-                                    crate::init_params::Merged::Changed { param, from, to } => {
-                                        println!("  changed {} = {:?} (was {:?})", param, to, from)
-                                    }
-                                    crate::init_params::Merged::Same { param, value } => {
-                                        println!("  kept    {} = {:?}", param, value)
-                                    }
-                                }
-                            }
-                            if merged != src {
-                                crate::fsx::write_edited_satz(&yaml_path, &src, &merged)?;
-                            }
-                            println!(
-                                "Merged into {} — every line this command did not name is unchanged.",
-                                yaml_path.display()
-                            );
-                        }
-                    } else {
-                        let domain = customer_domain.clone().unwrap_or_default();
-                        // an admin nobody named stays empty: `first.admin` looked
-                        // like an answer and was not one
-                        let resolved_iac_user = iac_user.unwrap_or_default();
-
-                        // The template and the shipped presets both compose members as
-                        // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the
-                        // local part only. Writing it as a variable is what lets the
-                        // `*first-admin` anchor resolve at all.
-                        let (first_admin, user_domain) = resolved_iac_user
-                            .split_once('@')
-                            .unwrap_or((resolved_iac_user.as_str(), ""));
-                        if !user_domain.is_empty() && !domain.is_empty() && user_domain != domain {
-                            eprintln!(
-                                "Warning: --iac-user domain '{}' differs from --customer-domain '{}'. \
-                                 Members are built as first-admin@customer-domain, so they will use '{}@{}'.",
-                                user_domain, domain, first_admin, domain
-                            );
-                        }
-
-                        // the two names that FOLLOW from the short name, by the
-                        // defaults `presets/estate-core.satz` documents — derived
-                        // when it is known, empty when it is not
-                        let shortname = customer_shortname.clone().unwrap_or_default();
-                        let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
-                            match given {
-                                Some(v) => v,
-                                None if !shortname.trim().is_empty() => format!("{}{}", shortname.trim(), suffix),
-                                None => String::new(),
-                            }
-                        };
-                        let infra_project_name = derive_from_shortname(infra_project_name, "-infra-001");
-                        let infra_bucket_name = derive_from_shortname(infra_bucket_name, "-infra-001-state");
-                        let args = crate::template::TemplateArgs {
-                            customer_id: c_id.clone(),
-                            shortname: customer_shortname.unwrap_or_default(),
-                            billing_id: billing_account_infra.unwrap_or_default(),
-                            region: default_region.unwrap_or_else(|| crate::bootstrap::DEFAULT_REGION.to_string()),
-                            // never a placeholder: unset stays empty, and the
-                            // bootstrap gate refuses it by name
-                            org_id: customer_organization_id.unwrap_or_default(),
-                            domain: domain.clone(),
-                            project_id: infra_project_name,
-                            bucket_id: infra_bucket_name,
-                            first_admin: first_admin.to_string(),
-                        };
-                        let presets_dir = Path::new(&runtime_config.presets_dir);
-                        let graph = crate::pack_graph::read(presets_dir)?;
-                        crate::template::generate_template(&args, graph.as_ref(), &yaml_path)?;
-                        if graph.is_none() {
-                            println!("{}", crate::pack_graph::no_menu_note(presets_dir));
-                        }
-                        println!("Generated estate: {} — next: `satz bootstrap {}.satz --dry-run`", yaml_path.display(), c_id);
-                    }
-
-                    // A bootstrap param is either stated, derived, or ASKED — there is
-                    // no fourth state where an estate is simply born incomplete.
-                    // Stating it is the flag because the interview is interactive
-                    // and a scripted run must not block on it.
-                    if interview {
-                        // init writes the estate-core `use` commented out so the estate transpiles
-                        // before any library is fetched; the interview switches it on, or it
-                        // finds no pack declaring a question and asks nothing
-                        if crate::template::use_estate_core(&yaml_path)? {
-                            println!("switched on `use \"presets/estate-core.satz\"` in {}", yaml_path.display());
-                        }
-                        println!();
-                        let stdin = std::io::stdin();
-                        let mut input = stdin.lock();
-                        let mut out = std::io::stdout();
-                        crate::interview::run(&yaml_path, &runtime_config, false, false, &mut input, &mut out)?;
-                    }
-                }
-
-            }
-
-            // 4. Fetch Schemas
-            //
-            // For the providers the command line names, else the ones the config does —
-            // which defaults to google and google-beta. Only the flags used to count, so a
-            // plain `satz init` created an empty schema dir, fetched nothing, said nothing,
-            // and printed "Initialization complete" for an estate nothing could transpile.
-            // A schema already on disk is kept: a re-run merges params, and re-downloading
-            // two providers to do that is not what anyone asked for.
-            let mut all_provs = final_google;
-            all_provs.extend(final_aws);
-            all_provs.extend(final_azure);
-            all_provs.extend(final_alibaba);
-            let wanted: Vec<(String, String)> = if all_provs.is_empty() {
-                tool_config.parsed_providers()
-            } else {
-                all_provs.into_iter().map(|p| (p, runtime_config.provider_version.clone())).collect()
+            // file names no locations, or the locations it names when it does — both folded
+            // into runtime_config, so the directories, the config file and the estate stand
+            // in one place.
+            let args = crate::init::Args {
+                defaults,
+                providers,
+                tf_tool,
+                customer_id,
+                customer_shortname,
+                billing_account_infra,
+                default_region,
+                customer_organization_id,
+                customer_domain,
+                infra_project_name,
+                infra_bucket_name,
+                iac_user,
+                from,
+                name,
+                force,
+                interview,
             };
-            for (provider, version) in wanted {
-                let name = provider.split('/').next_back().unwrap_or(&provider).to_string();
-                let out = format!("{}/{}.json", runtime_config.schema_dir, name);
-                if Path::new(&out).exists() {
-                    println!("Schema for {} already present: {}", name, out);
-                    continue;
-                }
-                println!("Fetching schema for {} {}...", provider, version);
-                crate::schema::ResourceRegistry::generate_schema(&tool, &provider, &version, &out).map_err(|e| {
-                    format!(
-                        "init: the estate is written, but the {} schema could not be fetched ({}) — nothing transpiles \
-                         without it. Put OpenTofu on PATH and run `satz update-schema`",
-                        name, e
-                    )
-                })?;
-            }
-            println!("Initialization complete.");
-            Ok(())
+            let fetch = |tool: &str, provider: &str, version: &str, out: &str| crate::schema::ResourceRegistry::generate_schema(tool, provider, version, out);
+            let ctx = crate::init::Ctx {
+                tool_config: &tool_config,
+                runtime_config: &runtime_config,
+                config_file_path: &config_file_path,
+                config_dir: &config_dir,
+                fetch_schema: &fetch,
+            };
+            crate::init::run(args, &ctx).await
         }
         Commands::UpdateSchema { providers, version, tf_tool } => {
             let tool = tf_tool.unwrap_or_else(|| tool_config.tf_tool.clone());
@@ -4661,63 +4324,6 @@ pub(crate) fn write_hcl(out: &PipelineBOut, dir: &Path, interfaces_dir: &Path, e
     }
     written.extend(write_interface(out.interface.as_ref(), &out.manifest, &out.requests, dir, interfaces_dir, estate)?);
     Ok(written)
-}
-
-/// One interface folder taken for a workload estate: `folder` is a folder an organization's estate
-/// wrote under its `interfaces/outgoing/` — or a copy of one — named after its interface,
-/// with that interface's file at `<name>/satz/interface.satz` inside. It is copied whole to
-/// `incoming/<name>/`, replacing an earlier copy, unless that is where it already stands.
-/// Returns the path the estate `use`s, relative to the config directory, and the interface.
-fn take_interface(folder: &Path, incoming: &Path, config_dir: &Path) -> Result<(String, satz_core::satz::InterfaceFile), Box<dyn std::error::Error>> {
-    use crate::interface::{SATZ_DIR, SATZ_FILE};
-    let folder = fsx::canonicalize(folder).map_err(|e| format!("{}: {}", folder.display(), e))?;
-    let name = folder.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: not a folder with a name", folder.display()))?.to_string();
-    let inside = Path::new(&name).join(SATZ_DIR).join(SATZ_FILE);
-    if !folder.join(&inside).is_file() {
-        return Err(format!(
-            "{}: no {} in it — an interface folder is one folder under interfaces/outgoing/ of an organization's estate, named after its interface",
-            folder.display(),
-            fsx::slash(&inside)
-        )
-        .into());
-    }
-    let target = incoming.join(&name);
-    let in_place = fsx::canonicalize(&target).ok().is_some_and(|t| t == folder);
-    if !in_place {
-        if target.exists() {
-            fsx::remove_dir_all(&target)?;
-        }
-        copy_dir(&folder, &target)?;
-        println!("Took {} into {}", folder.display(), target.display());
-    }
-    let path = target.join(&inside);
-    let text = fsx::read_to_string(&path).map_err(|e| format!("{}: {}", path.display(), e))?;
-    let file = satz_core::satz::parse(&text)
-        .map_err(|e| format!("{}:{}: {}", path.display(), e.line, e.msg))?
-        .interface_file
-        .ok_or_else(|| format!("{}: no interface file — `satz transpile` of the organization's estate writes one under interfaces/outgoing/", path.display()))?;
-    // the path the estate `use`s: relative to the config directory when it is under it
-    let absolute = fsx::canonicalize(&path).unwrap_or(path);
-    let use_path = match fsx::canonicalize(config_dir).ok().and_then(|c| absolute.strip_prefix(c).ok().map(Path::to_path_buf)) {
-        Some(rel) => fsx::slash(&rel),
-        None => fsx::slash(&absolute),
-    };
-    Ok((use_path, file))
-}
-
-/// Copy a directory with everything in it.
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), &target)?;
-        }
-    }
-    Ok(())
 }
 
 /// The estate's interfaces: the root `outputs.tf` in `dir`, and the outgoing half of
