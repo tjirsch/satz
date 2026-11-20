@@ -1706,15 +1706,16 @@ estate when the estate's interface folders give every value it reads.
 
 | field | what it holds |
 |---|---|
-| `params` | each param the pack declares: `name`; `default`, the value as the pack writes it in Satz (`"europe-west3"`, `[1, 2]`, `"${{interface.project_id}}"`), or `null` where it writes `""`; `question`, whether a `question` asks for it; `prompt`, that question's prompt |
+| `params` | each param the pack declares: `name`; `default`, the value as the pack writes it in Satz (`"europe-west3"`, `[1, 2]`, `"${{interface.project_id}}"`), or `null` where it writes `""`; `question`, whether a `question` asks for it; `prompt` and `why`, that question's prompt and why, `null` where no question asks or it has no `why` |
 | `list_params` | each `entries <list param>` statement: `param`, `key`, `fields`, and `defaults` per field in Satz |
-| `exports` | each export: `name`, and `interface`, the `interface "<name>"` block it stands in as written (an interface an `each` writes is named by its pattern, `ks-{each.id}`), or `null` for a core export |
-| `reads` | each `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` the pack writes in a param, a resource or an export — a comment reads nothing: `folder` (`null` for the bare form), `value`, `param` (the param whose value the read is, or `null`), and how the estate gives it |
+| `exports` | each export: `name`; `interface`, the `interface "<name>"` block it stands in as written (an interface an `each` writes is named by its pattern, `ks-{each.id}`), or `null` for a core export; `description`, its `description "…"`, or `null` |
+| `reads` | each `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` the pack writes in a param, a resource or an export — a comment reads nothing: `folder` (`null` for the bare form), `value`, `param` (the param whose value the read is, or `null`), how the estate gives it, and `description`, the description of the export that gives it |
 
 The estate is the one `--estate` names, or the one estate in `yaml_dir`, and its interface
 folders are the ones its transpile uses. The report lists them in `interface_folders`, each
-as `name`, `estate` (the organization's estate that wrote it) and `exports` (the names of
-the values it exports); the text form prints one line per folder. A read is matched by the
+as `name`, `estate` (the organization's estate that wrote it) and `exports`, each value it
+exports as `name` and `description` (`null` where the export has none); the text form
+prints one line per folder with the names of its values. A read is matched by the
 transpile's own rule:
 
 - `${{interface.<folder>.<value>}}` is given by the used interface folder named `<folder>`,
@@ -1725,7 +1726,9 @@ transpile's own rule:
 - a read in a param the estate binds is not made: `bound_by_estate` is true and nothing is
   matched.
 
-`met_by` lists the folders that give the value. Where none does, `met_by` is empty and
+`met_by` lists the folders that give the value, and `description` is the description of
+the export that gives it — of the first folder in `met_by` where several give it — or `null`
+where that export has none. Where no folder gives it, `met_by` is empty, `description` is `null` and
 `unmet_reason` is the refusal the transpile would print — no used interface folder of that
 name, the folder has no such value, two folders carry it differently, or the estate uses no
 interface folder. A pack a source holds and `packs_dir` does not is matched the same way, so

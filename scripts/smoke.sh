@@ -692,23 +692,24 @@ import json, sys
 report = json.load(open(sys.argv[1]))
 folders = {f["name"]: f for f in report["interface_folders"]}
 assert report["estate"].endswith("team.satz") and set(folders) == {"delegation-payments", "payments"}, report
-assert folders["payments"]["estate"] == "c0example" and {"project_id", "project_number"} <= set(folders["payments"]["exports"]), folders
+assert folders["payments"]["estate"] == "c0example" and {"project_id", "project_number"} <= {e["name"] for e in folders["payments"]["exports"]}, folders
 rows = {p["id"]: p for p in report["packs"]}
 budget = rows["project-budget"]
 assert "needs" not in budget, budget
 params = {p["name"]: p for p in budget["params"]}
-assert params["budget_project_id"] == {"name": "budget_project_id", "default": '"${{interface.project_id}}"', "question": False, "prompt": None}, params
+assert params["budget_project_id"] == {"name": "budget_project_id", "default": '"${{interface.project_id}}"', "question": False, "prompt": None, "why": None}, params
 assert params["budget_amount"]["default"] is None and params["budget_amount"]["question"] and params["budget_amount"]["prompt"].startswith("The monthly budget"), params
+assert params["budget_amount"]["why"].startswith("A budget stops nothing"), params
 assert budget["list_params"] == [] and budget["exports"] == [], budget
 # the estate binds none of the three params, so the pack reads them, and the project's folder gives them
 reads = {r["value"]: r for r in budget["reads"]}
 assert set(reads) == {"project_id", "project_number", "billing_account"}, reads
 assert reads["project_id"]["folder"] is None and reads["project_id"]["param"] == "budget_project_id", reads
 assert all(r["met_by"] and r["unmet_reason"] is None and not r["bound_by_estate"] for r in reads.values()), reads
-assert reads["project_id"]["met_by"] == ["payments"], reads
+assert reads["project_id"]["met_by"] == ["payments"] and reads["project_id"]["description"] == "The project's Google project", reads
 # the folder pack reads a folder this estate was not given
 folder = rows["workload-project"]["reads"]
-assert [(r["value"], r["met_by"]) for r in folder] == [("delegated_folder", [])] and "delegated_folder" in folder[0]["unmet_reason"], folder
+assert [(r["value"], r["met_by"], r["description"]) for r in folder] == [("delegated_folder", [], None)] and "delegated_folder" in folder[0]["unmet_reason"], folder
 PY2
 # --local reads no pack source: the estate's own pack, described as the full listing describes it
 "$satz" --config tmp/bud/team packs --local --format json --out tmp/bud-local.json > /dev/null 2>&1 || fail "satz packs --local failed on the workload estate"
@@ -721,9 +722,12 @@ budget = report["packs"][0]
 assert {p["name"] for p in budget["params"]} >= {"budget_project_id", "budget_amount"}, budget
 reads = {r["value"]: r for r in budget["reads"]}
 assert set(reads) == {"project_id", "project_number", "billing_account"} and reads["project_id"]["met_by"] == ["payments"], reads
+assert reads["billing_account"]["description"].startswith("The billing account a new project is linked to"), reads
+assert budget["params"][0].keys() == {"name", "default", "question", "prompt", "why"}, budget["params"]
 folders = {f["name"]: f for f in report["interface_folders"]}
-assert set(folders) == {"delegation-payments", "payments"} and "estate_account" in folders["delegation-payments"]["exports"], folders
-assert "project_id" in folders["payments"]["exports"] and all(f["estate"] == "c0example" for f in folders.values()), folders
+exports = {n: {e["name"]: e["description"] for e in f["exports"]} for n, f in folders.items()}
+assert set(folders) == {"delegation-payments", "payments"} and "estate_account" in exports["delegation-payments"], folders
+assert exports["payments"]["project_id"] == "The project's Google project" and all(f["estate"] == "c0example" for f in folders.values()), folders
 PY2
 if "$satz" --config tmp/bud/team packs --local --source repo --format json --out - > tmp/bud-local-source.txt 2>&1; then fail "satz packs read a source with --local"; fi
 grep -q -- '--local reads no pack source and --source names one to read' tmp/bud-local-source.txt || fail "the refusal must say why:\n$(cat tmp/bud-local-source.txt)"
