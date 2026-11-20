@@ -362,7 +362,7 @@ Google project `acme-payments-001` under `Workloads`. The project holds no accou
 bucket. The account holds the project's access control and its services on that project
 and nowhere else; the members of `payments-owners@example.com` read the infrastructure
 project and may become the account. `interfaces/outgoing/delegation-payments/` publishes
-`infrastructure_project_id`, `estate_account`, `state_bucket`, and what was delegated beside the
+`infrastructure_project_id`, `estate_account`, its id `estate_account_id`, `state_bucket`, and what was delegated beside the
 delegated project: `delegated_billing_roles` and `delegated_apis`. `interfaces/outgoing/payments/`
 publishes `project_id`, `project_number`, `delegated_project_roles` and
 `delegated_budgets`.

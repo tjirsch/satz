@@ -70,7 +70,7 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`delegation`](delegation.md) | 2.0 | Delegated access, the base: one identity per delegation. | 4 | — |
+| [`delegation`](delegation.md) | 2.1 | Delegated access, the base: one identity per delegation. | 4 | — |
 | [`delegated_folders`](delegated-folders.md) | 1.1 | Delegated access to folders: the folders a delegation's account works in, and its roles on those folders alone. | 4 | — |
 | [`delegated_projects`](delegated-projects.md) | 2.0 | Delegated access to projects: the Google projects a delegation's account works in, and its roles on those projects alone. | 3 | — |
 | [`delegated_budget_role`](delegated-budget-role.md) | 1.0 | Delegated access to budgets: the role an account manages budgets with, for its own project or folder alone. | 1 | — |

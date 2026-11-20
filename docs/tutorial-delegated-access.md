@@ -332,9 +332,13 @@ bucket:
 estate shop
 
 params {
-  infra_project_name = "acme-deploy-shop"
-  infra_bucket_name  = "acme-deploy-shop-state"
-  svc_iac_account    = "svc-deploy-shop"
+  // The delegation's estate account, `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`,
+  // and its state bucket, read from the folder `delegation-shop`: the estate runs as the account,
+  // its calls are billed to the infrastructure project and its state is kept in the bucket.
+  // A copy of the folder after a change of the organization's estate changes them here too.
+  infra_project_name = "${{interface.delegation-shop.infrastructure_project_id}}"
+  infra_bucket_name  = "${{interface.delegation-shop.state_bucket}}"
+  svc_iac_account    = "${{interface.delegation-shop.estate_account_id}}"
   default_region     = "europe-west3"
   default_zone       = "europe-west3-a"
   deployment_engine  = "tofu"
@@ -345,8 +349,10 @@ use "interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz"
 use "interfaces/incoming/shop/shop/satz/interface.satz"
 ```
 
-Below these it writes the `gcs` backend on the bucket and the providers on the
-infrastructure project, and at the end, as a comment, the read for each delegated resource: `folder_id
+The three params read the delegation's folder: `acme-deploy-shop`, `acme-deploy-shop-state`
+and `svc-deploy-shop`, so the estate runs as
+`svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com`. Below these it writes the
+`gcs` backend on the bucket and the providers on the infrastructure project, and at the end, as a comment, the read for each delegated resource: `folder_id
 = "${{interface.shop.delegated_folder}}"`. The team adds what it builds:
 
 ```

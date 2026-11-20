@@ -1352,7 +1352,7 @@ lookup. Everything else the account holds, it holds on a delegated resource.
 
 | export | what |
 |---|---|
-| `infrastructure_project_id`, `estate_account`, `state_bucket` | the delegation's infrastructure project, the account the workload estates run as, the bucket their states live in |
+| `infrastructure_project_id`, `estate_account`, `estate_account_id`, `state_bucket` | the delegation's infrastructure project, the account the workload estates run as and its id (the part before the `@`), the bucket their states live in |
 | `estate_account_user_group`, `account_group_roles` | the group whose members may act as the account, and what it holds on it |
 | `billing_account` | the billing account a project the team creates is linked to, and a budget is created on |
 | `delegated_billing_roles`, `delegated_apis` | what was delegated to the account beside its delegated resources: its roles on the billing account, and the APIs of its infrastructure project |

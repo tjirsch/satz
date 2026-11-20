@@ -1300,6 +1300,62 @@ pub fn resolve_interface_in_exports(exports: &mut [ResolvedExport], files: &[Use
     }
 }
 
+/// The params satz composes into text of its own: the estate account,
+/// `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, which the providers,
+/// the backend, the prerequisite check and every live call name, and the project the
+/// estate's calls are billed to.
+pub const COMPOSED_PARAMS: [&str; 2] = ["svc_iac_account", "infra_project_name"];
+
+/// Every param whose value reads an interface folder, `${interface.…}`, with the read
+/// replaced by the export's value: what satz itself reads a param as where it composes
+/// one into text. A resource body keeps the read, because the front end spliced the
+/// params into it before.
+///
+/// A read the organization's estate looks up, or one that does not resolve, stays as
+/// written, and a resource that holds it is judged where it stands; in a param of
+/// [`COMPOSED_PARAMS`] it is refused, naming the param and the value, because the estate
+/// account is named before any lookup is read. The error is the param and the message.
+pub fn resolve_interface_in_params(env: &mut Env, files: &[UsedInterfaceFile]) -> Result<(), (String, String)> {
+    let opener = format!("${{{}", INTERFACE_ROOT);
+    for (name, value) in env.iter_mut() {
+        let mut texts = Vec::new();
+        collect_strings(value, &mut texts);
+        if !texts.iter().any(|t| t.contains(&opener)) {
+            continue;
+        }
+        let composed = COMPOSED_PARAMS.contains(&name.as_str());
+        let mut resolved = value.clone();
+        let mut read = Vec::new();
+        if let Err(msg) = substitute_value(&mut resolved, files, &mut read) {
+            if composed {
+                return Err((name.clone(), format!("param `{}`: {}", name, msg)));
+            }
+            continue;
+        }
+        let looked_up = read.iter().find(|r| {
+            let mut texts = Vec::new();
+            if let Ok(o) = interface_output(r, files) {
+                collect_strings(&o.value, &mut texts);
+            }
+            texts.iter().any(|t| !data_addresses(t).is_empty())
+        });
+        match looked_up {
+            Some(r) if composed => {
+                return Err((
+                    name.clone(),
+                    format!(
+                        "param `{}`: `interface.{}` is a value the organization's estate looks up, and satz names the estate account `{{svc_iac_account}}@{{infra_project_name}}.iam.gserviceaccount.com` and the project its calls are billed to before any lookup is read — read a value the folder publishes as written, or bind the param as a literal",
+                        name, r
+                    ),
+                ))
+            }
+            Some(_) => {}
+            None => *value = resolved,
+        }
+    }
+    Ok(())
+}
+
 /// What [`resolve_interface_in_config`] leaves beside the substituted blocks: the
 /// `providers` block as it is written when a value was spliced into it, and the exports
 /// read.
@@ -2241,6 +2297,9 @@ pub fn compile_estate_bound(
     let requests = resolve_requests(&declared_requests, &tfvars)?;
     let inputs = w.inputs.into_values().collect();
     let config_rendering = w.config_rendering;
+    // what satz composes from the params reads each one as its value, the read resolved
+    let mut env = env;
+    resolve_interface_in_params(&mut env, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
 }
 
@@ -2539,11 +2598,21 @@ pub fn estate_params(
     let mut env = build_env(&file, &seed, file_name)?;
     let mut sink = Vec::new();
     let mut inputs = Vec::new();
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs)?;
+    let mut used = Vec::new();
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs, &mut used)?;
     if let Some(e) = deferred {
         return Err(e);
     }
+    let used = merge_interface_files(used)?;
+    resolve_interface_in_params(&mut env, &used).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     Ok(env)
+}
+
+/// An error about a param, at the line the estate binds it on — at the estate's top when
+/// a pack declares it.
+fn param_error(file: &File, file_name: &str, param: &str, msg: String) -> PipelineError {
+    let line = file.params.iter().find(|(n, _, _)| n == param).map(|(_, _, l)| *l).unwrap_or(0);
+    PipelineError { file: file_name.to_string(), line, msg }
 }
 
 /// One pack's contribution to a list param another file declares: what a pack needs
@@ -2703,7 +2772,7 @@ fn contribution_seed(
     let mut raw = Vec::new();
     let mut inputs = Vec::new();
     let mut env = build_env(file, &Env::new(), file_name)?;
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs)?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs, &mut Vec::new())?;
     if raw.is_empty() {
         return Ok((Env::new(), Vec::new(), inputs));
     }
@@ -2874,6 +2943,7 @@ fn collect_params(
     depth: usize,
     contributions: &mut Vec<RawContribution>,
     inputs: &mut Vec<RawInput>,
+    interface_files: &mut Vec<UsedInterfaceFile>,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
         return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
@@ -2905,6 +2975,9 @@ fn collect_params(
                 let used = satz::parse(&src)
                     .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
                 take_contributions(&used, path, contributions);
+                if let Some(i) = &used.interface_file {
+                    interface_files.push(UsedInterfaceFile { file: path.clone(), interface: i.clone() });
+                }
                 for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
                     if satz::contribution_target(name).is_some() || env.contains_key(name) {
                         continue;
@@ -2919,9 +2992,9 @@ fn collect_params(
                         env.insert(i.name.clone(), resolved);
                     }
                 }
-                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs)?;
+                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs, interface_files)?;
             }
-            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs)?,
+            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs, interface_files)?,
         }
     }
     Ok(())

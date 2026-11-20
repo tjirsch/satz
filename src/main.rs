@@ -3378,6 +3378,9 @@ pub(crate) fn compile_tail(
     match graph {
         crate::pack_graph::Shipped::Graph(..) => {}
         crate::pack_graph::Shipped::Missing(_) if crate::findings::at_level(level).is_none() => {}
+        // a workload estate — one that reads an interface folder, which `satz presets` reports
+        // as working in a delegated resource — uses no preset, and has no pack line to check
+        crate::pack_graph::Shipped::Missing(_) if !fe.interface_files.is_empty() => {}
         crate::pack_graph::Shipped::Missing(path) => f.push(Finding::new(
             Severity::Info,
             Kind::UnadoptedPack,
@@ -9559,8 +9562,9 @@ action "step" {
         assert!(!f.message.contains("satz add-preset"), "{}", f.message);
     }
 
-    /// Presets without `pack-graph.json`: the checks that read the menu are skipped, and
-    /// one note says why — never a crash, never silence.
+    /// An organization's estate whose presets carry no `pack-graph.json`: the checks that
+    /// read the menu are skipped, and one note says why — never a crash, never silence. A
+    /// workload estate gets none (`a_workload_estate_is_not_sent_for_the_preset_library`).
     #[test]
     fn a_missing_pack_graph_is_one_note() {
         let reg = super::corpus::registry();
