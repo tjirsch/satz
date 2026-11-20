@@ -1425,6 +1425,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegation` | 2.1 | 2026-11-20 | the interface `delegation-<name>` also exports `estate_account_id`, the estate account's id `svc-deploy-<name>`, which a workload estate reads as its `svc_iac_account`; nothing emitted changes |
 | `ci.verification_runner` | 1.2 | 2026-11-20 | the texts follow the glossary (ADR 0095): the two build triggers' descriptions say "transpile" and "organization" where they said "compile" and "organisation", and the trigger question says "transpiles" where it said "compiles". A plan shows in-place updates of the `description` of `google_cloudbuild_trigger.satz_check` and `google_cloudbuild_trigger.satz_compliance` |
 | `exemptions.exemption_tag` | 2.1 | 2026-11-20 | the texts follow the glossary (ADR 0095): the tag key's description says "organization policy" where it said "organisation policy". A plan shows an in-place update of the `description` of `google_tags_tag_key.exemption` |
 | `monitoring.organization_cis_log_alerts_central` | 1.8 | 2026-11-20 | the texts follow the glossary (ADR 0095): the metrics bucket's description says "organization-wide" where it said "org-wide", and the alert address question, the claim's interpretation and its risk say "organization". A plan shows an in-place update of the `description` of `google_logging_project_bucket_config.cis_central_metrics` |

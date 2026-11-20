@@ -418,7 +418,11 @@ and copied into the estate by pull request; the pull request is the request's re
 transpile` then writes `interfaces/outgoing/delegation-payments/` and
 `interfaces/outgoing/payments/`, and the workload estate is `satz init --from
 <central>/interfaces/outgoing/delegation-payments <central>/interfaces/outgoing/payments`
-in its directory; it reads the project as `${{interface.payments.project_id}}`. An
+in its directory; it reads the project as `${{interface.payments.project_id}}`, and the
+estate account it runs as and its state bucket by the delegation's folder:
+`svc_iac_account = "${{interface.delegation-payments.estate_account_id}}"`,
+`infra_project_name = "${{interface.delegation-payments.infrastructure_project_id}}"`,
+`infra_bucket_name = "${{interface.delegation-payments.state_bucket}}"`. An
 interface declared in two files is one interface, so the estate adds to a project's
 interface with a block of the same name in its own file — `interface "payments" { use
 interface "network" }` — and a workload that brings its own Google project gets an

@@ -1255,7 +1255,15 @@ impl Interface {
         );
         let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
         if let Some(a) = &account {
-            row("the estate account your workload estate runs as", format!("`{}`", a));
+            // the estate reads it in its two parts, `{svc_iac_account}@{infra_project_name}`
+            let read = match (text("estate_account_id"), text("infrastructure_project_id")) {
+                (Some(_), Some(_)) => format!(
+                    ", read as `svc_iac_account = \"${{{{interface.{0}.estate_account_id}}}}\"` and `infra_project_name = \"${{{{interface.{0}.infrastructure_project_id}}}}\"`",
+                    module
+                ),
+                _ => String::new(),
+            };
+            row("the estate account your workload estate runs as", format!("`{}`{}", a, read));
             match (text("estate_account_user_group"), list("account_group_roles")) {
                 (Some(g), roles) => row(
                     "who may act as it",
@@ -1272,7 +1280,7 @@ impl Interface {
             row("the delegation's infrastructure project, which its calls are billed to", format!("`{}`", p));
         }
         if let Some(b) = text("state_bucket") {
-            row("the state bucket its workload estates keep their state in", format!("`gs://{}`", b));
+            row("the state bucket its workload estates keep their state in", format!("`gs://{}`, read as `infra_bucket_name = \"${{{{interface.{}.state_bucket}}}}\"`", b, module));
         }
         if let Some(b) = text("billing_account") {
             row("the billing account a new project is linked to", format!("`{}`", b));

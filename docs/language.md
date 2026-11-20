@@ -2571,6 +2571,16 @@ copied to `interfaces/incoming/archive/`.)
   would be a cycle there. For the same reason a looked-up value is refused at the block —
   bind it as a param, or read it in a resource. The `terraform` block writes the value
   itself, because a backend takes no named value.
+- **A param that holds a read is its value where satz composes params into text of its
+  own.** The estate account is `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`
+  in the providers' and the backend's `impersonate_service_account`, in the project the
+  providers bill their calls to, in the prerequisite check and in the identity every live
+  command binds; with `svc_iac_account = "${{interface.delegation-payments.estate_account_id}}"`
+  and `infra_project_name = "${{interface.delegation-payments.infrastructure_project_id}}"`
+  each of these names `svc-deploy-payments@acme-deploy-payments.iam.gserviceaccount.com`. A
+  value the organization's estate looks up is refused in these two params, naming the
+  param: the account is named before any lookup is read. A resource that reads such a
+  param keeps the read, written as `local.interface.<…>`.
 - Refused, each at the resource that writes it: a folder the estate does not use (listing
   the folders it uses), a value the named folder does not have (listing the ones it has),
   a short form no used folder carries (listing every value they have), a short form two

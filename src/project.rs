@@ -11,6 +11,7 @@ use satz_core::satz::InterfaceFile;
 /// The exports `presets/delegation.satz` publishes for a delegation and `init --from` reads.
 const INFRASTRUCTURE_PROJECT: &str = "infrastructure_project_id";
 const ESTATE_ACCOUNT: &str = "estate_account";
+const ESTATE_ACCOUNT_ID: &str = "estate_account_id";
 const STATE_BUCKET: &str = "state_bucket";
 const REGION: &str = "default_region";
 
@@ -99,7 +100,6 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
             ));
         }
     };
-    let read = |export: &str| static_output(base, export).expect("a base carries the three exports");
     let region = files.iter().find_map(|(_, f)| static_output(f, REGION)).ok_or_else(|| {
         format!(
             "none of the interfaces {} publishes a static `{}` — `presets/estate-core.satz` exports it: switch its `use` line on in the organization's estate",
@@ -107,8 +107,14 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
             REGION
         )
     })?;
-    let account = read(ESTATE_ACCOUNT);
-    let account_id = account.split('@').next().unwrap_or(&account).to_string();
+    // the estate account's id is what `svc_iac_account` reads; a folder without it was
+    // copied from a transpile of the organization's estate that did not publish it yet
+    if static_output(base, ESTATE_ACCOUNT_ID).is_none() {
+        return Err(format!(
+            "the interface `{}` publishes no static `{}`, the estate account's id that `svc_iac_account` reads — it was copied from an older transpile of the organization's estate; copy it again",
+            base.name, ESTATE_ACCOUNT_ID
+        ));
+    }
     let uses: String = files.iter().map(|(path, _)| format!("use \"{}\"\n", path)).collect();
     let reads: String = files
         .iter()
@@ -129,9 +135,13 @@ pub(crate) fn estate(name: &str, files: &[(String, InterfaceFile)]) -> Result<St
 estate @LABEL@
 
 params {
-  infra_project_name = "@PROJECT@" // the delegation's infrastructure project: this estate's calls are billed to it, and its state is kept in it
-  infra_bucket_name  = "@BUCKET@"
-  svc_iac_account    = "@ACCOUNT@"
+  // The delegation's estate account, `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`,
+  // and its state bucket, read from the folder `@BASE@`: the estate runs as the account,
+  // its calls are billed to the infrastructure project and its state is kept in the bucket.
+  // A copy of the folder after a change of the organization's estate changes them here too.
+  infra_project_name = "${{interface.@BASE@.@PROJECT_EXPORT@}}"
+  infra_bucket_name  = "${{interface.@BASE@.@BUCKET_EXPORT@}}"
+  svc_iac_account    = "${{interface.@BASE@.@ACCOUNT_EXPORT@}}"
   default_region     = "@REGION@"
   default_zone       = "@REGION@-a"
   deployment_engine  = "tofu"
@@ -177,9 +187,9 @@ providers {
         .replace("@LABEL@", &label(name))
         .replace("@BASE@", &base.name)
         .replace("@CENTRAL@", &base.estate)
-        .replace("@PROJECT@", &read(INFRASTRUCTURE_PROJECT))
-        .replace("@BUCKET@", &read(STATE_BUCKET))
-        .replace("@ACCOUNT@", &account_id)
+        .replace("@PROJECT_EXPORT@", INFRASTRUCTURE_PROJECT)
+        .replace("@BUCKET_EXPORT@", STATE_BUCKET)
+        .replace("@ACCOUNT_EXPORT@", ESTATE_ACCOUNT_ID)
         .replace("@REGION@", &region)
         .replace("@USES@", &uses)
         .replace("@READS@", &reads))
@@ -193,7 +203,10 @@ mod tests {
     /// The estate `satz init` writes for the example organization, with its workload folder
     /// answered, the delegation packs, the entries given and `extra` params.
     fn central(tag: &str, delegations: &str, projects: &str, extra: &str) -> String {
-        let dir = std::env::temp_dir().join(format!("satz-project-{}-{}", std::process::id(), tag));
+        // one directory per call: tests that take the same tag run at once
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("satz-project-{}-{}-{}", std::process::id(), tag, call));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("C0example.satz");
@@ -269,7 +282,7 @@ mod tests {
             let deploy = address("google_project.deploy_payments");
             assert_eq!(deploy.refs.get("folder_id").map(String::as_str), Some("google_folder.infra_folder.name"), "{:?}", deploy.refs);
             for (name, exports) in [
-                ("delegation-payments", vec![("infrastructure_project_id", true), ("estate_account", true), ("state_bucket", true), ("estate_account_user_group", true)]),
+                ("delegation-payments", vec![("infrastructure_project_id", true), ("estate_account", true), ("estate_account_id", true), ("state_bucket", true), ("estate_account_user_group", true)]),
                 ("payments", vec![("project_id", true), ("project_number", false)]),
                 ("data-lake", vec![("project_id", true), ("project_number", false)]),
             ] {
@@ -285,6 +298,15 @@ mod tests {
                 i.module_outputs("delegation-data").into_iter().find(|o| o.name == "estate_account").unwrap().static_text().as_deref(),
                 Some("svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com")
             );
+            // the folder's README names the reads a workload estate binds the account with
+            let readme = i.readme("delegation-data", "0.0.0", "satz/e.satz", None);
+            for want in [
+                "`svc_iac_account = \"${{interface.delegation-data.estate_account_id}}\"`",
+                "`infra_project_name = \"${{interface.delegation-data.infrastructure_project_id}}\"`",
+                "`infra_bucket_name = \"${{interface.delegation-data.state_bucket}}\"`",
+            ] {
+                assert!(readme.contains(want), "{} — {}", want, readme);
+            }
             // the one account of `data` holds the project roles on both of its projects
             let grants = manifest
                 .resources
@@ -301,20 +323,102 @@ mod tests {
         assert!(i.projects().is_empty(), "{:?}", i.projects());
     }
 
+    /// The interface folders the organization's estate publishes for `delegations` and
+    /// `delegated_projects`, as a workload repository takes them: `taken(name)` is the path
+    /// the estate `use`s, the file's text and the file parsed.
+    fn published() -> impl Fn(&str) -> (String, String, InterfaceFile) {
+        // the region is estate-core's export, which the estate `init` writes switches on later
+        let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", DELEGATIONS, PROJECTS, ""));
+        let (manifest, i) = compile(&src, &presets);
+        let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
+        move |name: &str| {
+            let text = satz_core::fmt::format(&i.satz_file(name, &facts, "0.0.0", "e.satz")).unwrap();
+            let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
+            (format!("interfaces/incoming/{0}/{0}/satz/interface.satz", name), text, file)
+        }
+    }
+
+    /// The workload estate `src` through the whole transpile, reading the folders `taken`.
+    fn tail(src: &str, taken: &[&(String, String, InterfaceFile)]) -> crate::Tail {
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let load = |p: &str| taken.iter().find(|t| t.0 == p).map(|t| t.1.clone()).ok_or_else(|| format!("no {}", p));
+        let fe = satz_core::pipeline::compile_estate("data_lake.satz", src, &resolver, &load).unwrap_or_else(|e| panic!("{}\n{}", e, src));
+        let cfg = crate::parse_tool_config(Path::new("/nonexistent/config.toml")).unwrap();
+        let graph = crate::pack_graph::Shipped::Missing(std::path::PathBuf::from("presets/pack-graph.json"));
+        crate::compile_tail(&fe, &resolver, &reg, &cfg, &graph, "presets", "warn", Path::new("data_lake.satz"), "data_lake.satz", src)
+    }
+
+    /// A workload estate uses no preset, so the preset library's pack graph missing beside
+    /// it is no finding; an organization's estate gets one note
+    /// (`a_missing_pack_graph_is_one_note` in `src/main.rs`).
+    #[test]
+    fn a_workload_estate_is_not_sent_for_the_preset_library() {
+        let taken = published();
+        let (base, project) = (taken("delegation-data"), taken("data-lake"));
+        let written = estate("data-lake", &[(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone())]).unwrap();
+        let t = tail(&written, &[&base, &project]);
+        let menu: Vec<&str> = t.findings.iter().filter(|f| f.kind == crate::findings::Kind::UnadoptedPack).map(|f| f.message.as_str()).collect();
+        assert!(menu.is_empty(), "{:?}", menu);
+        assert!(t.providers_tf.is_some(), "the transpile ran to the end");
+    }
+
+    /// A param satz composes into text of its own — the account the estate runs as,
+    /// `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com`, and the project its
+    /// calls are billed to — may read an interface folder by name: the providers, the backend
+    /// and the prerequisite check name the export's value. A value the organization's estate
+    /// looks up is refused there, naming the param and the value.
+    #[test]
+    fn a_named_read_in_a_composed_param_is_the_exports_value() {
+        let taken = published();
+        let (base, project) = (taken("delegation-data"), taken("data-lake"));
+        let files = vec![(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone())];
+        let written = estate("data-lake", &files).unwrap();
+        let src = written
+            .lines()
+            .map(|l| match l.split_whitespace().next() {
+                Some("infra_project_name") => "  infra_project_name = \"${{interface.delegation-data.infrastructure_project_id}}\"".to_string(),
+                Some("svc_iac_account") => "  svc_iac_account    = \"svc-deploy-data\"".to_string(),
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(src.contains("${{interface.delegation-data.infrastructure_project_id}}"), "{}", src);
+        let t = tail(&src, &[&base, &project]);
+        let errors: Vec<&str> = t.findings.iter().filter(|f| f.severity == crate::findings::Severity::Error).map(|f| f.message.as_str()).collect();
+        assert!(errors.is_empty(), "{:?}", errors);
+        let unresolved: Vec<&str> = t.findings.iter().map(|f| f.message.as_str()).filter(|m| m.contains("interface.")).collect();
+        assert!(unresolved.is_empty(), "a finding names the read, not its value: {:?}", unresolved);
+        let providers = t.providers_tf.expect("providers.tf");
+        assert!(!providers.contains("interface.delegation"), "{}", providers);
+        assert!(providers.contains("impersonate_service_account = \"svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com\""), "{}", providers);
+        assert!(providers.contains("billing_project = local.interface_static.delegation_data__infrastructure_project_id"), "{}", providers);
+
+        // the identity every live call binds reads the same params
+        let load = |p: &str| [&base, &project].iter().find(|t| t.0 == p).map(|t| t.1.clone()).ok_or_else(|| format!("no {}", p));
+        let env = satz_core::pipeline::estate_params("data_lake.satz", &src, &load).unwrap();
+        let declared = crate::gcp::identity::EstateDeclaration::from_env("data_lake.satz".into(), &env).unwrap();
+        assert_eq!(declared.impersonation_target(), Some("svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com"));
+
+        // a value the organization's estate looks up cannot name the account
+        let looked_up = src.replace(
+            "\"${{interface.delegation-data.infrastructure_project_id}}\"",
+            "\"${{interface.data-lake.project_number}}\"",
+        );
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let e = satz_core::pipeline::compile_estate("data_lake.satz", &looked_up, &resolver, &load).err().expect("a looked-up value names the account");
+        assert!(e.msg.contains("`infra_project_name`") && e.msg.contains("interface.data-lake.project_number") && e.msg.contains("looks up"), "{}", e.msg);
+        assert_eq!(e.line, crate::findings::param_line(&looked_up, "infra_project_name").unwrap() as usize, "{}", e);
+        let e = satz_core::pipeline::estate_params("data_lake.satz", &looked_up, &load).expect_err("the identity is refused the same");
+        assert!(e.msg.contains("`infra_project_name`") && e.msg.contains("looks up"), "{}", e.msg);
+    }
+
     /// `init --from` writes an estate from the delegation's interface and those of what
     /// it works in, in the canonical layout, that transpiles as the delegation's account.
     #[test]
     fn the_teams_estate_runs_as_the_delegations_account_and_reads_every_interface() {
-        // the interfaces the organization's estate published, as the files a team takes; the
-        // region is estate-core's export, which the estate `init` writes switches on later
-        let src = format!("{}\nexport \"default_region\" = default_region\n", central("estate", DELEGATIONS, PROJECTS, ""));
-        let (manifest, i) = compile(&src, &presets);
-        let facts = crate::consumer::Facts::of_estate("e", Some(&i), &manifest);
-        let taken = |name: &str| {
-            let text = satz_core::fmt::format(&i.satz_file(name, &facts, "0.0.0", "e.satz")).unwrap();
-            let file = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
-            (format!("interfaces/incoming/{0}/{0}/satz/interface.satz", name), text, file)
-        };
+        let taken = published();
         let (base, project) = (taken("delegation-data"), taken("data-lake"));
         let files = vec![(base.0.clone(), base.2.clone()), (project.0.clone(), project.2.clone())];
         assert_eq!(default_name(&files).as_deref(), Some("data"));
@@ -323,13 +427,18 @@ mod tests {
         let stale = satz_core::satz::parse(&stale_text).unwrap().interface_file.unwrap();
         let err = estate("data-lake", &[(base.0.clone(), stale), (project.0.clone(), project.2.clone())]).unwrap_err();
         assert!(err.contains("`delegation-data` carries the names before the rename") && err.contains("copy it again"), "{}", err);
+        // a folder copied before the estate account's id was published is named too
+        let no_id_text = base.1.replace("output \"estate_account_id\"", "output \"gone\"");
+        let no_id = satz_core::satz::parse(&no_id_text).unwrap().interface_file.unwrap();
+        let err = estate("data-lake", &[(base.0.clone(), no_id), (project.0.clone(), project.2.clone())]).unwrap_err();
+        assert!(err.contains("`delegation-data` publishes no static `estate_account_id`") && err.contains("copy it again"), "{}", err);
         let estate = estate("data-lake", &files).unwrap();
         assert_eq!(satz_core::fmt::format(&estate).unwrap(), estate, "the estate is not in the canonical layout");
         for want in [
             "estate data_lake\n",
-            "svc_iac_account    = \"svc-deploy-data\"",
-            "infra_project_name = \"acme-deploy-data\"",
-            "infra_bucket_name  = \"acme-deploy-data-state\"",
+            "svc_iac_account    = \"${{interface.delegation-data.estate_account_id}}\"",
+            "infra_project_name = \"${{interface.delegation-data.infrastructure_project_id}}\"",
+            "infra_bucket_name  = \"${{interface.delegation-data.state_bucket}}\"",
             "prefix = \"data_lake/state\"",
             "use \"interfaces/incoming/delegation-data/delegation-data/satz/interface.satz\"",
             "use \"interfaces/incoming/data-lake/data-lake/satz/interface.satz\"",

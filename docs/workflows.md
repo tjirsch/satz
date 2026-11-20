@@ -1104,8 +1104,8 @@ each delegated_projects by name {
 ```
 
 The interface `delegation-payments` carries the estate account: `infrastructure_project_id`,
-`estate_account`, `state_bucket`, the estate account user group, and `delegated_billing_roles` and
-`delegated_apis`.
+`estate_account`, the account's id `estate_account_id`, `state_bucket`, the estate account
+user group, and `delegated_billing_roles` and `delegated_apis`.
 
 An entry is the estate's own, or the workload estate's request: `contributes_delegated_projects = [ … ]` in
 a small pack of the workload estate's, checked with `satz check-request` and vendored into the
@@ -1147,14 +1147,22 @@ already, and writes `config.toml` and `satz/payments.satz` from the interface fi
 sign-in is needed. Exactly one of the folders is a delegation's own, because an estate
 runs as one estate account;
  every other is a delegated folder or project, any number of them.
-`--name` names the estate, which otherwise takes the delegation's name. It reads `infrastructure_project_id`,
-`estate_account`, `state_bucket` and the core export `default_region` (an organization's estate
-without `estate-core.satz` publishes none and is refused), and writes `default_region`,
-`default_zone` and `deployment_engine` beside these: `infra_project_name` is the
-delegation's infrastructure project, `infra_bucket_name` its state bucket,
-`svc_iac_account` its estate account, `deployment_mode = "cloud"`, the `gcs` backend on the
-bucket under `<name>/state`, the providers, the `use` of each interface file, and at the
-end, as comments, the read for each delegated resource. The
+`--name` names the estate, which otherwise takes the delegation's name. It writes the
+delegation's estate account and state bucket as reads of the delegation's folder —
+`infra_project_name = "${{interface.delegation-payments.infrastructure_project_id}}"`,
+`svc_iac_account = "${{interface.delegation-payments.estate_account_id}}"`,
+`infra_bucket_name = "${{interface.delegation-payments.state_bucket}}"` — so a copy of the
+folder after a change of the organization's estate changes them too; a folder that
+publishes no `estate_account_id` was copied from an older transpile and is refused. It
+reads the core export `default_region` (an organization's estate without `estate-core.satz`
+publishes none and is refused) and writes it, `default_zone`, `deployment_engine`,
+`deployment_mode = "cloud"`, the `gcs` backend on the bucket under `<name>/state`, the
+providers, the `use` of each interface file, and at the end, as comments, the read for
+each delegated resource. satz reads `svc_iac_account` and `infra_project_name` as the
+values they read wherever it names the estate account,
+`{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the providers, the
+backend, the prerequisites and every live call; a value the organization's estate looks up
+cannot name the account and is refused there, naming the param. The
 estate transpiles as the delegation's estate account, and its
 resources read a value by the name of its interface folder,
 `${{interface.<folder>.<value>}}` — `project = "${{interface.payments.project_id}}"` on

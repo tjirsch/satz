@@ -36,14 +36,16 @@
 //
 // WHAT THE WORKLOAD ESTATE READS. The interface `delegation-<name>`, taken to its
 // `interfaces/incoming/` folder: `infrastructure_project_id` (its infrastructure project),
-// `estate_account`, `state_bucket`, `estate_account_user_group`, and what was
-// delegated to the account beside its targets — `delegated_billing_roles`, `delegated_apis`
-// — which `satz` judges the estate's needs against. `satz init --from` writes the workload
-// estate from it. Each target's own interface is taken beside it.
+// `estate_account` and its account id `estate_account_id`, `state_bucket`,
+// `estate_account_user_group`, and what was delegated to the account beside its targets —
+// `delegated_billing_roles`, `delegated_apis` — which `satz` judges the estate's needs
+// against. `satz init --from` writes the workload estate from it, reading its estate
+// account (`svc_iac_account`, `infra_project_name`) and its state bucket by the folder's
+// name. Each target's own interface is taken beside it.
 //
 // NO CLAIM. A delegation is an identity, not a control: this pack witnesses nothing.
 
-pack delegation version "2.0"
+pack delegation version "2.1"
 
 params {
   // One entry per delegation, `{ name estate_account_user_group apis billing_roles }`:
@@ -149,6 +151,7 @@ each delegations by name {
   interface "delegation-{each.name}" {
     export "infrastructure_project_id" = "{customer_shortname}-deploy-{each.name}" description "The delegation's infrastructure project: the team's plans are billed to it"
     export "estate_account"            = "svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" description "The service account the workload estates run as"
+    export "estate_account_id"         = "svc-deploy-{each.name}" description "The estate account's id, the part of its address before the `@`: a workload estate's `svc_iac_account`"
     export "state_bucket"              = "{customer_shortname}-deploy-{each.name}-state" description "The bucket the workload estates keep their states in"
     export "estate_account_user_group" = "{each.estate_account_user_group}" description "The group whose members may act as the account"
     export "account_group_roles"       = delegation_group_roles description "What that group holds on the account"
