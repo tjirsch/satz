@@ -70,7 +70,7 @@ EXPECTED_TOOLS = {
     *("satz_scan_checkov", "satz_report_compliance", "satz_whoami"),
     *("satz_presets", "satz_add_preset", "satz_remove_preset", "satz_check_consumer"),
     *("satz_packs", "satz_get_pack", "satz_update_pack", "satz_detach_pack", "satz_review_pack"),
-    *("satz_pack_sources",),
+    *("satz_pack_sources", "satz_publish_pack"),
 }
 
 # MCP 2025-06-18 requires an object `outputSchema` (`type: "object"`) and an object

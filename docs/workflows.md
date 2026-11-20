@@ -30,8 +30,9 @@ from then on; nothing is recreated on the way.
 **[Workload packs](#workload-packs).** The packs a workload estate takes one at a time
 from a pack source — the satz repository, or a repository or folder `config.toml` names:
 `get-pack` fetches one into `packs_dir` and records where it came from, `update-pack` brings
-a fetched pack up to date and leaves an edited one as it is, and a pack the repository
-wrote itself is written by no command.
+a fetched pack up to date and leaves an edited one as it is, a pack the repository
+wrote itself is written by no command, and `publish-pack` copies one the repository wrote
+into a folder source for other estates.
 
 **[Keeping presets current](#keeping-presets-current).** The loop that runs for the
 life of an estate. `check-presets` reports which packs are behind upstream, edited
@@ -1677,6 +1678,7 @@ satz update-pack workload-project         # bring it up to date from the source 
 satz update-pack --all --report-only      # what an update of every fetched pack would do
 satz detach-pack workload-project         # keep it as the repository's own
 satz review-pack packs/my-pack.satz --format text --out -
+satz publish-pack data/warehouse --source shared   # copy the repository's own pack into a folder source
 ```
 
 `satz packs` reads every pack source — `satz` first, then the ones `config.toml` lists — or
@@ -1715,6 +1717,42 @@ number of estates.
 that belong to the preset library — the changelog row and the adoption rule.
 
 A workload pack is one file. A script an `action` of the pack runs is not fetched with it.
+
+### Publishing a pack to a folder source
+
+A pack the repository wrote itself is developed and tested where it is used: a file in
+`packs_dir` without a row in `origin.toml`, `use`d by the estate, transpiled and planned
+with it. `publish-pack` then copies it into a folder pack source, where other estates fetch
+it with `get-pack --source`:
+
+```bash
+satz pack-source add shared --dir ../shared-packs   # once: the folder the packs are shared in
+satz publish-pack data/warehouse --source shared [--estate team.satz] [--force]
+satz update-pack data/warehouse --report-only        # current: the row follows the source
+```
+
+The pack goes to the place `get-pack --source shared` reads it from — `data/warehouse`
+becomes `../shared-packs/data/warehouse.satz`, its folders created. Before anything is
+copied, the pack clears `review-pack`'s bar inside the estate it was tested in — the one
+`--estate` names, or the one estate in `yaml_dir`: it is formatted, the estate transpiles
+with it and writes resources from it, and the rest of that bar holds. Then `publish-pack`
+writes the pack's row in `origin.toml` — `source`, `dir`, `version` and `sha256`, the row
+`get-pack --source shared` writes — so from then on the pack is a fetched one:
+`update-pack` compares it with the source, an edit here is reported as `edited`, and the
+next change is made in the source's folder, or here and published again after
+`detach-pack`.
+
+| the source's folder holds | what `publish-pack` does |
+|---|---|
+| no file of that id | copies the pack: `copied` |
+| the same file | copies nothing and writes the row: `identical` |
+| another file | refuses, naming both files; `--force` copies the pack over it: `overwritten` |
+
+It is refused for a GitHub source and for `satz` — a GitHub source is written by a pull
+request to its repository — and for a pack that has a row in `origin.toml`: a pack fetched
+from somewhere is `detach-pack`ed first to publish it as the repository's own.
+`--format json` prints `id`, `version`, `source`, `location` (the folder as `config.toml`
+writes it), `path` (the file in it), `action` and `estate`.
 
 ## Keeping presets current
 

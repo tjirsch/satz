@@ -693,6 +693,60 @@ grep -q '`budgets = true` on the entry of this project or folder' tmp/bud-plain.
 printf '\ngoogle_project_service {\n  again {\n    project = infra_project_name\n    service = "storage.googleapis.com"\n  }\n}\n' >> tmp/bud/team/satz/team.satz
 "$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not transpile at level warn:\n$(cat tmp/bud-twice.txt)"
 grep -q '1 API(s) are switched on twice on acme-deploy-payments' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
+step "publish-pack: a pack the repository wrote goes to a folder source, recorded as fetched from it, and update-pack and packs follow the source (ADR 0099)"
+# the workload estate of the budgets step, with the budget pack as its own: no row, under another id
+bud_estate tmp/pub payments
+rm -rf tmp/pub-shared && mkdir -p tmp/pub/packs/team tmp/pub-shared
+sed 's/^pack project_budget /pack budget /' tmp/pub/packs/project-budget.satz > tmp/pub/packs/team/budget.satz && rm tmp/pub/packs/project-budget.satz
+sed 's#use "packs/project-budget.satz"#use "packs/team/budget.satz"#' tmp/pub/satz/team.satz > tmp/pub/team.satz && mv tmp/pub/team.satz tmp/pub/satz/team.satz
+pub() { "$satz" --config tmp/pub "$@"; }
+pub transpile team.satz --check > tmp/pub-transpile.txt 2>&1 || fail "the estate with its own budget pack does not transpile:\n$(cat tmp/pub-transpile.txt)"
+pub pack-source add shared --dir ../pub-shared > /dev/null 2>&1 || fail "pack-source add failed on the publishing estate"
+# a GitHub source is written by a pull request, and a source config.toml does not name is none
+if pub publish-pack team/budget --source satz > tmp/pub-github.txt 2>&1; then fail "publish-pack wrote to the satz repository"; fi
+grep -q 'a GitHub source is written by a pull request to its repository; publish-pack writes only a folder source' tmp/pub-github.txt || fail "the refusal must say why:\n$(cat tmp/pub-github.txt)"
+if pub publish-pack team/budget --source nowhere > tmp/pub-unknown.txt 2>&1; then fail "publish-pack wrote to a source config.toml does not name"; fi
+grep -q 'no pack source `nowhere`' tmp/pub-unknown.txt || fail "the refusal must name the source:\n$(cat tmp/pub-unknown.txt)"
+# published: the file where get-pack --source reads it, the row get-pack would write
+pub publish-pack team/budget --source shared --format json > tmp/pub-published.json 2> tmp/pub-published.err || fail "publish-pack failed:\n$(cat tmp/pub-published.err)"
+cmp -s tmp/pub/packs/team/budget.satz tmp/pub-shared/team/budget.satz || fail "publish-pack did not copy the pack into the source's folder"
+python3 - <<'PYEOF' || fail "publish-pack did not report what it did:\n$(cat tmp/pub-published.json)"
+import json
+p = json.load(open("tmp/pub-published.json"))
+assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.0", "shared", "../pub-shared", "copied"), p
+assert p["path"].endswith("pub-shared/team/budget.satz") and p["estate"].endswith("team.satz"), p
+PYEOF
+grep -q '^source = "shared"$' tmp/pub/packs/origin.toml && grep -q '^dir = "../pub-shared"$' tmp/pub/packs/origin.toml || fail "publish-pack wrote no row naming the source and its folder:\n$(cat tmp/pub/packs/origin.toml)"
+pub update-pack team/budget > tmp/pub-update.txt 2>&1 || fail "update-pack failed on a published pack:\n$(cat tmp/pub-update.txt)"
+grep -q '^team/budget  1.0  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
+pub packs --source shared --format json --out tmp/pub-packs.json > /dev/null 2>&1 || fail "satz packs --source failed on the publishing estate"
+python3 - <<'PYEOF' || fail "satz packs does not list the published pack:\n$(cat tmp/pub-packs.json)"
+import json
+rows = {p["id"]: p for p in json.load(open("tmp/pub-packs.json"))["packs"]}
+assert rows["team/budget"]["state"] == "current" and rows["team/budget"]["source"] == "shared", rows
+PYEOF
+# fetched now: publishing it again is refused until it is detached; then the same file is left as it is
+if pub publish-pack team/budget --source shared > tmp/pub-again.txt 2>&1; then fail "publish-pack published a pack that has a row"; fi
+grep -q 'detach it first (`satz detach-pack team/budget`)' tmp/pub-again.txt || fail "the refusal must name detach-pack:\n$(cat tmp/pub-again.txt)"
+pub detach-pack team/budget > /dev/null 2>&1 || fail "detach-pack failed on the published pack"
+pub publish-pack team/budget --source shared > tmp/pub-same.txt 2>&1 || fail "publish-pack of an identical file failed:\n$(cat tmp/pub-same.txt)"
+grep -q 'holds the same file, nothing copied' tmp/pub-same.txt || fail "an identical file is not reported as left:\n$(cat tmp/pub-same.txt)"
+# another file of that id in the folder: refused naming both, and --force copies over it
+pub detach-pack team/budget > /dev/null 2>&1 || fail "detach-pack failed on the published pack"
+printf '// theirs\n' >> tmp/pub-shared/team/budget.satz
+cp tmp/pub-shared/team/budget.satz tmp/pub-theirs.satz
+if pub publish-pack team/budget --source shared > tmp/pub-differs.txt 2>&1; then fail "publish-pack overwrote another file in the source's folder"; fi
+grep -q 'pub-shared/team/budget.satz holds another `team/budget` than' tmp/pub-differs.txt || fail "the refusal must name both files:\n$(cat tmp/pub-differs.txt)"
+cmp -s tmp/pub-theirs.satz tmp/pub-shared/team/budget.satz || fail "a refused publish-pack wrote the source's file"
+pub publish-pack team/budget --source shared --force > tmp/pub-force.txt 2>&1 || fail "publish-pack --force failed:\n$(cat tmp/pub-force.txt)"
+cmp -s tmp/pub/packs/team/budget.satz tmp/pub-shared/team/budget.satz || fail "--force did not copy the pack over the source's file"
+# a pack the estate does not transpile with is not published
+pub detach-pack team/budget > /dev/null 2>&1 || fail "detach-pack failed on the published pack"
+printf '\ngoogle_storage_bucket {\n  broken {\n    shade = "EU"\n  }\n}\n' >> tmp/pub/packs/team/budget.satz
+if pub publish-pack team/budget --source shared --force > tmp/pub-broken.txt 2>&1; then fail "publish-pack published a pack the estate does not transpile with"; fi
+grep -q "does not clear review-pack's bar" tmp/pub-broken.txt || fail "the refusal must say which bar:\n$(cat tmp/pub-broken.txt)"
+cmp -s tmp/pub-shared/team/budget.satz tmp/pub/packs/team/budget.satz && fail "a pack that does not transpile reached the source's folder"
+
 # the example organization's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the budgets step"
 
@@ -2493,7 +2547,7 @@ assert set(tools) == {"satz_require", "satz_check_presets", "satz_questions", "s
                       "satz_update_prerequisites", "satz_merge_presets", "satz_restrict", "satz_review_preset", "satz_fmt",
                       "satz_presets", "satz_add_preset", "satz_add_entry", "satz_remove_preset", "satz_check_consumer",
                       "satz_packs", "satz_get_pack", "satz_update_pack", "satz_detach_pack", "satz_review_pack",
-                      "satz_pack_sources"}, sorted(tools)
+                      "satz_pack_sources", "satz_publish_pack"}, sorted(tools)
 
 # The server holds no estate until a client opens one, so it has to be able to
 # say which ones it could open — otherwise the first call is a guess at a path.
@@ -3114,6 +3168,8 @@ cp "$root/packs/workload-project.satz" tmp/wpm/up/workload-project.satz
   printf '%s\n' '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"satz_packs","arguments":{"source":"up"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"x","source":"nowhere"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"satz_pack_sources","arguments":{}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"satz_publish_pack","arguments":{"id":"workload-project","source":"satz"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"satz_publish_pack","arguments":{"id":"workload-project","source":"up"}}}'
 } > tmp/mcp-wpm-in.jsonl
 (cd tmp/wpm && python3 ../mcp-drive.py "$satz" mcp --root . --allow read,write < ../mcp-wpm-in.jsonl > ../mcp-wpm.jsonl 2>/dev/null) || true
 python3 - <<'PYEOF' || fail "the workload-pack tools did not behave"
@@ -3148,6 +3204,9 @@ assert ok(8) == {"id": "workload-project", "source": "up"}, ok(8)
 assert [(p["id"], p["state"]) for p in ok(9)["packs"]] == [("workload-project", "own")], ok(9)
 assert not os.path.exists("tmp/wpm/packs/origin.toml"), "a record without rows is no file"
 assert "no pack source `nowhere`" in refused(10), refused(10)
+assert "publish-pack writes only a folder source" in refused(12), refused(12)
+# the estate uses no pack: the one the folder holds is not published from it
+assert "does not clear review-pack's bar" in refused(13) and "does that estate `use` it" in refused(13), refused(13)
 assert [(s["name"], s["builtin"], s["dir"]) for s in ok(11)["sources"]] == [("satz", True, None), ("up", False, "up")], ok(11)
 PYEOF
 

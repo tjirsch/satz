@@ -74,6 +74,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::GetPack { .. }
         | Commands::UpdatePack { .. }
         | Commands::DetachPack { .. }
+        | Commands::PublishPack { .. }
         | Commands::PackSource { .. }
         | Commands::ReviewPack { .. }
         | Commands::Import { .. }

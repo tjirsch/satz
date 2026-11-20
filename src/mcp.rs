@@ -184,6 +184,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("get-pack", Parity::Tools(&["satz_get_pack"])),
     ("update-pack", Parity::Tools(&["satz_update_pack"])),
     ("detach-pack", Parity::Tools(&["satz_detach_pack"])),
+    ("publish-pack", Parity::Tools(&["satz_publish_pack"])),
     ("pack-source", Parity::Tools(&["satz_pack_sources"])),
     ("review-pack", Parity::Tools(&["satz_review_pack"])),
     ("whoami", Parity::Tools(&["satz_whoami"])),
@@ -754,6 +755,20 @@ pub(crate) struct UpdatePackArgs {
 pub(crate) struct DetachPackArgs {
     /// The pack's id: its path under `packs/` without `.satz`
     pub id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct PublishPackArgs {
+    /// The pack's id: its path under `packs_dir` without `.satz` — one without a row in origin.toml
+    pub id: String,
+    /// The folder pack source to copy it to — a name `satz_pack_sources` lists with a `dir`
+    pub source: String,
+    /// The estate the pack is checked in, e.g. `C0example.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
+    /// Copy the pack over a different file of that id in the source's folder
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2058,6 +2073,41 @@ impl SatzMcp {
         match crate::workload_packs::detach(&open.runtime, &args.id) {
             Ok(detached) => Ok(Ok(Json(detached))),
             Err(e) => Ok(Err(refused(format!("detach-pack: {}", e)))),
+        }
+    }
+
+    #[tool(
+        name = "satz_publish_pack",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<crate::workload_packs::Published>(),
+        description = "Copy one of the repository's own workload packs (no row in packs_dir/origin.toml) into a folder \
+                       pack source, as `satz publish-pack` does, and record it there as fetched from that source, so \
+                       `satz_update_pack` follows the source from then on and other estates fetch it with \
+                       `satz_get_pack`. Refused for a GitHub source or `satz`, for a pack with a row (detach it first), \
+                       for a file of that id in the source's folder that differs unless `force`, and for a pack that \
+                       does not clear `satz_review_pack`'s bar inside the estate — formatted, and the estate transpiles \
+                       with it. `action`: `copied`, `identical` (nothing copied) or `overwritten`. Needs the 'write' \
+                       capability.",
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn publish_workload_pack(
+        &self,
+        Parameters(args): Parameters<PublishPackArgs>,
+    ) -> Result<Result<Json<crate::workload_packs::Published>, CallToolResult>, McpError> {
+        const SERVES: Option<&str> = Some("publish-pack");
+        if let Err(r) = self.permits(Group::Write, SERVES) {
+            return Ok(Err(r));
+        }
+        let open = match self.packs_estate() {
+            Ok(v) => v,
+            Err(r) => return Ok(Err(r)),
+        };
+        let estate = match self.target(args.estate.as_deref()) {
+            Ok((_, estate)) => estate,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::workload_packs::publish(&open.tool, &open.runtime, &args.id, &args.source, &estate, args.force) {
+            Ok(published) => Ok(Ok(Json(published))),
+            Err(e) => Ok(Err(refused(format!("publish-pack: {}", e)))),
         }
     }
 

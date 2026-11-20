@@ -147,7 +147,7 @@ const COMMAND_GROUPS: &[(&str, &[&str])] = &[
     ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
-    ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "pack-source", "review-pack"]),
+    ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "publish-pack", "pack-source", "review-pack"]),
     (
         "Policies",
         &[
@@ -934,6 +934,31 @@ pub(crate) enum Commands {
     DetachPack {
         /// The pack's id: its path under `packs/` without `.satz`
         id: String,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
+    },
+    /// Copy one of the repository's own workload packs into a folder pack source, and record it as fetched from there, so other estates fetch it with `get-pack --source` and `update-pack` follows the source from then on
+    ///
+    /// The pack is one of `packs_dir` without a row in `packs_dir/origin.toml`; a pack
+    /// fetched from somewhere is detached first. The source is a `[[pack_source]]` with
+    /// `dir`: a GitHub source is written by a pull request to its repository. Before
+    /// anything is copied the pack clears `review-pack`'s bar inside the estate — it is
+    /// formatted, and the estate transpiles with it. A file of that id in the source's
+    /// folder that differs is refused unless `--force`; an identical one is left as it is.
+    PublishPack {
+        /// The pack's id: its path under `packs_dir` without `.satz`
+        id: String,
+        /// The folder pack source to copy it to: a name `satz pack-source list` lists
+        #[arg(long, value_name = "NAME")]
+        source: String,
+        /// The estate the pack is checked in (.satz, inside yaml_dir if relative); the one
+        /// estate in yaml_dir when left out
+        #[arg(long, value_name = "ESTATE")]
+        estate: Option<String>,
+        /// Copy the pack over a different file of that id in the source's folder
+        #[arg(long)]
+        force: bool,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
@@ -2452,6 +2477,18 @@ Thumbs.db
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&detached)?),
                 _ => println!("detached {}: it was fetched from `{}` and is this repository's own pack now — no update writes it", detached.id, detached.source),
+            }
+            Ok(())
+        }
+        Commands::PublishPack { id, source, estate, force, format } => {
+            let estate = match estate {
+                Some(e) => estate_path(PathBuf::from(e), &runtime_config),
+                None => sole_estate(Path::new(&runtime_config.yaml_dir))?,
+            };
+            let published = crate::workload_packs::publish(&tool_config, &runtime_config, &id, &source, &estate, force)?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&published)?),
+                _ => print!("{}", crate::workload_packs::render_publish(&published)),
             }
             Ok(())
         }
@@ -6467,6 +6504,7 @@ mod command_groups {
         ("get-pack", Identity::NoGoogleApi),
         ("update-pack", Identity::NoGoogleApi),
         ("detach-pack", Identity::NoGoogleApi),
+        ("publish-pack", Identity::NoGoogleApi),
         ("pack-source", Identity::NoGoogleApi),
         ("review-pack", Identity::NoGoogleApi),
         ("hcl-init", Identity::NoGoogleApi),
