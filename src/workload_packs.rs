@@ -196,8 +196,15 @@ pub(crate) fn valid_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A pack's file: its id's `/`-separated segments joined as path parts, so the
+/// path is written in the platform's own form.
 fn pack_file(packs_dir: &Path, id: &str) -> PathBuf {
-    packs_dir.join(format!("{id}.satz"))
+    let mut file = packs_dir.to_path_buf();
+    let mut segments: Vec<&str> = id.split('/').collect();
+    let last = segments.pop().unwrap_or_default();
+    file.extend(segments);
+    file.push(format!("{last}.satz"));
+    file
 }
 
 fn sha256(text: &str) -> String {
@@ -1322,6 +1329,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An id's segments are path parts, and a dot inside an id stays part of its name.
+    #[test]
+    fn a_pack_file_is_its_ids_segments_with_satz_appended() {
+        let base = Path::new("packs");
+        assert_eq!(pack_file(base, "team/logs"), base.join("team").join("logs.satz"));
+        assert_eq!(pack_file(base, "budget.v2"), base.join("budget.v2.satz"));
+    }
+
     #[test]
     fn a_different_file_in_the_folder_is_refused_unless_forced() {
         let (dir, cfg, estate) = publishing_estate("force");
@@ -1329,7 +1344,9 @@ mod tests {
         let theirs = LOGS.replace("1.0", "0.9");
         std::fs::write(dir.join("shared/team/logs.satz"), &theirs).unwrap();
         let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
-        assert!(err.contains("shared/team/logs.satz holds another `team/logs` than") && err.contains("packs/team/logs.satz") && err.contains("--force"), "{err}");
+        let there = dir.join("shared").join("team").join("logs.satz");
+        let here = dir.join("packs").join("team").join("logs.satz");
+        assert!(err.contains(&format!("{} holds another `team/logs` than {}", there.display(), here.display())) && err.contains("--force"), "{err}");
         assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), theirs, "a refusal wrote the file");
         assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refusal wrote a row");
         let forced = publish(&cfg, &cfg, "team/logs", "shared", &estate, true).unwrap();
