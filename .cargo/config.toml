@@ -1,8 +1,12 @@
-# Windows gives a program's main thread 1 MiB of stack. clap's builder for satz's
-# command tree is deep enough to overflow that in a debug build, so the binary asks
-# the linker for 8 MiB on Windows; other platforms already start with 8 MiB.
+# Windows gives a program's main thread 1 MiB of stack and Rust's test threads 2 MiB.
+# clap's builder for satz's command tree is deep enough to overflow either in a debug
+# build, so the Windows binary asks the linker for 8 MiB, and every thread cargo's test
+# harness spawns starts with 8 MiB (RUST_MIN_STACK), as other platforms' main threads do.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/STACK:8388608"]
 
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/STACK:8388608"]
+
+[env]
+RUST_MIN_STACK = "8388608"
