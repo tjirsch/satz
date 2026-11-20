@@ -1,6 +1,8 @@
 # 0091 — budgets are delegated by a role on the scope, and a pack's needs are what it reads
 
-- **Status:** accepted
+- **Status:** accepted; a pack's needs as a delegated folder or project are superseded by
+  [ADR 0100](0100-a-pack-is-described-by-its-own-declarations.md), which reports what a pack
+  declares and reads and matches the reads against the estate's interface folders
 - **Date:** 2026-11-12
 
 ## Context

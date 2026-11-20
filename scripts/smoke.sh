@@ -684,7 +684,30 @@ PY2
 "$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
 "$satz" --config tmp/bud/team pack-source add repo --dir "$root/packs" > /dev/null 2>&1 || fail "pack-source add failed on the workload estate"
 "$satz" --config tmp/bud/team packs --source repo --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
-grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
+grep -q 'reads: project_id from payments, project_number from payments, billing_account from ' tmp/bud-packs.txt && grep -q 'not given: .*delegated_folder' tmp/bud-packs.txt \
+  || fail "satz packs does not say what each pack reads and whether the estate gives it:\n$(cat tmp/bud-packs.txt)"
+"$satz" --config tmp/bud/team packs --source repo --format json --out tmp/bud-packs.json > /dev/null 2>&1 || fail "satz packs --format json failed on the workload estate"
+python3 - tmp/bud-packs.json <<'PY2' || fail "satz packs does not describe the packs by what they declare:\n$(cat tmp/bud-packs.json)"
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report["estate"].endswith("team.satz") and set(report["interface_folders"]) == {"delegation-payments", "payments"}, report
+rows = {p["id"]: p for p in report["packs"]}
+budget = rows["project-budget"]
+assert "needs" not in budget, budget
+params = {p["name"]: p for p in budget["params"]}
+assert params["budget_project_id"] == {"name": "budget_project_id", "default": '"${{interface.project_id}}"', "question": False, "prompt": None}, params
+assert params["budget_amount"]["default"] is None and params["budget_amount"]["question"] and params["budget_amount"]["prompt"].startswith("The monthly budget"), params
+assert budget["list_params"] == [] and budget["exports"] == [], budget
+# the estate binds none of the three params, so the pack reads them, and the project's folder gives them
+reads = {r["value"]: r for r in budget["reads"]}
+assert set(reads) == {"project_id", "project_number", "billing_account"}, reads
+assert reads["project_id"]["folder"] is None and reads["project_id"]["param"] == "budget_project_id", reads
+assert all(r["met_by"] and r["unmet_reason"] is None and not r["bound_by_estate"] for r in reads.values()), reads
+assert reads["project_id"]["met_by"] == ["payments"], reads
+# the folder pack reads a folder this estate was not given
+folder = rows["workload-project"]["reads"]
+assert [(r["value"], r["met_by"]) for r in folder] == [("delegated_folder", [])] and "delegated_folder" in folder[0]["unmet_reason"], folder
+PY2
 # the same estate in the project that was not: told what to ask for, and how
 bud_estate tmp/bud/plain plain
 "$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile at level warn:\n$(cat tmp/bud-plain.txt)"
@@ -1767,8 +1790,9 @@ if "$satz" --config tmp/lib/est/config.toml get-presets > tmp/lib-empty.txt 2>&1
 grep -q '\[preset_library\] dir = "../library"' tmp/lib-empty.txt || fail "the refusal must name the table:\n$(cat tmp/lib-empty.txt)"
 
 step "workload packs: a folder is a named pack source, get-pack records it, update-pack follows the record and writes a pack that is as fetched and never one that was edited or is the repository's own"
-rm -rf tmp/wp && mkdir -p tmp/wp/est tmp/wp/up/sub tmp/wp/other
-printf '# the estate'"'"'s settings\ninclude_dirs = [".", "satz"]\n' > tmp/wp/est/config.toml
+rm -rf tmp/wp && mkdir -p tmp/wp/est/satz tmp/wp/up/sub tmp/wp/other
+printf '# the estate'"'"'s settings\ninclude_dirs = [".", "satz"]\nschema_dir = "%s/tests/schemas"\n' "$root" > tmp/wp/est/config.toml
+printf 'estate wp\n' > tmp/wp/est/satz/wp.satz
 wp_pack() { printf '// A demo pack.\npack %s version "%s"\n' "$1" "$2"; }
 wp() { "$satz" --config tmp/wp/est/config.toml "$@"; }
 wp_pack demo 1.0 > tmp/wp/up/demo.satz
