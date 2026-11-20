@@ -690,7 +690,9 @@ grep -q 'reads: project_id from payments, project_number from payments, billing_
 python3 - tmp/bud-packs.json <<'PY2' || fail "satz packs does not describe the packs by what they declare:\n$(cat tmp/bud-packs.json)"
 import json, sys
 report = json.load(open(sys.argv[1]))
-assert report["estate"].endswith("team.satz") and set(report["interface_folders"]) == {"delegation-payments", "payments"}, report
+folders = {f["name"]: f for f in report["interface_folders"]}
+assert report["estate"].endswith("team.satz") and set(folders) == {"delegation-payments", "payments"}, report
+assert folders["payments"]["estate"] == "c0example" and {"project_id", "project_number"} <= set(folders["payments"]["exports"]), folders
 rows = {p["id"]: p for p in report["packs"]}
 budget = rows["project-budget"]
 assert "needs" not in budget, budget
@@ -708,6 +710,23 @@ assert reads["project_id"]["met_by"] == ["payments"], reads
 folder = rows["workload-project"]["reads"]
 assert [(r["value"], r["met_by"]) for r in folder] == [("delegated_folder", [])] and "delegated_folder" in folder[0]["unmet_reason"], folder
 PY2
+# --local reads no pack source: the estate's own pack, described as the full listing describes it
+"$satz" --config tmp/bud/team packs --local --format json --out tmp/bud-local.json > /dev/null 2>&1 || fail "satz packs --local failed on the workload estate"
+python3 - tmp/bud-local.json <<'PY2' || fail "satz packs --local does not describe the estate's own packs:\n$(cat tmp/bud-local.json)"
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report["sources"] == [], report["sources"]
+assert [(p["id"], p["state"], p["source"]) for p in report["packs"]] == [("project-budget", "own", None)], report["packs"]
+budget = report["packs"][0]
+assert {p["name"] for p in budget["params"]} >= {"budget_project_id", "budget_amount"}, budget
+reads = {r["value"]: r for r in budget["reads"]}
+assert set(reads) == {"project_id", "project_number", "billing_account"} and reads["project_id"]["met_by"] == ["payments"], reads
+folders = {f["name"]: f for f in report["interface_folders"]}
+assert set(folders) == {"delegation-payments", "payments"} and "estate_account" in folders["delegation-payments"]["exports"], folders
+assert "project_id" in folders["payments"]["exports"] and all(f["estate"] == "c0example" for f in folders.values()), folders
+PY2
+if "$satz" --config tmp/bud/team packs --local --source repo --format json --out - > tmp/bud-local-source.txt 2>&1; then fail "satz packs read a source with --local"; fi
+grep -q -- '--local reads no pack source and --source names one to read' tmp/bud-local-source.txt || fail "the refusal must say why:\n$(cat tmp/bud-local-source.txt)"
 # the same estate in the project that was not: told what to ask for, and how
 bud_estate tmp/bud/plain plain
 "$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile at level warn:\n$(cat tmp/bud-plain.txt)"
@@ -747,6 +766,12 @@ python3 - <<'PYEOF' || fail "satz packs does not list the published pack:\n$(cat
 import json
 rows = {p["id"]: p for p in json.load(open("tmp/pub-packs.json"))["packs"]}
 assert rows["team/budget"]["state"] == "current" and rows["team/budget"]["source"] == "shared", rows
+PYEOF
+pub packs --local --format json --out tmp/pub-local.json > /dev/null 2>&1 || fail "satz packs --local failed on the publishing estate"
+python3 - <<'PYEOF' || fail "satz packs --local does not report the published pack as unchanged and not checked:\n$(cat tmp/pub-local.json)"
+import json
+rows = {p["id"]: p for p in json.load(open("tmp/pub-local.json"))["packs"]}
+assert (rows["team/budget"]["state"], rows["team/budget"]["source"], rows["team/budget"]["upstream_version"]) == ("not-checked", "shared", None), rows
 PYEOF
 # fetched now: publishing it again is refused until it is detached; then the same file is left as it is
 if pub publish-pack team/budget --source shared > tmp/pub-again.txt 2>&1; then fail "publish-pack published a pack that has a row"; fi
@@ -3188,6 +3213,8 @@ cp "$root/packs/workload-project.satz" tmp/wpm/up/workload-project.satz
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"satz_packs","arguments":{"source":"up"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","source":"up"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"satz_get_pack","arguments":{"id":"workload-project","source":"up"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"satz_packs","arguments":{"local":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"satz_packs","arguments":{"local":true,"source":"up"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"satz_update_pack","arguments":{"all":true,"report_only":true}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"satz_review_pack","arguments":{"pack":"packs/workload-project.satz"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"satz_detach_pack","arguments":{"id":"workload-project"}}}'
@@ -3220,6 +3247,9 @@ assert [p["id"] for p in got["installed"]] == ["workload-project"], got
 assert got["installed"][0]["use_line"] == 'use "packs/workload-project.satz"', got
 assert os.path.exists("tmp/wpm/packs/workload-project.satz"), "the pack was not written"
 assert "update-pack workload-project" in refused(5), refused(5)
+local = ok(14)
+assert local["sources"] == [] and [(p["id"], p["state"], p["source"]) for p in local["packs"]] == [("workload-project", "not-checked", "up")], local
+assert "--local reads no pack source" in refused(15), refused(15)
 upd = ok(6)
 assert [(p["id"], p["action"]) for p in upd["packs"]] == [("workload-project", "current")] and upd["attention"] is False, upd
 review = ok(7)

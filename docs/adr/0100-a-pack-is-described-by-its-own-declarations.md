@@ -68,4 +68,8 @@ Option 2.
   binds the param that holds it, which is the edit ADR 0094 asks for.
 - `review-pack` without `--against` gives a pack that names folders one stand-in folder
   per name, so a pack written with named reads clears the bar it is reviewed against.
+- `satz packs --local` reads no pack source and describes the packs of `packs_dir` alone, a
+  fetched one `edited` or `not-checked` by its recorded sha256, so a window can describe the
+  estate's packs without a network read; `interface_folders` lists each folder the estate
+  uses with the organization's estate that wrote it and the names of the values it exports.
 - The same holds for an estate: `satz presets` reports an estate as an organization's estate or a workload estate (`works_in: organization | workload`), and the interface files it reads by the values they export (`delegated_by[].exports`); `folder` and `project` are no kinds of estate.

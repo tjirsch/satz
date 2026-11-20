@@ -205,7 +205,9 @@ the satz repository, or a repository or folder the estate's `config.toml` names,
 what each declares — its params with their defaults and questions, its list params, its
 exports — and the interface values it reads, each with the folders of the estate that give
 it (`met_by`) or why none does (`unmet_reason`); a pack fits the estate when nothing is
-unmet. `satz_get_pack` fetches one (`source` names where from) and records its origin in
+unmet. `interface_folders` lists the estate's interface folders with the organization's
+estate that wrote each and the values it exports; `local: true` reads no pack source and
+lists only `packs_dir`. `satz_get_pack` fetches one (`source` names where from) and records its origin in
 `packs_dir/origin.toml`,
 `satz_update_pack` brings a fetched one up to date and leaves an edited one as it is
 (`report_only` first), `satz_detach_pack` makes one the repository's own,

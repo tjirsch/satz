@@ -1673,6 +1673,7 @@ raw.githubusercontent.com and costs no API request.
 ```bash
 satz packs --format text --out -          # what is here, what every source holds, and what each declares and reads
 satz packs --source shared --format json --out -
+satz packs --local --format json --out -  # only packs_dir, no pack source read
 satz get-pack workload-project            # fetch one pack from satz, record its origin
 satz get-pack data/warehouse --source shared
 satz update-pack workload-project         # bring it up to date from the source its row names
@@ -1685,6 +1686,12 @@ satz publish-pack data/warehouse --source shared   # copy the repository's own p
 `satz packs` reads every pack source — `satz` first, then the ones `config.toml` lists — or
 the one `--source` names, and lists each pack of `packs_dir` with its state and source, and
 each pack a source holds that `packs_dir` does not, once per source that holds it.
+`--local` reads no pack source and lists only the packs of `packs_dir`: the repository's
+own as `own`, a fetched one as `edited` when its file no longer has the sha256 its row
+records and as `not-checked` when it does, with the `source` and `commit` its row records.
+`upstream_version` is `null` and `sources` is empty; each row carries its declarations and
+its reads matched against the estate as in the full listing. `--local` with `--source` is
+refused.
 `get-pack` reads `satz` unless `--source` names another. `update-pack` reads, for each
 pack, the source its row names; with `--source` it reads only that one, and a pack of
 another source is reported as not checked.
@@ -1705,7 +1712,10 @@ estate when the estate's interface folders give every value it reads.
 | `reads` | each `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` the pack writes in a param, a resource or an export — a comment reads nothing: `folder` (`null` for the bare form), `value`, `param` (the param whose value the read is, or `null`), and how the estate gives it |
 
 The estate is the one `--estate` names, or the one estate in `yaml_dir`, and its interface
-folders are the ones its transpile uses. A read is matched by the transpile's own rule:
+folders are the ones its transpile uses. The report lists them in `interface_folders`, each
+as `name`, `estate` (the organization's estate that wrote it) and `exports` (the names of
+the values it exports); the text form prints one line per folder. A read is matched by the
+transpile's own rule:
 
 - `${{interface.<folder>.<value>}}` is given by the used interface folder named `<folder>`,
   when it exports `<value>`;
