@@ -504,6 +504,9 @@ pub(crate) struct Installed {
     pub path: String,
     /// the line an estate reads the pack with
     pub use_line: String,
+    /// the interface values the pack reads that the estate does not give, each with why —
+    /// the transpile refuses them once the estate uses the pack
+    pub unmet: Vec<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -544,8 +547,9 @@ impl Which {
 /// Fetch one pack, or every pack the source holds that `packs_dir` lacks, from the
 /// source `source` names — `satz` without one — and record where each came from. A pack
 /// `packs_dir` already holds is never written: one named is refused, and with `all` it is
-/// listed as present.
-pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Which) -> Result<GetReport, String> {
+/// listed as present. Each pack's reads are matched against `estate`; one the estate does
+/// not give is reported, and the pack is fetched all the same.
+pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Which, estate: &Estate) -> Result<GetReport, String> {
     let packs_dir = Path::new(&runtime.packs_dir);
     let mut rows = read_record(packs_dir)?;
     check_rows(runtime, &rows)?;
@@ -588,6 +592,7 @@ pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Whic
             return Err(format!("{} holds no pack `{id}` — `satz packs --source {}` lists the packs it holds", source.describe(), source.name()));
         };
         let version = version_of(&id, &source, &text)?;
+        let unmet = unmet(&matched(declarations_of(&text, &format!("{} `{id}`", source.describe()))?, estate));
         let file = pack_file(packs_dir, &id);
         if let Some(parent) = file.parent() {
             fsx::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -598,7 +603,7 @@ pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Whic
         // the record follows every file as it lands: a later pack that fails leaves
         // the earlier ones recorded
         write_record(packs_dir, rows.clone())?;
-        report.installed.push(Installed { id, version, path: file.display().to_string(), use_line });
+        report.installed.push(Installed { id, version, path: file.display().to_string(), use_line, unmet });
     }
     Ok(report)
 }
@@ -611,6 +616,9 @@ pub(crate) fn render_get(r: &GetReport) -> String {
     let mut out = String::new();
     for p in &r.installed {
         out.push_str(&format!("installed {} {} from {from} → {}\n    {}\n", p.id, p.version, p.path, p.use_line));
+        for reason in &p.unmet {
+            out.push_str(&format!("    warning: the estate does not give a value the pack reads — {reason}\n"));
+        }
     }
     if !r.present.is_empty() {
         out.push_str(&format!("already there, left as they are: {}\n", r.present.join(", ")));
@@ -821,59 +829,293 @@ pub(crate) fn render_update(r: &UpdateReport) -> String {
 // packs
 // ---------------------------------------------------------------------------
 
-/// What a pack needs of the estate that uses it: a place its account was delegated access
-/// to. It is not declared. It is what the pack READS from the interface the estate uses —
-/// a pack that reads the delegated folder is of no use in an estate that was given none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub(crate) enum Need {
-    /// it reads `${{interface.delegated_folder}}`
-    Folder,
-    /// it reads `${{interface.project_id}}` or `${{interface.project_number}}`
-    Project,
+/// One param a pack declares, with the value it takes when the estate binds none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct ParamDecl {
+    pub name: String,
+    /// the value as the pack writes it, in Satz (`"europe-west3"`, `0.5`, `["a", "b"]`,
+    /// `"${{interface.project_id}}"`); none where it writes `""`, a value nobody has given yet
+    pub default: Option<String>,
+    /// the pack asks for it: a `question` names it, or an option of a `oneof` question does
+    pub question: bool,
+    /// the question's prompt, where one asks for it
+    pub prompt: Option<String>,
 }
 
-/// The interface values a pack reads, by export name: every `${{interface.<name>}}` outside
-/// its comments.
-pub(crate) fn interface_reads(text: &str) -> std::collections::BTreeSet<String> {
-    const OPEN: &str = "${{interface.";
-    let mut out = std::collections::BTreeSet::new();
-    for line in text.lines().filter(|l| !l.trim_start().starts_with("//")) {
-        let mut rest = line;
-        while let Some(i) = rest.find(OPEN) {
-            rest = &rest[i + OPEN.len()..];
-            // `<value>` or `<folder>.<value>`: the value is what a need is read from
-            let key: String = rest.chars().take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.')).collect();
-            let name = key.rsplit('.').next().unwrap_or_default();
-            if !name.is_empty() && rest[key.len()..].starts_with("}}") {
-                out.insert(name.to_string());
+/// One `entries <list param> { … }` of a pack: what a team may add to a list param.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct ListParamDecl {
+    pub param: String,
+    /// the field that names an entry
+    pub key: String,
+    /// every field an entry may carry, `key` among them
+    pub fields: Vec<String>,
+    /// per field, the value an entry that does not carry it takes, in Satz
+    pub defaults: std::collections::BTreeMap<String, String>,
+}
+
+/// One export of a pack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct ExportDecl {
+    /// the `interface "<name>"` block it stands in, the name as written — an interface an
+    /// `each` writes is named by its pattern, `ks-{each.id}`; none for a core export
+    pub interface: Option<String>,
+    pub name: String,
+}
+
+/// One value a pack reads from the interface folders the estate uses,
+/// `${{interface.<folder>.<value>}}` or `${{interface.<value>}}`, and whether the estate
+/// gives it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct ReadDecl {
+    /// the interface folder a named read names; none for the bare form
+    pub folder: Option<String>,
+    pub value: String,
+    /// the param whose value the read is; none where a resource or an export reads it
+    pub param: Option<String>,
+    /// the estate binds `param`, so the pack's value is not read and nothing is matched
+    pub bound_by_estate: bool,
+    /// the used interface folders that give the value: the one a named read names, every
+    /// folder that carries a bare one; empty when the estate does not give it
+    pub met_by: Vec<String>,
+    /// why the estate does not give it, in the words the transpile refuses the read with
+    pub unmet_reason: Option<String>,
+}
+
+/// What a pack declares, read from its parse: its params, its list params, its exports and
+/// the interface values it reads.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub(crate) struct Declarations {
+    pub params: Vec<ParamDecl>,
+    pub list_params: Vec<ListParamDecl>,
+    pub exports: Vec<ExportDecl>,
+    pub reads: Vec<ReadDecl>,
+}
+
+/// The estate a pack is matched against: the params its own file binds and the interface
+/// files it uses, as its transpile loads them.
+pub(crate) struct Estate {
+    pub path: PathBuf,
+    pub bound: std::collections::BTreeSet<String>,
+    pub interfaces: Vec<satz_core::pipeline::UsedInterfaceFile>,
+}
+
+impl Estate {
+    pub(crate) fn folders(&self) -> Vec<String> {
+        self.interfaces.iter().map(|f| f.interface.name.clone()).collect()
+    }
+}
+
+/// A value as a pack writes it, in Satz.
+fn satz_text(v: &satz_core::satz::Value) -> String {
+    use satz_core::satz::{Entry, Key, StrPart, Value};
+    fn string(parts: &[StrPart]) -> String {
+        let mut s = String::from("\"");
+        for p in parts {
+            match p {
+                StrPart::Param(r) => s.push_str(&format!("{{{r}}}")),
+                StrPart::Lit(t) => {
+                    let q = satz_core::satz::quote(t);
+                    s.push_str(&q[1..q.len() - 1]);
+                }
             }
+        }
+        s.push('"');
+        s
+    }
+    fn key(k: &Key) -> String {
+        match k {
+            Key::Ident(i) => i.clone(),
+            Key::Str(parts) => string(parts),
+        }
+    }
+    match v {
+        Value::Str(parts) => string(parts),
+        Value::Num(n) => n.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Ref(r) => r.clone(),
+        Value::List(items) => format!("[{}]", items.iter().map(satz_text).collect::<Vec<_>>().join(", ")),
+        Value::Obj(entries) => {
+            let inner: Vec<String> = entries
+                .iter()
+                .map(|e| match e {
+                    Entry::Attr { key: k, value, .. } => format!("{} = {}", key(k), satz_text(value)),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            format!("{{ {} }}", inner.join(", "))
+        }
+    }
+}
+
+/// `""`: a param declared without a value.
+fn is_unset(v: &satz_core::satz::Value) -> bool {
+    use satz_core::satz::{StrPart, Value};
+    matches!(v, Value::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(t) if t.is_empty())))
+}
+
+/// Every text in a value, keys included, `{param}` parts written as such.
+fn texts_of_value(v: &satz_core::satz::Value, out: &mut Vec<String>) {
+    use satz_core::satz::{StrPart, Value};
+    match v {
+        Value::Str(parts) => out.push(parts.iter().map(|p| match p {
+            StrPart::Lit(t) => t.clone(),
+            StrPart::Param(r) => format!("{{{r}}}"),
+        }).collect()),
+        Value::List(items) => items.iter().for_each(|i| texts_of_value(i, out)),
+        Value::Obj(entries) => entries.iter().for_each(|e| texts_of_entry(e, out)),
+        Value::Num(_) | Value::Bool(_) | Value::Ref(_) => {}
+    }
+}
+
+fn texts_of_entry(e: &satz_core::satz::Entry, out: &mut Vec<String>) {
+    use satz_core::satz::{Entry, Key, Value};
+    let key = |k: &Key, out: &mut Vec<String>| {
+        if let Key::Str(parts) = k {
+            texts_of_value(&Value::Str(parts.clone()), out);
+        }
+    };
+    match e {
+        Entry::Attr { key: k, value, .. } => {
+            key(k, out);
+            texts_of_value(value, out);
+        }
+        Entry::Map { key: k, name, body, .. } => {
+            key(k, out);
+            if let Some(n) = name {
+                key(n, out);
+            }
+            body.iter().for_each(|b| texts_of_entry(b, out));
+        }
+        Entry::When { entry, .. } => texts_of_entry(entry, out),
+        Entry::Each { body, .. } => body.iter().for_each(|b| texts_of_entry(b, out)),
+        Entry::Use { .. } => {}
+    }
+}
+
+/// The interface reads in one text: `(folder, value)` of every `${interface.<value>}` and
+/// `${interface.<folder>.<value>}` — `${{…}}` as a pack writes it, its braces unescaped
+/// by the parser.
+fn reads_in(text: &str) -> Vec<(Option<String>, String)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("${") {
+        rest = &rest[i + 2..];
+        let Some(end) = rest.find('}') else { break };
+        let inner = rest[..end].trim();
+        rest = &rest[end + 1..];
+        let Some(key) = inner.strip_prefix(satz_core::pipeline::INTERFACE_ROOT).and_then(|k| k.strip_prefix('.')) else { continue };
+        match key.rsplit_once('.') {
+            Some((folder, value)) => out.push((Some(folder.to_string()), value.to_string())),
+            None => out.push((None, key.to_string())),
         }
     }
     out
 }
 
-/// The needs of a pack, from its text: the interface values it reads outside comments.
-pub(crate) fn needs(text: &str) -> Vec<Need> {
-    let read = interface_reads(text);
-    let reads = |export: &str| read.contains(export);
-    let mut out = Vec::new();
-    if reads(crate::prerequisites::DELEGATED_FOLDER) {
-        out.push(Need::Folder);
+/// What a pack declares, from its parse: the params with their defaults and questions,
+/// the list params, the exports and every interface value its params, resources and
+/// exports read — a comment reads nothing. The reads are not matched; `matched` does that.
+pub(crate) fn declarations(file: &satz_core::satz::File) -> Declarations {
+    let asked = |name: &str| file.questions.iter().find(|q| (!q.oneof && q.subject == name) || q.options.iter().any(|o| o.param == name));
+    let params = file
+        .params
+        .iter()
+        .filter(|(name, _, _)| satz_core::satz::contribution_target(name).is_none())
+        .map(|(name, v, _)| ParamDecl {
+            name: name.clone(),
+            default: (!is_unset(v)).then(|| satz_text(v)),
+            question: asked(name).is_some(),
+            prompt: asked(name).map(|q| q.prompt.clone()),
+        })
+        .collect();
+    let list_params = file
+        .requests
+        .iter()
+        .map(|r| ListParamDecl { param: r.param.clone(), key: r.key.clone(), fields: r.fields.clone(), defaults: r.defaults.iter().map(|(f, v, _)| (f.clone(), satz_text(v))).collect() })
+        .collect();
+    let mut exports: Vec<ExportDecl> = file.exports.iter().map(|e| ExportDecl { interface: None, name: e.name.clone() }).collect();
+    for i in &file.interfaces {
+        exports.extend(i.exports.iter().map(|e| ExportDecl { interface: Some(i.name.clone()), name: e.name.clone() }));
     }
-    if reads("project_id") || reads("project_number") {
-        out.push(Need::Project);
+
+    // the texts a read can stand in, each with the param it is the value of
+    let mut texts: Vec<(Option<String>, String)> = Vec::new();
+    let mut push = |param: Option<&str>, found: Vec<String>| texts.extend(found.into_iter().map(|t| (param.map(str::to_string), t)));
+    for (name, v, _) in &file.params {
+        let mut t = Vec::new();
+        texts_of_value(v, &mut t);
+        push(Some(name), t);
     }
-    out
+    for i in &file.inputs {
+        let mut t = Vec::new();
+        texts_of_value(&i.value, &mut t);
+        push(Some(&i.name), t);
+    }
+    let mut t = Vec::new();
+    file.items.iter().for_each(|e| texts_of_entry(e, &mut t));
+    for r in &file.requests {
+        r.defaults.iter().for_each(|(_, v, _)| texts_of_value(v, &mut t));
+    }
+    for e in file.exports.iter().chain(file.interfaces.iter().flat_map(|i| &i.exports)) {
+        if let satz_core::satz::ExportValue::Value(v) = &e.value {
+            texts_of_value(v, &mut t);
+        }
+    }
+    push(None, t);
+    let mut reads: Vec<ReadDecl> = Vec::new();
+    for (param, text) in texts {
+        for (folder, value) in reads_in(&text) {
+            let read = ReadDecl { folder, value, param: param.clone(), bound_by_estate: false, met_by: Vec::new(), unmet_reason: None };
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+    }
+    Declarations { params, list_params, exports, reads }
+}
+
+/// The declarations of a pack's text. A text that does not parse is an error naming `what`.
+pub(crate) fn declarations_of(text: &str, what: &str) -> Result<Declarations, String> {
+    let file = satz_core::satz::parse(text).map_err(|e| format!("{what}: line {}: {}", e.line, e.msg))?;
+    Ok(declarations(&file))
+}
+
+/// Each read matched against the estate, by the transpile's own rule (ADR 0094): a named
+/// read is given by the used interface folder of that name when it carries the value, a
+/// bare one by every used folder that carries it when they agree. A read that is the value
+/// of a param the estate binds is not made.
+pub(crate) fn matched(mut d: Declarations, estate: &Estate) -> Declarations {
+    for r in &mut d.reads {
+        if r.param.as_ref().is_some_and(|p| estate.bound.contains(p)) {
+            r.bound_by_estate = true;
+            continue;
+        }
+        let key = match &r.folder {
+            Some(f) => format!("{f}.{}", r.value),
+            None => r.value.clone(),
+        };
+        match satz_core::pipeline::interface_read(&key, &estate.interfaces) {
+            Ok((folders, _)) => r.met_by = folders.into_iter().map(str::to_string).collect(),
+            Err(e) => r.unmet_reason = Some(e),
+        }
+    }
+    d
+}
+
+/// The reads of a pack the estate does not give, one line each.
+pub(crate) fn unmet(d: &Declarations) -> Vec<String> {
+    d.reads.iter().filter_map(|r| r.unmet_reason.clone()).collect()
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct PackRow {
     pub id: String,
     pub state: State,
-    /// what the pack needs of the estate that uses it, derived from what it reads: empty
-    /// for a pack that reads neither a delegated folder nor a delegated project
-    pub needs: Vec<Need>,
+    /// what the pack declares — params, list params, exports — and the interface values it
+    /// reads, each matched against the estate
+    #[serde(flatten)]
+    pub declarations: Declarations,
     /// the version the local file states; none for a pack that is only available
     pub version: Option<String>,
     /// the version the source's file states, where the source holds the pack
@@ -890,6 +1132,10 @@ pub(crate) struct PackRow {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct PacksReport {
     pub packs_dir: String,
+    /// the estate the reads are matched against
+    pub estate: String,
+    /// the interface folders that estate uses, by name
+    pub interface_folders: Vec<String>,
     /// the pack sources read: every one, or the one `--source` names
     pub sources: Vec<SourceRead>,
     pub packs: Vec<PackRow>,
@@ -897,8 +1143,9 @@ pub(crate) struct PacksReport {
 
 /// Every pack in `packs_dir` with its state, and every pack a source holds that
 /// `packs_dir` does not — one row per source that holds it. Reads every pack source,
-/// the built-in one first, or only the one `only` names.
-pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>) -> Result<PacksReport, String> {
+/// the built-in one first, or only the one `only` names. Each row carries what the pack
+/// declares, its reads matched against `estate`.
+pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, estate: &Estate) -> Result<PacksReport, String> {
     let packs_dir = Path::new(&runtime.packs_dir);
     let rows = read_record(packs_dir)?;
     for row in &rows {
@@ -934,7 +1181,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>) -> Result<Pac
         packs.push(PackRow {
             id: id.clone(),
             state,
-            needs: needs(&text),
+            declarations: matched(declarations_of(&text, &path.display().to_string())?, estate),
             version: crate::presets::pack_version(&text),
             upstream_version: match upstream {
                 Upstream::Found(t) => crate::presets::pack_version(t),
@@ -947,13 +1194,16 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>) -> Result<Pac
     }
     for source in sources {
         for id in source.list().await?.into_iter().filter(|id| !local.contains(id)) {
-            let text = source.fetch(&id).await?;
+            let Some(text) = source.fetch(&id).await? else {
+                return Err(format!("{} lists the pack `{id}` and holds no file for it", source.describe()));
+            };
+            let declarations = matched(declarations_of(&text, &format!("{} `{id}`", source.describe()))?, estate);
             packs.push(PackRow {
                 id,
                 state: State::Available,
-                needs: text.as_deref().map(needs).unwrap_or_default(),
+                declarations,
                 version: None,
-                upstream_version: text.as_deref().and_then(crate::presets::pack_version),
+                upstream_version: crate::presets::pack_version(&text),
                 source: Some(source.name().to_string()),
                 commit: None,
                 use_line: None,
@@ -963,7 +1213,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>) -> Result<Pac
     // the built-in source first among rows of one id, then the order config.toml lists them in
     let rank = |name: &Option<String>| name.as_ref().and_then(|n| defs.iter().position(|d| &d.name == n)).unwrap_or(0);
     packs.sort_by(|a, b| a.id.cmp(&b.id).then(rank(&a.source).cmp(&rank(&b.source))));
-    Ok(PacksReport { packs_dir: packs_dir.display().to_string(), sources: opened.read(), packs })
+    Ok(PacksReport { packs_dir: packs_dir.display().to_string(), estate: estate.path.display().to_string(), interface_folders: estate.folders(), sources: opened.read(), packs })
 }
 
 pub(crate) fn render_list(r: &PacksReport) -> String {
@@ -976,7 +1226,11 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut out = format!("packs in {} against {against}\n", r.packs_dir);
+    let folders = match r.interface_folders.as_slice() {
+        [] => "no interface folder".to_string(),
+        f => format!("the interface folders {}", f.join(", ")),
+    };
+    let mut out = format!("packs in {} against {against}\nreads matched against {}, which uses {folders}\n", r.packs_dir, r.estate);
     if r.packs.is_empty() {
         out.push_str("  none here, and the sources hold none\n");
         return out;
@@ -999,15 +1253,53 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
             (None, Some(u)) => u.clone(),
             (None, None) => "-".to_string(),
         };
-        let needs = match p.needs.as_slice() {
-            [] => String::new(),
-            n => format!(
-                "  — needs {}",
-                n.iter().map(|x| if *x == Need::Folder { "a delegated folder" } else { "a delegated project" }).collect::<Vec<_>>().join(" and ")
-            ),
-        };
         let source = p.source.as_deref().unwrap_or("-");
-        out.push_str(&format!("  {:width$}  {:source_width$}  {:10}  {}{}\n", p.id, source, version, state, needs));
+        out.push_str(&format!("  {:width$}  {:source_width$}  {:10}  {}\n", p.id, source, version, state));
+        out.push_str(&render_declarations(&p.declarations, "      "));
+    }
+    out
+}
+
+/// A pack's declarations, compact: one line per kind it declares, and one per read the
+/// estate does not give.
+pub(crate) fn render_declarations(d: &Declarations, indent: &str) -> String {
+    let mut out = String::new();
+    let mut line = |label: &str, items: Vec<String>| {
+        if !items.is_empty() {
+            out.push_str(&format!("{indent}{label}: {}\n", items.join(", ")));
+        }
+    };
+    line("params", d.params.iter().map(|p| if p.question { format!("{} (asked)", p.name) } else { p.name.clone() }).collect());
+    line("list params", d.list_params.iter().map(|l| format!("{} by {}", l.param, l.key)).collect());
+    line(
+        "exports",
+        d.exports
+            .iter()
+            .map(|e| match &e.interface {
+                Some(i) => format!("{} in interface \"{i}\"", e.name),
+                None => e.name.clone(),
+            })
+            .collect(),
+    );
+    line(
+        "reads",
+        d.reads
+            .iter()
+            .map(|r| {
+                let read = match &r.folder {
+                    Some(f) => format!("{f}.{}", r.value),
+                    None => r.value.clone(),
+                };
+                match (&r.met_by[..], &r.param) {
+                    (_, Some(p)) if r.bound_by_estate => format!("{read} (the estate binds {p})"),
+                    ([], _) => format!("{read} (not given)"),
+                    (by, _) => format!("{read} from {}", by.join(" and ")),
+                }
+            })
+            .collect(),
+    );
+    for reason in unmet(d) {
+        out.push_str(&format!("{indent}not given: {reason}\n"));
     }
     out
 }
@@ -1182,22 +1474,145 @@ mod tests {
         Row { id: "demo".into(), source: "local".into(), github: None, path: None, commit: None, dir: Some("up".into()), version: "1.0".into(), sha256: sha256(text) }
     }
 
+    const DECLARING: &str = "// `${{interface.delegated_folder}}` in a comment is read by nobody\n\
+        pack declaring version \"1.0\"\n\n\
+        params {\n\
+          region  = \"europe-west3\"\n\
+          project = \"${{interface.project_id}}\"\n\
+          owner   = \"\"\n\
+          sizes   = [1, 2]\n\
+          stores  = []\n\
+        }\n\n\
+        question owner {\n\
+          prompt   = \"The group that owns it\"\n\
+          reversal = edit\n\
+          blast    = low\n\
+        }\n\n\
+        entries stores {\n\
+          key    = \"name\"\n\
+          fields = [\"name\", \"tier\"]\n\
+          defaults = { tier = \"standard\" }\n\
+        }\n\n\
+        google_compute_instance {\n\
+          vm {\n\
+            name    = \"${{interface.delegation-vm.instance_name}}\"\n\
+            project = project\n\
+          }\n\
+        }\n\n\
+        export \"vm_name\" = \"${{google_compute_instance.vm.name}}\"\n\n\
+        interface \"vm-users\" {\n\
+          export \"vm_zone\" = \"${{interface.zone}}\"\n\
+        }\n";
+
+    /// A parameter of the estate a pack is matched against: interface folders by name, each
+    /// with its values.
+    fn estate(bound: &[&str], folders: &[(&str, &[(&str, &str)])]) -> Estate {
+        let interfaces = folders
+            .iter()
+            .map(|(name, values)| {
+                let mut text = format!("interface \"{name}\"\n\ncentral {{\n  estate        = \"acme\"\n  organizations = [\"organizations/123456789012\"]\n}}\n");
+                for (v, value) in *values {
+                    text.push_str(&format!("\noutput \"{v}\" {{\n  value = \"{value}\"\n}}\n"));
+                }
+                let interface = satz_core::satz::parse(&text).unwrap().interface_file.unwrap();
+                satz_core::pipeline::UsedInterfaceFile { file: format!("interfaces/{name}/satz/interface.satz"), interface }
+            })
+            .collect();
+        Estate { path: PathBuf::from("team.satz"), bound: bound.iter().map(|b| b.to_string()).collect(), interfaces }
+    }
+
+    fn read<'a>(d: &'a Declarations, value: &str) -> &'a ReadDecl {
+        d.reads.iter().find(|r| r.value == value).unwrap_or_else(|| panic!("no read of {value}: {:?}", d.reads))
+    }
+
+    /// Params with and without a value and with a question, a list param, a core export
+    /// and an interface export, and the reads in a param, a resource and an export — a
+    /// comment reads nothing.
     #[test]
-    fn a_packs_needs_are_what_it_reads_from_the_interface() {
-        let project = "pack p version \"1.0\"\nparams {\n  p = \"${{interface.project_id}}\"\n}\n";
-        let folder = "pack f version \"1.0\"\nparams {\n  parent = \"${{interface.delegated_folder}}\"\n}\n";
-        let number = "pack n version \"1.0\"\ngoogle_billing_budget {\n  b {\n    x = \"projects/${{interface.project_number}}\"\n  }\n}\n";
-        // a comment that names a value reads nothing, and a pack that reads neither needs neither
-        let neither = "// `${{interface.delegated_folder}}` is what another pack reads\npack o version \"1.0\"\nparams {\n  region = \"${{interface.default_region}}\"\n}\n";
-        assert_eq!(needs(project), [Need::Project]);
-        assert_eq!(needs(folder), [Need::Folder]);
-        assert_eq!(needs(number), [Need::Project]);
-        assert!(needs(neither).is_empty());
-        assert_eq!(needs(&format!("{}{}", folder, project)), [Need::Folder, Need::Project]);
-        // the two packs the repository ships say what they are for
+    fn a_pack_is_described_by_what_it_declares() {
+        let d = declarations_of(DECLARING, "declaring.satz").unwrap();
+        let param = |n: &str| d.params.iter().find(|p| p.name == n).unwrap_or_else(|| panic!("no param {n}"));
+        assert_eq!(d.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["region", "project", "owner", "sizes", "stores"]);
+        assert_eq!(param("region").default.as_deref(), Some("\"europe-west3\""));
+        assert_eq!(param("project").default.as_deref(), Some("\"${{interface.project_id}}\""));
+        assert_eq!(param("sizes").default.as_deref(), Some("[1, 2]"));
+        assert_eq!(param("owner").default, None, "a param written \"\" has no default");
+        assert!(param("owner").question && param("owner").prompt.as_deref() == Some("The group that owns it"));
+        assert!(!param("region").question && param("region").prompt.is_none());
+
+        assert_eq!(d.list_params.len(), 1);
+        let l = &d.list_params[0];
+        assert_eq!((l.param.as_str(), l.key.as_str(), l.fields.clone()), ("stores", "name", vec!["name".to_string(), "tier".to_string()]));
+        assert_eq!(l.defaults.get("tier").map(String::as_str), Some("\"standard\""));
+
+        assert_eq!(
+            d.exports,
+            [ExportDecl { interface: None, name: "vm_name".into() }, ExportDecl { interface: Some("vm-users".into()), name: "vm_zone".into() }]
+        );
+
+        assert_eq!(
+            d.reads.iter().map(|r| (r.folder.as_deref(), r.value.as_str(), r.param.as_deref())).collect::<Vec<_>>(),
+            [(None, "project_id", Some("project")), (Some("delegation-vm"), "instance_name", None), (None, "zone", None)]
+        );
+        assert!(!d.reads.iter().any(|r| r.value == "delegated_folder"), "a comment was read");
+    }
+
+    /// A delegation of one VM: its folder exports the instance's name, and a
+    /// pack that reads it is met — the estate needs no folder and no project of its own.
+    #[test]
+    fn a_read_is_met_by_the_folder_that_gives_it() {
+        let vm_only = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "europe-west3-a"), ("project_id", "acme-vm-001")])]);
+        let d = matched(declarations_of(DECLARING, "declaring.satz").unwrap(), &vm_only);
+        assert!(unmet(&d).is_empty(), "{:?}", d.reads);
+        assert_eq!(read(&d, "instance_name").met_by, ["delegation-vm"]);
+        // the bare form: every folder that carries it, when they agree
+        let two = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "z"), ("project_id", "p")]), ("vm", &[("zone", "z")])]);
+        let d = matched(declarations_of(DECLARING, "declaring.satz").unwrap(), &two);
+        assert_eq!(read(&d, "zone").met_by, ["delegation-vm", "vm"]);
+    }
+
+    #[test]
+    fn a_read_the_estate_does_not_give_says_why() {
+        let decl = || declarations_of(DECLARING, "declaring.satz").unwrap();
+        // no used folder of the name
+        let d = matched(decl(), &estate(&[], &[("vm", &[("instance_name", "vm-1"), ("zone", "z"), ("project_id", "p")])]));
+        let r = read(&d, "instance_name");
+        assert!(r.met_by.is_empty() && r.unmet_reason.as_deref().is_some_and(|m| m.contains("no used interface folder is named `delegation-vm`")), "{r:?}");
+        // the folder, without the value
+        let d = matched(decl(), &estate(&[], &[("delegation-vm", &[("zone", "z"), ("project_id", "p")])]));
+        let r = read(&d, "instance_name");
+        assert!(r.unmet_reason.as_deref().is_some_and(|m| m.contains("the interface folder `delegation-vm` has no value `instance_name`")), "{r:?}");
+        // the bare form, carried differently by two folders: name the folder
+        let d = matched(
+            decl(),
+            &estate(&[], &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "a"), ("project_id", "p")]), ("other", &[("zone", "b")])]),
+        );
+        let r = read(&d, "zone");
+        assert!(r.met_by.is_empty() && r.unmet_reason.as_deref().is_some_and(|m| m.contains("each have a `zone` and they differ — name the folder")), "{r:?}");
+        // no interface folder at all
+        let d = matched(decl(), &estate(&[], &[]));
+        assert_eq!(unmet(&d).len(), 3, "{:?}", d.reads);
+        // a param the estate binds is not read from the interface
+        let d = matched(decl(), &estate(&["project"], &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "z")])]));
+        let r = read(&d, "project_id");
+        assert!(r.bound_by_estate && r.met_by.is_empty() && r.unmet_reason.is_none(), "{r:?}");
+        assert!(unmet(&d).is_empty(), "{:?}", d.reads);
+        let text = render_declarations(&d, "  ");
+        assert!(text.contains("  params: region, project, owner (asked), sizes, stores\n") && text.contains("project_id (the estate binds project)"), "{text}");
+    }
+
+    /// The packs the repository ships: the budget reads the project it counts by the bare
+    /// form, through params an estate with several delegated projects binds.
+    #[test]
+    fn the_shipped_packs_say_what_they_read() {
         let shipped = |name: &str| std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("packs").join(name)).unwrap();
-        assert_eq!(needs(&shipped("workload-project.satz")), [Need::Folder]);
-        assert_eq!(needs(&shipped("project-budget.satz")), [Need::Project]);
+        let d = declarations_of(&shipped("project-budget.satz"), "project-budget.satz").unwrap();
+        assert_eq!(
+            d.reads.iter().map(|r| (r.value.as_str(), r.param.as_deref())).collect::<Vec<_>>(),
+            [("project_id", Some("budget_project_id")), ("project_number", Some("budget_project_number")), ("billing_account", Some("budget_billing_account"))]
+        );
+        let d = declarations_of(&shipped("workload-project.satz"), "workload-project.satz").unwrap();
+        assert_eq!(d.reads.iter().map(|r| r.value.as_str()).collect::<Vec<_>>(), ["delegated_folder"]);
     }
 
     #[test]

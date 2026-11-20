@@ -1612,6 +1612,13 @@ fn substitute_text(
 /// organization says once, such as its region; a value two folders carry differently has no
 /// bare name, and the message says how to name it.
 fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a satz::OfferedOutput, String> {
+    interface_read(key, files).map(|(_, o)| o)
+}
+
+/// What a key reads and from where: the names of the used interface folders that carry the
+/// value — the one folder a named read names, every folder that carries a bare one — and
+/// the value. Refused, with what to write instead, as the transpile refuses the read.
+pub fn interface_read<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<(Vec<&'a str>, &'a satz::OfferedOutput), String> {
     if files.is_empty() {
         return Err(format!(
             "`${{interface.{}}}` reads an interface folder, and this estate uses none — `use \"<path>/interface.satz\"` brings one in",
@@ -1629,6 +1636,7 @@ fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a
             .outputs
             .iter()
             .find(|o| o.name == value)
+            .map(|o| (vec![f.interface.name.as_str()], o))
             .ok_or_else(|| {
                 let has = |n: &str| f.interface.outputs.iter().any(|o| o.name == n);
                 format!("`${{interface.{}}}`: the interface folder `{}` has no value `{}` — it has {}{}", key, folder, value, values(f), renamed_export_hint(value, &has))
@@ -1652,7 +1660,7 @@ fn interface_output<'a>(key: &str, files: &'a [UsedInterfaceFile]) -> Result<&'a
             carriers.iter().map(|(f, _)| format!("`${{{{interface.{}.{}}}}}`", f.interface.name, key)).collect::<Vec<_>>().join(" or ")
         ));
     }
-    Ok(first)
+    Ok((carriers.iter().map(|(f, _)| f.interface.name.as_str()).collect(), *first))
 }
 
 /// Every string in a value, however deeply nested.

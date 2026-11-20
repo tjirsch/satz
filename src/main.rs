@@ -865,11 +865,17 @@ pub(crate) enum Commands {
     /// records the ones `get-pack` fetched and the pack source of each; a pack without a
     /// row is the repository's own. Reads every pack source — `satz`, the satz
     /// repository's `packs/`, and each `[[pack_source]]` of config.toml — or the one
-    /// `--source` names.
+    /// `--source` names. Each pack is described by what it declares — its params with
+    /// their defaults and questions, its list params, its exports — and the interface
+    /// values it reads, each matched against the interface folders the estate uses.
     Packs {
         /// Read only this pack source: `satz`, or a name `satz pack-source list` lists
         #[arg(long, value_name = "NAME")]
         source: Option<String>,
+        /// The estate each pack's reads are matched against (.satz, inside yaml_dir if
+        /// relative); the one estate in yaml_dir when left out
+        #[arg(long, value_name = "ESTATE")]
+        estate: Option<String>,
         /// Output format — json is the report an agent reads
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
@@ -880,7 +886,8 @@ pub(crate) enum Commands {
     /// Fetch one workload pack into `packs_dir` and record where it came from, so `update-pack` keeps it current
     ///
     /// Refused when `packs_dir` already holds a pack of that id. `--all` fetches every
-    /// pack the source holds that `packs_dir` lacks.
+    /// pack the source holds that `packs_dir` lacks. An interface value a fetched pack
+    /// reads that the estate does not give is a warning.
     GetPack {
         /// The pack's id: its path under the source's folder without `.satz`
         id: Option<String>,
@@ -891,6 +898,10 @@ pub(crate) enum Commands {
         /// satz repository's `packs/`, without it
         #[arg(long, value_name = "NAME")]
         source: Option<String>,
+        /// The estate the pack's reads are matched against (.satz, inside yaml_dir if
+        /// relative); the one estate in yaml_dir when left out
+        #[arg(long, value_name = "ESTATE")]
+        estate: Option<String>,
         /// Output format
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
         format: OutFormat,
@@ -2420,9 +2431,10 @@ Thumbs.db
             }
             Ok(())
         }
-        Commands::Packs { source, format, out } => {
+        Commands::Packs { source, estate, format, out } => {
             let out = crate::out::target(out, format)?;
-            let report = crate::workload_packs::list(&runtime_config, source.as_deref()).await?;
+            let estate = pack_estate(&named_or_sole_estate(estate, &runtime_config)?, &runtime_config)?;
+            let report = crate::workload_packs::list(&runtime_config, source.as_deref(), &estate).await?;
             let text = match format {
                 OutFormat::Json => serde_json::to_string_pretty(&report)?,
                 _ => crate::workload_packs::render_list(&report),
@@ -2430,9 +2442,10 @@ Thumbs.db
             write_report(&out, text.as_bytes(), &format!("{} pack(s)", report.packs.len()))?;
             Ok(())
         }
-        Commands::GetPack { id, all, source, format } => {
+        Commands::GetPack { id, all, source, estate, format } => {
             let which = crate::workload_packs::Which::new(id, all, "get-pack")?;
-            let report = crate::workload_packs::get(&runtime_config, source.as_deref(), &which).await?;
+            let estate = pack_estate(&named_or_sole_estate(estate, &runtime_config)?, &runtime_config)?;
+            let report = crate::workload_packs::get(&runtime_config, source.as_deref(), &which, &estate).await?;
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
                 _ => print!("{}", crate::workload_packs::render_get(&report)),
@@ -2481,10 +2494,7 @@ Thumbs.db
             Ok(())
         }
         Commands::PublishPack { id, source, estate, force, format } => {
-            let estate = match estate {
-                Some(e) => estate_path(PathBuf::from(e), &runtime_config),
-                None => sole_estate(Path::new(&runtime_config.yaml_dir))?,
-            };
+            let estate = named_or_sole_estate(estate, &runtime_config)?;
             let published = crate::workload_packs::publish(&tool_config, &runtime_config, &id, &source, &estate, force)?;
             match format {
                 OutFormat::Json => println!("{}", serde_json::to_string_pretty(&published)?),
@@ -3031,6 +3041,37 @@ fn hcl_target(output: Option<&str>, runtime_config: &ToolConfig) -> PathBuf {
     }
 }
 
+/// What a `use` line reads: the path beside the estate, else under the first include dir
+/// that holds it.
+fn use_loader(input_path: &Path, runtime_config: &ToolConfig) -> impl Fn(&str) -> Result<String, String> {
+    let base_dir = input_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let include_dirs = runtime_config.include_dirs.clone();
+    move |p: &str| -> Result<String, String> {
+        let mut candidates = vec![base_dir.join(p)];
+        candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(p)));
+        for c in candidates {
+            if c.exists() {
+                return std::fs::read_to_string(&c).map_err(|e| e.to_string());
+            }
+        }
+        Err(format!("use \"{}\": file not found", p))
+    }
+}
+
+/// The estate workload packs are matched against: the params its own file binds and the
+/// interface files it uses, loaded by the transpile's front end. An estate the front end
+/// refuses is an error naming the place.
+pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<crate::workload_packs::Estate, String> {
+    let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).map_err(|e| e.to_string())?;
+    let resolver = EstateResolver { registry: &registry };
+    let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let loader = use_loader(estate, runtime_config);
+    let fe = satz_core::pipeline::compile_estate_bound(&estate.to_string_lossy(), &src, &[], &runtime_config.inputs, &resolver, &loader)
+        .map_err(|e| format!("{}:{}: {} — the packs are matched against the interface folders this estate uses, and its transpile stops here", e.file, e.line, e.msg))?;
+    let bound = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", estate.display(), e.line, e.msg))?.params.into_iter().map(|(name, _, _)| name).collect();
+    Ok(crate::workload_packs::Estate { path: estate.to_path_buf(), bound, interfaces: fe.interface_files })
+}
+
 /// The transpile every command runs: its findings reported in full, and printed.
 fn pipeline_b_generate(
     input_path: &Path,
@@ -3064,18 +3105,7 @@ fn pipeline_b_compile_using(
 
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(input_path)?;
-    let base_dir = input_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let include_dirs = runtime_config.include_dirs.clone();
-    let loader = move |p: &str| -> Result<String, String> {
-        let mut candidates = vec![base_dir.join(p)];
-        candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(p)));
-        for c in candidates {
-            if c.exists() {
-                return std::fs::read_to_string(&c).map_err(|e| e.to_string());
-            }
-        }
-        Err(format!("use \"{}\": file not found", p))
-    };
+    let loader = use_loader(input_path, runtime_config);
     let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
     let fe = match satz_core::pipeline::compile_estate_bound(&input_path.to_string_lossy(), &src, extra_uses, &runtime_config.inputs, &resolver, &loader) {
         Ok(fe) => fe,
@@ -5559,6 +5589,14 @@ fn redundant_yaml_dir(estate: &str, yaml_dir: &str) -> Option<String> {
 /// shadowing is named.
 /// The one estate in `yaml_dir`, for a command whose estate argument is optional: a
 /// `.satz` file whose header is `estate`. None, or more than one, is refused naming them.
+/// The estate a flag names, read as every estate argument is, or the one estate in yaml_dir.
+fn named_or_sole_estate(estate: Option<String>, runtime_config: &ToolConfig) -> Result<PathBuf, String> {
+    match estate {
+        Some(e) => Ok(estate_path(PathBuf::from(e), runtime_config)),
+        None => sole_estate(Path::new(&runtime_config.yaml_dir)),
+    }
+}
+
 fn sole_estate(yaml_dir: &Path) -> Result<PathBuf, String> {
     let entries = std::fs::read_dir(yaml_dir).map_err(|e| format!("{}: {} — name the estate", yaml_dir.display(), e))?;
     let mut found: Vec<PathBuf> = entries

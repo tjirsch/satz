@@ -13,6 +13,26 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.107.0
+
+**`satz packs` and `satz get-pack` match a pack against an estate, and `satz packs` reports
+what a pack declares instead of what it needs** (ADR 0100). Both commands read the estate
+`--estate` names, or the one estate in `yaml_dir`; a repository whose `yaml_dir` holds none
+or several is refused with that message, and an estate whose transpile stops before its
+interface folders are loaded is refused with the transpile's error. The field `needs` of
+each row of `satz packs --format json` (and of `satz_packs`) is gone, and so is the text
+`— needs a delegated folder` / `— needs a delegated project`.
+
+| before | now | where |
+|---|---|---|
+| `works_in`: `organization`, `folder` or `project` | `works_in`: `organization` or `workload` — a workload estate is one that uses interface files; what it was delegated is what those files export | `satz presets --format json`, `satz_presets`; the text line `works in: …` is now `kind: …` |
+| `delegated_by[]`: `project`, `folder` | `delegated_by[].exports`: the names of the values the interface file exports | `satz presets --format json`, `satz_presets` |
+| `needs: ["folder"]`, `needs: ["project"]` | `reads`: each `{folder, value, param, bound_by_estate, met_by, unmet_reason}` the pack reads — the folders of the estate that give it, or why none does | scripts and agents that read `satz packs --format json` |
+| — | `params` (`name`, `default`, `question`, `prompt`), `list_params` (`param`, `key`, `fields`, `defaults`), `exports` (`interface`, `name`); `estate` and `interface_folders` on the report | the same |
+| `satz packs` or `satz get-pack` in a repository without one estate in `yaml_dir` | add `--estate <file>` | scripts, CI |
+
+The plan does not move.
+
 ### v0.105.0
 
 **A param whose read of an interface folder does not resolve is refused at the param,

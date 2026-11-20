@@ -669,8 +669,8 @@ grep -A4 '^resource "google_project_service" "budget_api"' "$bt" | grep -q 'disa
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/bud/team/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the workload estate with the budget pack does not validate"
 fi
-"$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated project' || fail "the presets report does not say the estate works in a delegated project"
-"$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'works in: a delegated folder' || fail "the presets report does not say the example works in a delegated folder"
+"$satz" --config tmp/bud/team presets team.satz --format text --out - 2>/dev/null | grep -q 'kind: a workload estate' || fail "the presets report does not say the estate is a workload estate"
+"$satz" --config "$pt" presets simple-project.satz --format text --out - 2>/dev/null | grep -q 'kind: a workload estate' || fail "the presets report does not say the example is a workload estate"
 "$satz" --config "$pt" presets simple-project.satz --format json --out tmp/pt-presets.json >/dev/null 2>&1 || fail "the presets report of the example workload estate failed"
 python3 - tmp/pt-presets.json <<'PY2' || fail "the presets report does not say who delegated:\n$(cat tmp/pt-presets.json)"
 import json, sys
@@ -678,13 +678,36 @@ by = {d["interface"]: d for d in json.load(open(sys.argv[1]))["delegated_by"]}
 base, folder = by["delegation-shop"], by["shop"]
 assert base["estate"] == "c0example" and base["organizations"] == ["organizations/123456789012"], base
 assert base["estate_account"] == "svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com" and base["infrastructure_project"] == "acme-deploy-shop", base
-assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and base["folder"] is False, base
-assert folder["folder"] is True and "account" not in folder, folder
+assert base["estate_account_user_group"] == "gcp-shop-admins@example.com" and base["customer_shortname"] == "acme" and "estate_account" in base["exports"], base
+assert "delegated_folder" in folder["exports"] and "estate_account" not in folder, folder
 PY2
-"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q 'works in: the organization' || fail "the presets report does not say the organization's estate works in the organization"
+"$satz" --config "$ex" presets C0example.satz --format text --out - 2>/dev/null | grep -q "kind: an organization's estate" || fail "the presets report does not say the organization's estate works in the organization"
 "$satz" --config tmp/bud/team pack-source add repo --dir "$root/packs" > /dev/null 2>&1 || fail "pack-source add failed on the workload estate"
 "$satz" --config tmp/bud/team packs --source repo --format text --out - > tmp/bud-packs.txt 2>&1 || fail "satz packs failed on the workload estate:\n$(cat tmp/bud-packs.txt)"
-grep -q 'project-budget .*needs a delegated project' tmp/bud-packs.txt && grep -q 'workload-project .*needs a delegated folder' tmp/bud-packs.txt || fail "satz packs does not say what each pack needs:\n$(cat tmp/bud-packs.txt)"
+grep -q 'reads: project_id from payments, project_number from payments, billing_account from ' tmp/bud-packs.txt && grep -q 'not given: .*delegated_folder' tmp/bud-packs.txt \
+  || fail "satz packs does not say what each pack reads and whether the estate gives it:\n$(cat tmp/bud-packs.txt)"
+"$satz" --config tmp/bud/team packs --source repo --format json --out tmp/bud-packs.json > /dev/null 2>&1 || fail "satz packs --format json failed on the workload estate"
+python3 - tmp/bud-packs.json <<'PY2' || fail "satz packs does not describe the packs by what they declare:\n$(cat tmp/bud-packs.json)"
+import json, sys
+report = json.load(open(sys.argv[1]))
+assert report["estate"].endswith("team.satz") and set(report["interface_folders"]) == {"delegation-payments", "payments"}, report
+rows = {p["id"]: p for p in report["packs"]}
+budget = rows["project-budget"]
+assert "needs" not in budget, budget
+params = {p["name"]: p for p in budget["params"]}
+assert params["budget_project_id"] == {"name": "budget_project_id", "default": '"${{interface.project_id}}"', "question": False, "prompt": None}, params
+assert params["budget_amount"]["default"] is None and params["budget_amount"]["question"] and params["budget_amount"]["prompt"].startswith("The monthly budget"), params
+assert budget["list_params"] == [] and budget["exports"] == [], budget
+# the estate binds none of the three params, so the pack reads them, and the project's folder gives them
+reads = {r["value"]: r for r in budget["reads"]}
+assert set(reads) == {"project_id", "project_number", "billing_account"}, reads
+assert reads["project_id"]["folder"] is None and reads["project_id"]["param"] == "budget_project_id", reads
+assert all(r["met_by"] and r["unmet_reason"] is None and not r["bound_by_estate"] for r in reads.values()), reads
+assert reads["project_id"]["met_by"] == ["payments"], reads
+# the folder pack reads a folder this estate was not given
+folder = rows["workload-project"]["reads"]
+assert [(r["value"], r["met_by"]) for r in folder] == [("delegated_folder", [])] and "delegated_folder" in folder[0]["unmet_reason"], folder
+PY2
 # the same estate in the project that was not: told what to ask for, and how
 bud_estate tmp/bud/plain plain
 "$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile at level warn:\n$(cat tmp/bud-plain.txt)"
@@ -1767,8 +1790,9 @@ if "$satz" --config tmp/lib/est/config.toml get-presets > tmp/lib-empty.txt 2>&1
 grep -q '\[preset_library\] dir = "../library"' tmp/lib-empty.txt || fail "the refusal must name the table:\n$(cat tmp/lib-empty.txt)"
 
 step "workload packs: a folder is a named pack source, get-pack records it, update-pack follows the record and writes a pack that is as fetched and never one that was edited or is the repository's own"
-rm -rf tmp/wp && mkdir -p tmp/wp/est tmp/wp/up/sub tmp/wp/other
-printf '# the estate'"'"'s settings\ninclude_dirs = [".", "satz"]\n' > tmp/wp/est/config.toml
+rm -rf tmp/wp && mkdir -p tmp/wp/est/satz tmp/wp/up/sub tmp/wp/other
+printf '# the estate'"'"'s settings\ninclude_dirs = [".", "satz"]\nschema_dir = "%s/tests/schemas"\n' "$root" > tmp/wp/est/config.toml
+printf 'estate wp\n' > tmp/wp/est/satz/wp.satz
 wp_pack() { printf '// A demo pack.\npack %s version "%s"\n' "$1" "$2"; }
 wp() { "$satz" --config tmp/wp/est/config.toml "$@"; }
 wp_pack demo 1.0 > tmp/wp/up/demo.satz
