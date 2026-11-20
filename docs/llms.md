@@ -201,8 +201,11 @@ need, say so instead of forking.
 switched on with `satz_add_preset`. A workload pack is one file in the estate's
 `packs_dir`, used by an estate beside the organization, taken from a pack source — `satz`,
 the satz repository, or a repository or folder the estate's `config.toml` names, which
-`satz_pack_sources` lists: `satz_packs` lists the packs with their state and source,
-`satz_get_pack` fetches one (`source` names where from) and records its origin in
+`satz_pack_sources` lists: `satz_packs` lists the packs with their state and source, and
+what each declares — its params with their defaults and questions, its list params, its
+exports — and the interface values it reads, each with the folders of the estate that give
+it (`met_by`) or why none does (`unmet_reason`); a pack fits the estate when nothing is
+unmet. `satz_get_pack` fetches one (`source` names where from) and records its origin in
 `packs_dir/origin.toml`,
 `satz_update_pack` brings a fetched one up to date and leaves an edited one as it is
 (`report_only` first), `satz_detach_pack` makes one the repository's own,

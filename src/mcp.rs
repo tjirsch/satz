@@ -715,6 +715,9 @@ pub(crate) struct PacksArgs {
     /// Read only this pack source — `satz`, or a name `satz_pack_sources` lists — instead of every one
     #[serde(default)]
     pub source: Option<String>,
+    /// The estate the packs' reads are matched against, e.g. `team.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -729,6 +732,9 @@ pub(crate) struct GetPackArgs {
     /// repository's `packs/`, when omitted
     #[serde(default)]
     pub source: Option<String>,
+    /// The estate the pack's reads are matched against, e.g. `team.satz`. Omit to use the open estate
+    #[serde(default)]
+    pub estate: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1958,8 +1964,14 @@ impl SatzMcp {
                        `behind`, `edited` (changed here since it was fetched), `gone` (the source holds it no longer), \
                        `not-checked` (fetched from another source than `source` names) — its `source`, its version, the \
                        source's version and the `use` line that reads it; and every pack a source holds that \
-                       packs_dir does not, as `available`, one row per source. Reads every pack source \
-                       `satz_pack_sources` lists, or the one `source` names.",
+                       packs_dir does not, as `available`, one row per source. Each row carries what the pack \
+                       declares: `params` (`name`, `default` in Satz or null, `question`, `prompt`), `list_params` \
+                       (`param`, `key`, `fields`, `defaults`), `exports` (`interface` or null for a core export, \
+                       `name`), and `reads`, every `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` it \
+                       makes (`folder` null for the bare form, `param` whose value it is) matched against the \
+                       interface folders the estate uses: `met_by` the folders that give it, `unmet_reason` the \
+                       transpile's refusal where none does, `bound_by_estate` where the estate binds the param. \
+                       Reads every pack source `satz_pack_sources` lists, or the one `source` names.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = true)
     )]
     async fn workload_packs(
@@ -1974,7 +1986,11 @@ impl SatzMcp {
             Ok(v) => v,
             Err(r) => return Ok(Err(r)),
         };
-        match crate::workload_packs::list(&open.runtime, args.source.as_deref()).await {
+        let estate = match self.target(args.estate.as_deref()).and_then(|(_, e)| crate::pack_estate(&e, &open.runtime).map_err(refused)) {
+            Ok(e) => e,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::workload_packs::list(&open.runtime, args.source.as_deref(), &estate).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("packs: {}", e)))),
         }
@@ -1988,8 +2004,9 @@ impl SatzMcp {
                        in packs_dir/origin.toml, so `satz_update_pack` keeps it current. Refused \
                        when packs_dir already holds a pack of that id — one fetched before is updated, one without \
                        a recorded origin is the repository's own. `all` fetches every pack the source holds that \
-                       packs_dir lacks. Each installed pack carries the `use_line` an estate reads it with. Needs \
-                       the 'write' capability.",
+                       packs_dir lacks. Each installed pack carries the `use_line` an estate reads it with and, in \
+                       `unmet`, every interface value it reads that the estate does not give, with why — fetched all \
+                       the same. Needs the 'write' capability.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = true)
     )]
     async fn get_workload_pack(
@@ -2008,7 +2025,11 @@ impl SatzMcp {
             Ok(w) => w,
             Err(e) => return Ok(Err(refused(e))),
         };
-        match crate::workload_packs::get(&open.runtime, args.source.as_deref(), &which).await {
+        let estate = match self.target(args.estate.as_deref()).and_then(|(_, e)| crate::pack_estate(&e, &open.runtime).map_err(refused)) {
+            Ok(e) => e,
+            Err(r) => return Ok(Err(r)),
+        };
+        match crate::workload_packs::get(&open.runtime, args.source.as_deref(), &which, &estate).await {
             Ok(report) => Ok(Ok(Json(report))),
             Err(e) => Ok(Err(refused(format!("get-pack: {}", e)))),
         }

@@ -824,33 +824,21 @@ pub(crate) struct Unmanaged {
     pub at_line: usize,
 }
 
-/// What an estate works in: the organization itself, or a delegated resource — what its account was given
-/// access to. Read from the interface files it uses.
+/// Which kind of estate it is: an organization's estate, or a workload estate — one that reads
+/// interface folders another estate wrote. What a workload estate was delegated is what those
+/// folders export; satz does not sort it into kinds (ADR 0100).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum WorksIn {
     /// it uses no interface file: an organization's estate
     Organization,
-    /// an interface it uses publishes `delegated_folder`
-    Folder,
-    /// it uses an interface file and none publishes a delegated folder: a delegated project
-    Project,
+    /// it uses interface files: a workload estate
+    Workload,
 }
 
-/// What the estate works in, from the exports of the interface files it uses.
-fn works_in(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -> WorksIn {
-    if interfaces.is_empty() {
-        return WorksIn::Organization;
-    }
-    let load = crate::satz_loader(estate, &runtime.include_dirs);
-    let folder = interfaces.iter().any(|u| {
-        load(&u.path)
-            .ok()
-            .and_then(|t| satz_core::satz::parse(&t).ok())
-            .and_then(|f| f.interface_file)
-            .is_some_and(|i| i.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER))
-    });
-    if folder { WorksIn::Folder } else { WorksIn::Project }
+/// Which kind of estate it is, from whether it uses interface files.
+fn works_in(interfaces: &[Unmanaged]) -> WorksIn {
+    if interfaces.is_empty() { WorksIn::Organization } else { WorksIn::Workload }
 }
 
 /// One interface file the estate uses, and what it says about who delegated: the organization's
@@ -878,11 +866,8 @@ pub(crate) struct DelegatedBy {
     /// the delegation's infrastructure project, which the account's calls are billed to
     #[serde(skip_serializing_if = "Option::is_none")]
     pub infrastructure_project: Option<String>,
-    /// the delegated project, when the file is one's
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    /// the file is a delegated folder's
-    pub folder: bool,
+    /// the names of the values the file exports, as it writes them
+    pub exports: Vec<String>,
 }
 
 /// What each used interface file says about who delegated, in the order the estate uses them.
@@ -902,8 +887,7 @@ fn delegated_by(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -
                 estate_account: text("estate_account"),
                 estate_account_user_group: text("estate_account_user_group"),
                 infrastructure_project: text("infrastructure_project_id"),
-                project: text("project_id"),
-                folder: file.outputs.iter().any(|o| o.name == crate::prerequisites::DELEGATED_FOLDER),
+                exports: file.outputs.iter().map(|o| o.name.clone()).collect(),
             })
         })
         .collect()
@@ -912,7 +896,7 @@ fn delegated_by(estate: &Path, runtime: &ToolConfig, interfaces: &[Unmanaged]) -
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct PacksReport {
     pub estate: String,
-    /// what the estate works in: the organization, a delegated folder or a delegated project
+    /// which kind of estate it is: an organization's estate or a workload estate
     pub works_in: WorksIn,
     /// why the report has no packs: the presets carry no pack graph
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -955,7 +939,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
         // every `use` is one the graph does not know, because there is none
         let s = scan(&src);
         let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect());
-        let works_in = works_in(estate, runtime, &interfaces);
+        let works_in = works_in(&interfaces);
         let delegated_by = delegated_by(estate, runtime, &interfaces);
         return Ok(PacksReport { estate: label, works_in, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, delegated_by, findings: Vec::new() });
     };
@@ -968,7 +952,7 @@ pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport,
     let (interfaces, unmanaged) = interface_files(estate, runtime, view.unmanaged());
     Ok(PacksReport {
         estate: label,
-        works_in: works_in(estate, runtime, &interfaces),
+        works_in: works_in(&interfaces),
         note: None,
         packs: nodes.iter().map(|n| view.row(n, &found)).collect(),
         unmanaged,
@@ -993,20 +977,16 @@ fn interface_files(estate: &Path, runtime: &ToolConfig, lines: Vec<Unmanaged>) -
 pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> String {
     let mut s = format!("packs — {}\n", r.estate);
     s.push_str(match r.works_in {
-        WorksIn::Organization => "  works in: the organization\n",
-        WorksIn::Folder => "  works in: a delegated folder\n",
-        WorksIn::Project => "  works in: a delegated project\n",
+        WorksIn::Organization => "  kind: an organization's estate\n",
+        WorksIn::Workload => "  kind: a workload estate\n",
     });
     for d in &r.delegated_by {
         let mut said = vec![format!("the estate `{}`", d.estate)];
         if let Some(a) = &d.estate_account {
             said.push(format!("estate account {}", a));
         }
-        if let Some(p) = &d.project {
-            said.push(format!("project {}", p));
-        }
-        if d.folder {
-            said.push("a folder".to_string());
+        if !d.exports.is_empty() {
+            said.push(format!("exports {}", d.exports.join(", ")));
         }
         s.push_str(&format!("  delegated by {} through `{}`\n", said.join(", "), d.interface));
     }

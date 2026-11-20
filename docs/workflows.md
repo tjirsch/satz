@@ -1671,7 +1671,7 @@ raw.githubusercontent.com and costs no API request.
 ### The commands
 
 ```bash
-satz packs --format text --out -          # what is here, what every source holds, and what each needs
+satz packs --format text --out -          # what is here, what every source holds, and what each declares and reads
 satz packs --source shared --format json --out -
 satz get-pack workload-project            # fetch one pack from satz, record its origin
 satz get-pack data/warehouse --source shared
@@ -1688,6 +1688,47 @@ each pack a source holds that `packs_dir` does not, once per source that holds i
 `get-pack` reads `satz` unless `--source` names another. `update-pack` reads, for each
 pack, the source its row names; with `--source` it reads only that one, and a pack of
 another source is reported as not checked.
+
+### What a pack declares, and what it reads
+
+`satz packs` describes each pack by its own declarations, read from its parse: what it
+takes, what it gives, and what it reads from the interface folders of the estate that uses
+it. A pack is not of a kind — a folder pack, a project pack. The delegated resource may be a
+folder, a project, one VM or anything else an interface folder exports, and a pack fits an
+estate when the estate's interface folders give every value it reads.
+
+| field | what it holds |
+|---|---|
+| `params` | each param the pack declares: `name`; `default`, the value as the pack writes it in Satz (`"europe-west3"`, `[1, 2]`, `"${{interface.project_id}}"`), or `null` where it writes `""`; `question`, whether a `question` asks for it; `prompt`, that question's prompt |
+| `list_params` | each `entries <list param>` statement: `param`, `key`, `fields`, and `defaults` per field in Satz |
+| `exports` | each export: `name`, and `interface`, the `interface "<name>"` block it stands in as written (an interface an `each` writes is named by its pattern, `ks-{each.id}`), or `null` for a core export |
+| `reads` | each `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` the pack writes in a param, a resource or an export — a comment reads nothing: `folder` (`null` for the bare form), `value`, `param` (the param whose value the read is, or `null`), and how the estate gives it |
+
+The estate is the one `--estate` names, or the one estate in `yaml_dir`, and its interface
+folders are the ones its transpile uses. A read is matched by the transpile's own rule:
+
+- `${{interface.<folder>.<value>}}` is given by the used interface folder named `<folder>`,
+  when it exports `<value>`;
+- `${{interface.<value>}}` is given by every used folder that exports `<value>`, when they
+  all carry the same value; two folders that carry it differently give it to no bare read,
+  and the pack's param is bound to a named read in the estate;
+- a read in a param the estate binds is not made: `bound_by_estate` is true and nothing is
+  matched.
+
+`met_by` lists the folders that give the value. Where none does, `met_by` is empty and
+`unmet_reason` is the refusal the transpile would print — no used interface folder of that
+name, the folder has no such value, two folders carry it differently, or the estate uses no
+interface folder. A pack a source holds and `packs_dir` does not is matched the same way, so
+the list says before the fetch whether it fits. The text form prints one line per kind a
+pack declares, and a `not given:` line per read the estate does not give.
+
+`get-pack` matches each pack it fetches against the estate the same way and prints a
+warning per read the estate does not give — the transpile refuses that read once the estate
+uses the pack; the pack is fetched all the same, and `--format json` carries the reasons in
+`unmet`. `review-pack --against <estate>` judges the pack inside the estate, whose
+transpile refuses a read the estate does not give; without `--against`, the review's
+estate uses a stand-in interface folder per folder the pack names, and `review` for its
+bare reads, each giving every value read as an example.
 
 `get-pack` writes `packs_dir/<id>.satz` and the row, and prints the `use` line that reaches
 the file. It is refused when `packs_dir` already holds a pack of that id, and when
