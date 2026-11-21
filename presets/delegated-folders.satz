@@ -1,6 +1,9 @@
-// Delegated access to folders: the folders a delegation's account works in, and its roles on
-// those folders alone. The account is the base's (`presets/delegation.satz`): each entry
-// here names the delegation whose account works in the folder.
+// The ready-made delegation pack for folders: the folders a delegation's account works in,
+// and its roles on those folders alone. It stands in the organization's estate, which
+// creates the folders and keeps them in its state; a workload estate builds inside them as
+// that account, with a workload pack of its own. The account is the base's
+// (`presets/delegation.satz`): each entry here names the delegation whose account works in
+// the folder.
 //
 //   use "presets/delegated-folders.satz" when use_delegated_folders
 //
@@ -27,7 +30,8 @@
 //
 // WHAT THE WORKLOAD ESTATE READS. The interface `<name>`, taken beside the delegation's own:
 // `delegated_folder`, the parent of everything the estate creates, `delegated_folder_roles`
-// and `delegated_budgets`. One estate reads one folder's interface: a delegation with two
+// and `delegated_budgets`, which tell the workload's team what the account holds — satz
+// checks no role in a workload estate. One estate reads one folder's interface: a delegation with two
 // folders is worked in by two estates that run as the same estate account. A folder's name is an
 // interface's name: no project of `presets/delegated-projects.satz` may carry the same.
 //

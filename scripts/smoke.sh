@@ -467,22 +467,23 @@ grep -q '^output "project_id"' "$pwi/delegation-shop/delegation-shop/satz/interf
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/pw/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the delegated-projects estate does not validate"
 fi
-# the folder that is copied to the workload's team says what it gives and what to do with it
+# the folder that is copied to the workload's team lists each export with its value and says what to do
+# with it — the rows are the exports the pack declares, none singled out by its name (ADR 0101)
 hr="$pwi/delegation-shop/delegation-shop/README.md"
-grep -q '^## Delegated access: what you were given' "$hr" && grep -q 'the members of the estate account user group `gcp-shop-admins@example.com`, which holds `roles/iam.serviceAccountTokenCreator`' "$hr" \
-  && grep -q 'satz init --from' "$hr" \
-  || fail "the README of a delegation's interface does not say who may act as the account and what to do:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$hr")"
-grep -q 'the delegated project to build in | `acme-payments-001`' "$pwi/payments/payments/README.md" && grep -q 'use "interfaces/incoming/payments/payments/satz/interface.satz"' "$pwi/payments/payments/README.md" \
-  && grep -q 'the members of the estate account user group `payments-owners@example.com`' "$pwi/delegation-payments/delegation-payments/README.md" \
-  || fail "the READMEs of a workload estate's interface and of its delegation do not say what was given:\n$(sed -n '/^## Delegated access: what you were given/,/^## How to use it/p' "$pwi/payments/payments/README.md")"
-grep -q 'the delegated folder to build in' "$pwi/shop/shop/README.md" && grep -q 'no role that sets a folder'"'"'s access' "$pwi/shop/shop/README.md" || fail "the README of a delegated folder does not say it is the folder to build in, or what the account holds on it"
-grep -q 'Delegated access: what you were given' "$pwi/common/core/README.md" && fail "the library's README speaks of delegated access"
+grep -q "^## For a workload's team" "$hr" && grep -q '| `estate_account_user_group` | `gcp-shop-admins@example.com` |' "$hr" \
+  && grep -q 'satz init --from' "$hr" && grep -q 'satz update-prerequisites <estate> --report-only' "$hr" \
+  || fail "the README of a delegation's interface does not list its exports or say what to do:\n$(sed -n "/^## For a workload's team/,/^## How to use it/p" "$hr")"
+grep -q '| `project_id` | `acme-payments-001` |' "$pwi/payments/payments/README.md" && grep -q 'use "interfaces/incoming/payments/payments/satz/interface.satz"' "$pwi/payments/payments/README.md" \
+  && grep -q '| `estate_account_user_group` | `payments-owners@example.com` |' "$pwi/delegation-payments/delegation-payments/README.md" \
+  || fail "the READMEs of a workload estate's interface and of its delegation do not list what they carry:\n$(sed -n "/^## For a workload's team/,/^## How to use it/p" "$pwi/payments/payments/README.md")"
+grep -q '| `delegated_folder` | looked up |' "$pwi/shop/shop/README.md" || fail "the README of a delegated folder does not say its folder is looked up:\n$(sed -n "/^## For a workload's team/,/^## How to use it/p" "$pwi/shop/shop/README.md")"
+grep -q "For a workload's team" "$pwi/common/core/README.md" && fail "the library's README has a section for a workload's team"
 # a project for a delegation nobody declared is refused at the transpile
 sed 's|{ name = "shop-backend" delegation = "shop" }|{ name = "shop-backend" delegation = "ghost" }|' tmp/pw-org.satz > tmp/pw-ghost.satz
 "$satz" --config "$ex" transpile "$PWD/tmp/pw-ghost.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-ghost.txt 2>&1 && fail "a project for a delegation nobody declared transpiled"
 grep -q 'google_service_account.deploy_ghost' tmp/pw-ghost.txt && grep -q 'deploy_shop' tmp/pw-ghost.txt || fail "the refusal does not name the missing account and those that exist:\n$(cat tmp/pw-ghost.txt)"
 # the estate that works in shop-backend as the delegation's account: it reads two interfaces, and
-# what its bucket needs on the project is its own to grant
+# its roles are the organization's to grant — no role is checked, and the report lists what it needs
 rm -rf tmp/pw/estate && mkdir -p tmp/pw/estate/satz tmp/pw/estate/interfaces/incoming
 cp -R "$pwi/delegation-shop" "$pwi/shop-backend" tmp/pw/estate/interfaces/incoming/
 sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/pw/estate/config.toml
@@ -527,13 +528,20 @@ google_storage_bucket {
 }
 SATZ
 "$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate does not transpile:\n$(cat tmp/pw-estate.txt)"
-grep -q 'roles/storage.admin on the project — to grant in this estate — for google_storage_bucket' tmp/pw-estate.txt || fail "a role the account lacks on its project is not its own to grant:\n$(cat tmp/pw-estate.txt)"
-grep -q 'at the organization\|on the delegated folders —' tmp/pw-estate.txt && fail "a project's estate is asked for a role at the organization or on a folder it does not have:\n$(cat tmp/pw-estate.txt)"
-printf '\ngoogle_project_iam_member {\n  project = "${{interface.project_id}}"\n  "serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com" = [\n    "roles/storage.admin",\n  ]\n}\n' >> tmp/pw/estate/satz/backend.satz
-"$satz" --config tmp/pw/estate transpile backend.satz > tmp/pw-estate.txt 2>&1 || fail "the delegated project's estate with its own grant does not transpile:\n$(cat tmp/pw-estate.txt)"
-grep -q 'prerequisites' tmp/pw-estate.txt && fail "the estate's own grant on its project does not close the need:\n$(cat tmp/pw-estate.txt)"
-"$satz" --config tmp/pw/estate update-prerequisites backend.satz --report-only > tmp/pw-report.txt 2>&1 || fail "the report of a project's estate with nothing missing is an error:\n$(cat tmp/pw-report.txt)"
-grep -q 'delegates 0 role(s) on its folders, 2 on its project' tmp/pw-report.txt || fail "folder roles count for an estate that works in no folder:\n$(cat tmp/pw-report.txt)"
+grep -q 'roles/' tmp/pw-estate.txt && fail "a workload estate is checked for roles (ADR 0101):\n$(cat tmp/pw-estate.txt)"
+"$satz" --config tmp/pw/estate update-prerequisites backend.satz --report-only > tmp/pw-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/pw-report.txt)"
+grep -q "^a workload estate: its account's roles are the organization's to grant" tmp/pw-report.txt && grep -q '^  roles/storage.admin on the project — for google_storage_bucket' tmp/pw-report.txt \
+  && ! grep -q 'roles/browser\|^missing:' tmp/pw-report.txt \
+  || fail "the report of a workload estate does not list the roles its resource types need, as information:\n$(cat tmp/pw-report.txt)"
+"$satz" --config tmp/pw/estate update-prerequisites backend.satz --report-only --format json > tmp/pw-report.json 2>/dev/null || fail "the JSON report of a workload estate is an error"
+python3 - tmp/pw-report.json <<'PY' || fail "the JSON report of a workload estate does not list needed_roles:\n$(cat tmp/pw-report.json)"
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["workload"] is True and r["missing"] == [] and r["write"] == [], r
+assert {"scope": "project", "roles": ["roles/storage.admin"], "permission": "storage.buckets.create", "reason": ["google_storage_bucket"]} in r["needed_roles"], r["needed_roles"]
+for gone in ("delegation", "request", "not_delegated_apis"):
+    assert gone not in r, gone
+PY
 # the pack this one replaced: its path and its params are refused by name
 sed 's|presets/delegated-projects.satz|presets/project-workload.satz|' tmp/pw-org.satz > tmp/pw-old.satz
 "$satz" --config "$ex" transpile "$PWD/tmp/pw-old.satz" --output "$PWD/tmp/pw/hcl" --check > tmp/pw-old.txt 2>&1 && fail "the old project pack path transpiled"
@@ -609,7 +617,7 @@ grep -A3 'role = "${google_organization_iam_custom_role.delegated_budgets.name}"
 bi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_budgets"' "$bi/payments/payments/satz/interface.satz" | grep -q 'value *= true' && grep -A1 '^output "delegated_budgets"' "$bi/plain/plain/satz/interface.satz" | grep -q 'value *= false' \
   || fail "the interfaces do not say which project was delegated budgets"
-grep -q '| budgets | delegated' "$bi/payments/payments/README.md" && grep -q '| budgets | not delegated' "$bi/plain/plain/README.md" || fail "the README of the interface folder does not say whether budgets were delegated"
+grep -q '| `delegated_budgets` | `true` |' "$bi/payments/payments/README.md" && grep -q '| `delegated_budgets` | `false` |' "$bi/plain/plain/README.md" || fail "the README of the interface folder does not list whether budgets were delegated"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/bud/hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate that delegates budgets does not validate"
 fi
@@ -731,14 +739,14 @@ assert exports["payments"]["project_id"] == "The project's Google project" and a
 PY2
 if "$satz" --config tmp/bud/team packs --local --source repo --format json --out - > tmp/bud-local-source.txt 2>&1; then fail "satz packs read a source with --local"; fi
 grep -q -- '--local reads no pack source and --source names one to read' tmp/bud-local-source.txt || fail "the refusal must say why:\n$(cat tmp/bud-local-source.txt)"
-# the same estate in the project that was not: told what to ask for, and how
+# the same estate in the project that was not: no role is checked in a workload estate (ADR 0101),
+# and the report lists the billing role its budget needs, for the organization's team
 bud_estate tmp/bud/plain plain
-"$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile at level warn:\n$(cat tmp/bud-plain.txt)"
-grep -q '`budgets = true` on the entry of this project or folder' tmp/bud-plain.txt || fail "an estate that was not delegated budgets is not told how to ask:\n$(cat tmp/bud-plain.txt)"
-# an API the organization already switched on, declared again by the team
-printf '\ngoogle_project_service {\n  again {\n    project = infra_project_name\n    service = "storage.googleapis.com"\n  }\n}\n' >> tmp/bud/team/satz/team.satz
-"$satz" --config tmp/bud/team transpile team.satz --check > tmp/bud-twice.txt 2>&1 || fail "the estate with a doubled API switch does not transpile at level warn:\n$(cat tmp/bud-twice.txt)"
-grep -q '1 API(s) are switched on twice on acme-deploy-payments' tmp/bud-twice.txt && grep -q 'storage.googleapis.com — google_project_service.again' tmp/bud-twice.txt || fail "an API switched on twice is not reported:\n$(cat tmp/bud-twice.txt)"
+"$satz" --config tmp/bud/plain transpile team.satz --check > tmp/bud-plain.txt 2>&1 || fail "the workload estate without delegated budgets does not transpile:\n$(cat tmp/bud-plain.txt)"
+grep -q 'prerequisites\|roles/' tmp/bud-plain.txt && fail "a workload estate is checked for roles:\n$(cat tmp/bud-plain.txt)"
+"$satz" --config tmp/bud/plain update-prerequisites team.satz --report-only > tmp/bud-plain-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/bud-plain-report.txt)"
+grep -q '^  roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/bud-plain-report.txt \
+  || fail "the report does not list the billing role the budget needs:\n$(cat tmp/bud-plain-report.txt)"
 step "publish-pack: a pack the repository wrote goes to a folder source, recorded as fetched from it, and update-pack and packs follow the source (ADR 0099)"
 # the workload estate of the budgets step, with the budget pack as its own: no row, under another id
 bud_estate tmp/pub payments
@@ -802,43 +810,27 @@ cmp -s tmp/pub-shared/team/budget.satz tmp/pub/packs/team/budget.satz && fail "a
 # the example organization's own interfaces are what the steps after this one read
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the budgets step"
 
-step "a workload estate is judged against what was delegated to its account, and what is missing is asked for (ADR 0087)"
-# the example: everything it needs was delegated, so the check is quiet — no role at the organization, no API to write
+step "a workload estate has no role check: its roles are the organization's to grant, and update-prerequisites lists them (ADR 0101)"
+# the example: no prerequisites finding — no role is checked, and its own projects declare their APIs
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
 grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organization binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
-"$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload estate with nothing missing is an error:\n$(cat tmp/wl-report.txt)"
-grep -q "delegates 6 role(s) on its folders, 0 on its project, 1 on the billing account and 6 API(s)" tmp/wl-report.txt && grep -q 'delegation-shop' tmp/wl-report.txt && grep -q '^not delegated: none' tmp/wl-report.txt \
-  || fail "the report does not say what was delegated:\n$(cat tmp/wl-report.txt)"
-# the published values say `delegated_…` (ADR 0089): nothing the example writes carries an old
-# name, and an interface copied before the rename is refused where it is used, not read
-grep -rq 'delivered_' "$ex/interfaces/outgoing" && fail "an interface the example organization writes still names a value delivered_…:\n$(grep -rln 'delivered_' "$ex/interfaces/outgoing")"
-rm -rf tmp/oldif && mkdir -p tmp/oldif/interfaces && cp -R "$pt/satz" tmp/oldif/ && cp -R "$pt/interfaces/incoming" tmp/oldif/interfaces/
-sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > tmp/oldif/config.toml
-oldif=tmp/oldif/interfaces/incoming/shop/shop/satz/interface.satz
-sed 's/"delegated_folder_roles"/"delivered_folder_roles"/' "$oldif" > tmp/oldif.satz && cp tmp/oldif.satz "$oldif"
-grep -q '"delivered_folder_roles"' "$oldif" || fail "the interface with the old name was not written"
-"$satz" --config tmp/oldif transpile simple-project.satz --check > tmp/oldif.txt 2>&1 && fail "an interface that still exports delivered_folder_roles was read"
-grep -q 'exports `delivered_folder_roles`: it was written by satz before v0.98.0' tmp/oldif.txt && grep -q 'Take the folder again' tmp/oldif.txt \
-  || fail "the refusal of an old interface does not say what to do:\n$(cat tmp/oldif.txt)"
-# a budget needs an API on the workload's infrastructure project and a billing role: neither was delegated
-{ cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-not-delegated.satz"
-"$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload estate with a need that was not delegated does not transpile at level warn:\n$(cat tmp/wl.txt)"; }
-grep -q "not enabled on acme-deploy-shop, the project its calls are billed to" tmp/wl.txt && grep -q 'billingbudgets.googleapis.com — needed by google_billing_budget' tmp/wl.txt \
-  || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated API is not asked for:\n$(cat tmp/wl.txt)"; }
-grep -q 'roles/billing.admin or roles/billing.costsManager on the billing account — or `budgets = true` on the entry of this project or folder, which needs none of them — for google_billing_budget' tmp/wl.txt && grep -q '`billing_roles` of the delegation'"'"'s entry in `delegations`' tmp/wl.txt \
-  || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the not delegated billing role is not asked for:\n$(cat tmp/wl.txt)"; }
-grep -q 'at the organization\|satz update-prerequisites' tmp/wl.txt && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "a workload estate is offered a grant at the organization or a write:\n$(cat tmp/wl.txt)"; }
-# the write: nothing is written for what was not delegated, the file stays as it is, and the command fails
-cp "$pt/satz/tmp-not-delegated.satz" tmp/wl-before.satz
-"$satz" --config "$pt" update-prerequisites tmp-not-delegated.satz > tmp/wl-write.txt 2>&1 && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites succeeded on a workload estate with not delegated needs"; }
-cmp -s "$pt/satz/tmp-not-delegated.satz" tmp/wl-before.satz || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "update-prerequisites wrote into a workload estate:\n$(diff tmp/wl-before.satz "$pt/satz/tmp-not-delegated.satz")"; }
-grep -q '2 prerequisite(s) are not delegated to svc-deploy-shop@acme-deploy-shop.iam.gserviceaccount.com' tmp/wl-write.txt && ! grep -q '^wrote \|gcloud services enable' tmp/wl-write.txt \
-  || { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "the write does not say what is not delegated, or offers to enable it:\n$(cat tmp/wl-write.txt)"; }
-# the apply: refused while an API is not delegated, with whom to ask
-"$satz" --config "$pt" transpile tmp-not-delegated.satz --output "$PWD/tmp/wl-hcl" --apply > tmp/wl-apply.txt 2>&1 && { rm -f "$pt/satz/tmp-not-delegated.satz"; fail "an estate with a not delegated API was applied"; }
-rm -f "$pt/satz/tmp-not-delegated.satz"
-grep -q "apply refused: 1 API(s) this estate's resources need are not enabled on the project its calls are billed to — billingbudgets.googleapis.com on acme-deploy-shop" tmp/wl-apply.txt \
-  && grep -q "belongs to the organization's estate" tmp/wl-apply.txt || fail "the apply's refusal does not name the API and whom to ask:\n$(cat tmp/wl-apply.txt)"
+"$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/wl-report.txt)"
+grep -q "^a workload estate: its account's roles are the organization's to grant" tmp/wl-report.txt && grep -q "^needed roles, for the organization's team:" tmp/wl-report.txt \
+  && ! grep -q '^missing:\|at the organization —\|roles/browser' tmp/wl-report.txt \
+  || fail "the report of a workload estate does not list its needed roles as information:\n$(cat tmp/wl-report.txt)"
+# a budget needs an API on the delegation's infrastructure project and a billing role: no finding,
+# nothing written, and the report lists both for the organization's team
+{ cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-workload-budget.satz"
+"$satz" --config "$pt" transpile tmp-workload-budget.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-workload-budget.satz"; fail "a workload estate with a budget does not transpile:\n$(cat tmp/wl.txt)"; }
+grep -q 'prerequisites\|roles/\|on acme-deploy-shop' tmp/wl.txt && { rm -f "$pt/satz/tmp-workload-budget.satz"; fail "a workload estate is checked for its roles or for the APIs of the delegation's infrastructure project:\n$(cat tmp/wl.txt)"; }
+cp "$pt/satz/tmp-workload-budget.satz" tmp/wl-before.satz
+"$satz" --config "$pt" update-prerequisites tmp-workload-budget.satz > tmp/wl-write.txt 2>&1 || { rm -f "$pt/satz/tmp-workload-budget.satz"; fail "update-prerequisites refused a workload estate:\n$(cat tmp/wl-write.txt)"; }
+cmp -s "$pt/satz/tmp-workload-budget.satz" tmp/wl-before.satz || { rm -f "$pt/satz/tmp-workload-budget.satz"; fail "update-prerequisites wrote into a workload estate:\n$(diff tmp/wl-before.satz "$pt/satz/tmp-workload-budget.satz")"; }
+rm -f "$pt/satz/tmp-workload-budget.satz"
+grep -q '^  roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/wl-write.txt \
+  && grep -q "^needed APIs on acme-deploy-shop, for the organization's team" tmp/wl-write.txt && grep -q '^  billingbudgets.googleapis.com — for google_billing_budget' tmp/wl-write.txt \
+  && ! grep -q '^wrote \|gcloud services enable' tmp/wl-write.txt \
+  || fail "the report does not list the billing role and the API as information, or offers to write them:\n$(cat tmp/wl-write.txt)"
 
 step "inputs: the showcase's input is a variable the HCL reads, bound by --input for a run, refused where it is no input"
 ih=tmp/inputs-hcl
@@ -932,7 +924,7 @@ PY2
 rm -rf tmp/two && mkdir -p tmp/two && seed_schemas tmp/two
 (cd tmp/two && "$satz" init --from "$out/delegation-payments" "$out/payments" "$out/ledger" > ../init-two.txt 2>&1) || fail "init refused an estate over two delegated projects:\n$(cat tmp/init-two.txt)"
 two=tmp/two/satz/payments.satz
-grep -q 'project   = "${{interface.ledger.project_id}}"' "$two" && grep -q 'project   = "${{interface.payments.project_id}}"' "$two" || fail "the estate does not say how each project is read:\n$(cat $two)"
+grep -q '^//   in the project `ledger`:  project = "${{interface.ledger.project_id}}"$' "$two" && grep -q '^//   in the project `payments`:  project = "${{interface.payments.project_id}}"$' "$two" && ! grep -q 'infra_project_id\|infra_folder' "$two" || fail "the estate does not say how each project is read:\n$(cat $two)"
 cat >> "$two" <<'SATZ'
 
 google_project_service "payments_storage" {

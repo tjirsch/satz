@@ -1212,138 +1212,54 @@ impl Interface {
         s
     }
 
-    /// `interfaces/outgoing/<folder>/README.md`: what the folder holds, where it came from, and the
-    /// content hash of every other file in it. `folder` is `common` or an interface's name.
-    /// What an interface gives a workload's team, said to that team:
-    /// the account, who may act as it, what it holds, and what to do next. Written when the
-    /// interface carries what a delegation preset publishes (`presets/delegation.satz`,
-    /// `presets/delegated-folders.satz`, `presets/delegated-projects.satz`), by the names
-    /// those exports have; `None` for every
-    /// other interface. The folder is what changes hands, so the instructions travel in it.
+    /// What an interface folder of its own gives a workload's team, said to that team: each
+    /// of the interface's own exports with its value — the literal, or "looked up" for one the
+    /// workload estate's plan reads — and its description, then what to do with the folder.
+    /// The rows are the exports the pack declares, in its order: no export is singled out by
+    /// its name (ADR 0101). `None` for `core`, a common interface, and an interface that
+    /// exports nothing of its own. The folder is what changes hands, so the instructions
+    /// travel in it.
     fn handover(&self, module: &str, outputs: &[&Output]) -> Option<String> {
-        let own = |name: &str| outputs.iter().find(|o| o.interface.is_some() && o.name == name);
-        let text = |name: &str| -> Option<String> {
-            own(name).and_then(|o| match &o.how {
-                How::Static(v) => Some(v.trim_matches('"').to_string()),
-                How::Lookup(_) => None,
-            })
-        };
-        let list = |name: &str| -> Option<Vec<String>> {
-            text(name).map(|v| {
-                v.trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(|r| r.trim().trim_matches('"').to_string())
-                    .filter(|r| !r.is_empty())
-                    .collect()
-            })
-        };
-        let code = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.iter().map(|r| format!("`{}`", r)).collect::<Vec<_>>().join(", ") };
-        let account = text("estate_account");
-        let folder = own("delegated_folder").is_some();
-        let folder_roles = list("delegated_folder_roles");
-        let project_roles = list("delegated_project_roles");
-        if account.is_none() && !folder && folder_roles.is_none() && project_roles.is_none() {
+        if !self.projects().iter().any(|p| p == module) {
             return None;
         }
-        let mut s = String::from("## Delegated access: what you were given\n\n");
-        s.push_str(
-            "This interface folder is copied to a workload's team. The organization's estate gives that team\n\
-             delegated access: an estate account of its own that holds roles on named resources of the organization\n\
-             and nowhere else, used from the workload repository. Nothing in the folder is secret: it holds\n\
-             names, and what was delegated. No key is issued.\n\n| | |\n|---|---|\n",
-        );
-        let mut row = |what: &str, value: String| s.push_str(&format!("| {} | {} |\n", what, table_cell(&value)));
-        if let Some(a) = &account {
-            // the estate reads it in its two parts, `{svc_iac_account}@{infra_project_name}`
-            let read = match (text("estate_account_id"), text("infrastructure_project_id")) {
-                (Some(_), Some(_)) => format!(
-                    ", read as `svc_iac_account = \"${{{{interface.{0}.estate_account_id}}}}\"` and `infra_project_name = \"${{{{interface.{0}.infrastructure_project_id}}}}\"`",
-                    module
-                ),
-                _ => String::new(),
+        let own: Vec<&Output> = outputs.iter().copied().filter(|o| o.interface.as_deref() == Some(module)).collect();
+        if own.is_empty() {
+            return None;
+        }
+        let mut s = String::from("## For a workload's team
+
+");
+        s.push_str(&format!(
+            "This interface folder is copied to a workload's team. Its workload estate reads each value by the\n\
+             folder's name, `${{{{interface.{}.<value>}}}}`. Nothing in the folder is secret: it holds names.\n\n\
+             | Export | Value | Description |\n|---|---|---|\n",
+            module
+        ));
+        for o in &own {
+            let value = match &o.how {
+                How::Static(v) => format!("`{}`", table_cell(&o.static_text().unwrap_or_else(|| v.clone()))),
+                How::Lookup(_) => "looked up".to_string(),
             };
-            row("the estate account your workload estate runs as", format!("`{}`{}", a, read));
-            match (text("estate_account_user_group"), list("account_group_roles")) {
-                (Some(g), roles) => row(
-                    "who may act as it",
-                    format!(
-                        "the members of the estate account user group `{}`{}. Who is a member is decided in the directory, not here; a member needs nothing else",
-                        g,
-                        roles.map(|r| format!(", which holds {} on the account", code(&r))).unwrap_or_default()
-                    ),
-                ),
-                (None, _) => row("who may act as it", "the members of the estate account user group the organization's estate names for this account; ask the organization's team which".to_string()),
-            }
-        }
-        if let Some(p) = text("infrastructure_project_id") {
-            row("the delegation's infrastructure project, which its calls are billed to", format!("`{}`", p));
-        }
-        if let Some(b) = text("state_bucket") {
-            row("the state bucket its workload estates keep their state in", format!("`gs://{}`, read as `infra_bucket_name = \"${{{{interface.{}.state_bucket}}}}\"`", b, module));
-        }
-        if let Some(b) = text("billing_account") {
-            row("the billing account a new project is linked to", format!("`{}`", b));
-        }
-        if folder {
-            row("the delegated folder to build in", format!("`${{{{interface.{}.delegated_folder}}}}`: looked up at plan time; everything the workload estate creates stands under it", module));
-        }
-        if let Some(p) = text("project_id") {
-            row("the delegated project to build in", format!("`{}`, read as `${{{{interface.{}.project_id}}}}` in the workload estate", p, module));
-        }
-        if let Some(r) = &folder_roles {
-            row("on each of its delegated folders the account holds", format!("{} — and no role that sets a folder's access", code(r)));
-        }
-        if let Some(r) = &project_roles {
-            row("on this delegated project the account holds", code(r));
-        }
-        if let Some(r) = list("delegated_billing_roles") {
-            row("on the billing account it holds", code(&r));
-        }
-        match text("delegated_budgets").as_deref() {
-            Some("true") => row(
-                "budgets",
-                format!(
-                    "delegated: the account may create and change budgets for this delegated {}, and sees its costs; it holds nothing on the billing account",
-                    if folder { "folder" } else { "project" }
-                ),
-            ),
-            Some(_) => row("budgets", "not delegated: ask the organization's team for `budgets = true` on this entry".to_string()),
-            None => {}
-        }
-        if let Some(r) = list("delegated_apis") {
-            row("APIs enabled on the delegation's infrastructure project", code(&r));
+            s.push_str(&format!("| `{}` | {} | {} |\n", o.name, value, o.description.as_deref().map(table_cell).unwrap_or_default()));
         }
         s.push_str("\n### What to do with it\n\n");
-        let mut steps: Vec<String> = Vec::new();
-        if account.is_some() {
-            steps.push(
-"In the workload repository run `satz init --from <this folder> <the interface folder of every delegated folder and delegated \
-                 project the workload estate works in>`. It copies them into `interfaces/incoming/`, where satz never writes again, and \
-                 writes your workload estate: it runs as the account above, bills its calls to the infrastructure project above and \
-                 keeps its state in the state bucket above. One workload estate may work in several delegated folders and delegated \
-                 projects; a second workload estate of the same account takes a `--name` of its own."
-                    .to_string(),
-            );
-        } else {
-            steps.push(format!(
-                "Take this interface folder together with the one that carries your account, `delegation-<name>`: `satz init --from` both \
-                 writes your workload estate. For a workload estate that exists, copy this folder into its `interfaces/incoming/` and add \
-                 `use \"interfaces/incoming/{}/{}/satz/interface.satz\"` beside the line of your account's interface.",
-                module, module
-            ));
-        }
-        steps.push(
-            "Check: `satz transpile <estate> --check`. satz judges the workload estate against what this table says was delegated. A line \
-             that names something missing says who closes it: the organization's team, or you with a grant on a delegated project. \
-             Nothing at the organization is yours to grant."
+        let steps = [
+            format!(
+                "In the workload repository run `satz init --from <this folder> <the other interface folders the workload estate \
+                 reads>`. It copies them into `interfaces/incoming/`, where satz never writes again, and writes the workload estate, \
+                 which runs as the estate account one of the folders carries. For a workload estate that exists, copy this folder into \
+                 its `interfaces/incoming/` and add `use \"interfaces/incoming/{0}/{0}/satz/interface.satz\"`.",
+                module
+            ),
+            "Check: `satz transpile <estate> --check`. Then `satz update-prerequisites <estate> --report-only` lists the roles the \
+             workload estate's resource types need. They are the organization's to grant, through the delegation pack that created \
+             what this folder describes: give the list to the organization's team. satz does not check them in a workload estate; a \
+             role that is missing is Google's refusal at the apply."
                 .to_string(),
-        );
-        if account.is_some() {
-            steps.push("Be a member of the estate account user group above, then `gcloud auth application-default login` and `satz whoami <estate>`.".to_string());
-            steps.push("`satz transpile <estate> --plan`, read it, then `--apply`: both run as the account.".to_string());
-        }
-        steps.push("Take the folder again after every change of the organization's estate; `CHANGES.md` here says what moved.".to_string());
+            "`satz whoami <estate>`, then `satz transpile <estate> --plan`, read it, then `--apply`: both run as the estate account.".to_string(),
+            "Take the folder again after every change of the organization's estate; `CHANGES.md` here says what moved.".to_string(),
+        ];
         for (n, step) in steps.iter().enumerate() {
             s.push_str(&format!("{}. {}\n", n + 1, step));
         }
@@ -1351,6 +1267,8 @@ impl Interface {
         Some(s)
     }
 
+    /// `interfaces/outgoing/<folder>/README.md`: what the folder holds, where it came from, and the
+    /// content hash of every other file in it. `folder` is `common` or an interface's name.
     pub fn index_readme(&self, folder: &str, version: &str, estate_path: &str, hash: &str) -> String {
         let mut s = String::new();
         if folder == COMMON {
@@ -1572,7 +1490,8 @@ resource "google_cloud_identity_group" "g" {
         assert_eq!(i.modules(), ["core", "team-a", "team-b"]);
         for (module, want) in [("core", vec!["org"]), ("team-a", vec!["org", "folder"]), ("team-b", vec!["org", "project"])] {
             let readme = i.readme(module, "0.0.0", "satz/e.satz", None);
-            let rows: Vec<&str> = readme.lines().filter(|l| l.starts_with("| `")).collect();
+            let exports_table = readme.split("## Exports").nth(1).unwrap_or_default();
+            let rows: Vec<&str> = exports_table.split("## Capabilities").next().unwrap_or_default().lines().filter(|l| l.starts_with("| `")).collect();
             let files = i.module_files(module);
             let outputs_tf = &files.iter().find(|(n, _)| *n == "outputs.tf").unwrap().1;
             let outputs: Vec<&str> = outputs_tf.lines().filter(|l| l.starts_with("output ")).collect();

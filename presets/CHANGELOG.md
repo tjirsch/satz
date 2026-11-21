@@ -13,6 +13,42 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.110.0
+
+**A workload estate has no prerequisites check for roles** (ADR 0101). An estate that uses an
+interface file — a workload estate — gets no finding about a role its account was not
+delegated, and `satz update-prerequisites` no longer fails on one: the roles are the
+organization's to grant, through the delegation pack that created what the estate builds in.
+The report lists the roles the estate's resource types need, as information for the
+organization's team. `apply` no longer refuses for an API missing on the delegation's
+infrastructure project; the report lists it under `needed_apis`. The finding of an API the
+workload estate switches on a second time on that project, and the refusal of an interface
+file whose exports are named `delivered_…`, are gone. Nothing to edit in an estate; a
+pipeline that relied on the non-zero exit of `update-prerequisites` for a workload estate
+reads `needed_roles` instead.
+
+**The JSON report of `update-prerequisites` (and of `satz_update_prerequisites`) drops four
+fields and gains three.**
+
+| before | now | where |
+|---|---|---|
+| `delegation: {interface, folder_roles, project_roles, billing_roles, apis, budgets}` | `workload: true` | scripts and agents that read `satz update-prerequisites --format json` or `satz_update_prerequisites` |
+| `request: ["<roles> on the delegated folders — for <types>", …]` | `needed_roles: [{"scope": "project" \| "folder" \| "organization" \| "billing_account" \| "workspace", "roles": [...], "permission": "...", "reason": [...]}, …]` | the same |
+| `not_delegated_apis: [{api, project, reason, declared}, …]` | `needed_apis: [{api, project, reason, declared}, …]`, the APIs on the delegation's infrastructure project | the same |
+| `granted.own` | gone | the same |
+
+**The README of an interface folder names no export by its name.** Its section "Delegated
+access: what you were given" is "For a workload's team": a table of each export of the
+folder's interface with its value — the literal, or "looked up" — and its description, then
+the team's next steps. The rows "the estate account your workload estate runs as", "who may
+act as it", "the delegated folder to build in" and the others chosen by an export's name are
+gone; their values are rows of the table. The comments `satz init --from` writes at the end
+of a workload estate read `` //   under the folder `<folder>`:  folder_id = … `` and
+`` //   in the project `<folder>`:  project = … ``, chosen by the resource type an export's
+`targets` name.
+
+The plan does not move.
+
 ### v0.109.0
 
 **`interface_folders[].exports` of `satz packs --format json` (and of `satz_packs`) lists

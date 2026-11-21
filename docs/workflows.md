@@ -1160,7 +1160,10 @@ reads the core export `default_region` (an organization's estate without `estate
 publishes none and is refused) and writes it, `default_zone`, `deployment_engine`,
 `deployment_mode = "cloud"`, the `gcs` backend on the bucket under `<name>/state`, the
 providers, the `use` of each interface file, and at the end, as comments, the read for
-each delegated resource. satz reads `svc_iac_account` and `infra_project_name` as the
+each folder and project the other folders give: an export whose `targets` name a
+`google_folder` is read as `folder_id`, one that names a `google_project` as `project`, a
+static export before a looked-up one, and an export the delegation's own folder carries as
+well — a core or common export — is no such parent. satz reads `svc_iac_account` and `infra_project_name` as the
 values they read wherever it names the estate account,
 `{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com` — the providers, the
 backend, the prerequisites and every live call; a value the organization's estate looks up
@@ -1170,14 +1173,27 @@ resources read a value by the name of its interface folder,
 `${{interface.<folder>.<value>}}` — `project = "${{interface.payments.project_id}}"` on
 each — and are held to the interface's rules at every
 transpile. An estate with several delegated resources names each the same way,
-`${{interface.data-lake.project_id}}` beside `${{interface.data-mart.project_id}}`; the
-check of what was delegated then counts a role as delegated when it was delegated on
-every delegated resource of its kind, and budgets when every interface folder that speaks of them says
-yes. The interface's `README.md` lists what may be attached to; `CHANGES.md` beside
+`${{interface.data-lake.project_id}}` beside `${{interface.data-mart.project_id}}`. satz
+checks no role in a workload estate: the account's roles are the organization's to grant,
+through the delegation pack that created what the estate builds in, and `satz
+update-prerequisites <estate> --report-only` lists those its resource types need, for the
+organization's team. The interface's `README.md` lists each export with its value and what
+may be attached to; `CHANGES.md` beside
 it, after a change of the organization's estate, says what to do about it. After such a change
 the workload's team copies the folders into `interfaces/incoming/` again.
 
 ### Delegated access: a folder for a team
+
+A delegation is two packs in two estates. A **delegation pack** stands in the organization's
+estate: it creates what one kind of workload is given — a folder, a project — and grants the
+delegation's estate account its roles on exactly that; what it creates stays in the
+organization's state, which creates, deletes and grants it. A **workload pack** stands in the
+workload estate: it reads what was given from the interface folder and builds inside it as
+the delegation's estate account, in the workload's state. Nothing the delegation pack created
+is imported into the workload's state. `presets/delegated-folders.satz` and
+`presets/delegated-projects.satz` are the ready-made delegation packs; a workload with needs
+of its own ships its own pair
+([ADR 0101](adr/0101-a-delegation-is-two-packs-and-a-workload-estate-has-no-rights-check.md)).
 
 A workload that creates Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an estate account of its own, never
