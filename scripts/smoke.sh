@@ -2227,6 +2227,16 @@ chmod +x tmp/fake-checkov/checkov
 PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . scan smoke.satz > tmp/scan.txt 2>&1 || true
 grep -q '^scan: Checkov' tmp/scan.txt || fail "scan printed no summary:\n$(cat tmp/scan.txt)"
 grep -q 'declared at' tmp/scan.txt || fail "findings were not pointed at the Satz source:\n$(cat tmp/scan.txt)"
+PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . scan smoke.satz --format json > tmp/scan.json 2>/dev/null || true
+python3 - <<'PY' || fail "scan --format json is not the report as data:\n$(cat tmp/scan.json)"
+import json
+d = json.load(open("tmp/scan.json"))
+assert d["failed"] == len(d["findings"]) > 0, d
+assert all(f["check_id"] and f["resource"] for f in d["findings"]), d
+assert any(f.get("declared_at") for f in d["findings"]), d
+PY
+"$satz" --config . scan --format json > tmp/scan-noestate.txt 2>&1 && fail "scan --format json ran without an estate"
+grep -q 'needs the estate' tmp/scan-noestate.txt || fail "scan --format json without an estate did not say what it needs:\n$(cat tmp/scan-noestate.txt)"
 PATH="$PWD/tmp/fake-checkov:$PATH" "$satz" --config . report-compliance cis-gcp-4.0 smoke.satz --no-live --checkov --format markdown --out tmp/evidence.md >/dev/null 2>&1 || fail "report-compliance --checkov failed"
 grep -q '| Checkov |' tmp/evidence.md || fail "the evidence report has no Checkov column"
 

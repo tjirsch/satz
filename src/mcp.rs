@@ -36,7 +36,7 @@
 //! `self-update` is not exposed at any level: it replaces the binary.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -870,6 +870,46 @@ pub(crate) struct ScanReport {
     /// where Checkov's JSON report was written, when `out` named a path
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub written: Option<String>,
+}
+
+impl ScanReport {
+    /// The report of one scan: Checkov's counts, and each failed check with the Satz
+    /// block the manifest says declared its resource. `satz_scan_checkov` and
+    /// `satz scan --format json` answer with this one shape.
+    pub(crate) fn new(
+        estate: &Path,
+        hcl_dir: &Path,
+        report: crate::scan::Report,
+        manifest: &crate::manifest::Manifest,
+        written: Option<String>,
+    ) -> Self {
+        let findings = report
+            .findings
+            .iter()
+            .map(|f| ScanFinding {
+                check_id: f.check_id.clone(),
+                check_name: f.check_name.clone(),
+                resource: f.resource.clone(),
+                declared_at: manifest
+                    .resources
+                    .get(&f.resource)
+                    .and_then(|r| r.origin.as_ref())
+                    .map(|(file, line)| format!("{}:{}", file, line)),
+                guideline: f.guideline.clone(),
+            })
+            .collect();
+        ScanReport {
+            estate: estate.display().to_string(),
+            hcl_dir: hcl_dir.display().to_string(),
+            checkov_version: report.version,
+            passed: report.passed,
+            failed: report.failed,
+            skipped: report.skipped,
+            resource_count: report.resource_count,
+            findings,
+            written,
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
@@ -2736,32 +2776,7 @@ impl SatzMcp {
                 return Ok(Err(refused(format!("scan: {}", e))));
             }
         }
-        let findings = report
-            .findings
-            .iter()
-            .map(|f| ScanFinding {
-                check_id: f.check_id.clone(),
-                check_name: f.check_name.clone(),
-                resource: f.resource.clone(),
-                declared_at: manifest
-                    .resources
-                    .get(&f.resource)
-                    .and_then(|r| r.origin.as_ref())
-                    .map(|(file, line)| format!("{}:{}", file, line)),
-                guideline: f.guideline.clone(),
-            })
-            .collect();
-        Ok(Ok(Json(ScanReport {
-            estate: estate.display().to_string(),
-            hcl_dir: dir.display().to_string(),
-            checkov_version: report.version,
-            passed: report.passed,
-            failed: report.failed,
-            skipped: report.skipped,
-            resource_count: report.resource_count,
-            findings,
-            written: out.map(|p| p.display().to_string()),
-        })))
+        Ok(Ok(Json(ScanReport::new(&estate, &dir, report, &manifest, out.map(|p| p.display().to_string())))))
     }
 
     #[tool(
