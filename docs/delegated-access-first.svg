@@ -44,7 +44,7 @@
   <circle cx="540" cy="614" r="11" fill="#1B2430"/>
   <text x="540" y="618" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">7</text>
   <text x="560" y="618" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">compile</text>
-  <text x="560" y="637" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">satz transpile &lt;estate&gt; --check: judged against what was delegated</text>
+  <text x="560" y="637" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">--check; update-prerequisites lists the roles it needs</text>
   <rect x="520" y="680" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
   <circle cx="540" cy="700" r="11" fill="#0F766E"/>
   <text x="540" y="704" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">8</text>
@@ -64,7 +64,7 @@
   <line x1="720.0" y1="652" x2="720.0" y2="678" stroke="#1B2430" marker-end="url(#arr)"/>
   <line x1="720.0" y1="738" x2="720.0" y2="764" stroke="#1B2430" marker-end="url(#arr)"/>
   <path d="M520,623.0 L474,623.0 L474,205.0 L442,205.0" fill="none" stroke="#0F766E" stroke-dasharray="5 4" marker-end="url(#arr-acc)"/>
-  <text x="468" y="614" text-anchor="end" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="12" fill="#0F766E">something is not delegated: ask for it</text>
+  <text x="468" y="614" text-anchor="end" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="12" fill="#0F766E">a role is missing: ask for it</text>
   <rect x="20" y="870" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#0F766E" stroke-dasharray="5 4"/>
   <text x="74" y="883" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">a step people do: a conversation, a decision, a hand-over</text>
   <rect x="430" y="870" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>

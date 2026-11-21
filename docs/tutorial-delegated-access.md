@@ -19,7 +19,7 @@ example is Acme Corp. of [`docs/examples.md`](examples.md) and its teams `shop` 
 
 ## The process
 
-![Two lanes, the organization's team and the workload's team, and nine steps: the workload's team asks; the organization's team decides, writes the entries, plans and applies, and copies the interface folders to the workload's team; the workload's team sets up its workload estate, transpiles, joins the estate account user group and signs in, then plans and applies as its own estate account. A dashed arrow leads from the transpile back to the decision: something is not delegated, ask for it](delegated-access-first.svg)
+![Two lanes, the organization's team and the workload's team, and nine steps: the workload's team asks; the organization's team decides, writes the entries, plans and applies, and copies the interface folders to the workload's team; the workload's team sets up its workload estate, transpiles, joins the estate account user group and signs in, then plans and applies as its own estate account. A dashed arrow leads from the transpile back to the decision: a role is missing, ask for it](delegated-access-first.svg)
 
 A dashed box is a step people do: a conversation, a decision, copying folders. A solid box is
 a step done with satz. The numbers are the sections below.
@@ -46,6 +46,14 @@ works in. It has two parts, and each is an entry in a list of the organization's
 
 Every entry of a delegated resource names its base: `delegation = "<name>"`. One base has
 any number of delegated resources, of either kind.
+
+`presets/delegated-folders.satz` and `presets/delegated-projects.satz` are the ready-made
+**delegation packs**: each stands in the organization's estate, creates what one kind of
+workload is given and grants the delegation's estate account its roles on it. What it
+creates stays in the organization's state; the workload estate builds inside it with
+**workload packs**, in its own state, and imports none of it. A workload with needs of its
+own ships its own pair: a delegation pack for the organization's estate, which the
+organization's team reviews, and a workload pack for the workload estate.
 
 **Every delegation has an infrastructure project of its own.** The account and the state
 bucket stand in it, never in a project the team fills. A delegated project holds no
@@ -287,14 +295,14 @@ given, and no transpile writes there. The organization's
 state.
 
 **The folders explain themselves.** Each has a `README.md` that satz writes for the team
-that receives it. In the delegation's own folder, "Delegated access: what you were given"
-says which estate account the workload estate runs as, which estate account user group's
-members may act as it and what that group holds on the account, which infrastructure project its calls are billed to, where the
-state lives, which billing account a new project is linked to, what the account holds on
-the billing account, and which APIs are on. In a delegated resource's folder it says which delegated
-folder or delegated project to build in and what the account holds there. Under "What to do with it" each
-lists the team's next steps, and the first is the command of step 6. Nothing else has to
-be written down to copy the folders.
+that receives it. Its section "For a workload's team" lists each export of the folder's
+interface with its value — the literal, or "looked up" for one the workload estate's plan
+reads — and its description, as the delegation pack declares them: in the delegation's own
+folder the estate account, its estate account user group, the infrastructure project, the
+state bucket; in a delegated resource's folder the folder or project to build in and what
+the account holds there. Under "What to do with it" it lists the team's next steps, and
+the first is the command of step 6. Nothing else has to be written down to copy the
+folders.
 
 
 Say one thing with it: the folders are taken again after every change of the
@@ -407,8 +415,8 @@ use "interfaces/incoming/data-lake/data-lake/satz/interface.satz"
 use "interfaces/incoming/data-mart/data-mart/satz/interface.satz"
 
 // The estate's own resources. A value is read by the name of its interface folder:
-//   in the delegated project `data-lake`:    project   = "${{interface.data-lake.project_id}}"
-//   in the delegated project `data-mart`:    project   = "${{interface.data-mart.project_id}}"
+//   in the project `data-lake`:  project = "${{interface.data-lake.project_id}}"
+//   in the project `data-mart`:  project = "${{interface.data-mart.project_id}}"
 ```
 
 Each resource says which project it stands in by the folder's name:
@@ -443,19 +451,32 @@ delegation's bucket, each under its own name.
 satz transpile shop.satz --check
 ```
 
-The transpile judges the estate against what was delegated. It is quiet when everything
-the estate needs was delegated. Otherwise each line says who closes it:
+The transpile checks no role in a workload estate: the account's roles are the
+organization's to grant, through the delegation pack that created what the estate builds in
+([ADR 0101](adr/0101-a-delegation-is-two-packs-and-a-workload-estate-has-no-rights-check.md)).
+It checks the APIs of the projects the estate declares itself, as for any estate. The roles
+its resource types need are a list for the organization's team:
 
-| the line says | who acts | what to do |
-|---|---|---|
-| `… on the delegated folders` | organization's team | ask for the role; it is added to the folder roles, `delegated_folders_roles` |
-| `… on the billing account` | organization's team | ask for it in `billing_roles` of the delegation's entry |
-| `… API(s) … not enabled on …, the project its calls are billed to` | organization's team | ask for it in `apis` of the delegation's entry: the project is the delegation's infrastructure project |
-| `… on the project — to grant in this estate` | workload's team | write the grant in this estate (below) |
-| `… outside the project` | nobody: this account does not get it | build it another way, or ask for a folder |
+```bash
+satz update-prerequisites shop.satz --report-only
+```
 
-The one gap a team closes itself is a role on a project it was given, because its account
-holds that project's access control:
+```
+a workload estate: its account's roles are the organization's to grant, through the delegation pack that created what this estate builds in, and are not checked here
+needed roles, for the organization's team:
+  roles/serviceusage.serviceUsageAdmin on the project — for google_project_service
+  roles/resourcemanager.projectCreator on the folder — for google_project
+  roles/billing.user or roles/billing.admin on the billing account — for google_project
+needed APIs on acme-deploy-shop, for the organization's team — its estate enables them there:
+  cloudresourcemanager.googleapis.com — for google_project
+```
+
+Each line names the roles, any one of which suffices, where the organization grants it and
+which resource types need it. Compare the list with what the README of each interface
+folder says the account holds; a role that is not there is asked for in step 1, and the
+organization's team adds it to the delegation pack. A role the account lacks at the apply
+is Google's refusal, naming the permission. On a project it was given the team may also grant
+its own account a role, because its account holds that project's access control:
 
 ```
 google_project_iam_member {
@@ -466,15 +487,8 @@ google_project_iam_member {
 }
 ```
 
-**An estate with several delegated resources.** The transpile does not judge which of them
-a resource stands in. A role counts as delegated when it was delegated on every one of its kind —
-on every delegated project the estate uses, on every delegated folder — and budgets count
-as delegated when every interface folder that speaks of budgets says yes. A role the
-account holds on one project and lacks on another is reported.
-
-`satz update-prerequisites shop.satz --report-only` prints the same as a list, with what
-was delegated. Nothing at the organization is ever proposed, and `satz update-prerequisites`
-writes no grant for a workload estate. `--apply` is refused while an API is missing.
+`satz update-prerequisites` writes no grant for a workload estate; it writes the APIs of the
+projects the estate declares itself.
 
 A note `presets/pack-graph.json is not here` is about the organization's preset library,
 which a workload repository does not hold. It asks nothing of the team.
@@ -496,8 +510,9 @@ use "packs/project-budget.satz"
 
 **A pack may switch on the APIs it adds.** The organization switched on the standard ones
 (the interface folder lists them); a pack declares the others in the project itself, and
-the account's role on its project allows it. Declaring one the organization already
-switched on is reported: two estates would own one switch.
+the account's role on its project allows it. A pack declares no API the organization
+already switched on: two estates would then own one switch, and taking it out of either
+switches the API off for both.
 
 ## 8. Workload's team: be in the group, and sign in
 

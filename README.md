@@ -383,9 +383,11 @@ for that project or folder, with nothing on the billing account
 `packs/project-budget.satz` is the budget itself.
 
 Each pack publishes what it delegated in an interface the workload estate reads —
-`delegation-<name>` for the base, `<name>` for each delegated resource — and the transpile judges that
-estate against them ([What an estate must
-declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [workload estates beside
+`delegation-<name>` for the base, `<name>` for each delegated resource. The two packs are the
+ready-made delegation packs: a delegation pack stands in the organization's estate, creates
+what one kind of workload is given and grants the delegation's estate account its roles on
+it; the workload estate builds inside it with workload packs and checks no role ([What an
+estate must declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [workload estates beside
 the organization](docs/tutorial-projects.md) says which delegated resource is for whom and walks both;
 [delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organization
 team and the workload's team follow, by side; the next section is the project pack in short.
@@ -623,43 +625,38 @@ halves are written before either is verified, so the estate is never left half-e
 A project declared outside the estate file (in a pack, which the next `merge-presets`
 would overwrite) is named with the APIs to add to it by hand, and nothing is written.
 
-**A workload estate is judged against what was delegated to it.** An estate that runs as
-an account the organization's estate created with `presets/delegation.satz` reads the
-interface `delegation-<name>`, which carries what that account holds beside its delegated resources —
-`delegated_billing_roles` on the billing account, and `delegated_apis` on its
-infrastructure project, the project its providers bill to — and the interface of each
-delegated resource, which carries what it holds there: `delegated_folder_roles` on a folder
-(`presets/delegated-folders.satz`), `delegated_project_roles` on a project
-(`presets/delegated-projects.satz`). For such an estate:
+**A workload estate has no role check.** An estate that uses an interface folder is a
+workload estate: it runs as a delegation's estate account and builds inside what the
+organization's estate created for it — a folder, a project — with the delegation pack
+(`presets/delegated-folders.satz`, `presets/delegated-projects.satz`, or a pack of the
+workload's own) that grants the account its roles there. Those roles are the organization's
+to grant, so satz does not check them in the workload estate: no finding names a role, and
+`update-prerequisites` writes none. It lists, as information for the organization's team,
+the roles the estate's resource types need, by where each is granted — on the project, on
+the folder a created folder or project stands under, at the organization, on the billing
+account — and the APIs they need on the delegation's infrastructure project, which the
+organization's estate enables:
 
-- a need on a folder or a project is met by a delegated folder role, or by a role the
-  estate grants its own account on a folder or a project; a need on a project is met as
-  well by a role delegated on that project (`delegated_project_roles`), and when `roles/resourcemanager.projectCreator` was
-  delegated on a folder, because a project's creator is its owner. The folder roles count
-  for an estate that reads a folder's interface: an account without a folder creates no
-  project;
-- a need on the billing account is met by a delegated billing role;
-- an API on the infrastructure project is enabled when it was delegated; one on a project
-  the estate declares is its own `project_service` entry, as above;
-- the reads are not asked for: `import`, `adopt` and `report-compliance` over an
-  organization are not a workload's;
-- an estate that works in several delegated resources is not judged one by one: a role counts as
-  delegated when it was delegated on every one of its kind the estate uses — on every
-  delegated folder, on every delegated project — and budgets count as delegated when every
-  interface folder that speaks of budgets says yes.
+```
+a workload estate: its account's roles are the organization's to grant, through the delegation pack that created what this estate builds in, and are not checked here
+needed roles, for the organization's team:
+  roles/serviceusage.serviceUsageAdmin on the project — for google_project_service
+  roles/resourcemanager.projectCreator on the folder — for google_project
+  roles/billing.user or roles/billing.admin on the billing account — for google_project
+needed APIs on acme-deploy-shop, for the organization's team — its estate enables them there:
+  cloudresourcemanager.googleapis.com — for google_project
+```
 
-What is not delegated is reported as what to ask the organization's estate for — a role in
-`delegated_folders_roles`, a role in the delegation's `billing_roles`, an API in the `apis` of
-the delegation, whose infrastructure project the calls are billed to — and nothing at the
-organization is ever proposed: the account could not apply such a grant. A role the
-account lacks on a project it was given is the one thing it closes itself, with a
-`google_project_iam_member` on the interface's `project_id` in its own estate; the finding
-says so on that line. `update-prerequisites` writes the APIs of the estate's own projects, writes nothing
-for what was not delegated, and exits non-zero while anything is; `transpile --apply`
-refuses while an API is not delegated. `whoami <estate>` tests the billing account live
-and names the rest as judged against what was delegated. An estate that reads an interface
-without these exports is judged at the organization as before, and a note says so
-([ADR 0087](docs/adr/0087-a-workload-estate-is-judged-against-what-was-delivered-to-its-account.md)).
+In `--format json` the report carries `workload: true`, `needed_roles` — one object per
+role, `{ scope, roles, permission, reason }`, `scope` one of `project`, `folder`,
+`organization`, `billing_account`, `workspace`, `roles` the alternatives of which any one
+suffices — and `needed_apis`, with `missing` and `write` empty. The reads of `import`,
+`adopt` and `report-compliance` are not listed: they are not a workload's. A role that is
+missing is Google's refusal at the apply. The APIs of the projects the workload estate
+declares itself are checked and written as for any estate. `whoami <estate>` tests the
+billing account live and leaves the rest untested. The organization's estate and the
+bootstrap keep the full check
+([ADR 0101](docs/adr/0101-a-delegation-is-two-packs-and-a-workload-estate-has-no-rights-check.md)).
 
 **Every transpile checks the same**, at the [validation level](#schema-validation): `warn`
 (the default) prints the missing roles and APIs with the `update-prerequisites` command

@@ -57,13 +57,11 @@ const EXAMPLE_PARAMS: &[(&str, &str)] = &[
 const REASON: usize = 80;
 
 /// The example value of an interface export a pack reads, for the review's stand-in
-/// interface: the documented examples (`docs/examples.md`), by the export's name.
+/// interface: the documented examples (`docs/examples.md`) for the core exports every
+/// interface carries (`presets/estate-core.satz`), and `example` for every other — what an
+/// interface of the organization's estate exports is its packs' choice, not satz's.
 fn example_export(name: &str) -> &'static str {
     match name {
-        "project_id" => "acme-payments-001",
-        "project_number" => "100000000001",
-        "billing_account" => "012345-6789AB-CDEF01",
-        "delegated_folder" => "folders/222222222222",
         "organization_id" => "123456789012",
         "customer_domain" => "example.com",
         "customer_shortname" => "acme",

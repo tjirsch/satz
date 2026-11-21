@@ -1,6 +1,7 @@
-// Delegated access to projects: the Google projects a delegation's account works in, and its
-// roles on those projects alone. A project is a Google project this estate creates; the
-// team's own estate, in its own repository, fills it. The account is the base's
+// The ready-made delegation pack for projects: the Google projects a delegation's account
+// works in, and its roles on those projects alone. It stands in the organization's estate,
+// which creates each project and keeps it in its state; the workload estate, in its own
+// repository, builds inside it as that account, with a workload pack of its own. The account is the base's
 // (`presets/delegation.satz`): each entry here names the delegation whose account works in
 // the project.
 //
@@ -32,8 +33,9 @@
 //
 // WHAT THE WORKLOAD ESTATE READS. The interface `<name>`, taken beside the delegation's own:
 // `project_id` (an attach point for `google_project_iam_member`), `project_number`,
-// `delegated_project_roles` and `delegated_budgets`, which `satz` judges the estate's
-// needs against. One estate reads one project's interface: an account that works in two
+// `delegated_project_roles` and `delegated_budgets`, which tell the workload's team what the
+// account holds — satz checks no role in a workload estate. One estate reads one project's
+// interface: an account that works in two
 // projects is worked in by two estates that run as the same estate account. A project's name is
 // an interface's name: no folder of `presets/delegated-folders.satz` may carry the same.
 //

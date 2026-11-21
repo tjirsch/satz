@@ -2631,6 +2631,10 @@ impl SatzMcp {
                        it) and the APIs not enabled on the project their resources' calls are billed to \
                        (`missing_apis`, each with its `project` and the types that need it; `enable_missing_apis` \
                        one `gcloud services enable` line per project). `unknown_types` are written types the table has no row for. \
+                       A workload estate (`workload`: it uses an interface file) is not checked for roles: \
+                       `needed_roles` lists what its resource types need, by where each is granted, and \
+                       `needed_apis` the APIs on the delegation's infrastructure project — the organization's \
+                       estate grants and enables them. \
                        Offline. It WRITES both into the estate file by default and re-checks — a gap that \
                        survives the write restores the file — so the default needs 'write'; pass `report_only` \
                        to list the gap instead, which needs only 'read'.",
@@ -2661,18 +2665,6 @@ impl SatzMcp {
             Ok(r) => r,
             Err(e) => return Ok(Err(refused(format!("update-prerequisites: {}", e)))),
         };
-        // A workload estate writes the APIs of its own projects alone. With nothing of
-        // that kind to write, a call that asked for the write is refused while something
-        // was not delegated to its account: "nothing written" would read as "nothing
-        // missing", and the caller has to be told whom to ask.
-        if !args.report_only && report.writable_gap() == 0 && !report.request.is_empty() {
-            return Ok(Err(refused(format!(
-                "update-prerequisites: {} prerequisite(s) are not delegated to {} — the organization's estate adds what it lacks (`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz`), a role on a project it was given the estate grants itself, and nothing is written for them:\n  {}",
-                report.request.len(),
-                report.service_account,
-                report.request.join("\n  ")
-            ))));
-        }
         if args.report_only || report.writable_gap() == 0 {
             return Ok(Ok(Json(PrerequisitesResult { report, written: Vec::new() })));
         }

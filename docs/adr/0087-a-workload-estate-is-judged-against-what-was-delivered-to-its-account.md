@@ -1,6 +1,6 @@
 # 0087 — a workload's estate is judged against what was delivered to its account
 
-- **Status:** accepted
+- **Status:** superseded by [ADR 0101](0101-a-delegation-is-two-packs-and-a-workload-estate-has-no-rights-check.md): a workload estate's roles are the organization's to grant and are listed, not checked
 - **Date:** 2026-11-11
 
 ## Context

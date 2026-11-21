@@ -2507,9 +2507,9 @@ struct PipelineBOut {
     interface_tf: String,
     /// what the references in `providers_tf` stand for, for the billing check
     names: crate::prerequisites::Names,
-    /// what the organization's estate delegated to this estate's account, when the estate
-    /// is a workload's: read from the interface file it uses
-    delegation: Option<crate::prerequisites::Delegation>,
+    /// the estate uses an interface file: a workload estate, whose roles are the organization's
+    /// to grant (ADR 0101)
+    workload: bool,
     /// What `main_tf` contains, as structure (resource blocks only — the raw
     /// `hcl { … }` passthrough is text appended afterwards and is not in it,
     /// which is exactly the "opaque to the proof layer" contract). Every
@@ -2854,7 +2854,7 @@ fn pipeline_b_compile_using(
     };
     let descriptions = question_descriptions(&fe);
     Ok(PipelineBOut {
-        delegation: crate::prerequisites::delegation(&fe.interface_files),
+        workload: !fe.interface_files.is_empty(),
         actions: fe.actions,
         main_tf: append_hcl_passthrough(out.main_tf, &fe.hcl),
         interface_tf: out.interface_tf,
@@ -3090,25 +3090,8 @@ pub(crate) fn compile_tail(
         (judged, written)
     };
     let providers_tf = providers_written;
-    // An interface written before v0.98.0 names what was delegated `delivered_…`. Read as it
-    // is, it would say nothing and the estate would be judged at the organization: refused.
-    for (file, line, export) in crate::prerequisites::written_before_delegated(&fe.interface_files) {
-        f.push(
-            crate::findings::Finding::new(
-                crate::findings::Severity::Error,
-                crate::findings::Kind::Prerequisites,
-                format!(
-                    "the interface file exports `{}`: it was written by satz before v0.98.0, which names what was delegated \
-                     `delegated_…`. Take the folder again from the organization's estate, transpiled with this satz — \
-                     a copy with the old names says nothing of what the account was given",
-                    export
-                ),
-            )
-            .located(file, line as u32),
-        );
-    }
-    let reads = Reads { delegation: crate::prerequisites::delegation(&fe.interface_files), interface: !fe.interface_files.is_empty() };
-    prerequisite_findings(&out.manifest, providers_judged.as_deref(), &out.names, &fe.env, &reads, estate, estate_arg, estate_src, level, &mut f);
+    let workload = !fe.interface_files.is_empty();
+    prerequisite_findings(&out.manifest, providers_judged.as_deref(), &out.names, &fe.env, workload, estate, estate_arg, estate_src, level, &mut f);
     f.extend(pack_findings);
     f.extend(crate::notices::compile_findings(&fe.notices, &fe.env, estate, estate_arg, estate_src, crate::notices::Doing::Reading));
     match graph {
@@ -3489,17 +3472,18 @@ fn bound_param(file: &str, line: u32, attribute: &str) -> Option<String> {
 /// project, an unbound service account — is a note naming what is missing: a
 /// check that says nothing reads as a check that passed.
 ///
-/// A workload estate — one that reads an interface carrying what was delegated to its
-/// account — is judged against that delegation, and what is missing is worded as what to
-/// ask the organization's estate for: its account can grant itself nothing there, and
-/// the project its calls are billed to is not its own to declare (ADR 0087).
+/// A workload estate — one that uses an interface file — gets no role half: its account's
+/// roles are granted by the organization's estate, through the delegation pack that created
+/// what the workload builds in, and a missing one is Google's refusal at the apply. Its API
+/// half judges its own projects; the project its calls are billed to, the delegation's
+/// infrastructure project, is the organization's estate's to declare (ADR 0101).
 #[allow(clippy::too_many_arguments)]
 fn prerequisite_findings(
     manifest: &crate::manifest::Manifest,
     providers_tf: Option<&str>,
     names: &crate::prerequisites::Names,
     env: &satz_core::pipeline::Env,
-    reads: &Reads,
+    workload: bool,
     estate: &Path,
     estate_arg: &str,
     estate_src: &str,
@@ -3519,29 +3503,20 @@ fn prerequisite_findings(
              and it is what names the project each provider bills its calls to",
         )),
         Some(Err(e)) => f.push(Finding::new(Severity::Error, Kind::Prerequisites, e)),
-        Some(Ok(billing)) => api_findings(manifest, &billing, reads.delegation.as_ref(), sev, update, estate_arg, f),
+        Some(Ok(billing)) => api_findings(manifest, &billing, workload, sev, update, estate_arg, f),
     }
-    prerequisite_role_findings(manifest, get, reads, estate, estate_arg, estate_src, sev, update, f);
+    if !workload {
+        prerequisite_role_findings(manifest, get, estate, estate_arg, estate_src, sev, update, f);
+    }
 }
 
-/// What an estate reads from an organization's estate, as far as the prerequisite check
-/// is concerned.
-#[derive(Debug, Clone, Default)]
-struct Reads {
-    /// what was delegated to its account; `None` for an organization's estate
-    delegation: Option<crate::prerequisites::Delegation>,
-    /// whether it uses an interface file at all
-    interface: bool,
-}
-
-/// Where a workload's account gets what it lacks: the lists of the pack that created it.
-const ASK_THE_ORGANIZATION: &str = "`presets/delegation.satz`, `presets/delegated-folders.satz` or `presets/delegated-projects.satz` in the organization's estate";
-
-/// The API half of [`prerequisite_findings`].
+/// The API half of [`prerequisite_findings`]. A workload estate's APIs on the project its
+/// calls are billed to are not judged: that project is the delegation's infrastructure
+/// project, which the organization's estate declares.
 fn api_findings(
     manifest: &crate::manifest::Manifest,
     billing: &crate::prerequisites::Billing,
-    delegation: Option<&crate::prerequisites::Delegation>,
+    workload: bool,
     sev: crate::findings::Severity,
     update: &str,
     estate_arg: &str,
@@ -3549,50 +3524,7 @@ fn api_findings(
 ) {
     use crate::findings::{Finding, Kind, Severity};
     let check = crate::prerequisites::apis(manifest, billing);
-    let check = match delegation {
-        Some(d) => check.with_delegation(billing.default_project(), d),
-        None => check,
-    };
-    // a workload's infrastructure project is for the organization's estate to declare:
-    // an API missing there is asked for, never written
-    let (not_delegated, missing): (Vec<_>, Vec<_>) =
-        check.missing().into_iter().partition(|a| delegation.is_some() && Some(a.project.as_str()) == billing.default_project());
-    if let Some(d) = delegation {
-        let doubled = crate::prerequisites::doubled_apis(manifest, billing.default_project(), d);
-        if !doubled.is_empty() {
-            f.push(Finding::new(
-                sev,
-                Kind::Prerequisites,
-                format!(
-                    "{} API(s) are switched on twice on {}: the organization's estate already switched them on \
-                     (the interface `{}` says so), and this estate declares them again. Remove the \
-                     declaration here — two estates then own one switch, and taking it out of either \
-                     switches the API off for both:\n  {}",
-                    doubled.len(),
-                    billing.default_project().unwrap_or_default(),
-                    d.interface,
-                    doubled.iter().map(|(address, api)| format!("{} — {}", api, address)).collect::<Vec<_>>().join("\n  ")
-                ),
-            ));
-        }
-    }
-    if let (Some(d), false) = (delegation, not_delegated.is_empty()) {
-        f.push(Finding::new(
-            sev,
-            Kind::Prerequisites,
-            format!(
-                "{} API(s) this estate's resources need are not enabled on {}, the project its calls are \
-                 billed to. That project belongs to the organization's estate: ask for each to be added to the \
-                 `apis` of the delegation's entry in `delegations` ({}); the interface `{}` says what is \
-                 delegated:\n  {}",
-                not_delegated.len(),
-                billing.default_project().unwrap_or_default(),
-                ASK_THE_ORGANIZATION,
-                d.interface,
-                not_delegated.iter().map(|a| format!("{} — needed by {}", a.api, a.reason.join(", "))).collect::<Vec<_>>().join("\n  ")
-            ),
-        ));
-    }
+    let missing: Vec<_> = check.missing().into_iter().filter(|a| !(workload && Some(a.project.as_str()) == billing.default_project())).collect();
     if !missing.is_empty() {
         f.push(
             Finding::new(
@@ -3647,7 +3579,6 @@ fn api_findings(
 fn prerequisite_role_findings(
     manifest: &crate::manifest::Manifest,
     get: impl Fn(&str) -> Option<String> + Copy,
-    reads: &Reads,
     estate: &Path,
     estate_arg: &str,
     estate_src: &str,
@@ -3675,50 +3606,8 @@ fn prerequisite_role_findings(
         ));
         return;
     };
-    let (needs, unknown) = crate::prerequisites::needs_of(manifest, reads.delegation.is_none());
+    let (needs, unknown) = crate::prerequisites::needs(manifest);
     let granted = crate::prerequisites::granted(manifest, &sa);
-    if let Some(d) = &reads.delegation {
-        let missing = crate::prerequisites::not_delegated(&needs, &granted, d);
-        if !missing.is_empty() {
-            f.push(
-                Finding::new(
-                    sev,
-                    Kind::Prerequisites,
-                    format!(
-                        "the account {} was not delegated roles this estate's resource types need. It holds \
-                         what the interface `{}` says and can grant itself nothing above its own projects: \
-                         a role on a project it was given it grants itself in this estate \
-                         (`google_project_iam_member` on the interface's `project_id`); ask for a role on \
-                         the delegated folders to be added to `delegated_folders_roles`, and for one on the \
-                         billing account to `billing_roles` of the delegation's entry in `delegations` \
-                         ({}):\n  {}",
-                        sa,
-                        d.interface,
-                        ASK_THE_ORGANIZATION,
-                        crate::prerequisites::describe_not_delegated(&missing, d).join("\n  ")
-                    ),
-                )
-                .maybe_at(estate.to_string_lossy().into_owned(), crate::findings::param_line(estate_src, "svc_iac_account")),
-            );
-        }
-        if !unknown.is_empty() {
-            f.push(Finding::new(
-                Severity::Info,
-                Kind::Prerequisites,
-                format!("no role is known for {} — whether the account may create it is not checked", unknown.into_iter().collect::<Vec<_>>().join(", ")),
-            ));
-        }
-        return;
-    }
-    if reads.interface {
-        f.push(Finding::new(
-            Severity::Info,
-            Kind::Prerequisites,
-            "this estate reads an interface that says nothing of what was delegated to its account (no \
-             `delegated_folder_roles`), so its roles are judged at the organization, as an organization's \
-             account is",
-        ));
-    }
     let missing = crate::prerequisites::missing(&needs, &granted);
     if !missing.is_empty() {
         f.push(
@@ -3851,22 +3740,20 @@ pub(crate) fn iac_probe(
     let out = pipeline_b_compile(path, tool_config, runtime_config, PrerequisiteFindings::Quiet, FindingsOutput::Stderr)?;
     let params = estate_param_strings(path, runtime_config)?;
     let get = |k: &str| params.get(k).filter(|v| !v.is_empty()).cloned();
-    // A workload's account holds its roles on its own folders, whose ids exist only once
-    // the plan has looked them up: the live test covers the billing account, and the
-    // rest is judged against what was delegated.
-    let (needs, skipped) = match &out.delegation {
-        Some(d) => (
+    // A workload's account holds its roles on what its delegation pack created, whose ids
+    // exist only once the plan has looked them up, and none at the organization: the live
+    // test covers the billing account, and the rest is listed, not tested.
+    let (needs, skipped) = if out.workload {
+        (
             crate::prerequisites::needs_of(&out.manifest, false)
                 .0
                 .into_iter()
                 .filter(|n| matches!(n.scope, crate::prerequisites::Scope::BillingAccount | crate::prerequisites::Scope::Workspace))
                 .collect(),
-            vec![format!(
-                "the permissions on folders and projects: a workload's account holds them on its own folders — judged against what the interface `{}` delegates, by `satz update-prerequisites --report-only`",
-                d.interface
-            )],
-        ),
-        None => (crate::prerequisites::needs(&out.manifest).0, Vec::new()),
+            vec!["the permissions on folders and projects: a workload estate's account holds them on what the organization's estate created for it — `satz update-prerequisites --report-only` lists the roles its resource types need".to_string()],
+        )
+    } else {
+        (crate::prerequisites::needs(&out.manifest).0, Vec::new())
     };
     Ok(crate::prerequisites::Probe {
         needs,
@@ -3888,28 +3775,14 @@ fn require_apis_declared(report: &PrerequisitesReport, action: &str) -> Result<(
         return Ok(());
     }
     let list = |apis: &[crate::prerequisites::ApiNeed]| apis.iter().map(|a| format!("{} on {}", a.api, a.project)).collect::<Vec<_>>().join(", ");
-    let writable = report.writable_apis();
-    let mut why = Vec::new();
-    if !report.not_delegated_apis.is_empty() {
-        why.push(format!(
-            "{} API(s) this estate's resources need are not enabled on the project its calls are billed to — {}. That \
-             project belongs to the organization's estate: ask for each to be added to the `apis` of the entry that \
-             created it ({}).",
-            report.not_delegated_apis.len(),
-            list(&report.not_delegated_apis),
-            ASK_THE_ORGANIZATION
-        ));
-    }
-    if !writable.is_empty() {
-        why.push(format!(
-            "{} API(s) this estate's resources need are not enabled on the project their \
-             calls are billed to — {}. `satz update-prerequisites {}` writes them into the estate.",
-            writable.len(),
-            list(&writable),
-            Path::new(&report.estate).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
-        ));
-    }
-    Err(format!("{} refused: {}", action, why.join(" ")))
+    Err(format!(
+        "{} refused: {} API(s) this estate's resources need are not enabled on the project their calls are billed to — {}. \
+         `satz update-prerequisites {}` writes them into the estate.",
+        action,
+        report.missing_apis.len(),
+        list(&report.missing_apis),
+        Path::new(&report.estate).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+    ))
 }
 
 /// What `update-prerequisites <estate>` reports: both halves of what the estate's
@@ -3924,18 +3797,21 @@ pub(crate) struct PrerequisitesReport {
     /// every API the written types need, per project their provider bills the
     /// calls to, each marked declared there or not
     pub apis: Vec<crate::prerequisites::ApiNeed>,
-    /// the APIs a billed project does not enable — what the write adds, but for
-    /// `not_delegated_apis`
+    /// the APIs a billed project does not enable — what the write adds. For a workload
+    /// estate, its own projects alone: the default provider's project is `needed_apis`
     pub missing_apis: Vec<crate::prerequisites::ApiNeed>,
-    /// a workload estate alone: the ones of `missing_apis` on its infrastructure
-    /// project, which the organization's estate declares. Asked for, never written
-    pub not_delegated_apis: Vec<crate::prerequisites::ApiNeed>,
-    /// a workload estate alone: what was delegated to its account, which `needs` are
-    /// judged against. `missing` is then what was not delegated, and `write` is empty
-    pub delegation: Option<crate::prerequisites::Delegation>,
-    /// a workload estate alone: what to ask the organization's estate for, one line
-    /// per role and API
-    pub request: Vec<String>,
+    /// the estate uses an interface file: a workload estate. Its account's roles are the
+    /// organization's estate's to grant, through the delegation pack that created what it
+    /// builds in, so they are not checked: `missing` and `write` are empty, and
+    /// `needed_roles` and `needed_apis` list what its resource types need (ADR 0101)
+    pub workload: bool,
+    /// a workload estate alone: the roles its resource types need, by where each is
+    /// granted, for the organization's team — information, never checked or written
+    pub needed_roles: Vec<crate::prerequisites::NeededRole>,
+    /// a workload estate alone: the APIs its resources need on the default provider's
+    /// project, the delegation's infrastructure project, that it does not declare — the
+    /// organization's estate enables them there
+    pub needed_apis: Vec<crate::prerequisites::ApiNeed>,
     /// the types whose APIs were not judged, by the provider that serves them:
     /// it names no billing project
     pub unbilled: Vec<crate::prerequisites::Unbilled>,
@@ -3964,16 +3840,11 @@ pub(crate) struct PrerequisitesReport {
 }
 
 impl PrerequisitesReport {
-    /// The missing APIs the estate can declare itself: on a project of its own.
-    pub(crate) fn writable_apis(&self) -> Vec<crate::prerequisites::ApiNeed> {
-        self.missing_apis.iter().filter(|a| !self.not_delegated_apis.contains(a)).cloned().collect()
-    }
-
     /// How many declarations `update-prerequisites` would write: the roles and the APIs
     /// on the estate's own projects.
     pub(crate) fn writable_gap(&self) -> usize {
         let (org, bill) = crate::prerequisites::to_write(&self.write);
-        org.len() + bill.len() + self.writable_apis().len()
+        org.len() + bill.len() + self.missing_apis.len()
     }
 }
 
@@ -4002,45 +3873,31 @@ pub(crate) fn prerequisites_report(
             path.display()
         )
     })?;
-    let (needs, unknown) = crate::prerequisites::needs_of(&out.manifest, out.delegation.is_none());
+    let workload = out.workload;
+    let (needs, unknown) = crate::prerequisites::needs_of(&out.manifest, !workload);
     let granted = crate::prerequisites::granted(&out.manifest, &sa);
-    let missing = match &out.delegation {
-        Some(d) => crate::prerequisites::not_delegated(&needs, &granted, d),
-        None => crate::prerequisites::missing(&needs, &granted),
-    };
+    // a workload's account is granted by the organization's estate: nothing is missing here,
+    // and nothing is written
+    let missing = if workload { Vec::new() } else { crate::prerequisites::missing(&needs, &granted) };
     let infra = params.get("infra_project_name").cloned().unwrap_or_default();
     let billing = crate::prerequisites::Billing::parse(&out.providers_tf, &out.names)?;
     let check = crate::prerequisites::apis(&out.manifest, &billing);
-    let check = match &out.delegation {
-        Some(d) => check.with_delegation(billing.default_project(), d),
-        None => check,
-    };
-    let missing_apis = check.missing();
-    let not_delegated_apis: Vec<crate::prerequisites::ApiNeed> = missing_apis
-        .iter()
-        .filter(|a| out.delegation.is_some() && Some(a.project.as_str()) == billing.default_project())
-        .cloned()
-        .collect();
-    let request: Vec<String> = match &out.delegation {
-        Some(d) => crate::prerequisites::describe_not_delegated(&missing, d)
-            .into_iter()
-            .chain(not_delegated_apis.iter().map(|a| format!("{} on {} — for {}", a.api, a.project, a.reason.join(", "))))
-            .collect(),
-        None => Vec::new(),
-    };
+    // a workload's default provider's project is the delegation's infrastructure project,
+    // which the organization's estate declares
+    let (needed_apis, missing_apis): (Vec<_>, Vec<_>) =
+        check.missing().into_iter().partition(|a| workload && Some(a.project.as_str()) == billing.default_project());
     Ok(PrerequisitesReport {
-        request,
         estate: path.display().to_string(),
         service_account: sa,
         default_billing_project: billing.default_project().unwrap_or_default().to_string(),
-        // the lines for the projects the estate declares itself: a workload's
-        // infrastructure project is switched on by the organization's estate
-        enable_missing_apis: crate::prerequisites::by_project(&missing_apis.iter().filter(|a| !not_delegated_apis.contains(a)).cloned().collect::<Vec<_>>())
+        enable_missing_apis: crate::prerequisites::by_project(&missing_apis)
             .into_iter()
             .map(|(project, apis)| crate::prerequisites::enable_command(&project, &apis.into_iter().collect::<Vec<_>>()))
             .collect(),
-        not_delegated_apis,
         missing_apis,
+        needed_apis,
+        needed_roles: if workload { crate::prerequisites::needed_roles(&needs) } else { Vec::new() },
+        workload,
         apis: check.needs,
         unbilled: check.unbilled,
         infra_services: if infra.is_empty() {
@@ -4051,9 +3908,7 @@ pub(crate) fn prerequisites_report(
         compute_deferral: crate::prerequisites::compute_deferral(&out.manifest),
         infra_project: infra,
         unknown_types: if granted.owner() { Vec::new() } else { unknown.into_iter().collect() },
-        // a workload's account is granted by the organization's estate: nothing to write here
-        write: if out.delegation.is_some() { Vec::new() } else { crate::prerequisites::plan(&missing, &granted) },
-        delegation: out.delegation,
+        write: crate::prerequisites::plan(&missing, &granted),
         granted,
         needs,
         missing,
@@ -4062,44 +3917,44 @@ pub(crate) fn prerequisites_report(
 
 fn render_prerequisites(r: &PrerequisitesReport) -> String {
     let mut out = format!("estate account: {}\n", r.service_account);
-    match &r.delegation {
-        Some(d) => {
-            out.push_str(&format!(
-                "a workload's account: the interface `{}` delegates {} role(s) on its folders, {} on its project, {} on the billing account and {} API(s) on the project its calls are billed to; the estate grants it {} more on its own folders and projects; its resource types need {} permission(s)\n",
-                d.interface,
-                d.folder_roles.len(),
-                d.project_roles.len(),
-                d.billing_roles.len(),
-                d.apis.len(),
-                r.granted.own.len(),
-                r.needs.iter().filter(|n| n.permission.is_some()).count()
-            ));
-            if r.request.is_empty() {
-                out.push_str("not delegated: none\n");
-            } else {
-                out.push_str(&format!("not delegated — to ask for in {}, or to grant in this estate where a line says so:\n", ASK_THE_ORGANIZATION));
-                for l in &r.request {
-                    out.push_str(&format!("  {}\n", l));
-                }
+    if r.workload {
+        out.push_str(
+            "a workload estate: its account's roles are the organization's to grant, through the delegation pack \
+             that created what this estate builds in, and are not checked here\n",
+        );
+        let listed: Vec<&crate::prerequisites::NeededRole> =
+            r.needed_roles.iter().filter(|n| n.scope != crate::prerequisites::Grant::Workspace).collect();
+        if listed.is_empty() {
+            out.push_str("needed roles: none\n");
+        } else {
+            out.push_str("needed roles, for the organization's team:\n");
+            for n in listed {
+                let at = match n.scope {
+                    crate::prerequisites::Grant::Project => "on the project",
+                    crate::prerequisites::Grant::Folder => "on the folder",
+                    crate::prerequisites::Grant::Organization => "at the organization",
+                    crate::prerequisites::Grant::BillingAccount => "on the billing account",
+                    crate::prerequisites::Grant::Workspace => unreachable!("filtered above"),
+                };
+                out.push_str(&format!("  {} {} — for {}\n", n.roles.join(" or "), at, n.reason.join(", ")));
             }
         }
-        None => {
-            out.push_str(&format!(
-                "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
-                r.granted.organization.len(),
-                r.granted.billing_account.len(),
-                r.needs.iter().filter(|n| n.permission.is_some()).count()
-            ));
-            if r.granted.owner() {
-                out.push_str("roles/owner at the organization meets every organization and project need\n");
-            }
-            if r.missing.is_empty() {
-                out.push_str("missing: none\n");
-            } else {
-                out.push_str("missing:\n");
-                for l in crate::prerequisites::describe(&r.write) {
-                    out.push_str(&format!("  {}\n", l));
-                }
+    } else {
+        out.push_str(&format!(
+            "the estate grants it {} role(s) at the organization and {} on the billing account; satz's reads and its resource types need {} permission(s)\n",
+            r.granted.organization.len(),
+            r.granted.billing_account.len(),
+            r.needs.iter().filter(|n| n.permission.is_some()).count()
+        ));
+        if r.granted.owner() {
+            out.push_str("roles/owner at the organization meets every organization and project need\n");
+        }
+        if r.missing.is_empty() {
+            out.push_str("missing: none\n");
+        } else {
+            out.push_str("missing:\n");
+            for l in crate::prerequisites::describe(&r.write) {
+                out.push_str(&format!("  {}\n", l));
             }
         }
     }
@@ -4118,8 +3973,10 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             r.unknown_types.join(", ")
         ));
     }
-    // the other half: the APIs, each on the project its resources' calls are billed to
-    let projects: std::collections::BTreeSet<&str> = r.apis.iter().map(|a| a.project.as_str()).collect();
+    // the other half: the APIs, each on the project its resources' calls are billed to —
+    // for a workload estate its own projects; the default provider's is listed apart
+    let projects: std::collections::BTreeSet<&str> =
+        r.apis.iter().map(|a| a.project.as_str()).filter(|p| !(r.workload && *p == r.default_billing_project)).collect();
     for p in &projects {
         let here: Vec<&crate::prerequisites::ApiNeed> = r.apis.iter().filter(|a| a.project == *p).collect();
         let what = if *p == r.default_billing_project { "default provider's project" } else { "project" };
@@ -4142,18 +3999,22 @@ fn render_prerequisites(r: &PrerequisitesReport) -> String {
             }
         ));
     }
-    // the ones the estate declares itself; what was not delegated to a workload's
-    // infrastructure project stands above, under what to ask for
-    let writable = r.writable_apis();
-    if writable.is_empty() {
-        if projects.is_empty() && r.unbilled.is_empty() {
+    if !r.needed_apis.is_empty() {
+        out.push_str(&format!("needed APIs on {}, for the organization's team — its estate enables them there:\n", r.default_billing_project));
+        for a in &r.needed_apis {
+            out.push_str(&format!("  {} — for {}\n", a.api, a.reason.join(", ")));
+        }
+    }
+    // the ones the estate declares itself
+    if r.missing_apis.is_empty() {
+        if projects.is_empty() && r.unbilled.is_empty() && r.needed_apis.is_empty() {
             out.push_str("APIs: the resource types need none\n");
-        } else if !projects.is_empty() && r.not_delegated_apis.is_empty() {
+        } else if !projects.is_empty() {
             out.push_str("missing APIs: none\n");
         }
     } else {
         out.push_str("missing APIs:\n");
-        for a in &writable {
+        for a in &r.missing_apis {
             out.push_str(&format!("  {} on {} — for {}\n", a.api, a.project, a.reason.join(", ")));
         }
         // Declaring an API is not enabling it. `satz plan` and `satz apply`
@@ -4188,23 +4049,8 @@ fn run_update_prerequisites(
     // counted as DECLARATIONS the estate is missing — the roles the write would add
     // and the APIs beside them — not as permissions, of which one role can carry many
     let gap = report.writable_gap();
-    // what a workload's account lacks is for the organization's estate to delegate: said,
-    // never written, and an error either way — the estate cannot be applied as it is
-    let not_delegated = |r: &PrerequisitesReport| -> Result<(), Box<dyn std::error::Error>> {
-        if r.request.is_empty() {
-            return Ok(());
-        }
-        Err(format!(
-            "{} prerequisite(s) are not delegated to {} — the organization's estate adds what it lacks ({}), and a role on a project it was given the estate grants itself; nothing is written for them",
-            r.request.len(),
-            r.service_account,
-            ASK_THE_ORGANIZATION
-        )
-        .into())
-    };
     if gap == 0 {
-        emit(&report)?;
-        return not_delegated(&report);
+        return emit(&report);
     }
     if report_only {
         emit(&report)?;
@@ -4221,8 +4067,7 @@ fn run_update_prerequisites(
     for w in &written {
         println!("wrote {} → {}", w, path.display());
     }
-    emit(&after)?;
-    not_delegated(&after)
+    emit(&after)
 }
 
 /// Write the missing roles AND the missing APIs into the estate, then re-check:
@@ -4240,17 +4085,6 @@ pub(crate) fn prerequisites_write(
     prerequisites: PrerequisiteFindings,
 ) -> Result<(Vec<String>, PrerequisitesReport), Box<dyn std::error::Error>> {
     let (org, bill) = crate::prerequisites::to_write(&report.write);
-    // A workload estate grants nothing at the organization or on the billing account:
-    // its account could not apply the grant, and what it holds is the organization's
-    // estate's decision. The report never asks for one; this holds whoever calls.
-    if report.delegation.is_some() && !(org.is_empty() && bill.is_empty()) {
-        return Err(format!(
-            "{}: a workload estate writes no grant at the organization or on the billing account — what its account lacks is asked for in {}",
-            path.display(),
-            ASK_THE_ORGANIZATION
-        )
-        .into());
-    }
     let params = estate_param_strings(path, runtime_config)?;
     let before = fsx::read_to_string(path)?;
     let restore = |why: String| -> Box<dyn std::error::Error> {
@@ -4260,18 +4094,17 @@ pub(crate) fn prerequisites_write(
         }
     };
     let mut written = crate::prerequisites::write_grants(path, &params, &report.service_account, &org, &bill)?;
-    match crate::prerequisites::write_apis(path, &params, &crate::prerequisites::by_project(&report.writable_apis())) {
+    match crate::prerequisites::write_apis(path, &params, &crate::prerequisites::by_project(&report.missing_apis)) {
         Ok(lines) => written.extend(lines),
         // the roles may already be on disk, so a refusal here restores the file
         // rather than leaving the estate half-written
         Err(e) => return Err(restore(e)),
     }
     match prerequisites_report(path, tool_config, runtime_config, prerequisites) {
-        // what was not delegated to a workload's account is not this write's to close
-        Ok(after) if after.writable_gap() == 0 && (after.delegation.is_some() || after.missing.is_empty()) => Ok((written, after)),
+        Ok(after) if after.writable_gap() == 0 && after.missing.is_empty() => Ok((written, after)),
         Ok(after) => Err(restore(format!(
             "the declarations were written and {} prerequisite(s) are still missing",
-            if after.delegation.is_some() { after.writable_gap() } else { after.missing.len() + after.missing_apis.len() }
+            after.missing.len() + after.missing_apis.len()
         ))),
         Err(e) => Err(restore(format!("the declarations were written and the estate no longer transpiles: {}", e))),
     }
@@ -7548,7 +7381,7 @@ mod prerequisite_findings_speak {
         let env: satz_core::pipeline::Env =
             params.iter().map(|(k, v)| ((*k).to_string(), serde_yaml::Value::from(*v))).collect();
         let mut f = Vec::new();
-        crate::prerequisite_findings(manifest, providers_tf, &Default::default(), &env, &Default::default(), Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
+        crate::prerequisite_findings(manifest, providers_tf, &Default::default(), &env, false, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
         f
     }
 
@@ -7579,47 +7412,37 @@ mod prerequisite_findings_speak {
         );
     }
 
-    /// No `providers.tf` — its emission failed, which is its own finding — is no
-    /// silent pass for the API half.
-    /// A workload estate is asked for nothing at the organization and offered no write;
-    /// an estate on an interface that says nothing of a delegation is judged as before, and
-    /// told so.
+    /// A workload estate gets no role finding — its roles are the organization's to grant
+    /// (ADR 0101) — and no API finding for the project its calls are billed to, the
+    /// delegation's infrastructure project; an API missing on a project of its own is still
+    /// found. The same estate as an organization's is judged in full.
     #[test]
-    fn a_workload_estate_is_told_what_to_ask_for_and_never_what_to_grant_itself() {
+    fn a_workload_estate_has_no_role_check_and_keeps_its_own_projects_api_check() {
         let params = [("infra_project_name", "acme-deploy-shop"), ("svc_iac_account", "svc-deploy-shop")];
         let env: satz_core::pipeline::Env = params.iter().map(|(k, v)| ((*k).to_string(), serde_yaml::Value::from(*v))).collect();
+        let providers_tf = format!(
+            "{}provider \"google\" {{\n  alias = \"project_p\"\n  project = \"acme-shop-dev\"\n  billing_project = \"acme-shop-dev\"\n  user_project_override = true\n}}\n",
+            providers(&params)
+        );
         let m = crate::manifest::Manifest::parse(
             "resource \"google_billing_budget\" \"b\" {\n  display_name = \"x\"\n  provider = google.google\n}\n\
-             resource \"google_project\" \"p\" {\n  project_id = \"p\"\n  provider = google.google\n}\n",
+             resource \"google_storage_bucket\" \"s\" {\n  name = \"s\"\n  project = \"acme-shop-dev\"\n  provider = google.project_p\n}\n",
         );
-        let run = |reads: &crate::Reads| {
+        let run = |workload: bool| {
             let mut f = Vec::new();
-            crate::prerequisite_findings(&m, Some(&providers(&params)), &Default::default(), &env, reads, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
+            crate::prerequisite_findings(&m, Some(&providers_tf), &Default::default(), &env, workload, Path::new("estate.satz"), "estate.satz", "", "warn", &mut f);
             f
         };
-        let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
-        let delegation = crate::prerequisites::Delegation {
-            interface: "delegation-shop".to_string(),
-            folder_roles: set(&["roles/resourcemanager.projectCreator"]),
-            project_roles: Default::default(),
-            budgets: false,
-            billing_roles: set(&["roles/billing.user"]),
-            apis: set(&["cloudresourcemanager.googleapis.com", "cloudbilling.googleapis.com"]),
-        };
-        let f = run(&crate::Reads { delegation: Some(delegation), interface: true });
+        let f = run(true);
         let text = f.iter().map(|x| x.message.as_str()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("billingbudgets.googleapis.com — needed by google_billing_budget"), "{}", text);
-        assert!(text.contains("roles/billing.admin or roles/billing.costsManager on the billing account"), "{}", text);
-        assert!(!text.contains("at the organization") && !text.contains("cloudbilling.googleapis.com on"), "{}", text);
-        assert!(f.iter().all(|x| x.fix.is_none()), "nothing here is the estate's to write: {:?}", f.iter().map(|x| &x.fix).collect::<Vec<_>>());
-
-        let f = run(&crate::Reads { delegation: None, interface: true });
-        assert!(says(&f, "says nothing of what was delegated to its account"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
-        assert!(says(&f, "at the organization"), "judged as an organization's account");
-        let f = run(&crate::Reads::default());
-        assert!(!says(&f, "says nothing of what was delegated"), "an organization's estate reads no interface");
+        assert!(text.contains("storage.googleapis.com on acme-shop-dev — needed by google_storage_bucket"), "{}", text);
+        assert!(!text.contains("on acme-deploy-shop") && !text.contains("roles/"), "{}", text);
+        let f = run(false);
+        assert!(says(&f, "billingbudgets.googleapis.com on acme-deploy-shop") && says(&f, "lacks roles"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
     }
 
+    /// No `providers.tf` — its emission failed, which is its own finding — is no
+    /// silent pass for the API half.
     #[test]
     fn no_providers_is_said_not_passed() {
         let f = findings_for(&manifest(), None, &[("infra_project_name", "acme-infra-001")]);
@@ -7696,7 +7519,7 @@ mod prerequisite_findings_speak {
             Some(&providers(&[])),
             &Default::default(),
             &BTreeMap::new(),
-            &Default::default(),
+            false,
             Path::new("estate.satz"),
             "estate.satz",
             "",

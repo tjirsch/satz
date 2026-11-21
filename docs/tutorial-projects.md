@@ -46,10 +46,12 @@ cannot widen it. On a folder the account holds no access control, so it grants i
 nothing there. On a project it holds the project's access control and nothing else, so
 what it grants itself stays inside the project.
 
-Each pack also tells the workload estate what it was given. The interfaces carry the roles
-and APIs that were delegated, satz judges the workload estate against them at every transpile,
-and a gap is reported as what to ask the organization for — never as a grant at the
-organization ([what an estate must
+Each pack also tells the workload estate what it was given: the interfaces carry the roles
+and APIs that were delegated, for the workload's team to read. The packs are the ready-made
+delegation packs — they stand in the organization's estate, create what the workload is
+given and grant its account the roles — and satz checks no role in the workload estate:
+`satz update-prerequisites --report-only` lists the roles its resource types need, for the
+organization's team, and proposes no grant ([what an estate must
 declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 
 Steps 1 to 5 walk a folder with the team `shop`; step 6 walks projects. The same
@@ -268,12 +270,12 @@ The plan reads the delegated folder live (`roles/browser`), creates `acme-shop-d
 it (`roles/resourcemanager.projectCreator` on that folder), links the billing account
 (`roles/billing.user`) and sets its grants (`roles/resourcemanager.projectIamAdmin`).
 
-The transpile checks exactly that. It reads what was delegated to the account from the
-interface `delegation-shop` and judges the estate's resource types against it, so this estate
-transpiles without a prerequisite warning. A template that needs more — a budget needs
-`billingbudgets.googleapis.com` on `acme-deploy-shop` and `roles/billing.costsManager` — is
-told what to ask the organization's estate for, and `--apply` refuses until the API is
-delegated: the delegation's account can grant itself nothing above its own projects. A
+satz checks no role here: the roles are the organization's to grant, and `satz
+update-prerequisites shop_dev.satz --report-only` lists those the resource types need. A
+template that needs more — a budget needs `billingbudgets.googleapis.com` on
+`acme-deploy-shop` and `roles/billing.costsManager` — finds both in that list, which the team
+gives the organization's team; the delegation's account can grant itself nothing above its
+own projects, and what it lacks at the apply is Google's refusal. A
 second project is a second thin estate — `shop-test/satz/shop_test.satz` with
 `stage = "test"` — or, for a run, `satz transpile shop_dev.satz --input stage=test`.
 
@@ -379,10 +381,10 @@ satz init --from <the organization>/interfaces/outgoing/delegation-payments <the
 and reads the organization through the two interface files. Its resources name the
 project as `project = "${{interface.payments.project_id}}"`.
 
-**What the account lacks on its project, it grants itself.** A bucket needs
-`roles/storage.admin`, which the pack did not delegate. The transpile says so on the
-finding's line — `roles/storage.admin on the project — to grant in this estate` — and the
-team writes the grant in its own estate, which the interface allows on `project_id`:
+**What the account lacks on its project, it may grant itself.** A bucket needs
+`roles/storage.admin`, which the pack did not delegate; `satz update-prerequisites
+--report-only` lists it as `roles/storage.admin on the project — for google_storage_bucket`.
+The team writes the grant in its own estate, which the interface allows on `project_id`:
 
 ```
 google_project_iam_member {
@@ -393,9 +395,9 @@ google_project_iam_member {
 }
 ```
 
-Anything else — a folder, an organization policy — is reported as `outside the project`:
-this account does not get it. An API a call needs and the infrastructure project lacks is
-what to ask the organization for: `apis` of the delegation's entry.
+Anything else — a folder, an organization policy — this account does not get. An API a
+call needs and the infrastructure project lacks is what to ask the organization for: `apis`
+of the delegation's entry.
 
 **One account, several delegated resources.** One account works in any number of delegated folders
 and projects, and one estate reads them all. The organization gives the delegation `data`
@@ -460,9 +462,7 @@ It runs as `svc-deploy-data` and keeps its state under `data/state` in the deleg
 bucket. In `main.tf` the two projects are `local.interface.data_lake__project_id` and
 `local.interface.data_mart__project_id`. `${{interface.project_id}}` is refused in this
 estate: both folders carry a `project_id` and the two differ, and the message names the
-two reads to choose from. The check of what was delegated does not judge which delegated
-resource a resource stands in: a role counts as delegated when it was delegated on every project the
-estate uses.
+two reads to choose from.
 
 Exactly one folder is a delegation's own, because an estate runs as one account. `--name`
 names the estate, which otherwise takes the delegation's name; two estates of one

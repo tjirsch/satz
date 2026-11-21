@@ -38,8 +38,8 @@
 // `interfaces/incoming/` folder: `infrastructure_project_id` (its infrastructure project),
 // `estate_account` and its account id `estate_account_id`, `state_bucket`,
 // `estate_account_user_group`, and what was delegated to the account beside its targets —
-// `delegated_billing_roles`, `delegated_apis` — which `satz` judges the estate's needs
-// against. `satz init --from` writes the workload estate from it, reading its estate
+// `delegated_billing_roles`, `delegated_apis` — which tell the workload's team what the
+// account holds; satz checks no role in a workload estate. `satz init --from` writes the workload estate from it, reading its estate
 // account (`svc_iac_account`, `infra_project_name`) and its state bucket by the folder's
 // name. Each target's own interface is taken beside it.
 //

@@ -1365,15 +1365,16 @@ name>/state` in the delegation's bucket. Exactly one of the folders is a delegat
 The estate reads a value by the name of its interface folder:
 `${{interface.delegation-shop.billing_account}}`, `${{interface.shop.delegated_folder}}`.
 
-The README satz writes into each of these folders opens with what it passes on — the
-estate account, who may act as it, what it holds — and the receiving team's next steps, so the
+The README satz writes into each of these folders lists, for the receiving team, each export
+of the folder's interface with its value and description, and the team's next steps, so the
 folders are all that is copied across ([the procedure for both
 teams](../docs/tutorial-delegated-access.md)).
 
-The `delegated_*` exports, here and in the interfaces of the delegated resources, are what satz judges the
-workload estate against: a resource type that needs a role or an API not in them is reported
-in that estate as what to ask for here, and nothing is proposed at the organization ([What
-an estate must declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
+The `delegated_*` exports, here and in the interfaces of the delegated resources, tell the
+workload's team what the account holds. satz checks no role in a workload estate: `satz
+update-prerequisites --report-only` there lists the roles its resource types need, for the
+organization's team to compare with these and to grant here ([What an estate must
+declare](../README.md#what-an-estate-must-declare-update-prerequisites)).
 
 **Overridable defaults:**
 
@@ -1387,8 +1388,9 @@ Nothing in the pack bills while idle.
 
 ### delegated-folders.satz
 
-Delegated access to folders: the folders a delegation's account works in, and its roles on
-those folders alone. The pack creates each folder and grants the account of the delegation
+The ready-made delegation pack for folders: the folders a delegation's account works in, and
+its roles on those folders alone. It stands in the organization's estate, which keeps the
+folders in its state; the workload estate builds inside them with workload packs. The pack creates each folder and grants the account of the delegation
 the entry names — an entry of `delegations` in [`delegation.satz`](#delegationsatz) — the
 right to create and manage folders and Google projects under it. The account reaches
 nothing beside the folders it was given.
@@ -1470,8 +1472,9 @@ Nothing in the pack bills while idle.
 
 ### delegated-projects.satz
 
-Delegated access to projects: the Google projects a delegation's account works in, and its
-roles on those projects alone. A project is a Google project the organization's estate
+The ready-made delegation pack for projects: the Google projects a delegation's account works
+in, and its roles on those projects alone. It stands in the organization's estate, which
+keeps each project in its state; the workload estate builds inside it with workload packs. A project is a Google project the organization's estate
 creates; the workload estate, in the workload repository, fills it. A delegated project has no
 account, no state bucket and no group of its own: it is worked by the account of the
 delegation its entry names — an entry of `delegations` in
@@ -1616,8 +1619,7 @@ its grant names a role the estate does not declare.
 The workload's side is the workload pack `packs/project-budget.satz` (`satz get-pack
 project-budget`): it reads the project and the billing account from the interface folder,
 asks for the amount, the currency and an address to tell, and creates the budget. The
-interface says whether budgets were delegated (`delegated_budgets`), and the transpile of the
-workload estate judges a budget against it.
+interface says whether budgets were delegated (`delegated_budgets`).
 
 | Param | Default | Meaning |
 |---|---|---|
