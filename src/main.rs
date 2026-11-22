@@ -725,6 +725,9 @@ pub(crate) enum Commands {
         /// Estate file (inside yaml_dir if relative) — transpiled for the source
         /// locations of the findings; without it, findings name the HCL only
         estate: Option<String>,
+        /// Output format — json is the report as data, for a program, and needs the estate
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
     },
     /// One Markdown page per pristine pack, derived from the pack file (purpose, params, resources, claims, duties) plus an index — into `<presets_dir>/docs/`
     ///
@@ -2084,18 +2087,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             crate::actions::run(&out.actions, &opts)?;
             Ok(())
         }
-        Commands::Scan { estate } => {
-            let manifest = match estate {
+        Commands::Scan { estate, format } => {
+            let estate = match estate {
                 Some(e) => {
                     let path = estate_path(PathBuf::from(e), &runtime_config);
                     reject_yaml_dialect(&path, "scan")?;
-                    Some(pipeline_b_generate(&path, &tool_config, &runtime_config)?.manifest)
+                    let manifest = pipeline_b_generate(&path, &tool_config, &runtime_config)?.manifest;
+                    Some((path, manifest))
                 }
                 None => None,
             };
-            let report = crate::scan::run(Path::new(&runtime_config.hcl_dir))?;
-            print!("{}", crate::scan::render(&report, manifest.as_ref()));
-            if report.failed > 0 {
+            let hcl_dir = Path::new(&runtime_config.hcl_dir);
+            let failed = match (format, estate) {
+                (OutFormat::Json, None) => {
+                    return Err("scan --format json needs the estate: the report says which Satz block declared each resource".into());
+                }
+                (OutFormat::Json, Some((path, manifest))) => {
+                    let report = crate::mcp::ScanReport::new(&path, hcl_dir, crate::scan::run(hcl_dir)?, &manifest, None);
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                    report.failed
+                }
+                (_, estate) => {
+                    let report = crate::scan::run(hcl_dir)?;
+                    print!("{}", crate::scan::render(&report, estate.as_ref().map(|(_, m)| m)));
+                    report.failed
+                }
+            };
+            if failed > 0 {
                 std::process::exit(1);
             }
             Ok(())
