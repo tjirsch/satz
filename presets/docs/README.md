@@ -9,7 +9,7 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`estate_map`](estate-map.md) | 5.1 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
+| [`estate_map`](estate-map.md) | 5.2 | The map: which packs make up this estate, asked as questions — so an interview has a path. | 0 | — |
 | [`estate_core`](estate-core.md) | 3.0 | The questions every estate has to answer before the bootstrap, with the params they answer. | 0 | — |
 
 ## Security groups and exemptions
@@ -24,7 +24,7 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`billing_account_permissions`](billing-account-permissions.md) | 1.2 | Billing-account IAM, split by audience. | 4 | — |
+| [`billing_account_permissions`](billing-account-permissions.md) | 1.3 | Billing-account IAM, split by audience. | 4 | — |
 | [`organization_budget`](organization-budget.md) | 2.2 | Budgets on the infrastructure billing account with alert thresholds: one for the whole account, and one per entry of `budgets` for a set of projects or folders. | 2 | — |
 | [`billing_export`](billing-export.md) | 1.1 | Cloud Billing usage and cost data, exported to BigQuery in a project of its own — where the spend is KEPT, as opposed to the budget that alarms on it. | 3 | — |
 

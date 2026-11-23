@@ -1519,6 +1519,8 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_map` | 5.2 | 2026-11-23 | the security-group choice has a third answer, `security_model_own`: the customer's own groups, for which no model pack goes in, satz creates no group and grants no admin role; the `requires` of billing account permissions on S1 or S2 is gone — the pack reads the model's group name and shows the edge itself. Nothing emitted changes |
+| `billing_account_permissions` | 1.3 | 2026-11-23 | `billing_admins_group` defaults to `{gcp_billing_admins_name}@{customer_domain}`, the model's billing-admins group, rather than a literal of the same address, so an estate on the customer's own groups uses the pack by answering the group's address. Nothing emitted changes for an estate on S1 or S2 |
 | `delegation` | 2.1 | 2026-11-20 | the interface `delegation-<name>` also exports `estate_account_id`, the estate account's id `svc-deploy-<name>`, which a workload estate reads as its `svc_iac_account`; nothing emitted changes |
 | `ci.verification_runner` | 1.2 | 2026-11-20 | the texts follow the glossary (ADR 0095): the two build triggers' descriptions say "transpile" and "organization" where they said "compile" and "organisation", and the trigger question says "transpiles" where it said "compiles". A plan shows in-place updates of the `description` of `google_cloudbuild_trigger.satz_check` and `google_cloudbuild_trigger.satz_compliance` |
 | `exemptions.exemption_tag` | 2.1 | 2026-11-20 | the texts follow the glossary (ADR 0095): the tag key's description says "organization policy" where it said "organisation policy". A plan shows an in-place update of the `description` of `google_tags_tag_key.exemption` |

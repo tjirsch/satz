@@ -346,6 +346,15 @@ in one pass. Which model — S1 or S2 — is the `security_model` choice in
 `estate-map.satz`, not a question in either model pack: a question that gates a pack
 cannot live in the pack it gates.
 
+**The customer's own groups.** The third answer of `security_model`,
+`security_model_own`, is for a customer whose admin groups and their organization roles
+exist already and stay the customer's: no model pack goes in, satz creates no group, grants
+no admin role and imports nothing. `billing-account-permissions.satz` reads the model's
+billing-admins group name; on the customer's own groups the estate answers
+`billing_admins_group` with the group's full address, at any domain, and the pack goes in
+without a model. The domain keeps Project Creator and Billing Account Creator, since the
+estate declares no holder of either for `satz apply` to leave them with.
+
 ### exemptions/
 
 **Two features live here, and they are two halves of one question: who may do what.**

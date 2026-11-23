@@ -702,6 +702,23 @@ pub(crate) mod tests {
         assert_eq!(insert_into_map(nested, "google_essential_contacts_contact", "// use \"c.satz\"", ""), None);
     }
 
+    /// The options of the map's choices that switch no pack on: the answer "none of these
+    /// packs", given a label of its own (`security_model_own`, the customer's own groups).
+    /// Each is the one such option of a choice whose other options each gate a pack.
+    fn packless_answers(map: &satz_core::satz::File) -> Vec<String> {
+        let gates: Vec<&str> = map.offers.iter().filter_map(|o| o.when.as_deref()).collect();
+        let mut out = Vec::new();
+        for q in map.questions.iter().filter(|q| q.oneof) {
+            let (packless, gating): (Vec<_>, Vec<_>) = q.options.iter().partition(|o| !gates.contains(&o.param.as_str()));
+            assert!(packless.len() <= 1, "choice `{}` has more than one answer that switches no pack", q.subject);
+            if let Some(o) = packless.first() {
+                assert!(!gating.is_empty(), "choice `{}` switches no pack with any answer", q.subject);
+                out.push(o.param.clone());
+            }
+        }
+        out
+    }
+
     #[test]
     fn the_skeleton_carries_one_use_line_per_choice_the_map_declares() {
         // Two places for one list — the map declares the choices, the skeleton carries their
@@ -709,7 +726,9 @@ pub(crate) mod tests {
         let map = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/presets/estate-map.satz")).unwrap();
         let map = satz_core::satz::parse(&map).unwrap();
         let sk = skeleton("x", Some(&shipped()));
-        for (name, _, _) in &map.params {
+        let packless = packless_answers(&map);
+        assert_eq!(packless, ["security_model_own"], "the answers that switch no pack");
+        for (name, _, _) in map.params.iter().filter(|(n, _, _)| !packless.contains(n)) {
             assert!(
                 use_lines(&sk).any(|l| l.ends_with(&format!(" when {}", name))),
                 "the map declares `{}` and the skeleton has no `use … when {}`",
@@ -754,7 +773,8 @@ pub(crate) mod tests {
         // No exceptions, a pack whose line lives inside a block included.
         let graph = shipped();
         let gated: Vec<&str> = graph.lines().iter().filter_map(|n| n.gate.as_deref()).collect();
-        for (name, _, _) in &map.params {
+        let packless = packless_answers(&map);
+        for (name, _, _) in map.params.iter().filter(|(n, _, _)| !packless.contains(n)) {
             assert!(gated.contains(&name.as_str()), "the map declares `{}` and no line the graph offers is gated on it", name);
         }
         // and the menu enforces nothing until a line is uncommented
