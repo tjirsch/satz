@@ -375,7 +375,15 @@ impl<'a> View<'a> {
         if params.iter().all(|p| self.own.contains_key(p)) {
             return true;
         }
-        let Some(f) = self.lib.files.get(&n.path) else { return false };
+        let readers = self.readers(n, params);
+        !readers.is_empty() && readers.iter().all(|r| self.own.contains_key(r))
+    }
+
+    /// The params of pack `n` whose default reads `params`, when nothing else in the pack
+    /// reads them: binding these in the estate meets the requirement. Empty when the pack
+    /// reads `params` in a resource or an action too, where only the params themselves do.
+    fn readers(&self, n: &Node, params: &[String]) -> Vec<String> {
+        let Some(f) = self.lib.files.get(&n.path) else { return Vec::new() };
         let reads = |r: &crate::doc_packs::Refs| params.iter().any(|p| r.contains_key(p));
         let mut direct = crate::doc_packs::Refs::new();
         f.items.iter().for_each(|e| crate::doc_packs::refs_in_entry(e, &mut direct));
@@ -383,19 +391,17 @@ impl<'a> View<'a> {
             a.args.iter().chain(&a.execute_args).for_each(|p| crate::doc_packs::refs_in_str(p, a.line, &mut direct));
         }
         if reads(&direct) {
-            return false;
+            return Vec::new();
         }
-        let readers: Vec<&str> = f
-            .params
+        f.params
             .iter()
             .filter(|(_, v, line)| {
                 let mut r = crate::doc_packs::Refs::new();
                 crate::doc_packs::refs_in_value(v, *line, &mut r);
                 reads(&r)
             })
-            .map(|(name, _, _)| name.as_str())
-            .collect();
-        !readers.is_empty() && readers.iter().all(|r| self.own.contains_key(*r))
+            .map(|(name, _, _)| name.clone())
+            .collect()
     }
 
     fn requirements(&self, n: &Node, on: &dyn Fn(&str) -> bool) -> Vec<Requirement> {
@@ -418,8 +424,14 @@ impl<'a> View<'a> {
             Some(g) => format!("`{}` (`{}`)", p, g),
             None => format!("`{}`", p),
         };
+        let quoted = |ps: &[String]| ps.iter().map(|p| format!("`{}`", p)).collect::<Vec<_>>().join(", ");
         let reads = if r.kind == "data" {
-            format!(" (it reads {})", r.params.iter().map(|p| format!("`{}`", p)).collect::<Vec<_>>().join(", "))
+            let readers = self.readers(n, &r.params);
+            if readers.is_empty() {
+                format!(" (it reads {})", quoted(&r.params))
+            } else {
+                format!(" (it reads {} through {}, which the estate may bind instead)", quoted(&r.params), quoted(&readers))
+            }
         } else {
             String::new()
         };

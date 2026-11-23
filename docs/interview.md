@@ -112,8 +112,9 @@ order is a path:
 2. **`presets/estate-map.satz`** — which packs make up the estate, as questions. The
    first is the CIS baseline (`use_cis_baseline`, on by default): the estate exists
    for its thirty organization policies, and it is asked because they reach the
-   organization in one apply. Then the security-group model (S1, or S2 with a
-   separate network-admins group) as a `question oneof`, and one boolean per optional
+   organization in one apply. Then the security-group model (S1, S2 with a
+   separate network-admins group, or the customer's own groups, for which satz creates
+   and grants nothing) as a `question oneof`, and one boolean per optional
    pack, each with what the pack is for and what turning it off later destroys. Four
    more are on by default — the audit-log archive, the central CIS alerts, the billing
    permissions, the essential contact. The rest are off: budget, SCC enablement and

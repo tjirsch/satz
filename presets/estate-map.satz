@@ -27,15 +27,16 @@
 // Turning a pack off later destroys what it created. The `reversal` of each
 // choice says so; the `blast` says how much that costs the running organization.
 
-pack estate_map version "5.1"
+pack estate_map version "5.2"
 
 params {
   // ---- what the estate is for ---------------------------------------------
   use_cis_baseline = true
 
-  // ---- the security-group model: exactly one ------------------------------
-  security_model_s1 = true
-  security_model_s2 = false
+  // ---- the security-group model: exactly one answer ------------------------
+  security_model_s1  = true
+  security_model_s2  = false
+  security_model_own = false
 
   // ---- recommended: on unless the customer says otherwise -------------------
   use_audit_logsink       = true
@@ -91,6 +92,7 @@ question oneof security_model {
   required = true
   option security_model_s1 { label = "S1 — five admin groups; network authority sits with project admins" why = "A small team that separates organization admins, project admins and security roles, and nothing more." }
   option security_model_s2 { label = "S2 — S1 plus a distinct network-admins group" why = "For a customer with a separate network team." }
+  option security_model_own { label = "The customer's own groups — satz creates no group and grants no admin role" why = "For a customer whose admin groups and their organization roles exist already and stay the customer's to manage. No model pack goes in; billing account permissions take the billing group's address as an answer, and the domain keeps Project Creator and Billing Account Creator until the customer takes them off." }
 }
 
 question use_audit_logsink {
@@ -303,24 +305,20 @@ every line below is gated on. This is the one to uncomment first."""
 offers "presets/security-group-models/s1-security-groups.satz" {
   when  = security_model_s1
   phase = """once the map is in — the security-group model, whose groups later grants name.
-Exactly one of the two."""
+At most one of the two; an estate on the customer's own groups uses neither."""
 }
 
 offers "presets/security-group-models/s2-security-groups.satz" {
   when = security_model_s2
 }
 
-// It grants to the model's billing-admins group by the group's address, which is
-// a literal, not a param the model declares — so the edge is declared. Either
-// model satisfies it: the two exclude one another.
+// It grants to the billing-admins group, whose address reads the model's group name
+// — so the packs show the edge, and either model meets it. An estate on the
+// customer's own groups meets it by answering the group's address itself.
 offers "presets/billing-account-permissions.satz" {
   when  = use_billing_permissions
-  phase = """once the groups exist — this grants to the model's billing-admins group by name, so
-the grant has nothing to land on until they are applied"""
-  requires = [
-    "presets/security-group-models/s1-security-groups.satz",
-    "presets/security-group-models/s2-security-groups.satz",
-  ]
+  phase = """once the groups exist — this grants to the billing-admins group by its address, so
+the grant has nothing to land on until the group is there"""
 }
 
 offers "presets/organization-budget.satz" {

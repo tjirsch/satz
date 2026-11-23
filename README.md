@@ -1554,7 +1554,8 @@ repository rather than in somebody's console history.
 
 That is the exception path. **Standing** authority — who administers projects, networks,
 guardrails, billing — is the [security group model](presets/README.md#security-group-models)
-the estate adopts, S1 or S2. The two are separate so that "may grant a narrow
+the estate adopts, S1 or S2, or the customer's own groups and grants, which satz leaves
+alone. The two are separate so that "may grant a narrow
 exemption" need not imply `roles/orgpolicy.policyAdmin`, which is what the
 security-admins group holds and which can rewrite any policy outright.
 
