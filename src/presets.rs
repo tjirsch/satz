@@ -714,6 +714,15 @@ pub(crate) async fn check_presets_report(
 /// `action` is executed directly (`Command::new`), so it has to arrive executable
 /// — installed without the bit, the action fails with a permission error naming a
 /// file that is right there.
+/// Whether a file or folder of a library is part of it: everything but what a machine
+/// leaves beside the files — a hidden entry (`.DS_Store`, `.git`) and Python's
+/// `__pycache__` — so a library folder named by `[preset_library]` or `--pristine-dir`
+/// gives what its repository holds.
+fn library_entry(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    !name.starts_with('.') && name != "__pycache__"
+}
+
 fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
     crate::fsx::write_verbatim(path, contents.as_bytes())?;
     #[cfg(unix)]
@@ -776,13 +785,13 @@ pub(crate) async fn get_presets(
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
             let p = e.path();
+            if !library_entry(&p) { continue; }
             if p.is_dir() { stack.push(p); continue; }
-            let name = p.to_string_lossy();
-            // the library is more than packs: docs, the import config and
-            // catalogs (.yaml), the CAI asset-type list (.txt), the pack graph
-            // (.json) — and the script a pack binds as an `action`, without which
-            // that pack is an action that cannot find what it runs
-            if name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".txt") || name.ends_with(".sh") {
+            // the library is more than packs: docs, the import config and catalogs, the
+            // lists, the pack graph — and the scripts a pack binds as an `action`, shell
+            // or Python, without which that pack is an action that cannot find what it
+            // runs. Every file is taken; the packs come from the walk above.
+            if !p.to_string_lossy().ends_with(".satz") {
                 extra.push(p.strip_prefix(&tmp)?.to_path_buf());
             }
         }
@@ -1259,6 +1268,7 @@ pub(crate) async fn run_merge_presets(
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for e in entries.flatten() {
             let p = e.path();
+            if !library_entry(&p) { continue; }
             if p.is_dir() { stack.push(p); continue; }
             let name = p.to_string_lossy();
             // a fork or a delta in the UPSTREAM tree would make pack_stem
@@ -1266,9 +1276,7 @@ pub(crate) async fn run_merge_presets(
             if name.ends_with(".local.satz") || name.ends_with(".diff.satz") {
                 return Err(format!("merge-presets: {} is a local fork/delta inside the pristine dir — upstream carries pristine packs only", p.display()).into());
             }
-            if name.ends_with(".satz") || name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".json") || name.ends_with(".txt") || name.ends_with(".sh") {
-                upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
-            }
+            upstream_files.push(p.strip_prefix(&pristine)?.to_path_buf());
         }
     }
     upstream_files.sort();

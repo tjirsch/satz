@@ -1879,6 +1879,10 @@ what the estate does **not** use. A pristine pack the estate **does** use is
 **refused**, naming the two commands that fit instead, because changing it changes
 what the organization enforces.
 `--force` overrides, listing each in-use pack as it overwrites it.
+The library is every file under `presets/`, whatever its kind — packs, docs, data, the
+scripts a pack's action runs, shell or Python — except a hidden file or folder
+(`.DS_Store`, `.git`) and Python's `__pycache__`; `get-presets` and `merge-presets` take
+the same set.
 
 **`check-presets <estate>`** is the read-only report. It walks the estate's `use`
 graph, so packs the estate actually includes are tagged `[included]`, and drift in
@@ -1891,7 +1895,7 @@ that fork, proves the repoint by transpile identity, refreshes the pristine
 `X.satz`, and writes `X.diff.satz` — the exact delta adopting upstream would make.
 Comment and formatting churn upgrades silently instead of forking. Every file of the
 library that is not a pack — the docs, the catalogs and other data, the `.txt` lists,
-the scripts a pack's action runs — is upstream's: it is replaced by upstream's copy
+the scripts a pack's action runs, shell or Python — is upstream's: it is replaced by upstream's copy
 and counted as an artifact, never parsed and never forked.
 It also writes the commented `use` line for every pack the pristine source's
 `pack-graph.json` offers and the estate has no line for, each where the graph's order puts
