@@ -20,7 +20,7 @@ use satz_core::satz::Severity as Declared;
 use crate::findings::{Finding, Kind, Severity};
 use crate::settings::ToolConfig;
 
-/// What the run this finding is produced for does to the organization. The pack's
+/// What the run this message is produced for does to the organization. The pack's
 /// declared severity is the floor and this is the ceiling: a run that only reads says an
 /// open `error` as a warning, a run that writes says it as the error it is and refuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +136,7 @@ pub(crate) fn render(rows: &[NoticeRow]) -> String {
 }
 
 /// The gate, for a run that writes to the organization: every pack-declared message of
-/// this estate that is open and declared an `error`, as the error findings it is. Empty
+/// this estate that is open and declared an `error`, as the error messages it is. Empty
 /// while none stands, which is what lets the run go on.
 ///
 /// `src/org_write.rs` decides which runs ask; nothing here knows what a command is.
@@ -164,7 +164,7 @@ pub(crate) fn acknowledge(estate: &Path, params: &[String]) -> Result<(), String
     crate::fsx::write_edited_satz(estate, &before, &src).map_err(|e| format!("{}: {}", estate.display(), e))
 }
 
-/// A finding for each open notice, at the estate's `use` line of the pack that declares
+/// A message for each open notice, at the estate's `use` line of the pack that declares
 /// it — or at the notice itself when another pack uses that one — at the severity the
 /// pack declared, capped by what this run does (`Doing`).
 /// `estate_arg` is the estate as a command takes it (`crate::estate_as_typed`): the
@@ -185,7 +185,7 @@ pub(crate) fn compile_findings(
         .map(|n| {
             // the param that acknowledges it is the notice's identity: the same key
             // `satz adopt --import` binds, and what a `[[silence]]` row names
-            // the command is the finding's `fix`; the sentence says what is left to do
+            // the command is the message's `fix`; the sentence says what is left to do
             // once it has run
             let held = match held(n.declared()) {
                 "" => String::new(),
@@ -249,7 +249,7 @@ mod tests {
         }]
     }
 
-    /// The transpile's finding for an open notice: the pack's command is its `fix`, with the
+    /// The transpile's message for an open notice: the pack's command is its `fix`, with the
     /// estate's file name where the pack wrote `<estate>`, and the sentence carries the
     /// text and the acknowledgement, never the command.
     #[test]

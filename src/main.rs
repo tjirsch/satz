@@ -125,12 +125,12 @@ pub(crate) struct Cli {
     #[arg(long, global = true, help_heading = "Global options")]
     no_pack_actions: bool,
 
-    /// Leave a finding out of this run's output by what it is: `<kind>` or
+    /// Leave a message out of this run's output by what it is: `<kind>` or
     /// `<kind>:<subject>`, repeatable
     ///
     /// The run tier of `satz silence`, for a CI pipeline; `SATZ_SILENCE` takes the
     /// same selectors, comma-separated, where the command line cannot be changed. The
-    /// finding is still produced, still counted and still in `--format json`. An error
+    /// message is still produced, still counted and still in `--format json`. An error
     /// is never silenced, and a `--silence` that names one refuses the run.
     #[arg(long, global = true, help_heading = "Global options", value_name = "KIND[:SUBJECT]")]
     silence: Vec<String>,
@@ -220,7 +220,7 @@ pub(crate) enum Commands {
         #[arg(long = "input", value_name = "NAME=VALUE")]
         inputs: Vec<String>,
         /// `json` prints the transpile as data on stdout — the estate, the addresses it
-        /// writes, the files written and every finding, silenced ones included — and
+        /// writes, the files written and every message, silenced ones included — and
         /// nothing on stderr but the version line. A refused transpile prints the same
         /// object with its errors in `findings`, and exits 1
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
@@ -685,9 +685,9 @@ pub(crate) enum Commands {
         /// when the name has none (`-` for stdout)
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
-        /// Add the estate delta the findings imply — `use` lines to add, resources
+        /// Add the estate delta the messages imply — `use` lines to add, resources
         /// to bring under management, and what has nothing to edit — to the report.
-        /// Proposed only: satz never writes the estate or the cloud from a finding.
+        /// Proposed only: satz never writes the estate or the cloud from a message.
         /// Markdown only: the delta is prose, and a JSON caller parses rows
         #[arg(long)]
         fix: bool,
@@ -754,7 +754,7 @@ pub(crate) enum Commands {
     /// Check a project's HCL beside the estate against the estate's interface: attachments only at attach points, no authoritative grant or policy on a node the estate manages, no resource the estate declares too
     ///
     /// Read-only, offline: parses the `.tf` files under DIR and transpiles the estate in
-    /// memory. Each finding names the project's file and line; any finding exits 1. A project
+    /// memory. Each message names the project's file and line; any message exits 1. A project
     /// written in Satz is held to the same rules by its own transpile.
     CheckConsumer {
         /// The project's configuration: a directory of `.tf` files, read with its subdirectories
@@ -765,7 +765,7 @@ pub(crate) enum Commands {
     /// Every pack the pack graph offers, as this estate has it: the choice (its gate's answer and default), the line (active, ungated, commented, absent, forked or misplaced), whether it creates anything, what it needs and what needs it
     ///
     /// Read-only, offline. A `use` the pack graph does not know is listed as
-    /// unmanaged; the findings are the transpile's own pack findings.
+    /// unmanaged; the messages are the transpile's own pack messages.
     Presets {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
@@ -859,7 +859,7 @@ pub(crate) enum Commands {
         /// Judge it inside this estate instead of a synthesised one
         #[arg(long, value_name = "ESTATE")]
         against: Option<PathBuf>,
-        /// Output format — json carries the findings an editor already reads
+        /// Output format — json carries the messages an editor already reads
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
@@ -999,7 +999,7 @@ pub(crate) enum Commands {
         /// Judge it inside this estate instead of a synthesised one
         #[arg(long, value_name = "ESTATE")]
         against: Option<PathBuf>,
-        /// Output format — json carries the findings an editor already reads
+        /// Output format — json carries the messages an editor already reads
         #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]))]
         format: OutFormat,
         /// Where it goes — the one file this run writes, the format's extension added
@@ -1077,11 +1077,11 @@ pub(crate) enum Commands {
     },
     /// What this estate, or this machine, has said "seen, move on" to — and say it
     ///
-    /// A finding is silenced by what it IS: its `kind`, as `--format json` spells it,
+    /// A message is silenced by what it IS: its `kind`, as `--format json` spells it,
     /// and optionally its `subject` — the pack, the notice's param, the action's name,
     /// the `hcl` block's `file:line`. Never by its wording. The estate's `config.toml`
     /// holds the rows a review reads, with a reason each; `--machine` holds this
-    /// operator's, whole kinds only. A silenced finding is still produced, still
+    /// operator's, whole kinds only. A silenced message is still produced, still
     /// counted and still in `--format json`; only the printed output leaves it out,
     /// and every run says how many. An error is never silenced.
     Silence {
@@ -1090,7 +1090,7 @@ pub(crate) enum Commands {
     },
     /// The language server behind an editor's Satz support (Language Server Protocol, stdio)
     ///
-    /// Started by the editor, never by hand. Findings from the parser on every
+    /// Started by the editor, never by hand. Messages from the parser on every
     /// change and from the whole pipeline on every open and save — the errors
     /// `transpile --check` prints, at the file and line they name; completion and
     /// hover from the provider schema the estate's config.toml points at;
@@ -1226,7 +1226,7 @@ enum SilenceSub {
     /// Every silence in force, with its reason and what it still silences
     List {
         /// Estate file, .satz (inside yaml_dir if relative) — transpile it, and say per
-        /// row how many findings it silences, or that nothing answers to it any more
+        /// row how many messages it silences, or that nothing answers to it any more
         input: Option<String>,
     },
     /// Silence a kind, or one subject of a kind
@@ -1261,7 +1261,7 @@ enum SilenceSub {
 
 /// An error is printed as what it says. Returned from `main`, it would be printed by
 /// the `Debug` formatter: a message in quotes with its newlines escaped, and a refused
-/// transpile as a struct dump of every finding.
+/// transpile as a struct dump of every message.
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     match run().await {
@@ -2267,9 +2267,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let n = blocks.iter().filter(|b| b.kind == "resource").count();
             if !findings.is_empty() {
                 eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
-                return Err(format!("check-consumer: {} finding(s) in {} resource(s) under {}", findings.len(), n, dir.display()).into());
+                return Err(format!("check-consumer: {} message(s) in {} resource(s) under {}", findings.len(), n, dir.display()).into());
             }
-            eprintln!("check-consumer: {} resource(s) under {} checked against {}: no finding", n, dir.display(), input_path.display());
+            eprintln!("check-consumer: {} resource(s) under {} checked against {}: no message", n, dir.display(), input_path.display());
             Ok(())
         }
         Commands::Presets { input, format, out } => {
@@ -2282,7 +2282,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 _ => crate::preset_lines::render_text(&report, crate::out::width(&out)),
             };
             let creating = report.packs.iter().filter(|p| p.deploys).count();
-            let what = format!("{} pack(s), {} creating, {} finding(s)", report.packs.len(), creating, report.findings.len());
+            let what = format!("{} pack(s), {} creating, {} message(s)", report.packs.len(), creating, report.findings.len());
             if format == OutFormat::Pdf {
                 pdf_from_markdown(&text, &out, &what)?;
             } else {
@@ -2326,7 +2326,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|(line, msg)| crate::findings::Finding::new(crate::findings::Severity::Error, crate::findings::Kind::Consumer, msg).located(file.display().to_string(), line as u32))
                     .collect();
                 eprint!("{}", crate::findings::lay_out(&findings, crate::findings::Shown::Errors, crate::findings::Width::of_stderr()));
-                return Err(format!("check-request: {} finding(s) in {}", findings.len(), file.display()).into());
+                return Err(format!("check-request: {} message(s) in {}", findings.len(), file.display()).into());
             }
             // the file fits the points; now the transpile with it in place — what the estate
             // would refuse once the file is vendored (an entry without a field the pack's
@@ -2616,14 +2616,14 @@ impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     }
 }
 
-/// Whether a transpile reports the estate's missing prerequisites as findings. A caller
+/// Whether a transpile reports the estate's missing prerequisites as messages. A caller
 /// that reports them as its own output — `whoami`'s live check of the prerequisites,
 /// `update-prerequisites` — transpiles with `Quiet`, so the transpile neither says the same
 /// thing twice nor refuses on the gap the caller is there to name or close.
 ///
 /// A parameter of one transpile, never a process-wide flag: `satz mcp` transpiles for many
 /// calls in one process, concurrently, and a flag one call set would silence every
-/// other call's findings — at validation level `error`, their refusal too.
+/// other call's messages — at validation level `error`, their refusal too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PrerequisiteFindings {
     Report,
@@ -2631,7 +2631,7 @@ pub(crate) enum PrerequisiteFindings {
 }
 
 /// Whether a transpile prints its warnings and notes to stderr, where the CLI shows them.
-/// `review-preset` transpiles `Silent`: the findings are its report, and printing them
+/// `review-preset` transpiles `Silent`: the messages are its report, and printing them
 /// beside it would say everything twice. A refusal reads the same either way.
 ///
 /// A parameter of one transpile for the reason `PrerequisiteFindings` is: `satz mcp`
@@ -2643,12 +2643,12 @@ pub(crate) enum FindingsOutput {
     Silent,
 }
 
-/// A finding's `file`, relative to the estate's own directory.
+/// A message's `file`, relative to the estate's own directory.
 ///
 /// A pack names itself as the `use` line wrote it, which is already estate-relative; the
 /// estate file reaches the transpile as the caller spelled it — a path relative to the
-/// terminal's directory from the CLI, an absolute one from `satz mcp`. One finding,
-/// named two ways, is a finding no `[[silence]]` row and no editor can match, so the
+/// terminal's directory from the CLI, an absolute one from `satz mcp`. One message,
+/// named two ways, is a message no `[[silence]]` row and no editor can match, so the
 /// estate's directory decides the spelling for every reader. A path that is not under
 /// it — a preset read from the library — is left as it is written.
 pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<&Path>) -> crate::findings::Finding {
@@ -2658,7 +2658,7 @@ pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<
         f.file = Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
         // an `hcl` block is named by where it stands, so its subject is that same path:
         // one spelling whoever transpiles, or a `[[silence]]` row written from an agent's
-        // JSON would not answer to the CLI's finding
+        // JSON would not answer to the CLI's message
         if let (crate::findings::Kind::HclPassthrough, Some(file), Some(line)) = (f.kind, &f.file, f.line) {
             f.subject = Some(format!("{}:{}", file, line));
         }
@@ -2668,9 +2668,9 @@ pub(crate) fn estate_relative_file(mut f: crate::findings::Finding, dir: Option<
 
 /// `transpile --format json`: the transpile as the object `satz_transpile_check` and
 /// `satz_transpile` return — one run, read by a person as the layout or by a program as
-/// this. The transpile prints nothing: the findings are in the object, silenced ones
+/// this. The transpile prints nothing: the messages are in the object, silenced ones
 /// marked. A refused transpile is the same object with nothing written and its errors
-/// among the findings, and the exit code says it refused.
+/// among the messages, and the exit code says it refused.
 fn transpile_as_json(
     input_path: &Path,
     input: &str,
@@ -2759,7 +2759,7 @@ pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<
     Ok(crate::workload_packs::Estate { path: estate.to_path_buf(), bound, interfaces: fe.interface_files })
 }
 
-/// The transpile every command runs: its findings reported in full, and printed.
+/// The transpile every command runs: its messages reported in full, and printed.
 fn pipeline_b_generate(
     input_path: &Path,
     tool_config: &ToolConfig,
@@ -2799,7 +2799,7 @@ fn pipeline_b_compile_using(
         // An `unknown param` is most often a pack whose provider is off: the pack graph
         // names it beside the parser's error, inside the typed error so the location
         // reaches every reader.
-        // The parser's error is a finding like any other — one row with its file and
+        // The parser's error is a message like any other — one row with its file and
         // line — so every reader gets a front-end refusal in the shape of any refusal.
         Err(e) => {
             let hinted = crate::preset_lines::hinted(
@@ -2828,7 +2828,7 @@ fn pipeline_b_compile_using(
         &src,
     );
     // A caller that reports the prerequisites itself is the one check that DROPS its
-    // findings: it is about to say the same thing in its own output. Everything else a
+    // messages: it is about to say the same thing in its own output. Everything else a
     // reader asked not to see is silenced below — kept, marked and counted.
     let mut findings: Vec<crate::findings::Finding> = tail
         .findings
@@ -2846,9 +2846,9 @@ fn pipeline_b_compile_using(
     if verdict.is_err() {
         return Err(Box::new(crate::findings::CompileRefusal { findings }));
     }
-    let out = tail.out.expect("no error finding, so the emitter ran");
+    let out = tail.out.expect("no error message, so the emitter ran");
     let interface = tail.interface;
-    let providers_tf = tail.providers_tf.expect("no error finding, so the providers were written");
+    let providers_tf = tail.providers_tf.expect("no error message, so the providers were written");
     let folded = tail.folded;
     let org_policies: Vec<(String, serde_yaml::Value)> = folded
         .slots
@@ -2918,12 +2918,12 @@ fn dry_run_pair(files: &[String]) -> Option<(String, String)> {
 
 /// Everything the transpile checks after the front end, collected rather than
 /// stopped at: the CLI renders it (`findings::render`), the language server maps
-/// it to findings in the editor, MCP returns it. `estate_src` is the estate's text as the
+/// it to messages in the editor, MCP returns it. `estate_src` is the estate's text as the
 /// caller has it — the editor's buffer or the file — for the checks that read the
 /// estate's own lines to say where.
 pub(crate) struct Tail {
     pub folded: satz_core::algebra::Folded,
-    /// `None` when an error finding stopped the transpile before or at the emitter.
+    /// `None` when an error message stopped the transpile before or at the emitter.
     pub out: Option<crate::emitter::EmitOut>,
     pub providers_tf: Option<String>,
     /// The estate's interface, when it exports anything and every export is one satz can
@@ -2935,7 +2935,7 @@ pub(crate) struct Tail {
 /// `graph` is the pack graph of the estate's presets: the estate's pack lines are judged
 /// against it by `crate::packs` — two excluded packs both on, a pack answered for and not
 /// used, a line without its gate, a pack on while one it needs is off — and a graph that
-/// is missing or unreadable is one finding instead.
+/// is missing or unreadable is one message instead.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_tail(
     fe: &satz_core::pipeline::FrontEnd,
@@ -2948,8 +2948,8 @@ pub(crate) fn compile_tail(
     presets_dir: &str,
     level: &str,
     estate: &Path,
-    // the same estate as a command takes it (`estate_as_typed`): what a finding's `fix`
-    // names, which is not the path the findings are located at
+    // the same estate as a command takes it (`estate_as_typed`): what a message's `fix`
+    // names, which is not the path the messages are located at
     estate_arg: &str,
     estate_src: &str,
 ) -> Tail {
@@ -2968,7 +2968,7 @@ pub(crate) fn compile_tail(
     if !f.is_empty() {
         return Tail { folded: satz_core::pipeline::fold_fragments(resolver, &[]), out: None, providers_tf: None, interface: None, findings: f };
     }
-    // After the dry-run check, which stops at any finding; before the suppressions, the
+    // After the dry-run check, which stops at any message; before the suppressions, the
     // conflicts and the emitter, so a transpile one of them stops still names a mode it
     // has no backend for.
     let mode_ok = deployment_mode_finding(&fe.env, estate, estate_src, &mut f);
@@ -3078,7 +3078,7 @@ pub(crate) fn compile_tail(
     missing_required_findings(&out.missing_required, level, &mut f);
     unscoped_findings(&out.unscoped, &mut f);
     wrong_shape_findings(&out.wrong_shapes, &fe.env, level, &mut f);
-    // a mode with no backend is already the finding at its line; the providers are not
+    // a mode with no backend is already the message at its line; the providers are not
     // written without one. The prerequisite check reads the text built from the judged
     // values: it names the project each provider bills its calls to. The file on disk is
     // the rendering — a value of an organization's estate as `local.interface.<export>` — where the
@@ -3268,7 +3268,7 @@ fn workload_folder_findings(
                 .of_type("google_folder")
                 .find(|r| r.label == read)
                 .and_then(|r| r.attrs.get("display_name").cloned());
-            // a folder the estate does not declare is the export check's finding
+            // a folder the estate does not declare is the export check's message
             if let Some(shown) = shown.filter(|d| d.as_str() != name) {
                 f.push(
                     err(format!(
@@ -3306,7 +3306,7 @@ fn compliance_frameworks_finding(
     }
 }
 
-/// The fold's conflicts, one finding per site so an editor marks every file involved;
+/// The fold's conflicts, one message per site so an editor marks every file involved;
 /// a fragment and its dry-run twin get the decision named beside the files.
 fn conflict_findings(folded: &satz_core::algebra::Folded, f: &mut Vec<crate::findings::Finding>) -> bool {
     use crate::findings::{Finding, Kind, Severity};
@@ -3426,7 +3426,7 @@ fn unscoped_findings(unscoped: &[crate::emitter::Unscoped], f: &mut Vec<crate::f
 }
 
 /// An written attribute whose value the provider refuses by its shape — at the declaring
-/// block, at the validation level like a missing argument. The finding names the param
+/// block, at the validation level like a missing argument. The message names the param
 /// where the declaring file binds the attribute to a bare one: the operator edits the
 /// param in the estate, and the HCL line `tofu apply` would name is generated.
 fn wrong_shape_findings(
@@ -3513,7 +3513,7 @@ fn prerequisite_findings(
     let get = |k: &str| env.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let update = "satz update-prerequisites <estate>";
     match providers_tf.map(|t| crate::prerequisites::Billing::parse(t, names)) {
-        // the finding that stopped the emission is already there
+        // the message that stopped the emission is already there
         None => f.push(Finding::new(
             Severity::Info,
             Kind::Prerequisites,
@@ -3681,7 +3681,7 @@ fn action_findings(actions: &[satz_core::pipeline::ResolvedAction], f: &mut Vec<
             Severity::Info,
             Kind::Action,
             "--no-pack-actions ignores pack-declared actions, --no-actions disables all execution, \
-             `satz silence add action --reason \"…\"` leaves these findings out of the output.",
+             `satz silence add action --reason \"…\"` leaves these messages out of the output.",
         ));
     }
 }
@@ -3707,7 +3707,7 @@ fn hcl_findings(blocks: &[satz_core::pipeline::HclPassthrough], f: &mut Vec<crat
                 ),
             ),
         };
-        // one block, named by where it stands: two blocks in one file are two findings
+        // one block, named by where it stands: two blocks in one file are two messages
         // and two silences, and moving one is a new block to review
         f.push(finding.about(format!("{}:{}", b.file, b.line)).located(b.file.clone(), b.line as u32));
     }
@@ -3876,7 +3876,7 @@ fn estate_param_strings(path: &Path, runtime_config: &ToolConfig) -> Result<Hash
 
 /// `prerequisites` is what the transpile behind the report does with the same gap:
 /// `update-prerequisites` (the command and its MCP tool) passes `Quiet`, since the
-/// report IS its output; every other caller keeps the transpile's findings.
+/// report IS its output; every other caller keeps the transpile's messages.
 pub(crate) fn prerequisites_report(
     path: &Path,
     tool_config: &ToolConfig,
@@ -5099,7 +5099,7 @@ pub(crate) fn estate_path(estate: PathBuf, runtime_config: &ToolConfig) -> PathB
 }
 
 /// The estate as a command takes it: what an operator types for this path, which is what
-/// a finding's `fix` line has to name for the line to run.
+/// a message's `fix` line has to name for the line to run.
 ///
 /// `estate_path` resolves a relative name inside `yaml_dir`, so the way back is to drop
 /// that prefix; a path that does not lie under it — an absolute one, or one given from
@@ -5808,7 +5808,7 @@ fn run_review(
         _ => crate::review_pack::render(&review, crate::out::width(&out)),
     };
     let what = format!(
-        "{} finding(s) on {}",
+        "{} message(s) on {}",
         review.findings.len(),
         pack.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
     );
@@ -7430,8 +7430,8 @@ mod prerequisite_findings_speak {
         );
     }
 
-    /// A workload estate gets no role finding — its roles are the organization's to grant
-    /// (ADR 0101) — and no API finding for the project its calls are billed to, the
+    /// A workload estate gets no role message — its roles are the organization's to grant
+    /// (ADR 0101) — and no API message for the project its calls are billed to, the
     /// delegation's infrastructure project; an API missing on a project of its own is still
     /// found. The same estate as an organization's is judged in full.
     #[test]
@@ -7459,7 +7459,7 @@ mod prerequisite_findings_speak {
         assert!(says(&f, "billingbudgets.googleapis.com on acme-deploy-shop") && says(&f, "lacks roles"), "{:?}", f.iter().map(|x| &x.message).collect::<Vec<_>>());
     }
 
-    /// No `providers.tf` — its emission failed, which is its own finding — is no
+    /// No `providers.tf` — its emission failed, which is its own message — is no
     /// silent pass for the API half.
     #[test]
     fn no_providers_is_said_not_passed() {
@@ -7472,7 +7472,7 @@ mod prerequisite_findings_speak {
     }
 
     /// The defect itself: an estate that binds the infrastructure project but no service
-    /// account gets the API finding, and a note for the half that was skipped.
+    /// account gets the API message, and a note for the half that was skipped.
     #[test]
     fn an_estate_without_a_service_account_still_gets_the_api_half() {
         let f = findings(&[("infra_project_name", "acme-infra-001")]);
@@ -7491,7 +7491,7 @@ mod prerequisite_findings_speak {
 
     /// An estate that binds neither param gets one note per half, naming the
     /// param each half needs — and neither note fails a transpile: not being able
-    /// to check something is not a finding against the estate.
+    /// to check something is not a message against the estate.
     #[test]
     fn an_estate_without_either_param_is_told_what_is_missing() {
         let f = findings(&[]);
@@ -8635,7 +8635,7 @@ mod estate_paths {
         assert_eq!(redundant_yaml_dir("yaml/SKEL.satz", ""), None);
     }
 
-    /// The way back: a finding's `fix` is a command to paste, so it names the estate as a
+    /// The way back: a message's `fix` is a command to paste, so it names the estate as a
     /// command takes it. The FILE NAME does not do for an estate in a subdirectory of
     /// `yaml_dir` — `yaml/pk/e.satz` gave `satz adopt e.satz`, which resolves to nothing.
     #[test]
@@ -8993,7 +8993,7 @@ mod agent_guide_tests {
 
 #[cfg(test)]
 mod compile_tail_tests {
-    //! The checks after the front end, as findings: each at the line it names, at
+    //! The checks after the front end, as messages: each at the line it names, at
     //! the severity the validation level gives it. What the CLI prints, the server
     //! shows and MCP returns is this list.
     use super::*;
@@ -9086,7 +9086,7 @@ action "step" {
         let f = t.findings.iter().find(|f| f.kind == Kind::UnadoptedPack).expect("the commented budget line");
         assert!(f.message.contains("use_budget") && f.message.contains("still commented out"), "{}", f.message);
         assert_eq!(f.line, Some(line_of("// use \"presets/organization-budget.satz\"")));
-        // the command is the finding's `fix`, for this estate, and the sentence does not repeat it
+        // the command is the message's `fix`, for this estate, and the sentence does not repeat it
         assert_eq!(f.fix.as_deref(), Some("satz add-preset tail.satz presets/organization-budget.satz"));
         assert!(!f.message.contains("satz add-preset"), "{}", f.message);
     }
@@ -9113,7 +9113,7 @@ action "step" {
         let t = tail("warn");
         let f = t.findings.iter().find(|f| f.kind == Kind::Action).expect("the action");
         assert_eq!((f.severity, f.line), (Severity::Warning, Some(line_of("action \"step\""))));
-        // where it stands is the finding's location, said once: the sentence does not repeat it
+        // where it stands is the message's location, said once: the sentence does not repeat it
         assert_eq!(f.file.as_deref(), Some("tail.satz"));
         assert_eq!(f.subject.as_deref(), Some("step"));
         assert!(f.message.starts_with("`satz run-actions` will execute"), "{}", f.message);
@@ -9121,7 +9121,7 @@ action "step" {
         assert!(t.out.is_some() && t.providers_tf.is_some());
     }
 
-    /// A bucket declared outside any project, setting none: a finding at its block, so
+    /// A bucket declared outside any project, setting none: a message at its block, so
     /// the caller decides whether it is printed — a review's transpile prints nothing. It
     /// stays a warning at every level: the provider block's project is a valid home.
     #[test]
@@ -9132,7 +9132,7 @@ action "step" {
                 .findings
                 .iter()
                 .find(|f| f.kind == Kind::MissingScope && f.message.starts_with("google_storage_bucket.no_location"))
-                .unwrap_or_else(|| panic!("level {}: no finding for the unscoped bucket: {:?}", level, t.findings));
+                .unwrap_or_else(|| panic!("level {}: no message for the unscoped bucket: {:?}", level, t.findings));
             assert_eq!(f.severity, Severity::Warning, "level {}", level);
             assert!(f.message.contains("sets no `project`"), "{}", f.message);
             assert_eq!((f.file.as_deref(), f.line), (Some("tail.satz"), Some(line_of("no_location {"))));
@@ -9181,7 +9181,7 @@ action "step" {
 
     /// `workload_folder_name` and the section that publishes it: each disagreement is
     /// an error at the line to edit; a name with its folder, and an estate that has the
-    /// question open, are not findings.
+    /// question open, are not messages.
     #[test]
     fn the_workload_folder_name_and_its_section_must_agree() {
         let with = |params: &str, section: &str| {
@@ -9258,7 +9258,7 @@ action "step" {
 
 #[cfg(test)]
 mod probe_quiet_tests {
-    //! `whoami`'s probe transpiles the estate with its prerequisite findings quiet, since
+    //! `whoami`'s probe transpiles the estate with its prerequisite messages quiet, since
     //! it tests the permissions live. The quiet is the probe's transpile's alone: `satz mcp`
     //! runs the probe for `satz_whoami` and every later transpile in the same process.
     use super::*;
@@ -9323,7 +9323,7 @@ google_storage_bucket {
         let _ = std::fs::remove_dir_all(estate.parent().unwrap());
     }
 
-    /// At `error` the finding is a refusal, and the probe that is quiet about it must
+    /// At `error` the message is a refusal, and the probe that is quiet about it must
     /// not take the refusal away from the transpile that follows.
     #[test]
     fn at_level_error_the_refusal_survives_the_probe() {
@@ -9337,7 +9337,7 @@ google_storage_bucket {
 
 #[cfg(test)]
 mod review_quiet_tests {
-    //! `review-preset` transpiles its scratch estate with nothing printed: the findings are
+    //! `review-preset` transpiles its scratch estate with nothing printed: the messages are
     //! its report. The silence is that transpile's alone — `satz mcp` serves
     //! `satz_review_preset` beside every other call, concurrently, and a transpile running
     //! beside a review prints its warnings as it would alone.
@@ -9413,7 +9413,7 @@ google_storage_bucket {
         std::fs::write(&good, ESTATE).unwrap();
         crate::findings::take_said();
         let (summary, refused) = compile_summary(&good, "good.satz", None, true, &cfg, &cfg).expect("a verdict");
-        assert!(crate::findings::take_said().is_empty(), "the findings are in the object; nothing is printed beside it");
+        assert!(crate::findings::take_said().is_empty(), "the messages are in the object; nothing is printed beside it");
         assert!(!refused && !summary.addresses.is_empty() && summary.written.is_empty(), "{:?}", summary);
         let lacks = summary.findings.iter().find(|f| f.kind == crate::findings::Kind::Prerequisites).expect("the roles it lacks");
         assert_eq!(lacks.fix.as_deref(), Some("satz update-prerequisites good.satz"));
@@ -9428,7 +9428,7 @@ google_storage_bucket {
         assert!(refused && summary.addresses.is_empty());
         let f = &summary.findings[0];
         assert_eq!((f.severity, f.kind), (crate::findings::Severity::Error, crate::findings::Kind::FrontEnd));
-        assert_eq!(f.file.as_deref(), Some("bad.satz"), "relative to the estate's directory, as every finding's file is");
+        assert_eq!(f.file.as_deref(), Some("bad.satz"), "relative to the estate's directory, as every message's file is");
         assert!(f.line.is_some() && f.message.contains("`params` is a Satz statement"), "{:?}", f);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -9463,7 +9463,7 @@ google_storage_bucket {
                     crate::findings::take_said();
                     crate::review_pack::review(&pack, None, crate::review_pack::Bar::Library, &cfg, &cfg).expect("the review runs");
                     let said = crate::findings::take_said();
-                    assert!(said.is_empty(), "the review printed its transpile's findings: {:?}", said);
+                    assert!(said.is_empty(), "the review printed its transpile's messages: {:?}", said);
                     reviews.fetch_add(1, Ordering::Relaxed);
                 }
             })

@@ -108,7 +108,7 @@ pub(crate) fn judge(policy: &serde_json::Value, role: &str, domain: &str, declar
     }
 }
 
-/// What one run read and did, one finding per declared role.
+/// What one run read and did, one verdict per declared role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Report {
     /// the organization's number

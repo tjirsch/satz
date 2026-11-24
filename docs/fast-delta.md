@@ -7,7 +7,7 @@ questions. This is an **audit, not an adoption plan** — FAST is greenfield
 landing-zone tooling; satz is CIS-mapped, brownfield-importing organization
 foundation. The deltas below are classified accordingly.
 
-## FAST has been restructured (finding 0)
+## FAST has been restructured (point 0)
 
 The old `0-bootstrap` + `1-resman` pair is gone. Current stages:
 

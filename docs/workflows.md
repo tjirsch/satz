@@ -1317,15 +1317,15 @@ the `.tf` files under the workload repository's directory and transpiles the org
 A value reads the estate when it is `module.<name>.<export>` of a module whose `source`
 ends in `<interface>/hcl`, `local.interface.<export>` or `local.interface_static.<export>`
 as the `interface.tf` a workload estate's transpile writes names it, or a literal equal to a
-value the estate publishes or an identity it writes; anything else is the workload estate's own. Each finding names the workload estate's
-file and line, and any finding exits 1. A workload estate runs it in its CI against a checkout of
+value the estate publishes or an identity it writes; anything else is the workload estate's own. Each message names the workload estate's
+file and line, and any message exits 1. A workload estate runs it in its CI against a checkout of
 the estate; an agent runs `satz_check_consumer`.
 
 **A workload estate written in Satz: its own transpile**, against the interface files it uses —
 they carry the attach points and the central resources the rules need, so the organization's
 estate is not read. A value reads the organization's estate when it is
 `"${{interface.<folder>.<value>}}"`, `"${{interface.<value>}}"`
-or a literal equal to a value it publishes or an identity it writes. Each finding is an
+or a literal equal to a value it publishes or an identity it writes. Each message is an
 error of the kind `interface-use` at the resource's line, and `satz transpile` refuses
 the estate as it refuses any other error.
 
@@ -1830,7 +1830,7 @@ writes it), `path` (the file in it), `action` and `estate`.
 How to tell whether a newer preset exists, what to do about it, and which command to
 reach for.
 
-![The pack loop: the library, the estate's presets folder with pristine, fork and diff files, check-presets and its states, merge-presets and what it writes into the estate file, then questions, interview and one apply per pack; below, the same loop through satz studio's Map, Interview, Commands and Findings views](workflow-packs.svg)
+![The pack loop: the library, the estate's presets folder with pristine, fork and diff files, check-presets and its states, merge-presets and what it writes into the estate file, then questions, interview and one apply per pack; below, the same loop through satz studio's Map, Interview, Commands and Messages views](workflow-packs.svg)
 
 ### Files and owners
 
@@ -1909,10 +1909,10 @@ have is refused before anything changes.
 Every pack but `estate-core` and the map is switched by a gate, and a no switches it
 off only through a line written `use "…" when <gate>`. An active line of such a pack
 written without `when` creates the pack's resources whatever the answer says. The transpile reports
-each one as an `ungated-pack` finding with its file and line, `satz presets` lists the
+each one as an `ungated-pack` message with its file and line, `satz presets` lists the
 line as `ungated`, and `satz remove-preset` refuses to switch the pack off through it.
 
-The finding names both halves of the edit: write `use "<path>" when <gate>` on that
+The message names both halves of the edit: write `use "<path>" when <gate>` on that
 line, and bind `<gate> = true` in the estate's own `params { }`. The line creates the
 pack's resources, and the binding keeps them once the gate decides;
  `satz remove-preset` is

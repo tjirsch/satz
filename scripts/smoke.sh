@@ -51,7 +51,7 @@ cmp -s yaml/showcase.satz tmp/fmt-stdin.satz || fail "fmt --stdin changed an alr
 printf 'a = "open' | "$satz" fmt --stdin > /dev/null 2> tmp/fmt-err.txt && fail "fmt --stdin accepted an unterminated string"
 grep -q 'unterminated string' tmp/fmt-err.txt || fail "fmt did not name the parse error:\n$(cat tmp/fmt-err.txt)"
 
-step "lsp: the language server answers an editor — findings, completion, hover, definition, formatting"
+step "lsp: the language server answers an editor — messages, completion, hover, definition, formatting"
 python3 "$root/tests/smoke/lsp_client.py" "$satz" yaml/showcase.satz || fail "satz lsp did not answer as an editor expects"
 
 step "init: the estate satz writes is in the canonical layout"
@@ -811,14 +811,14 @@ cmp -s tmp/pub-shared/team/budget.satz tmp/pub/packs/team/budget.satz && fail "a
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the budgets step"
 
 step "a workload estate has no role check: its roles are the organization's to grant, and update-prerequisites lists them (ADR 0101)"
-# the example: no prerequisites finding — no role is checked, and its own projects declare their APIs
+# the example: no prerequisites message — no role is checked, and its own projects declare their APIs
 grep -q 'prerequisites' tmp/example-simple-project.txt && fail "the example workload's estate has an open prerequisite:\n$(cat tmp/example-simple-project.txt)"
 grep -q 'pack-requirement' tmp/example-org.txt && fail "the example organization binds the pack's gate itself and is still told the map is off:\n$(cat tmp/example-org.txt)"
 "$satz" --config "$pt" update-prerequisites simple-project.satz --report-only > tmp/wl-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/wl-report.txt)"
 grep -q "^a workload estate: its account's roles are the organization's to grant" tmp/wl-report.txt && grep -q "^needed roles, for the organization's team:" tmp/wl-report.txt \
   && ! grep -q '^missing:\|at the organization —\|roles/browser' tmp/wl-report.txt \
   || fail "the report of a workload estate does not list its needed roles as information:\n$(cat tmp/wl-report.txt)"
-# a budget needs an API on the delegation's infrastructure project and a billing role: no finding,
+# a budget needs an API on the delegation's infrastructure project and a billing role: no message,
 # nothing written, and the report lists both for the organization's team
 { cat "$pt/satz/simple-project.satz"; printf '\ngoogle_billing_budget {\n  shop_budget {\n    billing_account = billing_account\n    display_name    = "shop"\n    amount {\n      specified_amount { units = "100" currency_code = "EUR" }\n    }\n  }\n}\n'; } > "$pt/satz/tmp-workload-budget.satz"
 "$satz" --config "$pt" transpile tmp-workload-budget.satz --output "$PWD/tmp/wl-hcl" > tmp/wl.txt 2>&1 || { rm -f "$pt/satz/tmp-workload-budget.satz"; fail "a workload estate with a budget does not transpile:\n$(cat tmp/wl.txt)"; }
@@ -1698,9 +1698,9 @@ grep -q 'not formatted' tmp/review-bad.txt || fail "the layout rule did not fire
 grep -q 'no header comment' tmp/review-bad.txt || fail "the header rule did not fire:\n$(cat tmp/review-bad.txt)"
 grep -q 'no `pack <name> version' tmp/review-bad.txt || fail "the version rule did not fire:\n$(cat tmp/review-bad.txt)"
 grep -q 'presets define groups, humans grant membership' tmp/review-bad.txt || fail "the membership rule did not fire:\n$(cat tmp/review-bad.txt)"
-# the findings are the shape an editor already reads: severity, kind, file, line
+# the messages are the shape an editor already reads: severity, kind, file, line
 "$satz" --config . review-preset tmp/packs/bad.satz --format json --out tmp/review-bad.json 2>/dev/null || true
-python3 - <<'PYEOF' || fail "review-preset --format json is not the findings shape"
+python3 - <<'PYEOF' || fail "review-preset --format json is not the messages shape"
 import json
 r = json.load(open("tmp/review-bad.json"))
 assert r["folded_into"] == "synthetic", r["folded_into"]
@@ -1708,7 +1708,7 @@ kinds = {f["kind"] for f in r["findings"]}
 assert kinds == {"pack"}, kinds
 errs = [f for f in r["findings"] if f["severity"] == "error"]
 assert len(errs) >= 4, errs
-assert any(f.get("line") for f in errs), "no finding is anchored to a line"
+assert any(f.get("line") for f in errs), "no message is anchored to a line"
 assert all(f.get("file", "").endswith("bad.satz") for f in r["findings"]), r["findings"]
 PYEOF
 
@@ -2588,7 +2588,7 @@ print(json.dumps({"jsonrpc": "2.0", "id": 20, "method": "tools/call",
                   "params": {"name": "satz_fmt", "arguments": {"text": text}}}))
 PYEOF
 # An estate that cannot transpile: it writes a reference to a folder nobody writes.
-# The refusal must carry that finding at its line, not only the sentence.
+# The refusal must carry that message at its line, not only the sentence.
 sed 's|name *= *"{customer_shortname}-audit-logs"|name = "${{google_folder.nope.name}}"|' yaml/showcase.satz > tmp/refuse.satz
 grep -q 'google_folder.nope.name' tmp/refuse.satz || fail "the refusing fixture was not written"
 python3 tmp/mcp-drive.py "$satz" mcp --root . < tmp/mcp-in.jsonl > tmp/mcp.jsonl 2>/dev/null || true
@@ -2682,9 +2682,9 @@ chk = msgs[17]["result"]["structuredContent"]
 assert chk["addresses"], chk
 kinds = {f["kind"] for f in chk["findings"]}
 assert {"action", "hcl-passthrough"} <= kinds, chk["findings"]
-# a finding with no site (the pack-actions note) carries no line at all
+# a message with no site (the pack-actions note) carries no line at all
 assert all(f.get("line") for f in chk["findings"] if f["kind"] in ("action", "hcl-passthrough") and f["severity"] != "info"), chk["findings"]
-# A REFUSED check is an error result that still carries its findings, each at its
+# A REFUSED check is an error result that still carries its messages, each at its
 # line — a client shows them where they are instead of parsing the sentence.
 bad = msgs[18]["result"]
 assert bad.get("isError"), bad
@@ -3032,10 +3032,10 @@ grep -q 'bind `cis_baseline_adopted = true`' tmp/pk/notice.txt || fail "the noti
   || fail "the estate with an open notice must transpile:\n$(cat tmp/pk/notice-check.txt)"
 grep -q 'notices open — what a pack asks to be run once it is on (1)' tmp/pk/notice-check.txt || fail "the transpile must warn while a notice is open:\n$(cat tmp/pk/notice-check.txt)"
 # the layout: the first line, the sentence under it, the command as a last line of its own
-grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/notice-check.txt || fail "a finding opens with severity, kind, file:line and subject:\n$(cat tmp/pk/notice-check.txt)"
+grep -q '^warning  notice  *tmp/pk/e.satz:[0-9]*  cis_baseline_adopted$' tmp/pk/notice-check.txt || fail "a message opens with severity, kind, file:line and subject:\n$(cat tmp/pk/notice-check.txt)"
 # the estate is named as a command takes it — this one is given as an absolute path, and
 # that is what the line has to carry: the file name alone would name yaml/e.satz, another file
-grep -q "^    fix: satz adopt $PWD/tmp/pk/e.satz --execute --import$" tmp/pk/notice-check.txt || fail "the command is the finding's last line, naming the estate as a command takes it:\n$(cat tmp/pk/notice-check.txt)"
+grep -q "^    fix: satz adopt $PWD/tmp/pk/e.satz --execute --import$" tmp/pk/notice-check.txt || fail "the command is the message's last line, naming the estate as a command takes it:\n$(cat tmp/pk/notice-check.txt)"
 # the acknowledgement is an answer: `satz_interview` takes it, and `satz_presets` reports both states
 "$satz" --config . presets "$PWD/tmp/pk/e.satz" --format json --out tmp/pk/notice-packs.json > /dev/null 2>&1 || fail "satz presets failed"
 printf '%s\n' \
@@ -3076,7 +3076,7 @@ if "$satz" --config . transpile "$PWD/tmp/nt/open-notice.satz" --apply --output 
   fail "apply with an open notice was not refused"
 fi
 grep -qE '^error +notice +.*pack_bucket_adopted$' tmp/nt/apply.txt \
-  || fail "the refusal is the finding, at its line and by its subject:\n$(cat tmp/nt/apply.txt)"
+  || fail "the refusal is the message, at its line and by its subject:\n$(cat tmp/nt/apply.txt)"
 grep -q 'every command that writes to the organization refuses until then' tmp/nt/apply.txt \
   || fail "the refusal must say what holds the run back:\n$(cat tmp/nt/apply.txt)"
 # and no tier may silence it away
@@ -3085,8 +3085,8 @@ if "$satz" --config . --silence notice transpile "$PWD/tmp/nt/open-notice.satz" 
 fi
 grep -q 'an error is never silenced' tmp/nt/silenced.txt || fail "silencing an error must be refused by name:\n$(cat tmp/nt/silenced.txt)"
 
-step "silence: a finding is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
-# The shape this exists for: the CIS extensions all on at once produce eleven findings
+step "silence: a message is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
+# The shape this exists for: the CIS extensions all on at once produce eleven messages
 # on every transpile — ten open notices and the baseline's requirement — all saying what
 # has already been read once.
 rm -rf tmp/sil && mkdir -p tmp/sil
@@ -3095,7 +3095,7 @@ cp "$root/tests/corpus/cis-packs/main.satz" tmp/sil/cis.satz
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/before.txt 2>&1 \
   || fail "the corpus estate must transpile:\n$(cat tmp/sil/before.txt)"
 grep -q 'notices open — what a pack asks to be run once it is on (10)' tmp/sil/before.txt || fail "the ten notices are what this silences:\n$(cat tmp/sil/before.txt)"
-grep -q 'packs on while a pack they need is off (1)' tmp/sil/before.txt || fail "the eleventh finding is missing"
+grep -q 'packs on while a pack they need is off (1)' tmp/sil/before.txt || fail "the eleventh message is missing"
 grep -q '^11 warnings, 2 infos$' tmp/sil/before.txt || fail "the run closes with its count by severity:\n$(cat tmp/sil/before.txt)"
 # the two infos: this estate binds neither param the prerequisite check is judged on,
 # and a check that cannot run says so rather than nothing
@@ -3112,9 +3112,9 @@ grep -q 'the roles this estate.s resource types need were not checked' tmp/sil/b
 grep -q 'kind = "notice"' tmp/sil/config.toml || fail "the row was not written into config.toml:\n$(cat tmp/sil/config.toml)"
 "$satz" --config tmp/sil transpile cis.satz --check > tmp/sil/after.txt 2>&1 \
   || fail "the estate must still transpile:\n$(cat tmp/sil/after.txt)"
-grep -q 'notices open' tmp/sil/after.txt && fail "a silenced finding was printed:\n$(cat tmp/sil/after.txt)"
+grep -q 'notices open' tmp/sil/after.txt && fail "a silenced message was printed:\n$(cat tmp/sil/after.txt)"
 grep -q '11 silenced (11 estate)' tmp/sil/after.txt \
-  || fail "every run says how many findings it left out, and from which tier:\n$(cat tmp/sil/after.txt)"
+  || fail "every run says how many messages it left out, and from which tier:\n$(cat tmp/sil/after.txt)"
 # …and an agent is handed all eleven, each marked
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
@@ -3128,9 +3128,9 @@ import json
 msgs = {d["id"]: d for d in (json.loads(l) for l in open("tmp/sil/mcp.jsonl") if l.strip()) if "id" in d}
 f = msgs[3]["result"]["structuredContent"]["findings"]
 silenced = [x for x in f if "silenced" in x]
-assert len(silenced) == 11, f"the JSON kept {len(silenced)} of eleven silenced findings"
+assert len(silenced) == 11, f"the JSON kept {len(silenced)} of eleven silenced messages"
 assert {x["silenced"]["tier"] for x in silenced} == {"estate"}, silenced
-assert all(x["subject"] for x in silenced), "every one of these findings names what it is about"
+assert all(x["subject"] for x in silenced), "every one of these messages names what it is about"
 # one path, whoever asks: the CLI and MCP spell the estate the same way
 assert {x["file"] for x in silenced} == {"cis.satz"}, {x["file"] for x in silenced}
 # what was not silenced is what nothing silences: the two prerequisite notes this
@@ -3142,7 +3142,7 @@ PYEOF
 "$satz" --config tmp/sil silence add "notice:no_such_param" --reason "a pack that is gone" > /dev/null 2>&1 \
   || fail "silence add of a subject nothing matches must still be written"
 "$satz" --config tmp/sil silence list cis.satz > tmp/sil/list.txt 2>&1 || fail "silence list failed:\n$(cat tmp/sil/list.txt)"
-grep -q 'silences 10 finding(s)' tmp/sil/list.txt || fail "list must say what each row silences:\n$(cat tmp/sil/list.txt)"
+grep -q 'silences 10 message(s)' tmp/sil/list.txt || fail "list must say what each row silences:\n$(cat tmp/sil/list.txt)"
 grep -q 'STALE' tmp/sil/list.txt || fail "a row nothing answers to must read stale:\n$(cat tmp/sil/list.txt)"
 "$satz" --config tmp/sil silence remove "notice:no_such_param" > /dev/null 2>&1 || fail "silence remove failed"
 "$satz" --config tmp/sil silence list cis.satz | grep -q 'STALE' && fail "the stale row was not removed"

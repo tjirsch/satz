@@ -3,7 +3,7 @@
 How satz compares with other frameworks for a Google Cloud organization foundation.
 Detailed technical diffs are in their own audit docs
 ([fast-delta.md](fast-delta.md)); this page holds the landscape, the differences
-and the review log. Every audit adds a row, and its raw findings stay in the
+and the review log. Every audit adds a row, and its raw results stay in the
 repository.
 
 ## Landscape

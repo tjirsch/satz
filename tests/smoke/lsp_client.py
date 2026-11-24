@@ -94,7 +94,7 @@ send("initialized", request=False)
 # didOpen: no ERROR on a clean estate (parse and pipeline); what the transpile warns
 # about — the showcase's action, its trusted passthrough — arrives as warnings and notes
 send("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "satz", "version": 1, "text": text}}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri, "the findings")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri, "the messages")
 errors = [x for x in d["params"]["diagnostics"] if x["severity"] == 1]
 assert errors == [], f"a clean estate has errors: {errors}"
 assert any("action" in x["message"] and x["severity"] == 2 for x in d["params"]["diagnostics"]), d["params"]["diagnostics"]
@@ -128,15 +128,15 @@ assert r and r["uri"].startswith("file://") and r["uri"].endswith(".satz"), f"de
 r = response(send("textDocument/formatting", {"textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": True}}))
 assert r == [], f"a formatted estate got edits: {r}"
 
-# a parse error on change is a finding at its line, cleared again on the fix
+# a parse error on change is a message at its line, cleared again on the fix
 broken = text.replace("\nestate showcase\n", "\nestate \"showcase\n", 1)
 assert broken != text, "the showcase header line moved; adjust the client"
 send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": broken}]}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and m["params"]["diagnostics"], "an error finding")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and m["params"]["diagnostics"], "an error message")
 diag = d["params"]["diagnostics"][0]
 assert diag["source"] == "satz" and diag["severity"] == 1, diag
 send("textDocument/didChange", {"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": text}]}, request=False)
-d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and not m["params"]["diagnostics"], "the finding to clear")
+d = wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and not m["params"]["diagnostics"], "the message to clear")
 
 # a pipeline error on save: an unknown resource type, named at its line
 bad = text.replace("google_folder {", "google_folderx {", 1)
@@ -164,4 +164,4 @@ wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["p
 response(send("shutdown"))
 send("exit", request=False)
 proc.wait(timeout=10)
-print("lsp: OK — initialize, findings (parse, pipeline, emitter), completion, hover, definition, formatting")
+print("lsp: OK — initialize, messages (parse, pipeline, emitter), completion, hover, definition, formatting")

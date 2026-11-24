@@ -1,6 +1,6 @@
-//! "Seen, move on" — said about a finding's IDENTITY, by one of three people.
+//! "Seen, move on" — said about a message's IDENTITY, by one of three people.
 //!
-//! A finding is named by its `kind` and its `subject` (`src/findings.rs`), never by its
+//! A message is named by its `kind` and its `subject` (`src/findings.rs`), never by its
 //! wording: a message carries paths, line numbers and counts, so a key made of it would
 //! be a different key after the next release, and a notice group's header (`10 notice(s)
 //! open`) rewords itself when one of the ten is acknowledged.
@@ -22,7 +22,7 @@
 //! error is refused by name — whether a CI switch may DOWNGRADE a named error kind is
 //! an open decision, and satz does not answer it by accident.
 //!
-//! And silencing hides, it never drops: a silenced finding is still produced, still
+//! And silencing hides, it never drops: a silenced message is still produced, still
 //! counted, still in `--format json` and in what MCP returns, marked with the tier and
 //! the reason. Only the human rendering leaves it out, and it prints one line saying
 //! how many it left out and from where.
@@ -66,7 +66,7 @@ impl std::fmt::Display for Tier {
     }
 }
 
-/// What the human rendering left out, on the finding itself.
+/// What the human rendering left out, on the message itself.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub(crate) struct Silenced {
     /// which tier said so
@@ -84,7 +84,7 @@ pub(crate) struct Silenced {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Rule {
-    /// the finding kind, as `--format json` spells it: `notice`, `action`, …
+    /// the message kind, as `--format json` spells it: `notice`, `action`, …
     pub kind: Kind,
     /// the one thing of that kind, when only one is meant
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -102,9 +102,9 @@ impl Rule {
         }
     }
 
-    /// Whether this rule names that finding: the kind, and the subject when the rule
+    /// Whether this rule names that message: the kind, and the subject when the rule
     /// names one. Subjects compare whole — there is no pattern, so a silence cannot
-    /// grow to cover a finding nobody read.
+    /// grow to cover a message nobody read.
     pub(crate) fn names(&self, f: &Finding) -> bool {
         self.kind == f.kind && match &self.subject {
             None => true,
@@ -114,12 +114,12 @@ impl Rule {
 }
 
 /// Every rule in force for one transpile, in tier order: the estate's first, then the
-/// machine's, then the run's. The first rule that names a finding is the one recorded.
+/// machine's, then the run's. The first rule that names a message is the one recorded.
 pub(crate) struct Silences(Vec<(Tier, Rule)>);
 
 impl Silences {
-    /// Mark every finding a rule names. An `Error` is never marked: this is the one
-    /// place a finding becomes silenced, so the rule holds everywhere at once.
+    /// Mark every message a rule names. An `Error` is never marked: this is the one
+    /// place a message becomes silenced, so the rule holds everywhere at once.
     pub(crate) fn apply(&self, findings: &mut [Finding]) {
         for f in findings.iter_mut().filter(|f| f.severity != Severity::Error) {
             if let Some((tier, rule)) = self.0.iter().find(|(_, r)| r.names(f)) {
@@ -128,7 +128,7 @@ impl Silences {
         }
     }
 
-    /// The rules that name an ERROR among these findings, with what the error says.
+    /// The rules that name an ERROR among these messages, with what the error says.
     pub(crate) fn naming_errors<'a>(&'a self, findings: &'a [Finding]) -> Vec<(Tier, &'a Rule, &'a Finding)> {
         self.0
             .iter()
@@ -148,7 +148,7 @@ pub(crate) fn estate_rules(tool: &ToolConfig) -> &[Rule] {
 /// Process-wide because that is what they are: one settings file and one command line
 /// per process, read before any estate is opened. Neither is ever written per call —
 /// `satz mcp` transpiles for many calls at once, and a list one call changed would
-/// silence another call's findings. The run tier is refused for `mcp` and `lsp`
+/// silence another call's messages. The run tier is refused for `mcp` and `lsp`
 /// outright, so a server never carries one.
 static MACHINE: OnceLock<Vec<Rule>> = OnceLock::new();
 static RUN: OnceLock<Vec<Rule>> = OnceLock::new();
@@ -215,7 +215,7 @@ pub(crate) fn selector(s: &str) -> Result<(Kind, Option<String>), String> {
         None => (s, None),
     };
     let kind = Kind::parse(name.trim())
-        .ok_or_else(|| format!("`{}` is not a finding kind. The kinds are: {}", name.trim(), Kind::names()))?;
+        .ok_or_else(|| format!("`{}` is not a message kind. The kinds are: {}", name.trim(), Kind::names()))?;
     Ok((kind, subject))
 }
 
@@ -279,7 +279,7 @@ pub(crate) fn list(estate: Option<&Path>, tool: &ToolConfig, runtime: &ToolConfi
     Ok(())
 }
 
-/// What one rule does to one transpile's findings: how many it silences, that it names an
+/// What one rule does to one transpile's messages: how many it silences, that it names an
 /// error and therefore silences nothing, or that nothing answers to it any more.
 fn state(rule: &Rule, findings: &[Finding]) -> String {
     let errors = findings.iter().filter(|f| f.severity == Severity::Error && rule.names(f)).count();
@@ -287,8 +287,8 @@ fn state(rule: &Rule, findings: &[Finding]) -> String {
     match (n, errors) {
         (0, 0) => "STALE: nothing this estate finds answers to it — remove it with `satz silence remove`".to_string(),
         (0, e) => format!("silences nothing: it names {} error(s), and an error is never silenced", e),
-        (n, 0) => format!("silences {} finding(s)", n),
-        (n, e) => format!("silences {} finding(s); {} error(s) it names stay, an error is never silenced", n, e),
+        (n, 0) => format!("silences {} message(s)", n),
+        (n, e) => format!("silences {} message(s); {} error(s) it names stay, an error is never silenced", n, e),
     }
 }
 
@@ -433,7 +433,7 @@ mod tests {
             selector("hcl-passthrough:yaml/e.satz:12").unwrap(),
             (Kind::HclPassthrough, Some("yaml/e.satz:12".to_string()))
         );
-        assert!(selector("notices").unwrap_err().contains("is not a finding kind"));
+        assert!(selector("notices").unwrap_err().contains("is not a message kind"));
         assert!(selector("notice:").unwrap_err().contains("nothing after the `:`"));
     }
 
@@ -478,7 +478,7 @@ mod tests {
     fn a_rule_nothing_answers_to_reads_stale() {
         let findings = vec![finding(Kind::Notice, Some("a"), Severity::Warning)];
         assert!(state(&rule(Kind::Notice, Some("gone")), &findings).starts_with("STALE"));
-        assert_eq!(state(&rule(Kind::Notice, Some("a")), &findings), "silences 1 finding(s)");
+        assert_eq!(state(&rule(Kind::Notice, Some("a")), &findings), "silences 1 message(s)");
     }
 
     #[test]

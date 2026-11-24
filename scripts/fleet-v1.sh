@@ -17,13 +17,13 @@
 #     directory and transpiled there. Estate repositories carry work in progress;
 #     a verification pass that writes into one costs more than it proves.
 #   * THE COMPARE IS BLOCK-LEVEL AND ORDER-INSENSITIVE. `git diff hcl/` reports a
-#     block that merely moved, which across many releases buries the finding that
+#     block that merely moved, which across many releases buries the difference that
 #     matters. Blocks are matched by ADDRESS, so only content counts.
 #   * A MISSING CHECKOUT IS NOT A PASS. It is reported UNAVAILABLE and, with
 #     --require-all, fails the run. Silence about an estate nobody checked is how
 #     a fleet report starts lying.
 #
-# Two findings, and they are not the same severity:
+# Two messages, and they are not the same severity:
 #
 #   BLOCKER   the estate does not transpile, or its ADDRESS SET moved — a
 #             resource appeared or disappeared. Nothing ships on top of that.

@@ -1,10 +1,10 @@
 //! What the transpile finds after the front end — one list, three readers.
 //!
-//! The CLI lays each finding out for a reader (`lay_out`) and refuses on an error; the
-//! language server turns each finding into an editor marker at the file and line it names;
+//! The CLI lays each message out for a reader (`lay_out`) and refuses on an error; the
+//! language server turns each message into an editor marker at the file and line it names;
 //! MCP returns the list as data, warnings included. One shape, so the three never
 //! disagree about what satz found, and one layout, so every command that prints a
-//! finding prints it the same way.
+//! message prints it the same way.
 
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ pub(crate) enum Severity {
 /// row, so the macro fills the list rather than a second table that can fall behind.
 macro_rules! kinds {
     ($($(#[$attr:meta])* $variant:ident => $name:literal),+ $(,)?) => {
-        /// Which check spoke, and half of a finding's identity: a `[[silence]]` row and
+        /// Which check spoke, and half of a message's identity: a `[[silence]]` row and
         /// `--silence` name a kind, never a wording. The other half is `subject`. The
         /// `update-prerequisites` command's own report silences its kind for its own
         /// transpile; an agent can group by it.
@@ -124,18 +124,18 @@ impl std::fmt::Display for Kind {
 pub(crate) struct Finding {
     pub severity: Severity,
     pub kind: Kind,
-    /// The title of the group this finding belongs to (`required arguments missing`).
-    /// The CLI prints it once above the group, with how many findings stand under it.
+    /// The title of the group this message belongs to (`required arguments missing`).
+    /// The CLI prints it once above the group, with how many messages stand under it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
-    /// The file the finding names: a `use` path as the loader saw it, or the estate.
+    /// The file the message names: a `use` path as the loader saw it, or the estate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     /// 1-based, in that file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
-    /// What this finding is ABOUT, and with `kind` its identity: the pack a pack
-    /// finding judges, the param a notice is acknowledged by, the action's name, the
+    /// What this message is ABOUT, and with `kind` its identity: the pack a pack
+    /// message judges, the param a notice is acknowledged by, the action's name, the
     /// `hcl` block's `file:line`. A `[[silence]]` row names this pair; the message,
     /// which carries counts and paths, names nothing stable.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -143,23 +143,23 @@ pub(crate) struct Finding {
     /// The sentence: what was found, and why it matters. Never the command that answers
     /// it — that is `fix`.
     pub message: String,
-    /// The command that answers this finding, as it is typed: `satz add-preset e.satz
+    /// The command that answers this message, as it is typed: `satz add-preset e.satz
     /// presets/estate-map.satz`. Absent where no one command does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
-    /// What this finding says in the words every finding like it uses: `message` with
-    /// what is this finding's own — a notice's pack and param — left to the first line,
+    /// What this message says in the words every message like it uses: `message` with
+    /// what is this message's own — a notice's pack and param — left to the first line,
     /// which carries it as `file:line` and `subject`. The PRODUCER states it; the layout
-    /// compares it for equality and never derives it from `message`. Findings of one
+    /// compares it for equality and never derives it from `message`. Messages of one
     /// group whose `shared`, severity, kind and `fix` are equal stand as one table of
-    /// first lines over this text. A finding that stands alone prints `message`.
+    /// first lines over this text. A message that stands alone prints `message`.
     ///
     /// For the layout alone, and in no schema: every reader of the JSON gets each
-    /// finding whole, in `message`, and a second field holding most of the same
+    /// message whole, in `message`, and a second field holding most of the same
     /// sentence would be two homes for one fact.
     #[serde(skip)]
     pub shared: Option<String>,
-    /// Set when a tier silenced this finding. The finding stays in the list and in the
+    /// Set when a tier silenced this message. The message stays in the list and in the
     /// JSON either way — only the human rendering leaves it out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub silenced: Option<Silenced>,
@@ -181,12 +181,12 @@ impl Finding {
         }
     }
 
-    /// What this finding is about: the second half of its identity.
+    /// What this message is about: the second half of its identity.
     pub(crate) fn about(mut self, subject: impl Into<String>) -> Self {
         self.subject = Some(subject.into());
         self
     }
-    /// The file this finding is about, with no line — the whole file is the subject.
+    /// The file this message is about, with no line — the whole file is the subject.
     pub(crate) fn at_file(mut self, file: impl Into<String>) -> Self {
         self.file = Some(file.into());
         self
@@ -221,14 +221,14 @@ impl Finding {
         self
     }
 
-    /// What it says in the words every finding like it uses — see `shared`. Written for
-    /// a table: the rows above it name what each finding is about.
+    /// What it says in the words every message like it uses — see `shared`. Written for
+    /// a table: the rows above it name what each message is about.
     pub(crate) fn shared(mut self, text: impl Into<String>) -> Self {
         self.shared = Some(text.into());
         self
     }
 
-    /// What the layout compares to tell whether two findings say the same thing: the
+    /// What the layout compares to tell whether two messages say the same thing: the
     /// text the producer declared shared, else the whole message — one thing found at
     /// several sites is the same message at each.
     fn said(&self) -> &str {
@@ -247,7 +247,7 @@ impl Finding {
     }
 }
 
-/// The severity a validation level gives the findings it governs: `warn` → Warning,
+/// The severity a validation level gives the messages it governs: `warn` → Warning,
 /// `error` → Error, `none` → the check is skipped.
 pub(crate) fn at_level(level: &str) -> Option<Severity> {
     match level {
@@ -258,7 +258,7 @@ pub(crate) fn at_level(level: &str) -> Option<Severity> {
 }
 
 /// The line a param is bound on, 1-based: `name = …` at any indentation and
-/// alignment. For findings whose check has no position of its own.
+/// alignment. For messages whose check has no position of its own.
 pub(crate) fn param_line(src: &str, name: &str) -> Option<u32> {
     src.lines().position(|l| {
         let t = l.trim_start();
@@ -267,20 +267,20 @@ pub(crate) fn param_line(src: &str, name: &str) -> Option<u32> {
     .map(|i| i as u32 + 1)
 }
 
-/// A transpile the findings refused, as an error: it displays as the layout the CLI
-/// prints, unwrapped, and carries the findings that produced it for a caller that can
+/// A transpile the messages refused, as an error: it displays as the layout the CLI
+/// prints, unwrapped, and carries the messages that produced it for a caller that can
 /// show them at their lines. `pipeline_b_generate` returns this boxed, so every `?`
 /// call site is unchanged and only the callers that want structure look for it.
 ///
-/// A front-end refusal is one too, with one finding: the parser's error has a file, a
-/// line and a message, which is what a finding is.
+/// A front-end refusal is one too, with one message: the parser's error has a file, a
+/// line and a sentence, which is what a message is.
 #[derive(Debug)]
 pub(crate) struct CompileRefusal {
     pub findings: Vec<Finding>,
 }
 
 impl CompileRefusal {
-    /// The front end's refusal as the one error finding it is.
+    /// The front end's refusal as the one error message it is.
     pub(crate) fn front_end(e: satz_core::pipeline::PipelineError) -> Self {
         CompileRefusal { findings: vec![Finding::new(Severity::Error, Kind::FrontEnd, e.msg).located(e.file, e.line as u32)] }
     }
@@ -309,14 +309,14 @@ pub(crate) fn as_refusal<'a>(e: &'a (dyn std::error::Error + 'static)) -> Option
     e.downcast_ref::<CompileRefusal>()
 }
 
-/// The findings behind a refusal, if this error is one. Empty for every other
+/// The messages behind a refusal, if this error is one. Empty for every other
 /// failure — a missing schema directory has no line to point at.
 pub(crate) fn refusal_findings(e: &(dyn std::error::Error + 'static)) -> Vec<Finding> {
     as_refusal(e).map(|c| c.findings.clone()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
-// The layout: one text form of a finding, for every command that prints one
+// The layout: one text form of a message, for every command that prints one
 // ---------------------------------------------------------------------------
 
 /// How far the prose may run before it breaks.
@@ -356,7 +356,7 @@ impl Width {
     }
 }
 
-/// Which findings of a list one call lays out. A silenced finding is in none of them:
+/// Which messages of a list one call lays out. A silenced message is in none of them:
 /// it stays in the list and in the JSON, and the footer counts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Shown {
@@ -396,20 +396,20 @@ fn location(f: &Finding) -> Option<String> {
     }
 }
 
-/// The indentation of a finding's message and of its `fix:` line under its first line.
+/// The indentation of a message's text and of its `fix:` line under its first line.
 const BODY: &str = "    ";
 
-/// The findings as a human reads them. Per finding: a first line of severity, kind,
+/// The messages as a human reads them. Per message: a first line of severity, kind,
 /// `file:line` and subject, in columns that line up over the whole run; the message
 /// under it, indented, wrapped to `width`; and the command that answers it as a last
-/// line of its own, `fix: …`. Findings of one group stand together under the group's
+/// line of its own, `fix: …`. Messages of one group stand together under the group's
 /// title, which says how many stand there and how many of the group a silence left out.
-/// Findings of a group that say the same thing — a conflict at each file it involves,
+/// Messages of a group that say the same thing — a conflict at each file it involves,
 /// nine packs asking for one command — are one block: their first lines as a table, then
 /// the sentence and the command once (`blocks`). A pipe gets the same blocks; only the
 /// wrapping differs.
-/// The findings of no group come first, so that what stands under a title is that
-/// group's. Every finding, and every title, is a blank line from the one before it.
+/// The messages of no group come first, so that what stands under a title is that
+/// group's. Every message, and every title, is a blank line from the one before it.
 /// Empty when nothing is shown.
 pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> String {
     let printed: Vec<&Finding> = findings.iter().filter(|f| shown.takes(f) && f.silenced.is_none()).collect();
@@ -418,7 +418,7 @@ pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> Strin
     let run = || findings.iter().filter(|f| f.silenced.is_none());
     let kind_w = run().map(|f| f.kind.as_str().len()).max().unwrap_or(0);
     let at_w = run().filter_map(location).map(|l| l.chars().count()).max().unwrap_or(0);
-    // The findings of no group first, then each group in the order its first finding
+    // The messages of no group first, then each group in the order its first message
     // arrives: whatever stands under a title belongs to it, down to the next title.
     let mut entries: Vec<(Option<&str>, Vec<&Finding>)> = vec![(None, Vec::new())];
     for f in printed {
@@ -454,8 +454,8 @@ pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> Strin
                 out.push_str(first.trim_end());
                 out.push('\n');
             }
-            // alone, a finding says its whole message; in a table the rows have said what
-            // is each finding's own
+            // alone, a message says its whole `message`; in a table the rows have said what
+            // is each message's own
             let text = if block.len() == 1 { block[0].message.as_str() } else { block[0].said() };
             for line in text.lines() {
                 wrap_into(&mut out, line, width);
@@ -469,12 +469,12 @@ pub(crate) fn lay_out(findings: &[Finding], shown: Shown, width: Width) -> Strin
     out
 }
 
-/// The findings of one group as the blocks they print as. Findings that say the same
+/// The messages of one group as the blocks they print as. Messages that say the same
 /// thing are one block: their first lines as a table, the sentence once, the command
-/// once. Same by EQUALITY — of the severity, the kind, the command and what the finding
+/// once. Same by EQUALITY — of the severity, the kind, the command and what the message
 /// says (`Finding::said`) — so two sentences one word apart are two blocks, and nothing
-/// is cut out of a message to make two alike. A block stands where its first finding
-/// arrived. One thing found at several sites — a conflict is one finding per site, so an
+/// is cut out of a message to make two alike. A block stands where its first message
+/// arrived. One thing found at several sites — a conflict is one message per site, so an
 /// editor marks each — is the plainest case: the same message at every site.
 fn blocks<'a>(members: Vec<&'a Finding>) -> Vec<Vec<&'a Finding>> {
     let mut blocks: Vec<Vec<&Finding>> = Vec::new();
@@ -488,7 +488,7 @@ fn blocks<'a>(members: Vec<&'a Finding>) -> Vec<Vec<&'a Finding>> {
     blocks
 }
 
-/// One line of a message under its finding: indented, and broken at `width` between
+/// One line of a message's text under its first line: indented, and broken at `width` between
 /// words. A line the producer indented — a list under a sentence — keeps its indent,
 /// and what wraps hangs two further in.
 fn wrap_into(out: &mut String, line: &str, width: Width) {
@@ -554,10 +554,10 @@ pub(crate) fn footer(findings: &[Finding]) -> Option<String> {
 /// The footer closes a transpile that goes on; one that is refused gets it from
 /// `report_refusal`, under the errors, so it is the last line either way.
 ///
-/// A silenced finding is left out here and nowhere else: it is still in the list this
+/// A silenced message is left out here and nowhere else: it is still in the list this
 /// was given, still in `--format json` and still in what MCP returns. What it leaves
 /// behind is its count in the footer — how many were silenced, and by which tier — so a
-/// silence is visible on every run even when its finding is not.
+/// silence is visible on every run even when its message is not.
 pub(crate) fn render(findings: &[Finding]) -> Result<(), String> {
     let text = lay_out(findings, Shown::Rest, Width::of_stderr());
     if !text.is_empty() {
@@ -602,7 +602,7 @@ pub(crate) fn take_said() -> Vec<String> {
 }
 
 /// The verdict `render` reaches, with nothing printed: the errors in the layout,
-/// unwrapped, `Err` when there is any. A command that reports the findings in its own
+/// unwrapped, `Err` when there is any. A command that reports the messages in its own
 /// output transpiles with this, so an internal transpile does not speak over it.
 ///
 /// It never reads `silenced`, and it never has to: `Silences::apply` skips an `Error`,
@@ -638,7 +638,7 @@ mod tests {
             .fix("satz adopt e.satz --execute --import")
     }
 
-    /// The layout, whole: lone findings first, a group under its title with its count,
+    /// The layout, whole: lone messages first, a group under its title with its count,
     /// the columns lined up over the run, the message indented, the fix last.
     #[test]
     fn a_finding_is_a_first_line_its_message_and_its_fix() {
@@ -668,7 +668,7 @@ mod tests {
         assert!(lay_out(&f, Shown::Errors, Width::Unwrapped).is_empty(), "there is no error to lay out");
     }
 
-    /// A conflict is one finding per site, so an editor marks every file; the CLI says the
+    /// A conflict is one message per site, so an editor marks every file; the CLI says the
     /// sentence once, under the sites.
     #[test]
     fn the_same_sentence_at_several_sites_is_said_once() {
@@ -695,9 +695,9 @@ mod tests {
             .fix("satz adopt e.satz --execute --import")
     }
 
-    /// Findings of one group whose shared sentence and command are EQUAL are one block:
+    /// Messages of one group whose shared sentence and command are EQUAL are one block:
     /// a row each, then the sentence and the command once — into a pipe as on a terminal.
-    /// The block stands where its first finding arrived, and a finding that arrives
+    /// The block stands where its first message arrived, and a message that arrives
     /// between two of its rows does not split it.
     #[test]
     fn findings_that_say_the_same_thing_share_one_table() {
@@ -723,15 +723,15 @@ mod tests {
              \x20   Once it has run, bind `baseline_adopted = true`.\n\
              \x20   fix: satz adopt e.satz --execute --import\n"
         );
-        assert_eq!(footer(&f).as_deref(), Some("4 warnings"), "a row is a finding, and the count is of findings");
-        // the JSON is where it was: every finding whole, and the shared sentence in no field
+        assert_eq!(footer(&f).as_deref(), Some("4 warnings"), "a row is a message, and the count is of messages");
+        // the JSON is where it was: every message whole, and the shared sentence in no field
         let json = serde_json::to_value(&f).unwrap();
         assert_eq!(json[2]["message"], "`presets/b.satz`: Google may hold the policy.\nOnce it has run, bind `b_adopted = true`.");
         assert!(json[2].get("shared").is_none(), "{}", json[2]);
     }
 
-    /// One row is no table: a finding that shares its sentence with nothing printed
-    /// beside it says its whole message, as a finding with no shared sentence does.
+    /// One row is no table: a message that shares its sentence with nothing printed
+    /// beside it says its whole `message`, as a message with no shared sentence does.
     #[test]
     fn a_finding_alone_in_its_block_prints_its_whole_message() {
         let f = vec![pack_notice("a", 4, "Google may hold the policy.")];
@@ -764,8 +764,8 @@ mod tests {
         }
     }
 
-    /// A silenced finding is no row: the table holds what is printed, the title counts
-    /// it exactly, and a table a silence leaves one row of is a finding on its own.
+    /// A silenced message is no row: the table holds what is printed, the title counts
+    /// it exactly, and a table a silence leaves one row of is a message on its own.
     #[test]
     fn a_silenced_finding_is_no_row_and_the_title_counts_what_stands_under_it() {
         use crate::silence::{Silenced, Tier};
@@ -807,7 +807,7 @@ mod tests {
         assert!(lay_out(&f, Shown::All, Width::Unwrapped).contains("one two three four five six seven\n"));
     }
 
-    /// A silence hides, it never drops: the finding is still in the list the caller
+    /// A silence hides, it never drops: the message is still in the list the caller
     /// holds — and so in `--format json` and in what MCP returns — while the printing
     /// leaves it out, the group's title counts what is left under it, and the footer
     /// says how many were left out, and by which tier.
@@ -857,10 +857,10 @@ mod tests {
         assert_eq!(refusal_findings(e.as_ref()).len(), 2);
         assert_eq!(as_refusal(e.as_ref()).unwrap().brief(), "e.satz:7: write: no");
         let other: Box<dyn std::error::Error> = "no schemas".into();
-        assert!(refusal_findings(other.as_ref()).is_empty(), "only a refusal carries findings");
+        assert!(refusal_findings(other.as_ref()).is_empty(), "only a refusal carries messages");
     }
 
-    /// The parser's refusal is a refusal like any other: one error finding, at its line.
+    /// The parser's refusal is a refusal like any other: one error message, at its line.
     #[test]
     fn a_front_end_error_is_one_finding_at_its_line() {
         let e = satz_core::pipeline::PipelineError { file: "e.satz".into(), line: 8, msg: "unknown param `x`".into() };

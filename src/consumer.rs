@@ -379,7 +379,7 @@ pub(crate) fn check_project(manifest: &Manifest, files: &[satz_core::pipeline::U
     judge(&blocks, &facts, &readers, Kind::InterfaceUse, &central)
 }
 
-/// Every finding about the project's blocks, in the order the blocks stand.
+/// Every message about the project's blocks, in the order the blocks stand.
 fn judge(blocks: &[ConsumerBlock], facts: &Facts, readers: &BTreeMap<String, Vec<usize>>, kind: Kind, central: &str) -> Vec<Finding> {
     let c = Check { facts, readers: readers.clone() };
     let attach_table = interface::attach_points();

@@ -2,7 +2,7 @@
 //!
 //! One module answers it for every reader. `satz presets` and `satz_presets` report it,
 //! `satz add-preset` and `satz remove-preset` change it, the interview and `merge-presets`
-//! write pack lines through it, and the transpile's pack findings are its findings — so
+//! write pack lines through it, and the transpile's pack messages are its messages — so
 //! what an editor marks, what `transpile --check` prints and what `add-preset` refuses
 //! are the same sentences.
 //!
@@ -47,7 +47,7 @@ pub(crate) struct UseLine {
     pub trailing: String,
 }
 
-/// The `use` clause of `l` as it reads gated on `gate` — what a finding tells the operator
+/// The `use` clause of `l` as it reads gated on `gate` — what a message tells the operator
 /// to write on a line that lacks its `when`.
 fn gated_line(l: &UseLine, gate: &str) -> String {
     match &l.alias {
@@ -306,7 +306,7 @@ impl<'a> View<'a> {
     /// the estate binds nothing — the default in the map or in the declaring pack is what
     /// the library proposes, not what this estate decided, and the interview means the
     /// same thing by an answer. A scaffold-only estate answers nothing and every pack line is
-    /// commented, which is the normal state and not a finding.
+    /// commented, which is the normal state and not a message.
     fn answered(&self, param: &str) -> Option<bool> {
         self.eval(self.own.get(param)?, 0)
     }
@@ -418,7 +418,7 @@ impl<'a> View<'a> {
     }
 
     /// The sentence for a requirement `n` has and that is off — the same in the transpile's
-    /// finding, `packs`, and `add-preset`'s refusal.
+    /// message, `packs`, and `add-preset`'s refusal.
     fn requirement_text(&self, n: &Node, r: &Requirement) -> String {
         let name = |p: &str| match self.node(p).and_then(|m| m.gate.clone()) {
             Some(g) => format!("`{}` (`{}`)", p, g),
@@ -466,7 +466,7 @@ impl<'a> View<'a> {
         }
     }
 
-    // ---- findings ------------------------------------------------------------
+    // ---- messages ------------------------------------------------------------
 
     /// Two packs that exclude one another, both on: always an error, found before the
     /// fold, which would name the files instead of the decision.
@@ -511,7 +511,7 @@ impl<'a> View<'a> {
         out
     }
 
-    /// The findings about each pack's line and what it needs, at the validation level.
+    /// The messages about each pack's line and what it needs, at the validation level.
     fn line_findings(&self, label: &str, estate_arg: &str, level: &str) -> Vec<(String, Finding)> {
         let Some(sev) = crate::findings::at_level(level) else { return Vec::new() };
         let at = |l: Option<&UseLine>| l.map(|l| l.index as u32 + 1);
@@ -694,7 +694,7 @@ impl<'a> View<'a> {
     }
 }
 
-/// The transpile's pack findings, in two halves: the exclusions, which stop the transpile
+/// The transpile's pack messages, in two halves: the exclusions, which stop the transpile
 /// before the fold, and the rest. A library file the graph names that does not read is
 /// one warning, never a stopped transpile.
 pub(crate) fn compile_findings(
@@ -715,7 +715,7 @@ pub(crate) fn compile_findings(
         Ok(v) => v,
         Err(e) => return (Vec::new(), vec![Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{}: {}", label, e))]),
     };
-    // the pack each finding is about becomes its subject: the half of its identity a
+    // the pack each message is about becomes its subject: the half of its identity a
     // `[[silence]]` row names, and what `satz presets` groups by
     let strip = |v: Vec<(String, Finding)>| v.into_iter().map(|(path, f)| f.about(path)).collect();
     (strip(view.exclusion_findings(label, src)), strip(view.line_findings(label, estate_arg, level)))
@@ -725,7 +725,7 @@ pub(crate) fn compile_findings(
 /// often a pack whose provider is off, and the graph names it.
 ///
 /// The hint rides in the typed error, so one refusal has one shape — `file` and `line`
-/// survive for the findings in the editor, `satz_transpile_check` and satz-studio, which are
+/// survive for the messages in the editor, `satz_transpile_check` and satz-studio, which are
 /// the readers that most need the line for exactly these refusals.
 pub(crate) fn hinted(
     e: PipelineError,
@@ -815,7 +815,7 @@ pub(crate) struct PackRow {
     /// beside the estate's own, so a reader sees which pack put each one there
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub contributes: Vec<Contributed>,
-    /// the transpile's findings about this pack
+    /// the transpile's messages about this pack
     pub findings: Vec<String>,
 }
 
@@ -922,7 +922,7 @@ pub(crate) struct PacksReport {
     /// per used interface file, who delegated and what it carries: the organization's estate, the
     /// organization, the account, the delegated resource
     pub delegated_by: Vec<DelegatedBy>,
-    /// the transpile's pack findings, as `transpile --check` prints them
+    /// the transpile's pack messages, as `transpile --check` prints them
     pub findings: Vec<Finding>,
 }
 
@@ -1128,7 +1128,7 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
         }
     }
     if !r.findings.is_empty() {
-        s.push_str("\n## Findings\n\n");
+        s.push_str("\n## Messages\n\n");
         for f in &r.findings {
             match &f.fix {
                 Some(fix) => s.push_str(&format!("- {} Fix: `{}`\n", cell(&f.message), fix)),
@@ -1806,7 +1806,7 @@ mod tests {
         assert_eq!(
             View::new(&graph(), &lib(&graph()), &skeleton).unwrap().value("use_cis_baseline"),
             Some(true),
-            "the map's default is still what the pack reads; only the finding changes"
+            "the map's default is still what the pack reads; only the message changes"
         );
         let answered = skeleton.replace("x = 1", "use_cis_baseline = true");
         assert!(
@@ -1847,7 +1847,7 @@ mod tests {
     fn an_ungated_line_is_found_only_where_its_gate_exists() {
         let src = format!("{}use \"presets/organization-budget.satz\"\n", HEAD.replace("x = 1", "use_budget = false"));
         assert!(messages(&src).iter().any(|m| m.contains("without `when use_budget`")), "{:?}", messages(&src));
-        // the finding states the edit: no command writes the `when`
+        // the message states the edit: no command writes the `when`
         let edit = "write `use \"presets/organization-budget.satz\" when use_budget` on that line and bind `use_budget = true`";
         assert!(messages(&src).iter().any(|m| m.contains(edit) && !m.contains("merge-presets")), "{:?}", messages(&src));
         let no_map = "estate e\n\nparams {\n  x = 1\n}\n\nuse \"presets/organization-budget.satz\"\n";

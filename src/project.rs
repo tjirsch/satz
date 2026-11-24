@@ -402,7 +402,7 @@ pub(crate) mod tests {
     }
 
     /// A workload estate uses no preset, so the preset library's pack graph missing beside
-    /// it is no finding; an organization's estate gets one note
+    /// it is no message; an organization's estate gets one note
     /// (`a_missing_pack_graph_is_one_note` in `src/main.rs`).
     #[test]
     fn a_workload_estate_is_not_sent_for_the_preset_library() {
@@ -440,7 +440,7 @@ pub(crate) mod tests {
         let errors: Vec<&str> = t.findings.iter().filter(|f| f.severity == crate::findings::Severity::Error).map(|f| f.message.as_str()).collect();
         assert!(errors.is_empty(), "{:?}", errors);
         let unresolved: Vec<&str> = t.findings.iter().map(|f| f.message.as_str()).filter(|m| m.contains("interface.")).collect();
-        assert!(unresolved.is_empty(), "a finding names the read, not its value: {:?}", unresolved);
+        assert!(unresolved.is_empty(), "a message names the read, not its value: {:?}", unresolved);
         let providers = t.providers_tf.expect("providers.tf");
         assert!(!providers.contains("interface.delegation"), "{}", providers);
         assert!(providers.contains("impersonate_service_account = \"svc-deploy-data@acme-deploy-data.iam.gserviceaccount.com\""), "{}", providers);

@@ -624,7 +624,7 @@ pub(crate) fn has_rendering(folded: &Folded) -> bool {
 }
 
 /// main.tf + imports.tf from the folded estate. The blocks are built from the bodies the
-/// fold judged — the manifest, the findings and `imports.tf` read those — and, where an
+/// fold judged — the manifest, the messages and `imports.tf` read those — and, where an
 /// entity carries a rendering, built once more from it for the text: the same addresses in
 /// the same order, with the real pass's `depends_on`, and `local.interface.<export>` where a
 /// value came from the interface of an organization's estate.

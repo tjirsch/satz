@@ -130,7 +130,7 @@ pub(crate) enum Goal {
     /// compliant and is not — and nothing but a live report would have said so.
     ClaimContradicted { inert: Vec<(String, String)>, pack: String, coverage: String },
     /// An included pack or the estate declares a DELIBERATE non-conformance with
-    /// a stated reason. Disclosed as a finding, never counted as a gap: a `.local`
+    /// a stated reason. Disclosed, never counted as a gap: a `.local`
     /// fork exists precisely so a customer can decline a control on purpose, and
     /// the report must say so rather than show a hole indistinguishable from an
     /// oversight. Does not fail the gate.
@@ -3985,7 +3985,7 @@ pub(crate) fn fix_plan(rows: &[TriageRow], presets_dir: &str) -> String {
             match paths.get(pack) {
                 Some(path) => out.push_str(&format!("    use \"{}\"   // {}\n", path, ids.join(", "))),
                 // A pack the library named but this checkout does not have is a
-                // finding of its own, not a line to paste.
+                // message of its own, not a line to paste.
                 None => out.push_str(&format!(
                     "    // {} covers {} but is not in this presets_dir — run `satz get-presets`\n",
                     pack,
@@ -4623,7 +4623,7 @@ mod fix_plan_tests {
         assert!(out.contains("1.14, 2.13"), "the line does not say what it closes:\n{}", out);
     }
 
-    /// A pack the library named but this checkout does not have is a finding of
+    /// A pack the library named but this checkout does not have is a message of
     /// its own. Writing a `use` for it would be a line that does not transpile.
     #[test]
     fn a_pack_that_is_not_installed_is_named_not_pasted() {

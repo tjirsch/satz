@@ -60,7 +60,7 @@ pub struct ToolConfig {
     #[serde(default)]
     pub import_config: Option<String>,
     /// What this estate has said "seen, move on" to: `[[silence]]` tables, each naming
-    /// a finding's `kind`, optionally its `subject`, and why. Committed with the
+    /// a message's `kind`, optionally its `subject`, and why. Committed with the
     /// estate, so a review sees who silenced what.
     ///
     /// Last in the struct because it is the one array of tables: TOML puts tables after
@@ -75,7 +75,7 @@ pub struct ToolConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) preset_library: Option<crate::pack_sources::PresetLibraryEntry>,
     /// The directory the config was read from, set by `resolved_config` — never read
-    /// from the file and never written back. It is what makes a finding's `file`
+    /// from the file and never written back. It is what makes a message's `file`
     /// estate-relative, so the CLI, the editor and an agent name the same path.
     #[serde(skip)]
     pub(crate) dir: Option<PathBuf>,

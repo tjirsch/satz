@@ -78,7 +78,7 @@ impl Shape {
         }
     }
 
-    /// What the token looks like it is, for a reader of a finding.
+    /// What the token looks like it is, for a reader of a message.
     pub(crate) fn describe(self) -> &'static str {
         match self {
             Shape::DirectoryId => "a Google Workspace directory id",
