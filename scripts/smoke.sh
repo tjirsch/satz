@@ -1811,6 +1811,20 @@ printf 'a\n' > tmp/prq/presets/list.txt
 grep -q ' 2 artifacts updated' tmp/prq-scripts.txt || fail "the script and the list were not counted as artifacts:\n$(cat tmp/prq-scripts.txt)"
 cmp -s tmp/prq/pristine/helper.sh tmp/prq/presets/helper.sh && cmp -s tmp/prq/pristine/list.txt tmp/prq/presets/list.txt \
   || fail "merge-presets left the older script or list in place:\n$(cat tmp/prq-scripts.txt)"
+# Every file of the library is taken, whatever its kind — a Python action's script
+# among them — and nothing a machine leaves beside the files.
+printf 'print("hello")\n' > tmp/prq/pristine/action.py
+mkdir -p tmp/prq/pristine/__pycache__ && printf 'x' > tmp/prq/pristine/__pycache__/action.cpython-312.pyc
+printf 'x' > tmp/prq/pristine/.DS_Store
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-py.txt 2>&1 \
+  || fail "merge-presets did not take a Python file:\n$(cat tmp/prq-py.txt)"
+cmp -s tmp/prq/pristine/action.py tmp/prq/presets/action.py || fail "merge-presets did not install the Python file:\n$(cat tmp/prq-py.txt)"
+[ -e tmp/prq/presets/.DS_Store ] || [ -e tmp/prq/presets/__pycache__ ] && fail "merge-presets copied a hidden file or __pycache__"
+rm tmp/prq/presets/action.py
+"$satz" --config tmp/prq/config.toml get-presets --pristine-dir tmp/prq/pristine > tmp/prq-get-py.txt 2>&1 \
+  || fail "get-presets did not take a Python file:\n$(cat tmp/prq-get-py.txt)"
+cmp -s tmp/prq/pristine/action.py tmp/prq/presets/action.py || fail "get-presets did not install the Python file:\n$(cat tmp/prq-get-py.txt)"
+[ -e tmp/prq/presets/.DS_Store ] || [ -e tmp/prq/presets/__pycache__ ] && fail "get-presets copied a hidden file or __pycache__"
 grep -q 'forked logs\|estate edit' tmp/prq-again.txt && fail "a second merge-presets edited the estate again:\n$(cat tmp/prq-again.txt)"
 
 step "get-presets reads the preset library [preset_library] names instead of satz's"
