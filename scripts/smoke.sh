@@ -1799,6 +1799,18 @@ grep -q 'acme-logs-eu' tmp/prq/presets/logs.local.satz && fail "the fork carries
 (cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm forked)
 "$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-again.txt 2>&1 \
   || fail "a second merge-presets needs attention:\n$(cat tmp/prq-again.txt)"
+# A script a pack's action runs and a `.txt` list are refreshed as they are, never parsed
+# as a pack: an older copy of either beside the estate is replaced by upstream's.
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho new\n' > tmp/prq/pristine/helper.sh
+printf 'a\nb\n' > tmp/prq/pristine/list.txt
+printf '#!/usr/bin/env bash\nset -euo pipefail\necho old\n' > tmp/prq/presets/helper.sh
+printf 'a\n' > tmp/prq/presets/list.txt
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm scripts)
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/prq-scripts.txt 2>&1 \
+  || fail "merge-presets did not take a changed script and list:\n$(cat tmp/prq-scripts.txt)"
+grep -q ' 2 artifacts updated' tmp/prq-scripts.txt || fail "the script and the list were not counted as artifacts:\n$(cat tmp/prq-scripts.txt)"
+cmp -s tmp/prq/pristine/helper.sh tmp/prq/presets/helper.sh && cmp -s tmp/prq/pristine/list.txt tmp/prq/presets/list.txt \
+  || fail "merge-presets left the older script or list in place:\n$(cat tmp/prq-scripts.txt)"
 grep -q 'forked logs\|estate edit' tmp/prq-again.txt && fail "a second merge-presets edited the estate again:\n$(cat tmp/prq-again.txt)"
 
 step "get-presets reads the preset library [preset_library] names instead of satz's"
