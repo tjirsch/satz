@@ -91,7 +91,8 @@ The spelling is American English.
 | **bootstrap** | | The one-time first setup of an organization, done by a person with their own rights: the infrastructure project, the billing link, the state bucket, the estate account. Everything after runs as the estate account. | `satz bootstrap`; satz-studio Apply |
 | **prerequisites** | | The roles the estate account needs and the services that must be switched on before an estate can apply. satz works them out from the estate and says which are missing. | `satz update-prerequisites` |
 | **signed in** | | A person has logged in on this computer so that satz may call the cloud in their name. | `satz whoami`; satz-studio Apply |
-| **finding** | | A problem satz reports about an estate, with its place and what to do. Its severity is an error or a warning. | every command; satz-studio Findings |
+| **message** | | A problem satz reports about an estate, with its place and what to do. Its severity is an error, a warning or a note. | every command; satz-studio Messages |
+| **finding** | | What a security tool reports about a resource: a check it ran and its result. Prowler and Checkov report findings; satz reads them, it raises none itself. | `satz scan`, `report-compliance --prowler`, `triage`, the remediation dossier; satz-studio Security |
 | **notice** | | A note a preset or workload pack attaches for whoever switches it on: what to do before or after. | `satz presets`; satz-studio Overview |
 
 ## The documents
@@ -131,7 +132,7 @@ The spelling is American English.
 | day 0 | bootstrap |
 | rights check, permission check, pre-flight | prerequisites |
 | logged in, credentials, ADC, Application Default Credentials | signed in, sign-in |
-| diagnostic | finding |
+| diagnostic | message |
 | sign-off page, sign-off sheet, handover record, decisions catalog | decisions sheet |
 | organisation and other British spellings | American spelling |
 

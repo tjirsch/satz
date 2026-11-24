@@ -212,7 +212,7 @@ class Server:
         except (
             TimeoutError,
             RuntimeError,
-        ) as e:  # a hung or dead server is the finding
+        ) as e:  # a hung or dead server is what the probe reports
             run.record(self.label, case, "FAIL", str(e), tool=tool)
             return {}
         extra: dict = {"tool": tool, "ms": int((time.monotonic() - t0) * 1000)}

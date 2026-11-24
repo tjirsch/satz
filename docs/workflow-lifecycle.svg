@@ -134,7 +134,7 @@
   <text x="404" y="512" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">in the terminal, with its</text>
   <text x="404" y="526" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">approval prompt</text>
   <text x="404" y="548" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">Diagnostics</text>
-  <text x="404" y="562" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the compile's findings, at</text>
+  <text x="404" y="562" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the compile's messages, at</text>
   <text x="404" y="576" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.75">the file and line they name</text>
 
   <rect x="574" y="412" width="168" height="180" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>

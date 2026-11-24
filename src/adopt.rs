@@ -83,7 +83,7 @@ pub(crate) enum Outcome {
     OnApply,
     /// Its parent (the project it lives in) is not live — it will be created
     /// together with the parent. Never written, never imported: an import id
-    /// derived from a non-existent parent is a guess, not a finding.
+    /// derived from a non-existent parent is a guess, not a message.
     ParentOnApply(String),
     /// More than one live candidate. Never guessed; pin `"import-id"` by hand.
     Ambiguous(Vec<String>),
@@ -202,7 +202,7 @@ impl Missing {
 }
 
 impl Missing {
-    /// The same finding, said about the resource it concerns.
+    /// The same message, said about the resource it concerns.
     fn with_subject(self, subject: &str) -> Missing {
         match self {
             Missing::Failed(why) => Missing::Failed(format!("{}: {}", subject, why)),
@@ -1855,7 +1855,7 @@ resource "google_project_iam_member" "fresh_writer" {
         // is written for it or its children
         assert!(!live.calls.iter().any(|c| c.starts_with("search projects/acme-infra-001")), "{:?}", live.calls);
         assert!(!rs.iter().any(|r| matches!(r.outcome, Outcome::Resolved { verified: false, .. })), "no derived ids may survive a missing parent");
-        assert_eq!(unanswered(&rs, &none()), rs.iter().filter(|r| matches!(r.outcome, Outcome::Ambiguous(_) | Outcome::NoRule)).count(), "a missing project is a finding, not a failure");
+        assert_eq!(unanswered(&rs, &none()), rs.iter().filter(|r| matches!(r.outcome, Outcome::Ambiguous(_) | Outcome::NoRule)).count(), "a missing project is a message, not a failure");
         assert!(summary(&rs, &none()).contains("2 on apply with their project"), "{}", summary(&rs, &none()));
     }
 
@@ -2159,7 +2159,7 @@ resource "google_project_iam_member" "fresh_writer" {
         let rs = resolve(&manifest, &account_rules(), &Options { only: BTreeSet::new(), activate: false }, &mut live).await;
         let held = outcome(&rs, "google_service_account_iam_member.held");
         assert!(matches!(held, Outcome::ParentOnApply(why) if why.contains(SA)), "{:?}", held);
-        assert_eq!(unanswered(&rs, &none()), 0, "a grant whose account apply creates is a finding, not a failure");
+        assert_eq!(unanswered(&rs, &none()), 0, "a grant whose account apply creates is a message, not a failure");
         let table = render_table(&rs, &none(), &manifest);
         assert!(table.lines().any(|l| l.contains("iam_member.held") && l.contains("on apply (parent)")), "{}", table);
 

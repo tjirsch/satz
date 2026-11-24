@@ -1,7 +1,7 @@
 //! `satz lsp`: the language server behind an editor's Satz support.
 //!
 //! What an editor gets is what satz knows, from satz's own front end — no second
-//! parser, no second schema. Findings come from `satz::parse` on every change
+//! parser, no second schema. Messages come from `satz::parse` on every change
 //! and from the whole fragment pipeline (`compile_estate`, the ⊕ fold, the
 //! suppressions) on every open and save, the same errors `transpile --check`
 //! prints, at the file and line they name. Completion and hover read the
@@ -9,7 +9,7 @@
 //! a `use` path the way the transpile resolves it and a param reference to its
 //! `params {}` line; formatting is `satz fmt`.
 //!
-//! A pack has no estate of its own to transpile: its pipeline findings come
+//! A pack has no estate of its own to transpile: its pipeline messages come
 //! from the estates beside it that `use` it, attributed back to the pack's file.
 //!
 //! stdout is the protocol. Nothing in this module prints; the registry's loading
@@ -89,7 +89,7 @@ struct Server {
     docs: HashMap<PathBuf, String>,
     /// Estates by config directory, loaded on first use.
     estates: HashMap<PathBuf, Estate>,
-    /// Files that currently carry pipeline findings, so they can be cleared.
+    /// Files that currently carry pipeline messages, so they can be cleared.
     published: BTreeSet<PathBuf>,
 }
 
@@ -169,10 +169,10 @@ impl Server {
     }
 
     // -----------------------------------------------------------------------
-    // Findings in the editor
+    // Messages in the editor
     // -----------------------------------------------------------------------
 
-    /// Parse findings for the file on every change; the pipeline's on open
+    /// Parse messages for the file on every change; the pipeline's on open
     /// and save — a whole-estate transpile is not a per-keystroke thing.
     fn publish_all(&mut self, conn: &Connection, path: &Path, pipeline: bool) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         let text = self.docs.get(path).cloned().unwrap_or_default();
@@ -188,7 +188,7 @@ impl Server {
             Ok(_) => {}
         }
         if pipeline {
-            // A file that carried pipeline findings last time and has none now
+            // A file that carried pipeline messages last time and has none now
             // gets an empty set, or the editor keeps showing stale ones.
             let stale: Vec<PathBuf> = self.published.iter().filter(|p| !by_file.contains_key(*p)).cloned().collect();
             for p in stale {
@@ -224,7 +224,7 @@ impl Server {
             out.extend(compile_for_diagnostics(&root, &src, &config, &registry, &self.docs));
         }
         // A pack's own line is what its author is looking at; the estate's other
-        // files are not in front of them. Keep every file's findings — the
+        // files are not in front of them. Keep every file's messages — the
         // editor shows them where they belong — but never lose the pack's.
         out
     }
@@ -240,7 +240,7 @@ impl Server {
             let reg = ResourceRegistry::load_all(&estate.config.schema_dir).ok()?;
             if reg.resources.is_empty() {
                 // No schema: the pipeline would name every type unknown. Parse
-                // findings still work; `satz update-schema` is the fix.
+                // messages still work; `satz update-schema` is the fix.
                 return None;
             }
             estate.registry = Some(Arc::new(reg));
@@ -538,7 +538,7 @@ impl Server {
 }
 
 // ---------------------------------------------------------------------------
-// The transpile, over buffers, to the editor's findings
+// The transpile, over buffers, to the editor's messages
 // ---------------------------------------------------------------------------
 
 type Loader = Box<dyn Fn(&str) -> Result<String, String>>;
@@ -601,7 +601,7 @@ fn compile_for_diagnostics(
         out.push((p, line_diagnostic(&t, e.line, e.msg, DiagnosticSeverity::ERROR, Kind::FrontEnd)));
     };
     let graph = crate::pack_graph::shipped(Path::new(&config.presets_dir));
-    // a finding's `fix` is a command to paste, so it names the estate as a command takes it
+    // a message's `fix` is a command to paste, so it names the estate as a command takes it
     let estate_arg = crate::estate_as_typed(root, config);
     let fe = match pipeline::compile_estate(&label, src, &resolver, &loader) {
         Ok(fe) => fe,
@@ -611,7 +611,7 @@ fn compile_for_diagnostics(
             return out;
         }
     };
-    // Everything `transpile --check` checks after the front end, as findings: at the
+    // Everything `transpile --check` checks after the front end, as messages: at the
     // file and line each names, or on the estate's first line when it names none.
     let tail = crate::compile_tail(&fe, &resolver, registry, config, &graph, &config.presets_dir, &config.validation_level, root, &estate_arg, src);
     // The editor shows what the estate and this machine have not silenced — the same
@@ -636,7 +636,7 @@ fn compile_for_diagnostics(
             _ => (root.to_path_buf(), 1),
         };
         let t = text_of(&p);
-        // The layout, as far as the editor's finding can hold it. The range is the location and
+        // The layout, as far as the editor's message can hold it. The range is the location and
         // the editor draws the severity; `code` is the kind; the message is the group's
         // title, the sentence, and the fix as its own last line — the order the CLI
         // prints them in.
@@ -1018,7 +1018,7 @@ fn line_range(text: &str, line: usize) -> Range {
     Range { start: Position::new(l, 0), end: Position::new(l, len) }
 }
 
-/// `code` is the finding's kind — the name a `[[silence]]` row and `--format json` call
+/// `code` is the message's kind — the name a `[[silence]]` row and `--format json` call
 /// it by — so an editor groups and filters by what the CLI prints in its second column.
 fn line_diagnostic(text: &str, line: usize, msg: String, severity: DiagnosticSeverity, kind: Kind) -> Diagnostic {
     Diagnostic {

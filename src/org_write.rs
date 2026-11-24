@@ -114,15 +114,15 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
 }
 
 /// The gate. A run that writes to an estate's organization is refused while a message
-/// that estate's packs declare is open and an `error`; the refusal is the findings
-/// themselves, so it prints where every other finding prints and at the line it names.
+/// that estate's packs declare is open and an `error`; the refusal is the messages
+/// themselves, so it prints where every other message prints and at the line it names.
 ///
 /// An estate that cannot be read is no pass: the caller is about to change an
 /// organization on the strength of that file.
 pub(crate) fn refuse(command: &Commands, tool_config: &ToolConfig, runtime: &ToolConfig) -> Result<(), Box<dyn std::error::Error>> {
     let OrgWrite::Writes(estate) = of(command, runtime) else { return Ok(()) };
     // one spelling of the file, the transpile's: a `[[silence]]` row written from a
-    // transpile's JSON answers to the same finding here
+    // transpile's JSON answers to the same message here
     let mut findings: Vec<_> = crate::notices::open_errors(&estate, runtime)?
         .into_iter()
         .map(|f| crate::estate_relative_file(f, runtime.dir.as_deref()))

@@ -192,7 +192,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("fmt", Parity::Tools(&["satz_fmt"])),
     // --- not served ---------------------------------------------------------
     ("lsp", Parity::Off("it is a server for editors, as `mcp` is for agents")),
-    ("silence", Parity::Off("it decides what a human's output leaves out; an agent is handed every finding, silenced ones included, each marked with the tier that silenced it and why")),
+    ("silence", Parity::Off("it decides what a human's output leaves out; an agent is handed every message, silenced ones included, each marked with the tier that silenced it and why")),
 
     ("init", Parity::Off("`satz_interview` creates an estate from the skeleton; init writes the estate and its config before there is one to open, and derives its values from the signed-in person")),
     ("bootstrap", Parity::Off("the one-time first setup: it runs as the signed-in operator, because the estate account every other tool runs as does not exist until it has — creating the folder, project and state bucket, so a human runs it knowingly in their own shell")),
@@ -315,7 +315,7 @@ pub(crate) struct CheckConsumerArgs {
     pub estate: Option<String>,
 }
 
-/// What `satz_check_consumer` found: every finding names the project's file and line.
+/// What `satz_check_consumer` found: every message names the project's file and line.
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ConsumerReport {
     pub estate: String,
@@ -1012,7 +1012,7 @@ fn refused(msg: String) -> CallToolResult {
 /// each error at its own line instead of parsing the text. The text is the errors in
 /// the layout the CLI prints them in, under a line saying what refused; the structure
 /// is a `CompileSummary` with nothing written, so it conforms to the schema the tool
-/// publishes. A front-end refusal is one too: its one finding carries the file and line.
+/// publishes. A front-end refusal is one too: its one message carries the file and line.
 fn refused_with_findings(what: &str, estate: &std::path::Path, e: &(dyn std::error::Error + 'static)) -> CallToolResult {
     let findings = crate::findings::refusal_findings(e);
     let mut result = refused(if findings.is_empty() { format!("{}: {}", what, e) } else { format!("{} refused:\n\n{}", what, e) });
@@ -1662,7 +1662,7 @@ impl SatzMcp {
                        `required_by`, what it `excludes`, the `notices` it carries (each with `severity` and \
                        `acknowledged`), what it `contributes` to another pack's list params while it creates resources (each \
                        `param` with its `values` — an external principal added to the CIS baseline's \
-                       `allowed_policy_member_subjects`, for one), and the transpile's findings about it. A `use` the \
+                       `allowed_policy_member_subjects`, for one), and the transpile's messages about it. A `use` the \
                        graph does not know is `unmanaged`. With no pack-graph.json in the presets, `note` says so. \
                        Offline and schema-free.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1692,7 +1692,7 @@ impl SatzMcp {
                        check-consumer` does: an attachment resource whose target is the estate's and no attach \
                        point allowing its type (`export … attach [ … ]`), an authoritative grant (`*_iam_policy`, \
                        `*_iam_binding`) or an organization policy on a node the estate manages, and a resource the \
-                       estate declares too, by natural key. Each finding names the project's file and line; an empty \
+                       estate declares too, by natural key. Each message names the project's file and line; an empty \
                        list is a pass. Offline: parses the `.tf` files under `dir` and transpiles the estate in \
                        memory, writing nothing.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
@@ -1956,14 +1956,14 @@ impl SatzMcp {
         output_schema = rmcp::handler::server::tool::schema_for_output::<crate::review_pack::Review>(),
         description = "Judge one pack against the library's own bar, the way a pull request would: it parses, it is \
                        formatted, its header says what it is, its version has a changelog row, it carries no value \
-                       shaped like private data (kind `private-shape`, one finding per token: an organization, \
+                       shaped like private data (kind `private-shape`, one message per token: an organization, \
                        folder or project number, a directory id, a billing account, a GUID, a project id, an e-mail \
                        address or a domain that is not a documented example value), it declares no membership \
                        (presets define groups, humans grant membership), it runs no legacy org-policy constraint \
                        beside its managed replacement, every resource type it writes has a row in satz's \
                        prerequisite table, and it transpiles. A pack is a fragment, so it is folded into an estate to \
                        see what it writes — a synthesised one unless `against` names a real estate. Returns the same \
-                       findings the transpile and the language server produce, each anchored to file and line. \
+                       messages the transpile and the language server produce, each anchored to file and line. \
                        Offline, reads only.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]

@@ -606,7 +606,7 @@ resolve: ValueResolver,
         }
 
         // A project or folder the type takes, neither inherited nor set: handed back
-        // for the transpile to report as a finding, which its caller renders or keeps.
+        // for the transpile to report as a message, which its caller renders or keeps.
         if !context_set {
             let needs_project = project_params.iter().any(|p| schema.block.attributes.contains_key(*p) && !attrs.contains_key(serde_yaml::Value::String(p.to_string())));
             let needs_folder = folder_params.iter().any(|f| schema.block.attributes.contains_key(*f) && !attrs.contains_key(serde_yaml::Value::String(f.to_string())));
@@ -775,7 +775,7 @@ pub(crate) struct ResourceBlock {
     pub import_id: Option<String>,
     pub label: String,
     /// The scope the type takes that the resource neither sets nor inherits —
-    /// `project` or `folder` — for the transpile to report as a finding.
+    /// `project` or `folder` — for the transpile to report as a message.
     pub needs_scope: Option<&'static str>,
 }
 

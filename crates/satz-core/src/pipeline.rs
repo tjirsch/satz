@@ -310,7 +310,7 @@ pub fn check_request_entries(r: &satz::RequestDecl, entries: &[serde_yaml::Value
 
 /// A team's request file against the estate's lists: it holds `params { … }`
 /// with `contributes_<param>` entries alone (a `pack` header allowed), every param one
-/// the estate declares a list for, every entry shaped by it. Each finding is
+/// the estate declares a list for, every entry shaped by it. Each message is
 /// (line, message).
 pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) -> Vec<(usize, String)> {
     let file = match satz::parse(src) {
@@ -756,7 +756,7 @@ pub struct FrontEnd {
     pub env: Env,
     /// Estate-level config blocks (terraform, providers), resolved.
     pub config: BTreeMap<String, serde_yaml::Value>,
-    /// Where each config block stands, `(file, line)`, for a finding about it.
+    /// Where each config block stands, `(file, line)`, for a message about it.
     pub config_sites: BTreeMap<String, (String, usize)>,
     /// The `providers` block as it is written when an input is read in it: the same
     /// mapping with `var.<input>` where the value stands. Empty when none is read.
@@ -3773,7 +3773,7 @@ impl Walk<'_> {
                                 self.config.insert(k, resolved);
                             } else {
                                 // Silently dropping a block the author wrote means a
-                                // typo deletes infrastructure with no finding at all.
+                                // typo deletes infrastructure with no message at all.
                                 return perr(file_name, *line, unknown_type_msg(self.types, &k, "block"));
                             }
                         }

@@ -12,7 +12,7 @@ It also bootstraps a new Google Cloud organization, imports an existing one from
 
 > **✏️ Write Satz in [Zed](https://zed.dev).** Zed is a fast native editor with tree-sitter
 > grammars and language servers built in. The Satz extension in `editors/zed/` brings highlighting, the outline, bracket matching and the
-> language server (findings in the editor, completion, hover, go-to-definition, format on save); its
+> language server (messages in the editor, completion, hover, go-to-definition, format on save); its
 > grammar is [satz-tree-sitter](https://github.com/tjirsch/satz-tree-sitter). Install:
 > [Editor support (Zed)](#editor-support-zed).
 
@@ -90,7 +90,7 @@ These options can be placed anywhere in the command (e.g., before or after subco
 - `--verbose`: Enable verbose output. When invoked without a subcommand (e.g. `satz --verbose`), prints full recursive help listing all subcommands and their options.
 - `--no-actions`: never execute a declared [`action`](#run-actions-run-actions), whatever `run-actions` was asked to do.
 - `--no-pack-actions`: consider only the estate's own actions; ignore any a `use`d pack declares.
-- `--silence <KIND[:SUBJECT]>`: leave a finding out of this run's output, by what it is (see [Silencing a finding](#silencing-a-finding-silence)). Repeatable; `SATZ_SILENCE` takes the same selectors comma-separated. The finding is still produced, still counted and still in `--format json`; an error is never silenced, and a `--silence` that names one refuses the run. Refused for `satz mcp` and `satz lsp`, which serve many estates in one process.
+- `--silence <KIND[:SUBJECT]>`: leave a message out of this run's output, by what it is (see [Silencing a message](#silencing-a-message-silence)). Repeatable; `SATZ_SILENCE` takes the same selectors comma-separated. The message is still produced, still counted and still in `--format json`; an error is never silenced, and a `--silence` that names one refuses the run. Refused for `satz mcp` and `satz lsp`, which serve many estates in one process.
 - `--no-impersonate`: run as the signed-in person, without acting as the estate account — for a check that must answer as the human.
 - `--no-api-preflight`: `plan` and `apply` start the tool without asking Service Usage which of the APIs the estate declares are off, and enable none; `apply` also leaves the domain's default Project Creator and Billing Account Creator grants where they are — for a run that must reach the tool without satz calling Google.
 
@@ -101,7 +101,7 @@ User-level **parameters** (e.g. when to check for updates) live in **`~/.config/
 | Option | Default | Description |
 |--------|---------|-------------|
 | `self_update_frequency` | `"always"` | When to check for updates on normal runs: `never`, `always`, or `daily` (at most once per 24 hours). The check only reports a newer version; it installs nothing. |
-| `[[silence]]` | none | Finding kinds this machine leaves out of every estate's printed output, each with a `reason`. Whole kinds only — a `subject` here is refused, because it belongs to one estate. Managed by `satz silence add --machine`; see [Silencing a finding](#silencing-a-finding-silence). |
+| `[[silence]]` | none | Message kinds this machine leaves out of every estate's printed output, each with a `reason`. Whole kinds only — a `subject` here is refused, because it belongs to one estate. Managed by `satz silence add --machine`; see [Silencing a message](#silencing-a-message-silence). |
 
 **Estate config** (paths, providers, etc.) stays in **`config.toml`** per repository; see [Configuration](#configuration) below.
 
@@ -190,11 +190,11 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `check-request <FILE> [ESTATE]` | a workload team's request file — a pack of `contributes_<param>` entries for the estate's list params — checked before it is copied into the estate: lists only, each entry shaped (its fields, and each value its field's pattern matches), no key the list holds for another entry, and the estate transpiled with the file in place |
 | `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a workload estate reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every list param with its key, fields, patterns, defaults and entries; the json form is what satz-studio reads |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the prerequisites check), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
-| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (transpile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the transpile as data, see [How a finding is printed](#how-a-finding-is-printed)), the first line of `main.tf` names the satz that written it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per workload estate, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. An estate that `use`s an interface file reads a value by the name of its interface folder, `"${{interface.<folder>.<value>}}"`, and is held to its attach points ([workload estates beside the organization's estate](docs/workflows.md#workload-estates-beside-the-estate)) |
+| `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (transpile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the transpile as data, see [How a message is printed](#how-a-message-is-printed)), the first line of `main.tf` names the satz that written it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per workload estate, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. An estate that `use`s an interface file reads a value by the name of its interface folder, `"${{interface.<folder>.<value>}}"`, and is held to its attach points ([workload estates beside the organization's estate](docs/workflows.md#workload-estates-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's estate account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
 | `adopt <INPUT>` | `--execute`, `--import`, `--activate`, `--only <types>` — dry run by default, and the dry run reads the state so a resource it already manages says so instead of counting as an import; exits non-zero on any failed/unresolvable/ambiguous row; `--import` reads `state list` first and skips already-managed addresses, and a run over every type that finishes with nothing unresolved acknowledges the packs' notices that name `satz adopt` |
 | `update-prerequisites [INPUT]` (alias `prerequisites`) | `--report-only`, `--format` (`text`\|`json`) — what the estate's resource types oblige it to declare and it does not: the roles its estate account is missing, and the APIs not enabled on the project their resources' calls are billed to. Writes both into the estate file and re-checks; `--report-only` lists them and exits non-zero. Without an estate: the table of resource types, roles and APIs. See [What an estate must declare](#what-an-estate-must-declare-update-prerequisites) |
-| `presets <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — which kind of estate it is (an organization's estate, or a workload estate that reads interface folders) and, for an estate that reads interface folders, who delegated (`delegated_by`: the organization's estate, the estate account, the delegated resource); then every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack creates anything, what it needs and what needs it, the notices it carries with their severity and their state, and the transpile's pack findings. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
+| `presets <INPUT>` | `--format` (`text`\|`markdown`\|`pdf`\|`json`), `--out <FILE>` — which kind of estate it is (an organization's estate, or a workload estate that reads interface folders) and, for an estate that reads interface folders, who delegated (`delegated_by`: the organization's estate, the estate account, the delegated resource); then every pack the pack graph in `presets_dir` offers, as this estate has it: the gate's answer and default, the line (`active`, `ungated`, `commented`, `absent`, `forked`, `misplaced`), whether the pack creates anything, what it needs and what needs it, the notices it carries with their severity and their state, and the transpile's pack messages. A `use` the graph does not know is listed as `unmanaged`. See [the pack graph](docs/language.md#616-offers--what-the-library-offers-an-estate) |
 | `add-preset <INPUT> <PACK>` | `--with-requirements`, `--format` (`text`\|`json`) — `<PACK>` is a gate or a pack path. Binds the gate true (an option of a choice sets its siblings false) and makes the pack's line active where the pack graph places it, with the packs whose gate follows it; prints the questions and the notices that opened. Refused, naming them, while a pack it needs is off — `--with-requirements` switches those on where the graph names one — or a pack it excludes is on. The edited estate is transpiled and restored when it does not transpile |
 | `remove-preset <INPUT> <PACK>` | `--cascade`, `--format` (`text`\|`json`) — binds the gate false and leaves the line: a gated line with a false gate creates nothing. Refused, naming them, while a pack that needs it is on — `--cascade` switches those off too — or while the pack's line is not gated on its gate. The edited estate is transpiled and restored when it does not transpile |
 | `add-entry <INPUT> <LIST> <FIELD=VALUE>…` | `--format` (`text`\|`json`) — adds one entry to a list a pack declares with `entries` — a delegation, a delegated folder or project, a subnet: `satz add-entry C0example.satz delegated_projects name=shop-backend delegation=shop budgets=true`. `<LIST>` is the list param as the `request` names it; each field is `<field>=<value>`, a list's values separated by commas. Refused, naming the field, when a field is not declared, a value does not match its field's pattern, or the key is already in the list; a field left out takes the declaration's default. The entry is written into the estate's params; the edited estate is transpiled and restored when it does not transpile. It adds only: changing or removing an entry is an edit of the file. `satz interfaces` lists the lists |
@@ -210,7 +210,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `scan-plan <plan_json>` | `--output` (default: `mapping.yaml`) |
 | `generate-migration <mapping>` | `--output` (default: `migrate.sh`) |
 | `run-actions <INPUT>` | `--check` (each action's own dry-run form), `--execute` (the form that writes), `--only <names>`, `--phase <before-apply\|after-apply>` — prints what it would run and stops by default |
-| `check-consumer <DIR> [ESTATE]` | the HCL code of a workload beside the estate, held to the estate's interface, offline: `DIR` is the workload's directory of `.tf` files, read with its subdirectories; without `ESTATE` the one estate in `yaml_dir`. A module is an interface when its `source` ends in `<interface>/hcl`. Each finding names the workload's file and line — an attachment resource onto the estate's object that no attach point (`export … attach [ … ]`) allows, an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organization policy on a node the estate manages, a resource the estate declares too, by natural key — and any finding exits 1 ([workload estates beside the organization's estate](docs/workflows.md#workload-estates-beside-the-estate)) |
+| `check-consumer <DIR> [ESTATE]` | the HCL code of a workload beside the estate, held to the estate's interface, offline: `DIR` is the workload's directory of `.tf` files, read with its subdirectories; without `ESTATE` the one estate in `yaml_dir`. A module is an interface when its `source` ends in `<interface>/hcl`. Each message names the workload's file and line — an attachment resource onto the estate's object that no attach point (`export … attach [ … ]`) allows, an authoritative grant (`*_iam_policy`, `*_iam_binding`) or an organization policy on a node the estate manages, a resource the estate declares too, by natural key — and any message exits 1 ([workload estates beside the organization's estate](docs/workflows.md#workload-estates-beside-the-estate)) |
 
 **Presets**
 
@@ -219,7 +219,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `get-presets` | `--force` — overwrite presets the estate uses too; `--pristine-dir`. The library is satz's, or the one `[preset_library]` in `config.toml` names ([Keeping presets current](docs/workflows.md#keeping-presets-current)) |
 | `merge-presets` | `--pristine-dir`, `--estate`, `--report-only`, `--adopt <stem\|all>` — reconciling update; `--adopt` upgrades in place instead of forking. Writes the commented line for every pack the pack graph of the pristine source offers and the estate lacks — the whole menu into an estate that has none — and gates every active line of a gated pack written without `when`, binding its gate `true` |
 | `check-presets <INPUT>` | `--format` (`text`\|`json`), `--out <FILE>`, `--pristine-dir` |
-| `review-preset <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same findings the transpile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it writes has a prerequisite row, and it transpiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-preset) |
+| `review-preset <PACK>` | `--against <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — one pack against the library's bar, as the same messages the transpile and the editor read: it parses, it is formatted, its header says what it is, its version has a changelog row, it carries no value shaped like private data, it declares no membership, it runs no legacy org-policy constraint beside its managed replacement, every resource type it writes has a prerequisite row, and it transpiles. Exits non-zero when it does not clear the bar. See [Reviewing a pack](#reviewing-a-pack-review-preset) |
 | `packs` | `--source <NAME>`, `--local`, `--estate <ESTATE>`, `--format` (`text`\|`json`), `--out <FILE>` — every workload pack in `packs_dir` with its state (`own`, `current`, `behind`, `edited`, `gone`, `not-checked`) and source, and every pack a source holds that `packs_dir` does not (`available`), each with what it declares — its params with their defaults and questions, its list params, its exports — and every interface value it reads, matched against the interface folders the estate uses (`--estate`, or the one estate in `yaml_dir`): the folders that give it, or the transpile's refusal. The report lists those interface folders, each with the organization's estate that wrote it and the values it exports. Reads every pack source, or the one `--source` names; `--local` reads none and lists only `packs_dir`, a fetched pack `edited` or `not-checked` by the sha256 its origin row records ([What a pack declares](docs/workflows.md#what-a-pack-declares-and-what-it-reads)) |
 | `get-pack [ID]` | `--all`, `--source <NAME>` (default `satz`), `--estate <ESTATE>` (default: the one estate in `yaml_dir`), `--format` (`text`\|`json`) — fetch one workload pack into `packs_dir` and record its pack source and the repository and commit or the folder it was read from in `packs_dir/origin.toml`; refused when `packs_dir` holds a pack of that id. `--all` fetches every pack the source holds that `packs_dir` lacks. An interface value a fetched pack reads that the estate does not give is printed as a warning |
 | `update-pack [ID]` | `--all`, `--source <NAME>`, `--report-only`, `--take-upstream`, `--format` (`text`\|`json`) — bring one fetched pack up to date from the pack source its row names (`--source`: only the packs of that source): unchanged since it was fetched, it is overwritten with the source's file; edited here, it is left as it is and printed with its difference, and `--take-upstream` overwrites it. A pack without a recorded origin is never written. Exits 1 when a pack is edited or gone from the source |
@@ -259,8 +259,8 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 | `update-schema` | `--providers`, `--version`, `--tf-tool` |
 | `map-types` | `--only <types>`, `--import-config` — derive the API→Terraform field map per type into `presets/type-map.yaml` |
 | `fmt <PATHS…>` | `--check`, `--stdin` — rewrite Satz files in their canonical layout (indentation, spacing, `=` alignment, list commas); `--check` names the files that are not and exits 1; `--stdin` formats one file from stdin to stdout, for editors |
-| `silence list [INPUT]` / `silence add <KIND[:SUBJECT]> --reason "…" [--machine]` / `silence remove <KIND[:SUBJECT]> [--machine]` | what an estate or this machine leaves out of the printed output, by a finding's kind and subject — [Silencing a finding](#silencing-a-finding-silence) |
-| `lsp` | the language server behind an editor's Satz support, on stdio, started by the editor: findings from the parser on every change and from the pipeline on every save, completion and hover from the provider schema, go-to-definition for `use` paths and params, formatting |
+| `silence list [INPUT]` / `silence add <KIND[:SUBJECT]> --reason "…" [--machine]` / `silence remove <KIND[:SUBJECT]> [--machine]` | what an estate or this machine leaves out of the printed output, by a message's kind and subject — [Silencing a message](#silencing-a-message-silence) |
+| `lsp` | the language server behind an editor's Satz support, on stdio, started by the editor: messages from the parser on every change and from the pipeline on every save, completion and hover from the provider schema, go-to-definition for `use` paths and params, formatting |
 | `self-update` | `--no-open-readme`, `--check-only`, `--skip-checksum` |
 | `completion [SHELL]` | `--install` |
 | `open-readme` | *(none)* — opens the documentation site |
@@ -471,7 +471,7 @@ bar as a command.
 
 ```bash
 satz review-preset my-pack.satz --format text --out -
-satz review-preset my-pack.satz --format json --out review.json      # the findings as data
+satz review-preset my-pack.satz --format json --out review.json      # the messages as data
 satz review-preset my-pack.satz --against C0example.satz --format text --out -
 ```
 
@@ -498,10 +498,10 @@ one, with the documented example values for the estate's own params and the pack
 declared defaults for its questions, which checks the pack the way a customer first meets
 it. `--against <estate>` judges it inside a real estate instead.
 
-The findings are the same `Finding` the transpile, `satz lsp` and `satz_transpile_check`
+The messages are the same ones the transpile, `satz lsp` and `satz_transpile_check`
 produce — severity, kind, file, line, message, fix — so an editor or an app that already
 reads those needs nothing new to show them, and the text report prints them as every
-command does ([How a finding is printed](#how-a-finding-is-printed)). `satz_review_preset` serves the same review over MCP,
+command does ([How a message is printed](#how-a-message-is-printed)). `satz_review_preset` serves the same review over MCP,
 read-only. The command exits non-zero when the pack does not clear the bar.
 
 Each private-looking token is an error of kind `private-shape` at its line, naming the
@@ -630,7 +630,7 @@ workload estate: it runs as a delegation's estate account and builds inside what
 organization's estate created for it — a folder, a project — with the delegation pack
 (`presets/delegated-folders.satz`, `presets/delegated-projects.satz`, or a pack of the
 workload's own) that grants the account its roles there. Those roles are the organization's
-to grant, so satz does not check them in the workload estate: no finding names a role, and
+to grant, so satz does not check them in the workload estate: no message names a role, and
 `update-prerequisites` writes none. It lists, as information for the organization's team,
 the roles the estate's resource types need, by where each is granted — on the project, on
 the folder a created folder or project stands under, at the organization, on the billing
@@ -1346,7 +1346,7 @@ How a resource is resolved depends on who chose its identity:
   and every resource inside it (IAM, services, project-scoped policies, …)
   reads *on apply (parent)*: created together with the project, never given a
   derived id, never written or imported. A misspelled project id therefore
-  shows as a finding. Google answers a lookup of a project id that does not
+  shows as a message. Google answers a lookup of a project id that does not
   exist (or that the caller cannot see) with **403, not 404**, so a typo reads
   as *FAILED* with the API's denial rather than *on apply*; either way the run
   stops and nothing is written.
@@ -1690,14 +1690,14 @@ A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
 
 **A pack line without its gate** is not written by this command. The transpile reports an
-active `use` of a gated pack that has no `when` as an `ungated-pack` finding, which names
+active `use` of a gated pack that has no `when` as an `ungated-pack` message, which names
 the line to write — see [docs/workflows.md](docs/workflows.md#when-a-pack-line-has-no-gate).
 
 **Last, the prerequisites.** A pack the run adopts can write a type whose role or API
 the estate does not declare yet, and so can a release whose prerequisite table grew. The
 run ends with the check and the write `update-prerequisites` makes, and reports each role
 and API it wrote; `--report-only` lists them instead, and a gap listed or left unwritten
-needs attention. Its transpiles do not report that gap as a finding, so at `--validation
+needs attention. Its transpiles do not report that gap as a message, so at `--validation
 error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
@@ -1867,11 +1867,11 @@ satz fmt --stdin < in.satz         # one file from stdin to stdout, for an edito
 `satz lsp` is the server behind an editor's Satz support, speaking the Language Server
 Protocol over stdio. What the editor gets is what satz knows, from satz's own front end:
 
-- **Findings.** `satz::parse` on every change — the parser's error at its line — and
+- **Messages.** `satz::parse` on every change — the parser's error at its line — and
   the whole fragment pipeline on every open and save: the same errors `transpile --check`
   prints, at the file and line they name, published to that file. The pipeline reads the
   editor's open buffers, so an estate with an unsaved pack transpiles as you see it. A pack
-  has no estate of its own: its pipeline findings come from the `estate` files beside
+  has no estate of its own: its pipeline messages come from the `estate` files beside
   it that name it. Everything `transpile --check` checks is in — a required attribute
   the provider needs, a reference to a resource the estate does not write, a role
   the estate account lacks, a pack the estate's own true answer asks for that is still
@@ -1898,7 +1898,7 @@ satz lsp        # started by the editor; nothing to type
 ```
 
 The server finds an estate through its `config.toml`, walking up from the file. Without
-one, or with an empty `schema_dir`, it gives parse findings only; `satz update-schema`
+one, or with an empty `schema_dir`, it gives parse messages only; `satz update-schema`
 fills the schema. stdout is the protocol; the registry's loading progress goes to stderr,
 where the editor's log shows it.
 
@@ -1976,12 +1976,12 @@ writes nothing the second time.
 The command reads the estate's name and its directory, transpiles nothing, calls no Google
 API and touches no sign-in.
 
-### How a finding is printed
+### How a message is printed
 
 What a transpile finds — the errors it refuses on, the warnings and the infos — is printed
-in blocks, one per finding, and findings that say the same thing share one. Every command
-that prints a finding prints this block: `transpile`, every command that transpiles,
-`review-preset` and the findings of `packs`. This is `tests/corpus/cis-packs/main.satz` as
+in blocks, one per message, and messages that say the same thing share one. Every command
+that prints a message prints this block: `transpile`, every command that transpiles,
+`review-preset` and the messages of `packs`. This is `tests/corpus/cis-packs/main.satz` as
 `estate.satz`, the CIS baseline and nine of its extensions on, on a terminal 100 columns
 wide:
 
@@ -2026,25 +2026,25 @@ warning  notice            estate.satz:57  cis_cloud_sql_iam_and_deletion_protec
 
 - **The first line** is the severity, the `kind`, `file:line` and the subject — the pack, the
   param, the action's name — in columns that line up over the run. Kind and subject are
-  what a [silence](#silencing-a-finding-silence) names.
+  what a [silence](#silencing-a-message-silence) names.
 - **The message** stands under it, indented. On a terminal it is wrapped to the terminal's
   width, 110 columns at most. Into a pipe, a file or a CI log nothing is wrapped: each
   paragraph is one line, so a `grep` for a phrase finds it.
-- **`fix:`** is the last line, where one command answers the finding: the command as it is
+- **`fix:`** is the last line, where one command answers the message: the command as it is
   typed, with the estate in it as a command takes it — the path under `yaml_dir`, so an
   estate in a subdirectory of it reads `pk/e.satz`. It is never wrapped.
-- **A group** of findings stands under its title with its count — `(7 of 10, 3 silenced)`
-  when a silence left some of it out. Findings of no group come first.
-- **Findings of a group that say the same thing are one block:** their first lines as a
-  table, one row per finding, then the sentence once and `fix:` once. Above, nine packs
+- **A group** of messages stands under its title with its count — `(7 of 10, 3 silenced)`
+  when a silence left some of it out. Messages of no group come first.
+- **Messages of a group that say the same thing are one block:** their first lines as a
+  table, one row per message, then the sentence once and `fix:` once. Above, nine packs
   carry the same text and ask for the same command and are nine rows; the baseline words
-  its text differently and is a block of its own. Two findings say the same thing when
+  its text differently and is a block of its own. Two messages say the same thing when
   their severity, kind, `fix` and sentence are equal — the sentence without what the row
   carries, the pack's `use` line and the param. A sentence one word apart is another
-  block. A finding alone in its block prints its whole message. One thing found at several
+  block. A message alone in its block prints its whole message. One thing found at several
   sites — a composition conflict, at each file involved — is a row per site over the one
-  message. The counts in the title and in the last line are of findings, and a silenced
-  finding is no row. A pipe gets the same blocks, unwrapped.
+  message. The counts in the title and in the last line are of messages, and a silenced
+  message is no row. A pipe gets the same blocks, unwrapped.
 - **The last line** counts the run by severity, and what was silenced by tier:
   `1 error, 10 warnings; 3 silenced (3 estate) — …`. A refused transpile prints its warnings,
   then its errors, then this line, and exits 1.
@@ -2052,26 +2052,26 @@ warning  notice            estate.satz:57  cis_cloud_sql_iam_and_deletion_protec
 
 `satz transpile <estate> --check --format json` prints the same run as data on stdout, and
 nothing on stderr but the version line: the estate, the `addresses` it writes, the files
-`written` (none under `--check`) and every finding — `severity`, `kind`, `group`, `file`,
+`written` (none under `--check`) and every message — `severity`, `kind`, `group`, `file`,
 `line`, `subject`, `message`, `fix`, and `silenced` where a tier silenced it. Every
-finding is an object of its own with its whole `message`, the ten notices above included;
+message is an object of its own with its whole `message`, the ten notices above included;
 only the printed form shares a block. It is the object the MCP tools
-`satz_transpile_check` and `satz_transpile` return. A refused transpile prints the same object with no address and its errors among the findings — a parse error
-too, as one finding of kind `front-end` — and exits 1. `message` is the sentence and `fix`
+`satz_transpile_check` and `satz_transpile` return. A refused transpile prints the same object with no address and its errors among the messages — a parse error
+too, as one message of kind `front-end` — and exits 1. `message` is the sentence and `fix`
 the command; the command is in `fix` alone.
 
-The language server shows the same finding in the editor: the range is the location, its
+The language server shows the same message in the editor: the range is the location, its
 `code` is the kind, and its message
 is the group's title, the sentence and `fix: <command>` as the last line. There is one per
 location: each of the ten notices is its own, with its whole message.
 
-### Silencing a finding (`silence`)
+### Silencing a message (`silence`)
 
-A transpile reports what it finds as findings — the errors it refuses on, the warnings and
-the infos. A finding that has been seen and acted on is silenced by **what it is**, never
+A transpile reports what it finds as messages — the errors it refuses on, the warnings and
+the infos. A message that has been seen and acted on is silenced by **what it is**, never
 by its wording: its `kind`, as `--format json` spells it, and optionally its `subject` —
-the pack a pack finding judges, the param a notice is acknowledged by, the action's name,
-the `hcl` block's `file:line`. Both are in every finding's JSON, so a selector is read out
+the pack a pack message judges, the param a notice is acknowledged by, the action's name,
+the `hcl` block's `file:line`. Both are in every message's JSON, so a selector is read out
 of a report and pasted into a rule.
 
 Three tiers hold those rules, each belonging to a different person:
@@ -2086,7 +2086,7 @@ Every row carries a `reason`; a row without one is a TOML error naming the file 
 line. The run tier is refused for `satz mcp` and `satz lsp`: both serve many estates in
 one process, and a silence given once on their command line would hold for all of them.
 
-A silenced finding is **still produced**: it stays in the list, in `--format json` and in
+A silenced message is **still produced**: it stays in the list, in `--format json` and in
 what MCP returns, marked with the tier that silenced it and that tier's reason. Only the
 printed output leaves it out: a group's title says how many of it were silenced, and the
 run's last line counts them by tier. An **error is never silenced** by any tier, and a
@@ -2146,7 +2146,7 @@ Per-project settings are read from **`config.toml`** in the project root (or the
 | `provider_version` | `"7.14.1"` | Provider version to use |
 | `auto_explode` | `["google_project_service", ".*_iam_member"]` | Resources that use compact explosion |
 | `validation_level` | `"warn"` | Validation level for mandatory parameters |
-| `[[silence]]` | none | Findings this estate leaves out of its printed output: `kind`, optional `subject`, mandatory `reason`. Managed by `satz silence add`; see [Silencing a finding](#silencing-a-finding-silence). |
+| `[[silence]]` | none | Messages this estate leaves out of its printed output: `kind`, optional `subject`, mandatory `reason`. Managed by `satz silence add`; see [Silencing a message](#silencing-a-message-silence). |
 | `[[pack_source]]` | none | The pack sources workload packs are fetched from besides the built-in `satz`: `name`, and `github` (`owner/repository`, with optional `ref` and `path`) or `dir` (a folder, relative to `config.toml`). Managed by `satz pack-source`; see [The pack sources](docs/workflows.md#the-pack-sources). |
 | `[preset_library]` | none: satz's library | The one preset library that replaces satz's for `get-presets`, `merge-presets` and `check-presets`: `github` (`owner/repository`, with optional `ref`) or `dir` (a folder, relative to `config.toml`); the library is its `presets/`. See [Keeping presets current](docs/workflows.md#keeping-presets-current). |
 
@@ -2170,7 +2170,7 @@ nested blocks included: a string where the schema types a list, set or map, a li
 map where it types a scalar, and a string that spells no number or bool where one is
 wanted. What Terraform converts — a number or a bool into a string — passes, and a
 reference or an interpolation is known only at plan and is not judged. Where the
-declaring file binds the attribute to a bare param, the finding names the param, which
+declaring file binds the attribute to a bare param, the message names the param, which
 is what the estate changes.
 
 A resource whose type takes a `project`, declared outside any project and setting none,
@@ -2361,7 +2361,7 @@ global switches exist:
 |---|---|
 | `--no-actions` | never execute an action, whatever `run-actions` was asked to do |
 | `--no-pack-actions` | consider only the estate's own actions |
-| `--silence action` | leave the action findings out of this run's output; `satz silence add action --reason "…"` does it for every run ([Silencing a finding](#silencing-a-finding-silence)) |
+| `--silence action` | leave the action messages out of this run's output; `satz silence add action --reason "…"` does it for every run ([Silencing a message](#silencing-a-message-silence)) |
 
 A downloaded script arrives without its executable bit and satz does not set
 it: the error names the `chmod +x` to run once the script has been read. A `.py`
@@ -2427,7 +2427,7 @@ read looks like, and how a review and a documentation package are run:
 
 `editors/zed/` is a Zed extension for Satz: syntax highlighting, the outline panel,
 bracket matching and indentation for `.satz` files, and the language server
-(`satz lsp`, see [Language server](#language-server-lsp)) for findings, completion,
+(`satz lsp`, see [Language server](#language-server-lsp)) for messages, completion,
 hover, go-to-definition and format-on-save. Its grammar is a
 [tree-sitter](https://tree-sitter.github.io) grammar in a separate repository,
 `satz-tree-sitter`, pinned by commit in `editors/zed/extension.toml`; Zed fetches and

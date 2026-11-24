@@ -404,7 +404,7 @@ fn check_integrations(g: &PackGraph, declared: &BTreeMap<&str, Vec<(&str, usize,
 /// 9 is `check_notices` and 10 `check_integrations`).
 /// There is no 7: it held that every block a line is placed in exists in the estate satz
 /// writes, and a line now stands at the top level or in a resource type map, which is
-/// written where the estate lacks it. The numbers a finding prints are not reused.
+/// written where the estate lacks it. The numbers a message prints are not reused.
 fn check(g: &PackGraph, contributed: &BTreeSet<(String, String)>) -> Vec<Finding> {
     let mut out = Vec::new();
     let declared_between = |a: &str, b: &str| {
@@ -640,7 +640,7 @@ fn provider_is_ancestor(g: &PackGraph) -> Vec<Finding> {
 }
 
 /// The pack graph an estate's presets arrived with, as the transpile reads it: the menu-
-/// dependent checks run over `Graph`, and the other two are one finding each.
+/// dependent checks run over `Graph`, and the other two are one message each.
 pub(crate) enum Shipped {
     /// the graph, and the presets folder it came from — the library files the pack logic
     /// reads beside it
@@ -690,7 +690,7 @@ pub(crate) fn run(presets_dir: &Path, check: bool) -> Result<(), BoxErr> {
     if !findings.is_empty() {
         let mut lines: Vec<String> = findings.iter().map(|f| format!("check {}: {}", f.check, f.text)).collect();
         lines.sort();
-        return Err(format!("preset-graph: {} finding(s) in the library — nothing written:\n  {}", lines.len(), lines.join("\n  ")).into());
+        return Err(format!("preset-graph: {} message(s) in the library — nothing written:\n  {}", lines.len(), lines.join("\n  ")).into());
     }
     let text = format!("{}\n", serde_json::to_string_pretty(&graph)?);
     let out = presets_dir.join(GRAPH_FILE);
@@ -765,7 +765,7 @@ mod tests {
     }
 
     /// A `use interface` names an interface, not a file: the graph gains no node, no edge
-    /// and no finding from it.
+    /// and no message from it.
     #[test]
     fn a_use_interface_line_is_no_pack_line_of_the_graph() {
         let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n");

@@ -150,7 +150,7 @@ fn at(pack: &Path, line: Option<u32>, severity: Severity, message: String) -> Fi
     }
 }
 
-/// The line a string first appears on, 1-based — so a finding points at the thing it
+/// The line a string first appears on, 1-based — so a message points at the thing it
 /// names rather than at the top of the file.
 fn line_of(src: &str, needle: &str) -> Option<u32> {
     src.lines().position(|l| l.contains(needle)).map(|i| i as u32 + 1)
@@ -228,7 +228,7 @@ pub(crate) fn review(
     match crate::doc_packs::header(&src, &rel).and_then(|h| crate::doc_packs::summary(&h, &rel)) {
         Ok(_) => {}
         // the index's own message, minus the `presets/<file>:` it prefixes for a pack
-        // inside the library — this finding already carries the file it is about
+        // inside the library — this message already carries the file it is about
         Err(e) => {
             let text = e.to_string();
             let message = text.split_once(": ").map(|(_, rest)| rest.to_string()).unwrap_or(text);
@@ -328,7 +328,7 @@ pub(crate) fn review(
     }
 
     // 5. it transpiles, and 9. everything the transpile itself checks — raw HCL, actions,
-    //    required arguments — arrives as the findings the CLI and the editor already
+    //    required arguments — arrives as the messages the CLI and the editor already
     //    read. The transpile is internal, so it prints nothing: this report is the output.
     let compiled = crate::pipeline_b_compile(
         &estate,
@@ -563,7 +563,7 @@ pub(crate) fn review(
     }
 
     // What the transpile said that names this pack's own file — raw HCL it carries, an
-    // action it declares. The estate-wide findings are about the scratch estate.
+    // action it declares. The estate-wide messages are about the scratch estate.
     for finding in out.findings.iter().filter(|x| x.file.as_deref().is_some_and(|file| same_file(file, &pack))) {
         f.push(finding.clone());
     }
@@ -577,7 +577,7 @@ pub(crate) fn review(
 }
 
 /// Every token of the pack shaped like private data that is not a documented example
-/// value, one finding each at its line. An error: the library's bar is the bar a pack
+/// value, one message each at its line. An error: the library's bar is the bar a pack
 /// goes upstream with, and a pack that keeps its author's organization in it cannot.
 fn private_shapes(pack: &Path, src: &str) -> Vec<Finding> {
     crate::privacy_shapes::scan(src)
@@ -656,13 +656,13 @@ fn same_file(a: &str, b: &Path) -> bool {
     }
 }
 
-/// The review as a human reads it: what the pack is, what it writes, then the findings
-/// in the order they were checked — in the layout every command prints a finding in
+/// The review as a human reads it: what the pack is, what it writes, then the messages
+/// in the order they were checked — in the layout every command prints a message in
 /// (`findings::lay_out`) — the count by severity, and the verdict.
 pub(crate) fn render(r: &Review, width: crate::findings::Width) -> String {
     let mut out = format!("pack: {}\nfolded into: {}\n", r.pack, r.folded_into);
     out.push_str(&format!("writes: {}\n\n", if r.emits.is_empty() { "nothing".to_string() } else { r.emits.join(", ") }));
-    // the first line names the pack in full, so a finding about it names the file alone:
+    // the first line names the pack in full, so a message about it names the file alone:
     // the rows stay narrow, and the JSON keeps the path
     let pack_name = Path::new(&r.pack).file_name().map(|n| n.to_string_lossy().into_owned());
     let findings: Vec<Finding> = r
@@ -692,7 +692,7 @@ pub(crate) fn render(r: &Review, width: crate::findings::Width) -> String {
 mod tests {
     use super::*;
 
-    /// The review prints its findings in the layout every command prints one in — the
+    /// The review prints its messages in the layout every command prints one in — the
     /// pack named by its file in each row, since the first line names it in full — then
     /// the count by severity and the verdict.
     #[test]
@@ -801,7 +801,7 @@ mod tests {
     }
 
     /// A bucket the pack declares outside any project: what the transpile says about it is a
-    /// finding in the review, at the pack's line, and the review's own transpile prints
+    /// message in the review, at the pack's line, and the review's own transpile prints
     /// nothing — the report is the output.
     #[test]
     fn what_the_compile_says_about_the_pack_is_in_the_review_and_nowhere_else() {
@@ -868,7 +868,7 @@ mod tests {
         assert!(private_shapes(Path::new("/tmp/x/central-logs.satz"), text).is_empty());
     }
 
-    /// The whole review reports it: a real review of a pack file carries the finding.
+    /// The whole review reports it: a real review of a pack file carries the message.
     #[test]
     fn the_review_carries_the_private_shape_finding() {
         let dir = std::env::temp_dir().join(format!("satz-review-private-{}", std::process::id()));
@@ -892,7 +892,7 @@ mod tests {
             .findings
             .iter()
             .find(|f| f.kind == Kind::PrivateShape)
-            .unwrap_or_else(|| panic!("no private-shape finding: {:?}", r.findings));
+            .unwrap_or_else(|| panic!("no private-shape message: {:?}", r.findings));
         assert_eq!((f.line, f.severity), (Some(6), Severity::Error));
         assert!(!r.passed());
         assert!(!r.findings.iter().any(|f| f.message.contains("not checked here")), "{:?}", r.findings);

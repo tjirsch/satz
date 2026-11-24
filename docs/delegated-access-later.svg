@@ -19,7 +19,7 @@
   <circle cx="540" cy="184" r="11" fill="#0F766E"/>
   <text x="540" y="188" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A2</text>
   <text x="560" y="188" font-family="Newsreader, Georgia, serif" font-size="14" fill="#1B2430" font-style="italic">Ask for it</text>
-  <text x="560" y="207" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the finding says which list of which pack takes it</text>
+  <text x="560" y="207" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the message says which list of which pack takes it</text>
   <rect x="40" y="250" width="400" height="58" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
   <circle cx="60" cy="270" r="11" fill="#1B2430"/>
   <text x="60" y="274" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#FFFFFF" font-weight="500">A3</text>

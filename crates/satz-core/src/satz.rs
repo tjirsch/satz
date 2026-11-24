@@ -699,7 +699,7 @@ pub struct ClaimDecl {
     ///
     /// `deviates` is a DELIBERATE, reasoned non-conformance: the estate knowingly
     /// does not meet this control (a policy declared but `enforce = "FALSE"`, a
-    /// pristine resource `suppress`ed). It is a disclosed finding, not a gap —
+    /// pristine resource `suppress`ed). It is disclosed, not a gap —
     /// the whole point of a `.local` fork is that the customer had a reason, and
     /// the report must carry that reason instead of showing a hole that looks
     /// like an oversight.

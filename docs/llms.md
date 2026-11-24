@@ -422,7 +422,7 @@ Also available: `satz_check_presets` (is the pack library current, or forked?),
 the estate, or adopts upstream in place with `adopt`), `satz_update_prerequisites` (the roles the
 estate's service account is missing for what it writes and the APIs its infrastructure
 project does not enable — it writes both unless `report_only`),
-`satz_review_preset` (judge a pack somebody wrote against the library's bar, findings
+`satz_review_preset` (judge a pack somebody wrote against the library's bar, messages
 anchored to file and line — offline and read-only),
 `satz_triage` (sort a Prowler export against what the estate claims), `satz_fmt` (the
 canonical layout of a file), `satz_get_presets` (fetch the pack library), `satz_prowler`
@@ -446,22 +446,22 @@ recoverable: say what you would need and why, rather than retrying the same call
 
 ## Errors you will meet, and what they mean
 
-**Read a finding as fields, not as text.** `satz_transpile_check` — and `satz transpile
-<estate> --check --format json` from a shell — return every finding as an object:
+**Read a message as fields, not as text.** `satz_transpile_check` — and `satz transpile
+<estate> --check --format json` from a shell — return every message as an object:
 `severity` (`error` · `warning` · `info`), `kind`, `subject`, `file`, `line`, `message`
 (the sentence) and, where one command answers it, `fix` (that command, as it is typed).
 Run `fix`; never cut a command out of `message`. A refused transpile returns the same
 object with its errors in `findings`, a parse error included (`kind: "front-end"`).
 
-On a terminal the same finding is a block: a first line of severity, kind, `file:line` and
+On a terminal the same message is a block: a first line of severity, kind, `file:line` and
 subject, the message indented under it, then `fix: <command>`. A terminal gets the message
 wrapped to its width; a pipe gets each paragraph on one line, so a substring of this table
-matches what a pipe carries. A group of findings stands under a title ending in its count,
+matches what a pipe carries. A group of messages stands under a title ending in its count,
 and the last line counts the run: `1 error, 10 warnings; 3 silenced (3 estate) — …`.
-Findings of a group that say the same thing — nine packs asking for one command — are one
-block, on a terminal and in a pipe: a first line per finding, then the sentence and
+Messages of a group that say the same thing — nine packs asking for one command — are one
+block, on a terminal and in a pipe: a first line per message, then the sentence and
 `fix: <command>` once. The printed sentence of such a block names no single pack or param;
-each finding's whole `message` is in the JSON, and the counts are of findings.
+each message's whole `message` is in the JSON, and the counts are of messages.
 
 | message | what happened |
 |---|---|
@@ -472,9 +472,9 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
 | a question names no local param | a question must travel with the param it answers |
-| `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the finding's `fix`, then bind its `subject` — the param — `true` |
-| the estate account … lacks roles, kind `prerequisites` | a resource type the estate writes needs a role the estate does not grant its estate account; add the named role to that account's `google_organization_iam_member` list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
-| … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate writes is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the finding's `fix`, `satz update-prerequisites <estate>` |
+| `notices open — what a pack asks to be run once it is on (N)`, kind `notice` | a pack asks for a command to be run now; run the message's `fix`, then bind its `subject` — the param — `true` |
+| the estate account … lacks roles, kind `prerequisites` | a resource type the estate writes needs a role the estate does not grant its estate account; add the named role to that account's `google_organization_iam_member` list, or run the message's `fix`, `satz update-prerequisites <estate>` |
+| … API(s) this estate's resources need are not enabled on the project their calls are billed to …, kind `prerequisites` | a resource type the estate writes is served by an API no `project_service` entry enables on the project its provider bills to — the project node it stands in, or the infrastructure project for everything else; add it to that project's list, or run the message's `fix`, `satz update-prerequisites <estate>` |
 | `packs on while a pack they need is off (N)`, kind `pack-requirement` | a pack is on and one it needs is off; the `fix` is the `satz add-preset` that switches the needed one on |
 | `"${{interface.x}}"`: no used interface folder has a value `x`, kind `interface-use` | no interface file the estate `use`s has a value `x`; the message lists what they have |
 | `"${{interface.x}}"`: the interface folders `a`, `b` each have a `x` and they differ, kind `interface-use` | two used folders carry the value with different content; name the folder, `"${{interface.a.x}}"` or `"${{interface.b.x}}"` — the message writes both |
@@ -482,7 +482,7 @@ each finding's whole `message` is in the JSON, and the counts are of findings.
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
 | `entries <param>: entry … has <field>, which is no field of this list` | a request file carries a field the list does not declare; the message lists its fields |
 | `entries <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `estate_account_user_group` of `delegations` is an address `<name>@<domain>`; write the value in that form |
-| `N silenced (…)` in the last line | the estate or the operator's machine leaves those findings out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
+| `N silenced (…)` in the last line | the estate or the operator's machine leaves those messages out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules
 

@@ -1483,7 +1483,7 @@ pub(crate) fn publish(tool: &ToolConfig, runtime: &ToolConfig, id: &str, source:
             })
             .collect();
         return Err(format!(
-            "{} does not clear review-pack's bar inside {}, so it is not published:\n{}\n`satz review-pack {} --against {} --format text --out -` lists every finding",
+            "{} does not clear review-pack's bar inside {}, so it is not published:\n{}\n`satz review-pack {} --against {} --format text --out -` lists every message",
             local.display(),
             estate.display(),
             errors.join("\n"),

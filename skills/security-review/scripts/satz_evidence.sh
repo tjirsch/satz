@@ -40,7 +40,7 @@ r = json.load(open(sys.argv[1])); print("require:", collections.Counter(c["verdi
 rep = json.load(open(sys.argv[2])); print("report:", collections.Counter(x["status"] for x in rep["rows"]), "live:", rep.get("live_status"))
 PY
 
-# ---- workloads: offline, from the customer folder so every path in a finding is <folder>/…, never absolute
+# ---- workloads: offline, from the customer folder so every path in a message is <folder>/…, never absolute
 step() { # file, title — opens a block
   printf '== %s\n' "$2" >> "$1"
 }

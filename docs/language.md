@@ -1828,7 +1828,7 @@ warning  action  presets/scc/enable.satz:12  scc-services
 
 info     action
     --no-pack-actions ignores pack-declared actions, --no-actions disables all execution, `satz
-    silence add action --reason "…"` leaves these findings out of the output.
+    silence add action --reason "…"` leaves these messages out of the output.
 
 1 warning, 1 info
 ```
@@ -2116,11 +2116,11 @@ or the map, which nothing switches on.
   `merge-presets` bringing the pack in — the notice is printed once, and the MCP tools
   `satz_interview` and `satz_add_preset` return it in `notices`.
 - **Until it is acknowledged** the transpile warns at the estate's `use` line of the pack —
-  a `notice` finding whose subject is the param and whose `fix:` line is the pack's `run`,
+  a `notice` message whose subject is the param and whose `fix:` line is the pack's `run`,
   with the estate's file name where the pack wrote `<estate>` —
   and every command that writes to the organization — `transpile --apply`, `bootstrap`,
   `run-actions --execute`, `migrate` — refuses while a `severity = error` notice is open.
-  `--plan` and `--dry-run` transpile, print the finding and go on.
+  `--plan` and `--dry-run` transpile, print the message and go on.
 - `satz adopt --execute --import` **acknowledges the notices that name it** when the run
   covers every resource type and nothing failed: it binds their params itself.
 - `satz presets` lists each pack's notices with their state, and `satz doc-presets` gives a
@@ -2186,7 +2186,7 @@ the graph does not know is `unmanaged`. `satz add-preset` and `satz remove-prese
 pack on or off by its gate or its path. A yes in the interview switches a line on as
 `add-preset` does, and `merge-presets` writes the lines the estate lacks from the graph of
 its pristine source. An active line of a gated pack that has no `when` is a transpile
-finding naming the line to write ([workflows](workflows.md#when-a-pack-line-has-no-gate)).
+message naming the line to write ([workflows](workflows.md#when-a-pack-line-has-no-gate)).
 Every line satz writes goes where the graph's order puts it: after
 the line of the pack before it in the same place, inside the block the graph names, after
 the estate-core line — or, in an estate without one, after its top-level `params`.
@@ -3014,12 +3014,12 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 
 | command | layer | does |
 |---|---|---|
-| `transpile <estate>.satz` | Satz → HCL | write `hcl/` and `interfaces/outgoing/`; `--check` transpiles in memory and writes nothing; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the transpile as data — estate, addresses, files written, findings — and exits 1 on a refusal |
+| `transpile <estate>.satz` | Satz → HCL | write `hcl/` and `interfaces/outgoing/`; `--check` transpiles in memory and writes nothing; `--plan` / `--apply` run the tool afterwards, `--scan` runs Checkov, `--print-variables` prints the tfvars; `--format json` prints the transpile as data — estate, addresses, files written, messages — and exits 1 on a refusal |
 | `require <framework> <estate>.satz --format text\|json --out f` | Controls | goal view — declared estate vs catalog; exit 1 on unmet/broken |
 | `report-compliance [<framework>] <estate>.satz --format markdown\|json\|pdf --out f` | Evidence | evidence report, verified against live; `--no-live`, `--prowler`, `--fail-on <statuses>` (exit code as the CI gate). With no framework it reports each one the estate's `compliance_frameworks` names, one section per framework in the one file, and `--format json` answers `{frameworks, reports}`. `pdf` is typeset by satz itself: no tool on PATH and nothing to install, and the same report renders to the same bytes on every machine |
 | `questions <estate>.satz --format text\|markdown\|pdf\|json\|xlsx --out f [--unanswered]` | Satz | every question the estate's packs declare, with its state; `markdown` is the decisions sheet and `pdf` the same sheet typeset, `xlsx` the workbook a customer fills in |
 | `interview <estate>.satz [--create] [--all] [--accept-defaults]` | Satz | asks the open questions at the terminal and binds each answer as a param; `--create` writes the estate from `estate-core` first |
-| `presets <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it creates anything, what it needs and what needs it, and the transpile's pack findings; a `use` the graph does not know is `unmanaged` |
+| `presets <estate>.satz --format text\|markdown\|pdf\|json --out f` | Satz | every pack the pack graph offers as the estate has it: the choice, the line, whether it creates anything, what it needs and what needs it, and the transpile's pack messages; a `use` the graph does not know is `unmanaged` |
 | `add-preset <estate>.satz <gate\|path> [--with-requirements] [--format text\|json]` | Satz | binds the gate true and makes the line active where the graph places it, with the packs that follow its gate; refused, naming them, while a pack it needs is off or one it excludes is on. The edited estate is transpiled and restored when it does not transpile |
 | `remove-preset <estate>.satz <gate\|path> [--cascade] [--format text\|json]` | Satz | binds the gate false and leaves the line; refused, naming them, while a pack that needs it is on (`--cascade` switches those off too) or while its line is not gated on its gate |
 | `add-entry <estate>.satz <list> <field>=<value>… [--format text\|json]` | Satz | adds one entry to a list a pack declares with `entries` (§6.17): every field declared, each value matching its field's pattern, the key not yet in the list; a list's values are comma-separated. The edited estate is transpiled and restored when it does not transpile |
@@ -3029,7 +3029,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `remediation-plan <framework> <estate>.satz --prowler f [--checkov] [--out-dir d] [--merge f]` | Evidence | the remediation dossier: items per control and resource from the triage and the report, written as JSON, CSV and XLSX; `--merge` fills the authored columns from an `authored.json` written against the run's dossier |
 | `check-presets <estate>.satz --format text\|json --out f` | Satz | drift of packs vs upstream |
 | `fmt <paths…> [--check] [--stdin]` | Satz | rewrite Satz files in the canonical layout (§12.3); `--check` names the files that are not, `--stdin` formats one file from stdin to stdout |
-| `lsp` | Satz | the language server on stdio, started by the editor: findings in the editor, completion, hover, go-to-definition, formatting |
+| `lsp` | Satz | the language server on stdio, started by the editor: messages in the editor, completion, hover, go-to-definition, formatting |
 | `init [flags] [--interview]` / `init --from <folder>… [--name <n>]` | Satz | write a new estate from the bootstrap values, or a workload estate from the interface folders of a delegation and the delegated resources it works in (§6.17) |
 | `interfaces <estate>.satz --format text\|json --out f` | Satz | every export, interface and list the estate publishes (§6.17) |
 | `check-request <file> [<estate>.satz]` | Satz | a workload estate's request file against the estate's list params, and the estate's transpile with the file in place, before the pull request that vendors it |
@@ -3045,7 +3045,7 @@ against; it switches no pack on. It is read by `report-compliance` with no frame
 | `review-preset <pack>.satz --format text\|json --out f [--against <estate>.satz]` | Satz | one pack against the library's bar — parses, formatted, a header sentence, a version with its changelog row, no value shaped like private data, no membership, no legacy constraint beside its managed replacement, a prerequisite row for every type it writes, and it transpiles. A pack is a fragment, so it is folded into a synthesized estate (the documented example params, the pack's own defaults) unless `--against` names a real one |
 | `preset-graph [--presets-dir d] [--check]` | Satz | builds the library's pack graph from the map's `offers` entries and the packs' own param references and `ask_when`, checks it, and writes `<presets_dir>/pack-graph.json`; nothing is written while a check fails, and `--check` fails when the file is behind the library |
 | `doc-presets [--out-dir d] [--check]` | Satz | one page per pristine pack derived from the pack file (what it does, the `use` block, params, resources, claims with their catalog titles, duties, version history) + a grouped index with framework coverage; `--check` is the CI gate, and it also refuses an off-catalog claim, a header that says nothing and a pack version with no changelog row |
-| `silence list [<estate>.satz]` / `silence add <kind>[:<subject>] --reason "…" [--machine]` / `silence remove <kind>[:<subject>] [--machine]` | — | what an estate or this machine leaves out of its printed output, named by a finding's `kind` and `subject`. `list` with an estate says what each row still silences, or that it is stale. A silenced finding stays in `--format json` and in what MCP returns; an error is never silenced. `--silence <kind>[:<subject>]` and `SATZ_SILENCE` do it for one run |
+| `silence list [<estate>.satz]` / `silence add <kind>[:<subject>] --reason "…" [--machine]` / `silence remove <kind>[:<subject>] [--machine]` | — | what an estate or this machine leaves out of its printed output, named by a message's `kind` and `subject`. `list` with an estate says what each row still silences, or that it is stale. A silenced message stays in `--format json` and in what MCP returns; an error is never silenced. `--silence <kind>[:<subject>]` and `SATZ_SILENCE` do it for one run |
 | `map-types [--only t,…]` | — | derive the API→Terraform field map per type into `presets/type-map.yaml` (from the Discovery Documents and the provider schema) |
 | `bootstrap <estate>.satz [--dry-run] [--greenfield] [--no-default-grants]` | Satz | first apply for a new organization: infrastructure project, state bucket, billing link |
 

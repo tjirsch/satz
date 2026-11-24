@@ -25,7 +25,7 @@ sign-off (page|sheet)|decisions catalog	decisions sheet
 IaC[ -](service[ -])?accounts?|(^|[^A-Za-z_@-])deployers?([^A-Za-z_@.-]|$)	estate account
 logged in|(^|[^A-Za-z_])ADC([^A-Za-z_]|$)|Application Default Credentials	signed in
 (^|[^A-Za-z_])credentials?([^A-Za-z_]|$)	signed in (signed in as …), the sign-in
-(^|[^A-Za-z_])diagnostics?([^A-Za-z_]|$)	finding
+(^|[^A-Za-z_])diagnostics?([^A-Za-z_]|$)	message
 (^|[^A-Za-z_./<$=|{-])(the|an?|this|that|every|each|per|one|live|whole|new|same|its|their|your) orgs?([^A-Za-z_./>=-]|$)|(^|[^A-Za-z_./<$=|{-])org.?s? (polic(y|ies)|sinks?|admins?|grants?|scope|level|pass|firewall|structure|number|reference|id|IAM|setup)([^A-Za-z_]|$)|(^|[^A-Za-z_./<$=|{(-])org-(wide|level)|(^|[^A-Za-z_./<$=|{-])orgs([^A-Za-z_./>=-]|$)	organization
 projects? beside|projects may request	workload estate (a project is a cloud project)
 organis|isation|behaviour|colour|licence|catalogue|initialis|recognis|summaris|normalis|serialis|customis|minimis|authoris|realis(e|ed|es|ing)|prioritis|analys(e|ed|ing)([^A-Za-z]|$)|(^|[^A-Za-z_])centres?|favour|honour|defence|programme	American spelling
