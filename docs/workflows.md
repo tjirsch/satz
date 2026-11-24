@@ -1889,7 +1889,10 @@ changes silently.** When upstream has moved *semantically*, it
 preserves your current content as `X.local.satz`, repoints the estate's `use` at
 that fork, proves the repoint by transpile identity, refreshes the pristine
 `X.satz`, and writes `X.diff.satz` — the exact delta adopting upstream would make.
-Comment and formatting churn upgrades silently instead of forking.
+Comment and formatting churn upgrades silently instead of forking. Every file of the
+library that is not a pack — the docs, the catalogs and other data, the `.txt` lists,
+the scripts a pack's action runs — is upstream's: it is replaced by upstream's copy
+and counted as an artifact, never parsed and never forked.
 It also writes the commented `use` line for every pack the pristine source's
 `pack-graph.json` offers and the estate has no line for, each where the graph's order puts
 it — after the pack before it, inside the block the graph names — so `--pristine-dir <dir>`

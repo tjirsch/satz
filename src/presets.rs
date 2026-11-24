@@ -1309,9 +1309,10 @@ pub(crate) async fn run_merge_presets(
         }
 
         let fname = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
-        // docs and data (catalogs, import-config, the pack graph) are artifacts:
-        // upstream owns them, nothing to fork
-        let is_artifact = fname.ends_with(".md") || fname.ends_with(".yaml") || fname.ends_with(".json");
+        // every file of the library that is not a pack is an artifact — docs, data
+        // (catalogs, import-config, the pack graph, the `.txt` lists) and the scripts a
+        // pack's action runs: upstream owns it, it is never parsed, nothing is forked
+        let is_artifact = !fname.ends_with(".satz");
         if is_artifact {
             events.push(pack(MergeAction::ArtifactUpdated, rel));
             if report_only { continue; }
