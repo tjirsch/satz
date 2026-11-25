@@ -23,6 +23,7 @@ ships it).
 | `presets/interface-lookups.yaml` (the data source, keys, permission and attributes per type the interfaces read back) | by hand, from the provider's data source schemas (`tofu providers schema -json`) | the provider pin moves; an export needs a type the table has no row for | the rows the showcase uses: smoke, `tofu validate` of every `interfaces/outgoing/<…>/hcl` module; the other rows: **nothing** |
 | `presets/attach-points.yaml` (the attachment types an export may allow, the argument that names the shared object, and the estate's authoritative form of each membership) | by hand, from the provider's resource documentation (which attachment resources exist, and which attribute of the shared resource they fight with) | the provider pin moves; a new attachment resource or a changed `ignore_changes` requirement in the provider's docs | the rows' shape: `cargo test` (`every_attach_row_is_an_attachment_with_a_target`); whether a row matches the provider: **nothing** |
 | `presets/managed-constraint-equivalents.txt` | `scripts/update_constraint_equivalents.py` | Google ships a new managed twin | `cargo test` catches the *effect*, not the table |
+| `presets/managed-constraint-parameters.txt` (each managed constraint's parameters with their types: the shape of a param no pack gives a value, read in a rule's `parameters`) | `scripts/update_constraint_equivalents.py` | a pack configures a managed constraint the table has no row for; Google changes a parameter | `cargo test` (`every_parameter_a_pack_writes_has_a_row`): a parameter a pack writes without a row, a pack's default of another shape than the row; a changed type of a row: **nothing** |
 | `presets/docs/*.md` | `satz doc-presets` | any pack changes | smoke: `doc-presets --check` |
 | `skills/<name>.skill` (the packaged form of `skills/<name>/`, for Cowork and the desktop app) | `scripts/build-skills.py` | any file of the skill's folder changes | smoke: `build-skills.py --check`, byte for byte |
 | `presets/pack-graph.json` | `satz preset-graph` | any pack or the map's `offers` entries change | smoke: `preset-graph --check`; `cargo test` (`the_shipped_pack_graph_is_current`) |
@@ -774,7 +775,7 @@ uv run scripts/update_constraint_equivalents.py            # auto-detect organiz
 uv run scripts/update_constraint_equivalents.py --org 123456789012
 ```
 
-Writes `presets/managed-constraint-equivalents.txt`. Needs a signed-in person **and** a quota project —
+Writes `presets/managed-constraint-equivalents.txt` and `presets/managed-constraint-parameters.txt`. Needs a signed-in person **and** a quota project —
 the OrgPolicy API refuses a sign-in without one. Nothing about the organization reaches the file: the
 constraint catalog is Google's and identical for every customer.
 
@@ -788,6 +789,14 @@ The script:
   `iam.allowedPolicyMemberDomains` ↔ `iam.managed.allowedPolicyMembers`: different names,
   no declared equivalence in either direction, the same control. The generated section
   above the marker is rewritten wholesale; do not edit it by hand.
+- **Writes every managed constraint's parameters.** One row per parameter — the constraint,
+  the parameter, its type (`LIST`, `STRING`, `BOOLEAN`, `INTEGER`) and a list's item type —
+  read from the constraint's `customConstraintDefinition`. A rule's `parameters` is JSON
+  the provider types as one string, so this table is where a param no pack gives a value,
+  written there, takes its shape from (ADR 0108). The run refuses to write an empty table.
+  `constraint_parameters::every_parameter_a_pack_writes_has_a_row` (`src/main.rs`) fails on
+  a parameter a pack writes without a row, and on a pack default of another shape than its
+  row.
 
 The table is enforced offline by `constraint_equivalents::no_pack_runs_a_superseded_constraint`
 (`src/main.rs`), which transpiles every corpus case and fails when a pack enforces a legacy

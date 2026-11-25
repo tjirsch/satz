@@ -49,12 +49,16 @@ id, a billing account, a domain: the pack can name the question, it cannot guess
 answer. These need a typed value.
 
 Each param question also carries its **`shape`** — `string`, `number`, `bool`, `list` or
-`map` — as the pack declares it (`access_approval_notification_emails = []` is a list),
-so an answer to a question with nothing to offer still has a shape. The interview reads a
-typed answer in that shape: one address for a list is a list of one, `yes` for a bool is
-`true`. An answer whose shape contradicts the declaration — a string for a list, the
-string `"true"` for a bool — is refused, from the terminal and through `satz_interview`
-alike, naming the param and the shape to use.
+`map` — so an answer to a question with nothing to offer still has a shape. It is the shape
+of the default a file gives the param; for a param no file gives a value, the shape of
+where the packs read it ([language §6.3](language.md#63-params)):
+`access_approval_notification_emails` is written into `notification_emails`, a set of
+strings in the provider's schema, so it is a list. Reading that needs the estate's
+provider schema, and the report is refused without it. The interview reads a typed answer
+in the shape: one address for a list is a list of one — from the terminal, and as one
+string through `satz_interview` — and `yes` for a bool is `true`. An answer whose shape
+contradicts it — the string `"true"` for a bool, a list for a string — is refused, naming
+the param and the shape to use.
 
 A default is usable when it is not empty and not built from something still open.
 `infra_project_name` defaults to `"{customer_shortname}-infra-001"`; with the short

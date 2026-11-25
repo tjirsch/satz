@@ -207,6 +207,63 @@ pub(crate) fn snake_to_camel(s: &str) -> String {
     out
 }
 
+/// A provider type expression (`"string"`, `["set","string"]`, `["object",{…}]`) as the
+/// pipeline reads it. `None` for an expression the provider protocol does not define.
+pub fn attr_type(t: &serde_json::Value) -> Option<satz_core::pipeline::AttrType> {
+    use satz_core::pipeline::AttrType;
+    Some(match t {
+        serde_json::Value::String(s) => match s.as_str() {
+            "string" => AttrType::String,
+            "number" => AttrType::Number,
+            "bool" => AttrType::Bool,
+            "dynamic" => AttrType::Dynamic,
+            _ => return None,
+        },
+        serde_json::Value::Array(a) => match (a.first()?.as_str()?, a.get(1)?) {
+            ("list" | "set", inner) => AttrType::List(Box::new(attr_type(inner)?)),
+            ("map", inner) => AttrType::Map(Box::new(attr_type(inner)?)),
+            ("tuple", _) => AttrType::List(Box::new(AttrType::Dynamic)),
+            ("object", serde_json::Value::Object(fields)) => {
+                AttrType::Object(fields.iter().map(|(k, v)| Some((k.clone(), attr_type(v)?))).collect::<Option<_>>()?)
+            }
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// `presets/managed-constraint-parameters.txt`: the parameters of the managed constraints,
+/// refreshed by `scripts/update_constraint_equivalents.py`, never by hand.
+pub(crate) const CONSTRAINT_PARAMETERS: &str = include_str!("../presets/managed-constraint-parameters.txt");
+
+/// The rows of [`CONSTRAINT_PARAMETERS`]: constraint, parameter, type, item type.
+pub(crate) fn constraint_parameter_rows() -> impl Iterator<Item = (&'static str, &'static str, &'static str, &'static str)> {
+    CONSTRAINT_PARAMETERS.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).map(|l| {
+        let mut cols = l.split('\t');
+        let mut next = || cols.next().unwrap_or_default();
+        (next(), next(), next(), next())
+    })
+}
+
+/// The type of one parameter of a managed constraint, as Google defines it: `LIST` of its
+/// item type, `STRING`, `BOOLEAN`, `INTEGER`. A name `organizations/<n>/policies/<c>` is
+/// read as `<c>`.
+pub fn constraint_parameter(constraint: &str, parameter: &str) -> Option<satz_core::pipeline::AttrType> {
+    use satz_core::pipeline::AttrType;
+    let constraint = constraint.rsplit_once("/policies/").map(|(_, c)| c).unwrap_or(constraint);
+    let scalar = |t: &str| match t {
+        "STRING" => Some(AttrType::String),
+        "BOOLEAN" => Some(AttrType::Bool),
+        "INTEGER" => Some(AttrType::Number),
+        _ => None,
+    };
+    let (_, _, t, item) = constraint_parameter_rows().find(|(c, p, _, _)| *c == constraint && *p == parameter)?;
+    match t {
+        "LIST" => Some(AttrType::List(Box::new(scalar(item)?))),
+        other => scalar(other),
+    }
+}
+
 pub struct ResourceRegistry {
     pub resources: HashMap<String, (String, ResourceSchema)>, // resource_name -> (provider_name, schema)
 }

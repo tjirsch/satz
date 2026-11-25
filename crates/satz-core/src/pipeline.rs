@@ -16,7 +16,10 @@ use crate::satz::{self, Entry, File, Key, StrPart, Value};
 use crate::{Address, MergeClass, Scope, Span};
 use std::collections::BTreeMap;
 
+mod param_kind;
 mod position;
+pub use param_kind::{AttrType, ParamUses, Shape};
+use param_kind::{map_seg, Seg};
 use position::Position;
 
 /// How a source-level mapping key becomes a Terraform type. Schema-driven in
@@ -31,6 +34,20 @@ pub trait TypeResolver {
     /// block — a level with no schema gets no verdict, and the walk checks nothing
     /// there.
     fn body_keys(&self, tf_type: &str, path: &[&str]) -> Option<BodyKeys>;
+
+    /// The type of attribute `key` in one body of `tf_type` (`path` as for
+    /// [`TypeResolver::body_keys`]). `None` where the schema has no such attribute — a
+    /// block, an unknown key — and from a resolver that carries no types.
+    fn attribute_type(&self, _tf_type: &str, _path: &[&str], _key: &str) -> Option<AttrType> {
+        None
+    }
+
+    /// The type of one parameter of a managed organization policy constraint
+    /// (`iam.managed.disableServiceAccountApiKeyCreation`, `allowedServices`): the JSON in a
+    /// rule's `parameters`, which the provider types as a string.
+    fn constraint_parameter(&self, _constraint: &str, _parameter: &str) -> Option<AttrType> {
+        None
+    }
 }
 
 /// One body level as the schema names it: the keys that open a nested block, and the
@@ -2516,6 +2533,7 @@ pub fn compile_estate_bound(
     if let Some(e) = deferred {
         return Err(e); // the walk was happy; the seed pass was not, and it is the one with something to say
     }
+    check_param_shapes(file_name, src, types, load)?;
     let privates = file.privates.iter().map(|x| ResolvedPrivate { address: x.address.clone(), file: file_name.to_string(), line: x.line }).collect();
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
@@ -3112,6 +3130,17 @@ pub fn estate_questions(
     src: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env), PipelineError> {
+    estate_questions_and_uses(file_name, src, load).map(|(q, n, env, _)| (q, n, env))
+}
+
+/// `estate_questions`, with every read of a param the walk passed: what the shape of a
+/// param no file gives a value is read from ([`ParamUses::shapes`], ADR 0108). The walk
+/// itself stays schema-free; only the shapes need the provider schema.
+pub fn estate_questions_and_uses(
+    file_name: &str,
+    src: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env, ParamUses), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
     let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, load);
@@ -3120,7 +3149,10 @@ pub fn estate_questions(
     if !file.questions.is_empty() {
         out.0.push(pack_questions(&file, file_name));
     }
-    collect_questions(&file.items, file_name, load, &mut env, &mut out, 0)?;
+    let mut uses = ParamUses::default();
+    uses.note_params(&file, file_name, true);
+    let mut walk = QuestionsWalk { load, env: &mut env, out: &mut out, uses: &mut uses };
+    walk.items(&file.items, &file, file_name, &mut Vec::new(), 0)?;
     // Contradictions only: a required choice nobody has made yet is what this
     // report is for.
     check_oneof(&out.0, &env, false)?;
@@ -3128,7 +3160,19 @@ pub fn estate_questions(
         return Err(e);
     }
     drop_no_values(&mut env);
-    Ok((out.0, out.1, env))
+    Ok((out.0, out.1, env, uses))
+}
+
+/// The transpile's check of the params no file gives a value: two places that read one as
+/// two shapes are refused, naming both (ADR 0108).
+fn check_param_shapes(
+    file_name: &str,
+    src: &str,
+    types: &dyn TypeResolver,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(), PipelineError> {
+    let (_, _, _, uses) = estate_questions_and_uses(file_name, src, load)?;
+    uses.shapes(types).map(|_| ())
 }
 
 /// What the packs this estate uses contribute to other files' list params — the
@@ -3147,53 +3191,75 @@ pub fn estate_contributions(
 
 /// The `use` walk of `collect_params`, gathering questions and notices on the way. A
 /// pack behind a false `when` contributes neither params, questions nor notices.
-fn collect_questions(
-    items: &[Entry],
-    file_name: &str,
-    load: &dyn Fn(&str) -> Result<String, String>,
-    env: &mut Env,
-    out: &mut (Vec<PackQuestions>, Vec<PackNotices>),
-    depth: usize,
-) -> Result<(), PipelineError> {
-    if depth > MAX_USE_DEPTH {
-        return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
-    }
-    for item in items {
-        match item {
-            // an `each` body declares no param, asks no question and uses no pack
-            Entry::Attr { .. } | Entry::Each { .. } | Entry::When { .. } => {}
-            Entry::Use { path, when, line, .. } => {
-                if let Some(p) = when {
-                    if let Some(e) = renamed_param(p, file_name, *line) {
-                        return Err(e);
-                    }
-                    if !env.contains_key(p) {
-                        return perr(file_name, *line, format!("use … when {}: unknown param `{}`", p, p));
-                    }
-                    if let Some(v) = env.get(p) {
-                        read_no_value(v, file_name, *line)?;
-                    }
-                    if !truthy(env.get(p)) {
-                        continue;
-                    }
-                }
-                let src = (load)(path)
-                    .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
-                let used = satz::parse(&src)
-                    .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
-                absorb(&used, path, env)?;
-                if !used.questions.is_empty() {
-                    out.0.push(pack_questions(&used, path));
-                }
-                if !used.notices.is_empty() {
-                    out.1.push(pack_notices(&used, path));
-                }
-                collect_questions(&used.items, path, load, env, out, depth + 1)?;
-            }
-            Entry::Map { body, .. } => collect_questions(body, file_name, load, env, out, depth)?,
+struct QuestionsWalk<'a, 'b> {
+    load: &'a dyn Fn(&str) -> Result<String, String>,
+    env: &'b mut Env,
+    out: &'b mut (Vec<PackQuestions>, Vec<PackNotices>),
+    uses: &'b mut ParamUses,
+}
+
+impl QuestionsWalk<'_, '_> {
+    /// One body of `file` at `segs`: the questions and notices of every file it `use`s, the
+    /// params they declare, and where each param is read.
+    fn items(&mut self, items: &[Entry], file: &File, file_name: &str, segs: &mut Vec<Seg>, depth: usize) -> Result<(), PipelineError> {
+        if depth > MAX_USE_DEPTH {
+            return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
         }
+        for item in items {
+            self.uses.note_entry(item, segs, file, file_name);
+            match item {
+                Entry::Attr { .. } => {}
+                // an `each` body declares no param, asks no question and uses no pack
+                Entry::Each { body, .. } => {
+                    segs.push(Seg::EachBody);
+                    self.items(body, file, file_name, segs, depth)?;
+                    segs.pop();
+                }
+                Entry::When { entry, .. } => self.items(std::slice::from_ref(entry), file, file_name, segs, depth)?,
+                Entry::Use { path, as_key, when, line } => {
+                    if let Some(p) = when {
+                        self.uses.note_use_gate(p, file_name, *line);
+                        if let Some(e) = renamed_param(p, file_name, *line) {
+                            return Err(e);
+                        }
+                        if !self.env.contains_key(p) {
+                            return perr(file_name, *line, format!("use … when {}: unknown param `{}`", p, p));
+                        }
+                        if let Some(v) = self.env.get(p) {
+                            read_no_value(v, file_name, *line)?;
+                        }
+                        if !truthy(self.env.get(p)) {
+                            continue;
+                        }
+                    }
+                    let src = (self.load)(path)
+                        .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
+                    let used = satz::parse(&src)
+                        .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
+                    absorb(&used, path, self.env)?;
+                    self.uses.note_params(&used, path, false);
+                    if !used.questions.is_empty() {
+                        self.out.0.push(pack_questions(&used, path));
+                    }
+                    if !used.notices.is_empty() {
+                        self.out.1.push(pack_notices(&used, path));
+                    }
+                    // `use "…" as <type>`: the file's entries are the content of that map
+                    let pushed = as_key.as_ref().map(|k| segs.push(Seg::Map { key: k.clone(), named: false, name: None })).is_some();
+                    self.items(&used.items, &used, path, segs, depth + 1)?;
+                    if pushed {
+                        segs.pop();
+                    }
+                }
+                Entry::Map { key, name, body, .. } => {
+                    segs.push(map_seg(key, name, body));
+                    self.items(body, file, file_name, segs, depth)?;
+                    segs.pop();
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

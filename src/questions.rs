@@ -5,15 +5,16 @@
 //! question the estate's packs contribute, against the value the estate already
 //! carries for it.
 //!
-//! Read-only, schema-free, offline. An interview happens before anyone has run
-//! `update-schema`, so nothing here needs the provider registry.
+//! Read-only and offline. The walk is schema-free: an interview happens before anyone has
+//! run `update-schema`. The provider schema is read only where a param no file gives a
+//! value is read inside a resource — its shape is that attribute's type (ADR 0108).
 
 // schemars comes through rmcp: one version in the tree, no second dependency to pin
 use rmcp::schemars;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use satz_core::pipeline::{estate_questions, Env};
+use satz_core::pipeline::{estate_questions_and_uses, Env, Shape};
 
 use crate::settings::ToolConfig;
 
@@ -58,10 +59,11 @@ pub(crate) struct QuestionRow {
     /// anything; a value has to be typed before the estate may touch an
     /// organization.
     pub blocking: bool,
-    /// The shape the pack declares for the param — `string`, `number`, `bool`, `list`
-    /// or `map` — and so the shape an answer must have: a client typing one address where
-    /// the pack declares `[]` would write a string where the provider wants a set. A param
-    /// declared `none` takes the shape of the default another file gives it, else of the
+    /// The shape of the param — `string`, `number`, `bool`, `list` or `map` — and so the
+    /// shape an answer must have: a client typing one address where the provider wants a
+    /// set would write a string. The shape of the default a file gives the param; for a
+    /// param no file gives a value, the shape of where it is read — an attribute's
+    /// provider type, an `each`, a `when`, a string it is interpolated into — else of the
     /// question's `recommend`; absent without either, and for a choice, which is answered
     /// by an option's name.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -146,8 +148,9 @@ pub(crate) fn questions_report(
     let src = crate::fsx::read_to_string(input)?;
     let load = loader(input, runtime);
     let file_name = input.display().to_string();
-    let (packs, _, env) = estate_questions(&file_name, &src, &load)
+    let (packs, _, env, uses) = estate_questions_and_uses(&file_name, &src, &load)
         .map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))?;
+    let read_shapes = read_shapes(&uses, runtime)?;
 
     // The estate's OWN bindings. The fold cannot answer "did a human decide
     // this": a pack default and an estate's decision look the same from there.
@@ -209,10 +212,14 @@ pub(crate) fn questions_report(
                 let default = if usable { env.get(&q.subject).cloned() } else { None };
                 ("unanswered", None, default, !usable)
             };
+            let recommended = || q.recommend.as_ref().and_then(satz_shape);
             let shape = if q.oneof {
                 None
+            } else if uses.without_value().contains(&q.subject) {
+                // no file gives it a value: the shape is where it is read
+                read_shapes.get(&q.subject).map(|s| s.as_str()).or_else(recommended)
             } else {
-                declared_shape(&q.subject, declared.map(|f| &f.params), &env, 0).or_else(|| q.recommend.as_ref().and_then(satz_shape))
+                declared_shape(&q.subject, declared.map(|f| &f.params), &env, 0).or_else(recommended)
             };
             let one_way = q.reversal == satz_core::satz::Reversal::Recreate
                 || q.blast == satz_core::satz::Blast::High;
@@ -293,6 +300,30 @@ pub(crate) fn require_complete(input: &Path, runtime: &ToolConfig, action: &str)
         names.join(", "),
         input.display()
     ))
+}
+
+/// The shapes of the params no file gives a value, read from where they are read. The
+/// provider schema is loaded only when one of them is read inside a resource, and a missing
+/// schema is then the transpile's own refusal: the shape is not guessed.
+fn read_shapes(uses: &satz_core::pipeline::ParamUses, runtime: &ToolConfig) -> Result<BTreeMap<String, Shape>, Box<dyn std::error::Error>> {
+    let shapes = if uses.needs_types() {
+        let registry = crate::schema::ResourceRegistry::load_all(&runtime.schema_dir)?;
+        uses.shapes(&crate::EstateResolver { registry: &registry })
+    } else {
+        uses.shapes(&NoTypes)
+    };
+    shapes.map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg).into())
+}
+
+/// The resolver of a walk that reads no resource type.
+struct NoTypes;
+impl satz_core::pipeline::TypeResolver for NoTypes {
+    fn resolve(&self, _: &str) -> Option<satz_core::pipeline::ResolvedType> {
+        None
+    }
+    fn body_keys(&self, _: &str, _: &[&str]) -> Option<satz_core::pipeline::BodyKeys> {
+        None
+    }
 }
 
 /// The shape of a value, in the words the report uses.

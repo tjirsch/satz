@@ -289,7 +289,10 @@ the pack's default is an answer, written as the default. Unanswered questions ca
 declared `none` (a customer id, a billing account): those need the human's value. `""` and
 `[]` are values, offered and bound like any other; an estate's `p = none` binds nothing.
 A param declared `none` that nothing binds and nothing asks stops the transpile at its
-read, naming every file that declares it — bind it in the estate's `params {}`. **Every question must be answered before
+read, naming every file that declares it — bind it in the estate's `params {}`. Each
+question's `shape` is the shape to answer in: a param no file gives a value takes it from
+where the packs read it (a set attribute is a `list`), so answer a `list` with a list —
+one string is written as a list of one. **Every question must be answered before
 bootstrap or apply**; `summary.complete` says whether they are.
 
 A question must be declared in the same file as the param it answers.
