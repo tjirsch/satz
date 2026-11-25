@@ -13,6 +13,34 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### v0.111.0
+
+**`merge-presets` and `check-presets` refuse a preset library without
+`dropped-files.txt`** (ADR 0103). The list names every file the library carried and
+carries no more; satz's own library carries it. A library named by `[preset_library]` in
+`config.toml`, or passed with `--pristine-dir`, adds `presets/dropped-files.txt` — empty
+when it never dropped a file, else one path under `presets/` per line. The plan does not
+move.
+
+**`merge-presets` removes the files the library dropped from the estate's `presets/`.**
+A dropped file the estate does not use is deleted, and so is the `.diff.satz` of a
+dropped pack; a dropped pack the estate uses is forked to `.local.satz` and the estate
+repointed, with the transpiled output proven identical. Commit the estate repository
+before the run to review the removals in `git diff`. Any other file in `presets/` that is
+not the library's, a `.local.satz` or a `.diff.satz` is kept and named in a warning: move
+it out of the folder. The plan does not move.
+
+**The JSON of `check-presets` (and `satz_check_presets`) has no `local-only` status.**
+
+| before | now | where |
+|---|---|---|
+| `"status": "local-only"` | `"status": "dropped"` for a file on the library's list, `"status": "foreign"` for any other | scripts and agents that read `satz check-presets --format json` |
+| `summary: {clean, stale, drift_in_use}` | adds `dropped` and `foreign` | the same |
+
+The merge report of `merge-presets` (`satz_merge_presets`) gains the actions
+`dropped-removed`, `dropped-forked` and `fork-kept`, with the counts `dropped_removed`,
+`dropped_forked` and `forks_kept`.
+
 ### v0.110.0
 
 **A workload estate has no prerequisites check for roles** (ADR 0101). An estate that uses an

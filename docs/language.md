@@ -2712,6 +2712,10 @@ Suffix carries meaning; the tooling enforces it.
   forked: a pack the estate uses only through another pack ("fork it by hand"), and an
   estate with uncommitted changes; an existing `.local.satz` gets its pristine tracked and
   its `.diff.satz` refreshed; `--adopt <stem|all>` upgrades in place.
+- A file the library lists in its `dropped-files.txt` is removed, or forked and the
+  estate repointed when the estate uses it; the `.diff.satz` of a dropped pack is
+  removed, its `.local.satz` kept. Any other file in `presets/` that is not the
+  library's, a fork or a delta is kept and named in a warning.
 - Pack versions live **in-file**; filenames carry only framework versions.
   Never `X.local.2.satz`.
 - Most customization is **params**, the rest a `.local` fork. If a fork's whole

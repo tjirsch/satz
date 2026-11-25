@@ -1842,7 +1842,11 @@ who owns the file**:
 | `X.satz` | upstream | overwritable — this is a pristine copy |
 | `X.local.satz` | you | never touched by any command |
 | `X.diff.satz` | the tool | the current fork-vs-pristine delta, rewritten each `merge-presets` run |
-| `<own>.satz` | you | no upstream counterpart, kept as-is |
+| a file the library dropped | nobody | removed by `merge-presets`, or forked when the estate uses it |
+
+Nothing else belongs in the folder. A file that is none of these — not the library's,
+not a fork, not a delta, not on the library's list of dropped files — is never deleted:
+`merge-presets` and `check-presets` warn about it by path, and it is moved out by hand.
 
 Two more facts:
 
@@ -1904,6 +1908,27 @@ writes the lines of THAT directory's graph. A pristine source without a graph ge
 note and no line; a graph that places a pack in a block this binary's scaffold does not
 have is refused before anything changes.
 
+### When the library drops a file
+
+The library lists every file it carried and carries no more in
+`presets/dropped-files.txt`, one path under `presets/` per line. `merge-presets` and
+`check-presets` read the list from the library they compare with and refuse a library
+without it — a library folder that never dropped a file carries it empty — and a line
+naming a file the library carries.
+
+| in the estate's `presets/` | `merge-presets` | `check-presets` |
+|---|---|---|
+| `X.satz` dropped, the estate does not use it | removes it, and a folder left empty | `dropped` |
+| `X.satz` dropped, the estate uses it | forks it to `X.local.satz`, repoints the estate, proves the repoint by transpile identity, removes `X.satz`; exits non-zero | `DROPPED [included]`, exits non-zero |
+| `X.diff.satz` of a dropped `X.satz` | removes it: there is nothing left to compare the fork with | `dropped` |
+| `X.local.satz` of a dropped `X.satz` | keeps it, and says the original is gone in the run that removes `X.satz` or `X.diff.satz` | `fork`, saying the original is gone |
+| a file of no kind above | keeps it, `WARNING` naming it | `WARNING` naming it |
+
+A fork of a dropped pack is the estate's own file: no release changes it, and no
+adoption delta is written for it. A used dropped pack whose `X.local.satz` exists
+already is refused, naming the fork: the estate's `use` is pointed at that fork, or the
+fork moved aside, before the next run.
+
 ### When a pack line has no gate
 
 Every pack but `estate-core` and the map is switched by a gate, and a no switches it
@@ -1925,6 +1950,10 @@ path the pack lives at now and the edit. The old file is still in the estate's
 `presets/`, so following it would transpile a copy nothing updates again, at the version
 it had when the library moved it. No command rewrites the line or moves the files
 beside it: the steps are in [Breaking changes](../presets/CHANGELOG.md#breaking-changes).
+The old path is on the library's list of dropped files, so once the estate's `use`
+names the new path, `merge-presets` removes the copy at the old one and its
+`.diff.satz`, and keeps a `.local.satz` there (see
+[When the library drops a file](#when-the-library-drops-a-file)).
 
 ### Is it stale, or edited?
 
@@ -1959,7 +1988,11 @@ copy.
 - **fork** — an `X.local.*` file. Never an error. If a pristine file reads STALE but
   its `.local` sibling exists, the report says so and tells you to leave the pristine
   copy alone: the estate runs the fork, and that copy is the fork's baseline.
-- **missing locally** / **local-only** — new upstream preset / your own file.
+- **dropped** — the library no longer carries the file; `merge-presets` removes it, or
+  forks it when the estate uses it (**DROPPED [included]**, which fails the gate).
+- **WARNING** — a file that is not the library's, a fork, an adoption delta or dropped;
+  move it out of `presets/`.
+- **missing locally** — a new upstream preset.
 
 Drift in an **`[included]`** preset exits non-zero — that is the CI gate.
 
