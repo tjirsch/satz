@@ -801,7 +801,7 @@ pub(crate) struct AddEntryArgs {
     pub estate: Option<String>,
     /// The list param, as the pack's `entries` statement names it: `delegations`, `delegated_projects`, …
     pub list: String,
-    /// The entry's fields, each as text: `{"name": "rag", "delegation": "rag", "budgets": "true"}`;
+    /// The entry's fields, each as text: `{"name": "payments", "delegation": "payments", "budgets": "true"}`;
     /// a list's values are separated by commas
     pub fields: std::collections::BTreeMap<String, String>,
 }

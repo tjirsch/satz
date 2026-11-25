@@ -1,0 +1,58 @@
+name: Check Release Assets
+
+# cargo-dist post-announce job (dist-workspace.toml: post-announce-jobs). It runs inside
+# the Release workflow once the GitHub release exists, attaches `dist-manifest.json` when
+# the release lacks it, and then fails the run, naming each file, when the release lacks
+# any file cargo-dist planned for it — the `plan` input, cargo-dist's manifest, is the
+# list, so it follows the targets and installers of dist-workspace.toml.
+#
+# The repair is of a known race in cargo-dist's generated `host` job: it uploads
+# dist-manifest.json as the artifact `artifacts-dist-manifest` and, half a second later,
+# downloads `artifacts-*` to attach to the release — and the artifact listing does not
+# always hold the upload yet, so the release is created without the file while every job
+# reports success. The file attached here is that artifact, the exact file the run built,
+# not one rebuilt. prune-artifacts.yml leaves this one artifact in place so the order of
+# the two post-announce jobs does not matter. scripts/check-release-assets.sh is the check,
+# and runs the same way locally.
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  check-release-assets:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download the dist-manifest.json this run built
+        uses: actions/download-artifact@v8
+        with:
+          name: artifacts-dist-manifest
+          path: ${{ runner.temp }}/host
+
+      - name: Attach dist-manifest.json when the host job did not
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx 'dist-manifest.json'; then
+            echo "the release carries dist-manifest.json"
+          else
+            echo "the release lacks dist-manifest.json (cargo-dist's host race): attaching the one this run built"
+            gh release upload "$TAG" "$RUNNER_TEMP/host/dist-manifest.json" --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Compare the release's files with the plan
+        run: |
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          bash scripts/check-release-assets.sh "$TAG" "$RUNNER_TEMP/plan.json" "$GITHUB_REPOSITORY"

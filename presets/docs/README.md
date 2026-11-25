@@ -3,7 +3,7 @@
 
 One page per pristine pack, derived from the pack file by `satz doc-presets`, in the groups and the order of `presets/library-groups.txt`. The library's conventions and its prose per group are [`presets/README.md`](../README.md); its history — what each release refuses and one row per pack version — is [`presets/CHANGELOG.md`](../CHANGELOG.md), repeated per pack under **History** on each page here.
 
-**51 packs · 243 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
+**51 packs · 242 resources · 83 claims over cis-gcp 4.0 and cis-gcp 5.0.**
 
 ## Estate map and core
 
@@ -26,7 +26,7 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 |---|---|---|---|---|
 | [`billing_account_permissions`](billing-account-permissions.md) | 1.3 | Billing-account IAM, split by audience. | 4 | — |
 | [`organization_budget`](organization-budget.md) | 2.2 | Budgets on the infrastructure billing account with alert thresholds: one for the whole account, and one per entry of `budgets` for a set of projects or folders. | 2 | — |
-| [`billing_export`](billing-export.md) | 1.1 | Cloud Billing usage and cost data, exported to BigQuery in a project of its own — where the spend is KEPT, as opposed to the budget that alarms on it. | 3 | — |
+| [`billing_export`](billing-export.md) | 1.2 | Cloud Billing usage and cost data, exported to BigQuery in a project of its own — where the spend is KEPT, as opposed to the budget that alarms on it. | 3 | — |
 
 ## CIS baseline and extensions
 
@@ -64,15 +64,15 @@ One page per pristine pack, derived from the pack file by `satz doc-presets`, in
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
-| [`shared_network`](shared-network.md) | 1.1 | A shared VPC in a host project of its own: one network, the subnets the projects ask for, and a network firewall policy whose rules they ask for. | 7 | — |
+| [`shared_network`](shared-network.md) | 1.2 | A shared VPC in a host project of its own: one network, the subnets the projects ask for, and a network firewall policy whose rules they ask for. | 7 | — |
 
 ## Projects and interfaces
 
 | pack | version | what it does | resources | claims |
 |---|---|---|---|---|
 | [`delegation`](delegation.md) | 2.1 | Delegated access, the base: one identity per delegation. | 4 | — |
-| [`delegated_folders`](delegated-folders.md) | 1.1 | The ready-made delegation pack for folders: the folders a delegation's account works in, and its roles on those folders alone. | 4 | — |
-| [`delegated_projects`](delegated-projects.md) | 2.0 | The ready-made delegation pack for projects: the Google projects a delegation's account works in, and its roles on those projects alone. | 3 | — |
+| [`delegated_folders`](delegated-folders.md) | 1.2 | The ready-made delegation pack for folders: the folders a delegation's account works in, and its roles on those folders alone. | 3 | — |
+| [`delegated_projects`](delegated-projects.md) | 2.1 | The ready-made delegation pack for projects: the Google projects a delegation's account works in, and its roles on those projects alone. | 3 | — |
 | [`delegated_budget_role`](delegated-budget-role.md) | 1.0 | Delegated access to budgets: the role an account manages budgets with, for its own project or folder alone. | 1 | — |
 | [`interface_notice`](interface-notice.md) | 1.2 | Tells the projects that read this estate's interface when an exported value changes: one Pub/Sub message per apply that changes one. | 5 | — |
 

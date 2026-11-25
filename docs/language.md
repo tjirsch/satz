@@ -2769,9 +2769,14 @@ contribution is written in one — which the estate `use`s once the pull request
 vendors it is reviewed. `key` is the field that names an entry, `fields` every field an
 entry may carry, `key` among them, `description` what an entry is; an entry's key is a
 string or a number. `patterns` is optional and maps a field to a regular expression (Rust's
-`regex` syntax, no interpolation) that the field's whole value matches; a field without one
+`regex` syntax, no interpolation; a brace is doubled as in every Satz string, `{{4,30}}`)
+that the field's whole value matches; a field without one
 takes any value. `defaults` is optional and maps a field to the value an entry that leaves
-it out takes — any value, a param read by name included, never the key. The defaults are
+it out takes — any value, a param read by name included, never the key. A default may also
+read another field of the same entry, `each.<field>`: `display_name = each.name` gives an
+entry without a display name its own name. The field it reads is one the entry carries as
+written — the default of a field that takes a default itself is refused — and an entry that
+does not carry it is left without the defaulted field too. The defaults are
 written into the list when the list is read, before anything reads the list, so
 an `each`, the patterns, the interface and `terraform.tfvars` all see the filled entry; a
 workload estate's file is checked as written, its entries filled the same way before they are
@@ -2801,7 +2806,9 @@ field the pack's `each` body reads — is refused before the pull request. `satz
 
 Refused: a list on a param no file declares or that is no list, two `entries`
 statements on one list, a `key` not among the `fields`, a field named twice, a pattern for a
-field `fields` does not name, a pattern that is no regular expression.
+field `fields` does not name, a pattern that is no regular expression, a default that reads
+`each.<field>` of a field `fields` does not name, of the field itself, or of a field that
+takes a default.
 
 ### 6.18 Provenance: pristine, fork, ledger
 

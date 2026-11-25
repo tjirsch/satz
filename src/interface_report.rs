@@ -40,6 +40,9 @@ pub(crate) struct RequestRow {
     /// per field, the value an entry without it takes
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub defaults: std::collections::BTreeMap<String, serde_json::Value>,
+    /// per field, the field of the same entry whose value an entry without it takes
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub field_defaults: std::collections::BTreeMap<String, String>,
     pub file: String,
     pub line: usize,
 }
@@ -133,6 +136,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             entries: r.entries.len(),
             rows: r.entries.iter().filter_map(|e| serde_json::to_value(e).ok()).collect(),
             defaults: r.defaults.iter().filter_map(|(f, v)| serde_json::to_value(v).ok().map(|v| (f.clone(), v))).collect(),
+            field_defaults: r.field_defaults.iter().cloned().collect(),
             file: r.file.clone(),
             line: r.line,
         })

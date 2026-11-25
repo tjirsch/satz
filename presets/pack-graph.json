@@ -54,7 +54,7 @@
     },
     {
       "path": "presets/billing-export.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "use_billing_export",
       "gate_declared_in": "presets/estate-map.satz",
@@ -81,7 +81,7 @@
     },
     {
       "path": "presets/delegated-folders.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "use_delegated_folders",
       "gate_declared_in": "presets/estate-map.satz",
@@ -91,7 +91,7 @@
     },
     {
       "path": "presets/delegated-projects.satz",
-      "version": "2.0",
+      "version": "2.1",
       "role": "pack",
       "gate": "use_delegated_projects",
       "gate_declared_in": "presets/estate-map.satz",
@@ -111,7 +111,7 @@
     },
     {
       "path": "presets/shared-network.satz",
-      "version": "1.1",
+      "version": "1.2",
       "role": "pack",
       "gate": "use_shared_network",
       "gate_declared_in": "presets/estate-map.satz",

@@ -11,7 +11,11 @@
 //   { name = "payments"      delegation = "payments" }
 //   { name = "shop-backend"  delegation = "shop" }
 //   { name = "shop-frontend" delegation = "shop" }
-// is one Google project `{customer_shortname}-<name>-001`. One account works in as many
+// is one Google project `{customer_shortname}-<name>-001`, shown under its `display_name`, the
+// entry's name when left out. Google takes a project display name of 4 to 30 letters, digits,
+// spaces, hyphens, single and double quotes and exclamation points, so the list's pattern
+// refuses an entry whose display name is not one — `{ name = "rag" … }` needs a
+// `display_name = "rag-workload"` — before anything is planned. One account works in as many
 // projects as name its delegation. The grant names the account by reference, so an entry
 // that names a delegation no entry of `delegations` declares is refused by the transpile,
 // which lists the accounts that exist. Entries are bound in the estate, added with
@@ -45,12 +49,13 @@
 //
 // NO CLAIM. A delegated project is a workload's, not a control: this pack witnesses nothing.
 
-pack delegated_projects version "2.0"
+pack delegated_projects version "2.1"
 
 params {
-  // One entry per project, `{ name delegation apis budgets }`: the name, the delegation
-  // whose account works in it, the APIs enabled on it (the defaults of the `entries` statement below
-  // when left out), and whether the account may manage a budget for it.
+  // One entry per project, `{ name delegation display_name apis budgets }`: the name, the
+  // delegation whose account works in it, the name the project is shown under (the entry's
+  // name when left out), the APIs enabled on it (the defaults of the `entries` statement
+  // below when left out), and whether the account may manage a budget for it.
   delegated_projects        = []
   // The folder the projects are created in: the workload folder. Another folder the
   // estate declares is named by reference, `google_folder.<label>.name`; one that already
@@ -76,9 +81,10 @@ question delegated_projects_folder {
 
 entries delegated_projects {
   key      = "name"
-  fields   = ["name", "delegation", "apis", "budgets"]
-  patterns = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" }
+  fields   = ["name", "delegation", "display_name", "apis", "budgets"]
+  patterns = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" display_name = "[A-Za-z0-9 '\"!-]{{4,30}}" }
   defaults = {
+    display_name = each.name
     apis = [
       "cloudresourcemanager.googleapis.com",
       "iam.googleapis.com",
@@ -88,14 +94,14 @@ entries delegated_projects {
     ]
     budgets = false
   }
-  description = "A project a delegation's account works in: its name, which is its interface's, the delegation's name, the APIs enabled on it, and whether a budget is delegated for it"
+  description = "A project a delegation's account works in: its name, which is its interface's, the delegation's name, the name the project is shown under, the APIs enabled on it, and whether a budget is delegated for it"
 }
 
 // ---- per project: the project, and no account of its own --------------------------------
 
 google_project {
   each delegated_projects by name {
-    name            = "{each.name}"
+    name            = "{each.display_name}"
     project_id      = "{customer_shortname}-{each.name}-001"
     folder_id       = delegated_projects_folder
     billing_account = billing_account_infra

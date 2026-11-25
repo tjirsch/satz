@@ -13,6 +13,19 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**A delegated project's or folder's display name is held to Google's rule** (`delegated_projects`
+2.1, `delegated_folders` 1.2). Each entry's `display_name` — the entry's `name` when the entry
+does not carry one — matches the list's pattern or the transpile refuses it, naming the entry,
+the field, the value and the pattern. A project display name is 4 to 30 letters, digits,
+spaces, hyphens, single and double quotes and exclamation points; a folder display name is at
+most 30 letters, digits, spaces, hyphens and underscores, starting and ending with a letter or
+digit. An estate refused here held an entry that `tofu validate` (a project) or the apply (a
+folder) refused already: give the entry a `display_name` that matches, `{ name = "rag"
+delegation = "rag" display_name = "rag-workload" }`; the project id stays
+`{customer_shortname}-rag-001`. An estate whose entries all match plans as before.
+
 ### v0.111.0
 
 **`none` declares a param without a value, and `""` and `[]` are values** (ADR 0106).
@@ -1615,6 +1628,10 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegated_projects` | 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "rag" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
+| `delegated_folders` | 1.2 | 2026-11-25 | `display_name` is the entry's `name` when left out, through the list's `defaults`, so one `google_folder` body serves both; the list's pattern holds it to Google's rule for a folder display name — at most 30 letters, digits, spaces, hyphens and underscores, starting and ending with a letter or digit — so an entry whose display name breaks it is refused by the transpile and by `satz add-entry`, where it failed at apply. `terraform.tfvars` carries the filled `display_name` of every entry; nothing a plan shows changes |
+| `billing_export` | 1.2 | 2026-11-25 | the folder question says what its empty answer means, `empty = "the organization itself; the project is created directly under it"`, so `satz questions`, the interview and the decisions sheet show it beside the `""` the pack offers and `--accept-defaults` takes. Nothing emitted changes |
+| `shared_network` | 1.2 | 2026-11-25 | the host project's folder question says what its empty answer means, `empty = "the organization itself; the project is created directly under it"`, so `satz questions`, the interview and the decisions sheet show it beside the `""` the pack offers and `--accept-defaults` takes. Nothing emitted changes |
 | `estate_core` | 3.1 | 2026-11-25 | the eight params no default is possible for — `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `first_admin`, `billing_account_infra`, `customer_longname`, `workload_folder_name` — are declared `none` where they were `""`: the pack proposes no value, and each question stays blocking until the estate binds one. An estate that binds `""` for one has answered it with an empty string. Nothing emitted changes for an estate that binds them |
 | `integrations.microsoft_sentinel` | 1.2 | 2026-11-25 | `sentinel_project_number` and `sentinel_workload_pool_id` are declared `none` where they were `""`: the pack proposes no value, and the questions block until the estate binds one. Nothing emitted changes for an estate that binds them |
 | `sa_security_audit` | 1.2 | 2026-11-25 | `security_audit_sa_project` is declared `none` where it was `""`: the pack proposes no value, and the question blocks until the estate binds one. Nothing emitted changes for an estate that binds it |

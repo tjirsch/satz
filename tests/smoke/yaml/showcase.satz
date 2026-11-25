@@ -245,12 +245,13 @@ google_project {
 
 // --- `entries`: what a project may add to a list, and each entry's shape — checked at
 //     every transpile, and by `satz check-request` on a project's file before it is used.
-//     `defaults` fills a field an entry leaves out, before anything reads the list.
+//     `defaults` fills a field an entry leaves out, before anything reads the list — with a
+//     value, or with another field of the same entry, `each.<field>`.
 entries event_topics {
   key         = "name"
-  fields      = ["name", "retention", "subscription"]
-  patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" }
-  defaults    = { retention = "604800s" }
+  fields      = ["name", "retention", "subscription", "dead_letter"]
+  patterns    = { name = "[a-z][a-z0-9-]*" retention = "[0-9]+s" dead_letter = "[a-z][a-z0-9-]*" }
+  defaults    = { retention = "604800s" dead_letter = each.name }
   description = "A Pub/Sub topic in the infrastructure project"
 }
 
@@ -269,7 +270,7 @@ google_pubsub_topic {
   // second `each` over the list writes a second topic per entry. `… when each.<field>` on
   // a block: written for the entries that carry the field with a value.
   each event_topics by name as "{each.name}_dead_letter" {
-    name    = "{customer_shortname}-{each.name}-dead-letter"
+    name    = "{customer_shortname}-{each.dead_letter}-dead-letter"
     project = infra_project_name
     message_storage_policy when each.subscription {
       allowed_persistence_regions = [default_region]

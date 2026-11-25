@@ -18,8 +18,11 @@
 // Entries are bound in the estate, added with `satz add-entry`, or requested by the team
 // as `contributes_delegated_folders`.
 //
-// PER FOLDER. The folder `<name>` (shown as `display_name` when the entry has one), and
-// `delegated_folders_roles` for the delegation's account on it: create and manage folders
+// PER FOLDER. The folder `<name>`, shown under its `display_name`, the entry's name when left
+// out. Google takes a folder display name of at most 30 letters, digits, spaces, hyphens and
+// underscores that starts and ends with a letter or digit, so the list's pattern refuses an
+// entry whose display name is not one before anything is planned. On the folder,
+// `delegated_folders_roles` for the delegation's account: create and manage folders
 // and Google projects under it, set the IAM of its projects and enable their APIs. NOT
 // granted: access control on a folder, organization policies, tags, billing administration
 // — so an account cannot grant itself anything on a folder, its own included, and reaches
@@ -37,7 +40,7 @@
 //
 // NO CLAIM. A delegated folder is a workload's, not a control: this pack witnesses nothing.
 
-pack delegated_folders version "1.1"
+pack delegated_folders version "1.2"
 
 params {
   // One entry per folder, `{ name delegation display_name parent budgets }`: the folder's
@@ -63,20 +66,16 @@ params {
 entries delegated_folders {
   key         = "name"
   fields      = ["name", "delegation", "display_name", "parent", "budgets"]
-  patterns    = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" }
-  defaults    = { parent = "google_folder.workload_folder.name" budgets = false }
+  patterns    = { name = "[a-z][a-z0-9-]*" delegation = "[a-z][a-z0-9-]*" display_name = "[\\pL\\pN]([\\pL\\pN_ -]{{0,28}}[\\pL\\pN])?" }
+  defaults    = { display_name = each.name parent = "google_folder.workload_folder.name" budgets = false }
   description = "A folder a delegation's account works in: the folder's name, the delegation's name, the name the folder is shown under, its parent, and whether budgets are delegated for it"
 }
 
 // ---- per folder: the folder, and the delegation's account on it and on nothing above it -
 
 google_folder {
-  each delegated_folders by name when display_name {
+  each delegated_folders by name {
     display_name = "{each.display_name}"
-    parent       = "{each.parent}"
-  }
-  each delegated_folders by name when not display_name {
-    display_name = "{each.name}"
     parent       = "{each.parent}"
   }
 }

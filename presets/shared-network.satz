@@ -13,7 +13,7 @@
 // once a grant of `roles/compute.networkUser` on it exists, at the attach point
 // `shared_subnets`.
 
-pack shared_network version "1.1"
+pack shared_network version "1.2"
 
 params {
   network_host_project_id     = "{customer_shortname}-net-host-001"
@@ -48,6 +48,7 @@ question network_host_project_folder {
   why      = "It decides the policies and the grants the host project inherits. Changing it afterwards moves a live project between parents."
   reversal = edit
   blast    = low
+  empty    = "the organization itself; the project is created directly under it"
 }
 
 // ---- what a project may ask for ---------------------------------------------------
