@@ -4,3 +4,8 @@ push = true
 publish = false          # set true if you publish to crates.io
 pre-release-commit-message = "version bump"   # match your existing style
 tag-message = ""
+# The preset changelog collects a release's rows under `### Unreleased`; the version
+# bump names it. `min = 0`: a release without a library change has no such section.
+pre-release-replacements = [
+  { file = "presets/CHANGELOG.md", search = "(?m)^### Unreleased$", replace = "### v{{version}}", min = 0, max = 1 },
+]
