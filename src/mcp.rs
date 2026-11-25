@@ -1518,8 +1518,8 @@ impl SatzMcp {
                        answered yet (or all of them, with `filter: all`), each with the default the pack offers — \
                        or `blocking: true` when no file gives the param a value (it is declared `none`) and one must be typed. `answers` writes \
                        the human's decisions into the estate's `params {}` and `accept_defaults` writes every \
-                       offered default (both need 'write'); an answer is checked against the question's shape, and \
-                       one refused answer writes nothing. Answering a pack's gate `true` switches its line on as \
+                       offered default (both need 'write'); an answer is checked against the question's shape — one \
+                       string for a `list` is a list of one — and one refused answer writes nothing. Answering a pack's gate `true` switches its line on as \
                        `satz_add_preset` does, and is refused while a pack it needs is off; `notices` carries the \
                        commands the switched-on packs ask to be run, and `contributes` what they add to other \
                        packs' list params. `summary.complete` is the gate: `satz bootstrap` and `satz transpile \
@@ -3381,7 +3381,8 @@ mod confine_tests {
 
     /// `<base>/root` is the server's root, with a config and an estate in it;
     /// `<base>/outside/present.satz` exists beyond it. The repository is an include
-    /// dir, so a skeleton's `use "presets/estate-core.satz"` resolves.
+    /// dir, so a skeleton's `use "presets/estate-core.satz"` resolves, and its schema
+    /// fixture the schema, which the shape of a param read in a resource needs.
     fn fixture(name: &str) -> Fixture {
         let base = std::env::temp_dir().join(format!("satz-confine-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&base);
@@ -3392,7 +3393,8 @@ mod confine_tests {
         std::fs::write(
             root.join("config.toml"),
             format!(
-                "yaml_dir = \"yaml\"\nhcl_dir = \"hcl\"\ninclude_dirs = [\".\", \"yaml\", '{}']\npresets_dir = \"presets\"\ntf_tool = \"tofu\"\n",
+                "yaml_dir = \"yaml\"\nhcl_dir = \"hcl\"\ninclude_dirs = [\".\", \"yaml\", '{}']\nschema_dir = '{}/tests/schemas'\npresets_dir = \"presets\"\ntf_tool = \"tofu\"\n",
+                env!("CARGO_MANIFEST_DIR"),
                 env!("CARGO_MANIFEST_DIR")
             ),
         )

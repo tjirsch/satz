@@ -2604,6 +2604,15 @@ impl satz_core::pipeline::TypeResolver for EstateResolver<'_> {
             attributes: block.attributes.keys().cloned().collect(),
         })
     }
+
+    fn attribute_type(&self, tf_type: &str, path: &[&str], key: &str) -> Option<satz_core::pipeline::AttrType> {
+        let attr = self.registry.block_at(tf_type, path)?.attributes.get(key)?;
+        crate::schema::attr_type(attr.type_.as_ref()?)
+    }
+
+    fn constraint_parameter(&self, constraint: &str, parameter: &str) -> Option<satz_core::pipeline::AttrType> {
+        crate::schema::constraint_parameter(constraint, parameter)
+    }
 }
 impl satz_core::algebra::TypeTable for EstateResolver<'_> {
     fn merge_class(&self, t: &str) -> satz_core::MergeClass {
@@ -8942,6 +8951,119 @@ mod constraint_equivalents {
 }
 
 
+#[cfg(test)]
+mod constraint_parameters {
+    //! The shape of a param no pack gives a value, read in a managed constraint's
+    //! `parameters`, is the type `presets/managed-constraint-parameters.txt` gives that
+    //! parameter (ADR 0108). The table is generated from a live organization by
+    //! `scripts/update_constraint_equivalents.py`; this holds it to the library, so a
+    //! pack that writes a parameter the table does not know fails here, and a row that
+    //! disagrees with the default a pack gives fails too.
+    use satz_core::pipeline::AttrType;
+    use satz_core::satz::{Entry, Key, StrPart, Value};
+    use std::path::{Path, PathBuf};
+
+    fn root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn satz_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                satz_files(&p, out);
+            } else if p.extension().is_some_and(|x| x == "satz") {
+                out.push(p);
+            }
+        }
+    }
+
+    /// (constraint, parameter, value) of every `parameters = { … }` in `entries`.
+    fn parameters(entries: &[Entry], constraint: Option<&str>, out: &mut Vec<(String, String, Value)>) {
+        let named = entries.iter().find_map(|e| match e {
+            Entry::Attr { key: Key::Ident(k), value: Value::Str(parts), .. } if k == "name" => {
+                parts.iter().map(|p| match p {
+                    StrPart::Lit(s) => Some(s.as_str()),
+                    StrPart::Param(_) => None,
+                }).collect::<Option<String>>()
+            }
+            _ => None,
+        });
+        let constraint = named.as_deref().or(constraint);
+        for e in entries {
+            match e {
+                Entry::Attr { key: Key::Ident(k), value: Value::Obj(fields), .. } if k == "parameters" => {
+                    for f in fields {
+                        if let Entry::Attr { key, value, .. } = f {
+                            let key = match key {
+                                Key::Ident(k) => k.clone(),
+                                Key::Str(_) => panic!("a parameter named by a string: {:?}", key),
+                            };
+                            out.push((constraint.unwrap_or_default().to_string(), key, value.clone()));
+                        }
+                    }
+                }
+                Entry::Attr { value, .. } => value_parameters(value, constraint, out),
+                Entry::Map { body, .. } | Entry::Each { body, .. } => parameters(body, constraint, out),
+                Entry::When { entry, .. } => parameters(std::slice::from_ref(entry), constraint, out),
+                Entry::Use { .. } => {}
+            }
+        }
+    }
+
+    fn value_parameters(v: &Value, constraint: Option<&str>, out: &mut Vec<(String, String, Value)>) {
+        match v {
+            Value::List(items) => items.iter().for_each(|i| value_parameters(i, constraint, out)),
+            Value::Obj(entries) => parameters(entries, constraint, out),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn every_parameter_a_pack_writes_has_a_row() {
+        let mut files = Vec::new();
+        satz_files(&root().join("presets"), &mut files);
+        satz_files(&root().join("packs"), &mut files);
+        let mut problems = Vec::new();
+        let mut seen = 0;
+        for path in files {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let file = satz_core::satz::parse(&text).unwrap_or_else(|e| panic!("{}: {}", path.display(), e.msg));
+            let mut found = Vec::new();
+            parameters(&file.items, None, &mut found);
+            for (constraint, parameter, value) in found {
+                seen += 1;
+                let Some(t) = crate::schema::constraint_parameter(&constraint, &parameter) else {
+                    problems.push(format!(
+                        "{}: `{}` of `{}` has no row in presets/managed-constraint-parameters.txt — run scripts/update_constraint_equivalents.py",
+                        path.display(),
+                        parameter,
+                        constraint
+                    ));
+                    continue;
+                };
+                // the default the pack gives the param it writes there agrees with the row
+                let given = match &value {
+                    Value::Ref(p) => file.params.iter().find(|(n, _, _)| n == p).map(|(_, v, _)| v.clone()),
+                    other => Some(other.clone()),
+                };
+                let agrees = matches!(
+                    (given, &t),
+                    (None | Some(Value::None | Value::Ref(_)), _)
+                        | (Some(Value::List(_)), AttrType::List(_))
+                        | (Some(Value::Str(_)), AttrType::String)
+                        | (Some(Value::Bool(_)), AttrType::Bool)
+                        | (Some(Value::Num(_)), AttrType::Number)
+                );
+                if !agrees {
+                    problems.push(format!("{}: `{}` of `{}` is given a value of another shape than the table's {:?}", path.display(), parameter, constraint, t));
+                }
+            }
+        }
+        assert!(seen >= 6, "the library stopped writing constraint parameters — this gate judges nothing ({} found)", seen);
+        assert!(problems.is_empty(), "\n  - {}\n", problems.join("\n  - "));
+    }
+}
 
 #[cfg(test)]
 mod agent_guide_tests {

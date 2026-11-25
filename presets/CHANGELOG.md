@@ -13,6 +13,19 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**A param no file gives a value takes its shape from where it is read, and two reads that
+disagree are refused** (ADR 0108). A param every used file declares `none` is read for its
+shape in the places a pack reads it — an attribute's provider type, a managed constraint's
+parameter, an `each`, a condition, a string. Where two of those places say two shapes, a
+list in one and a string in the other, the transpile and `satz questions` refuse the param,
+naming both places. No pack of the library does; a fork that does reads the param as one
+shape in both places, or gives it a default. `satz questions`, `satz interview` and
+`satz_interview` read the provider schema in `schema_dir` when such a param is read in a
+resource, and are refused without it: run `satz update-schema`. Nothing a plan shows
+changes.
+
 ### v0.112.0
 
 **A delegated project's or folder's display name is held to Google's rule** (`delegated_projects`

@@ -3,7 +3,8 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Refresh presets/managed-constraint-equivalents.txt from a live organization.
+"""Refresh presets/managed-constraint-equivalents.txt and
+presets/managed-constraint-parameters.txt from a live organization.
 
 Google publishes, per org-policy constraint, the constraint that replaces it
 (`equivalentConstraint`). That pairing is the whole input to the rule the packs
@@ -23,6 +24,11 @@ and must never be hand-edited. The CURATED one below it is preserved untouched:
 it holds pairs Google does not declare, which exist — `iam.allowedPolicyMemberDomains`
 and `iam.managed.allowedPolicyMembers` replace each other in practice and share
 no `equivalentConstraint` in either direction.
+
+The parameters file is generated whole: every parameter of every managed constraint,
+with its type, as the constraint's `customConstraintDefinition` declares it. satz reads
+the shape of a param no pack gives a value from it where a pack writes that param into a
+rule's `parameters` (ADR 0108).
 """
 
 import argparse
@@ -34,6 +40,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_OUT = Path("presets/managed-constraint-equivalents.txt")
+PARAMETERS_OUT = Path("presets/managed-constraint-parameters.txt")
 GENERATED_MARKER = "# --- GENERATED, do not edit: rewritten by scripts/update_constraint_equivalents.py"
 CURATED_MARKER = "# --- CURATED, maintained by hand: pairs Google does not declare"
 
@@ -50,6 +57,21 @@ HEADER = f"""# Managed org-policy constraints and the legacy constraints they re
 #
 # Most managed constraints are NOT in here: they were born managed and have no
 # legacy form, so there is nothing to switch off.
+#
+{GENERATED_MARKER}
+"""
+
+PARAMETERS_HEADER = f"""# The parameters of Google's managed org-policy constraints: the JSON a rule's `parameters`
+# carries, which the provider types as one string.
+#
+# One parameter per line, tab-separated: <constraint>\t<parameter>\t<type>\t<item type>
+# <type> is LIST, STRING, BOOLEAN or INTEGER; <item type> is the type of a LIST's
+# elements, empty for the others.
+#
+# satz reads the shape of a param no pack gives a value from where it is read (ADR 0108);
+# a param read in a managed constraint's `parameters` takes the shape this table gives
+# that parameter. The test `constraint_parameters::every_parameter_a_pack_writes_has_a_row`
+# in src/main.rs fails when a pack writes a parameter this table has no row for.
 #
 {GENERATED_MARKER}
 """
@@ -117,6 +139,21 @@ def pairs_from(constraints: list[dict]) -> list[tuple[str, str]]:
     return sorted(found)
 
 
+def parameters_from(constraints: list[dict]) -> list[tuple[str, str, str, str]]:
+    """Every parameter of every managed constraint, with its type and its item type."""
+    rows: list[tuple[str, str, str, str]] = []
+    for c in constraints:
+        name = c["name"].split("/")[-1]
+        definition = c.get("booleanConstraint", {}).get(
+            "customConstraintDefinition", {}
+        )
+        for param, spec in definition.get("parameters", {}).items():
+            kind = spec["type"]
+            item = spec.get("item", "") if kind == "LIST" else ""
+            rows.append((name, param, kind, item))
+    return sorted(rows)
+
+
 def existing_curated(path: Path) -> str:
     if not path.exists():
         return CURATED_HEADER + CURATED_SEED
@@ -168,9 +205,22 @@ def main() -> None:
     body = "".join(f"{legacy}\t{mgd}\tGOOGLE\n" for legacy, mgd in pairs)
     args.out.write_text(HEADER + body + existing_curated(args.out))
 
+    parameters = parameters_from(constraints)
+    if not parameters:
+        sys.exit(
+            "no managed constraint declares a parameter — the API answered in a shape this "
+            "script does not read; refusing to write an empty parameter table"
+        )
+    PARAMETERS_OUT.write_text(
+        PARAMETERS_HEADER + "".join("\t".join(r) + "\n" for r in parameters)
+    )
+
     print(
         f"{args.out}: {len(pairs)} declared pair(s) from {len(constraints)} constraints "
         f"({managed} managed, {managed - len(pairs)} of them with no legacy form)"
+    )
+    print(
+        f"{PARAMETERS_OUT}: {len(parameters)} parameter(s) of the managed constraints"
     )
 
 

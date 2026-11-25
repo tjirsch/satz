@@ -202,7 +202,8 @@ fn align_params(text: &str) -> String {
 /// Write one answer, given the question it answers. A `oneof` takes an option's
 /// param name and sets the siblings false, so the choice stays exclusive by
 /// construction. A string with braces is refused: braces interpolate in Satz, and
-/// a customer's answer is a value, not a template.
+/// a customer's answer is a value, not a template. One string where the question's shape
+/// is a list is a list of one.
 ///
 /// `graph` is the pack graph of the estate's presets: a yes to a pack's gate switches
 /// that pack's line on through it. Without one, the answer is bound and no line moves.
@@ -235,6 +236,15 @@ pub(crate) fn answer(
         }
         return Ok(out);
     }
+    // one entry where the param is a list is a list of one, as the terminal reads it
+    let one = row.shape == Some("list") && value.is_string();
+    let listed;
+    let value = if one {
+        listed = serde_yaml::Value::Sequence(vec![value.clone()]);
+        &listed
+    } else {
+        value
+    };
     check_shape(row, value)?;
     if let Some(s) = value.as_str() {
         if s.contains('{') || s.contains('}') {
@@ -1117,6 +1127,46 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         std::fs::write(&estate, "estate e\n\nparams {\n  owner = \"\"\n}\n\nuse \"asks.satz\"\n").unwrap();
         let r = questions_report(&estate, &cfg).unwrap();
         assert_eq!(by(&r, "owner").state, "answered");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The library's two list params no pack gives a value — the access approval
+    /// addresses, read as a set of strings, and the API key services, read in a managed
+    /// constraint's `parameters` — are lists, so one address is written as a list of one;
+    /// without the provider schema the report is refused, not typed as text.
+    #[test]
+    fn a_none_param_has_the_shape_of_where_it_is_read() {
+        let dir = std::env::temp_dir().join(format!("satz-iv-{}-read-shape", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("e.satz");
+        let text = "estate e\n\nparams {\n  customer_organization_id = \"123456789012\"\n}\n\nuse \"presets/cis/access-approval.satz\"\nuse \"presets/cis/api-key-services.satz\"\n";
+        std::fs::write(&estate, text).unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut cfg: ToolConfig = toml::from_str("").unwrap();
+        cfg.include_dirs = vec![repo.to_string_lossy().into_owned()];
+        cfg.schema_dir = repo.join("tests/schemas").to_string_lossy().into_owned();
+        cfg.presets_dir = repo.join("presets").to_string_lossy().into_owned();
+        let r = questions_report(&estate, &cfg).unwrap();
+        let by = |r: &QuestionsReport, s: &str| r.questions.iter().find(|q| q.subject == s).unwrap().clone();
+        for subject in ["access_approval_notification_emails", "allowed_api_key_services"] {
+            let q = by(&r, subject);
+            assert_eq!((q.state, q.blocking, q.shape), ("unanswered", true, Some("list")), "{:?}", q);
+        }
+
+        // one address, as one string, is written as a list of one
+        let one = BTreeMap::from([("access_approval_notification_emails".to_string(), yaml("security@example.com"))]);
+        apply(&estate, &cfg, &one, false).unwrap();
+        let src = std::fs::read_to_string(&estate).unwrap();
+        let written = satz_core::satz::parse(&src).unwrap().params.into_iter().find(|(n, _, _)| n == "access_approval_notification_emails").map(|(_, v, _)| v);
+        assert!(matches!(&written, Some(satz_core::satz::Value::List(items)) if items.len() == 1), "{:?}\n{}", written, src);
+        let q = by(&questions_report(&estate, &cfg).unwrap(), "access_approval_notification_emails");
+        assert_eq!((q.state, q.current), ("answered", Some(serde_yaml::Value::Sequence(vec![yaml("security@example.com")]))));
+
+        // the shape needs the schema: missing, the report is refused by the transpile's words
+        cfg.schema_dir = dir.join("schemas").to_string_lossy().into_owned();
+        let e = questions_report(&estate, &cfg).expect_err("no schema").to_string();
+        assert!(e.contains("no provider schema") && e.contains("satz update-schema"), "{}", e);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

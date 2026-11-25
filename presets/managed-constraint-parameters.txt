@@ -1,0 +1,19 @@
+# The parameters of Google's managed org-policy constraints: the JSON a rule's `parameters`
+# carries, which the provider types as one string.
+#
+# One parameter per line, tab-separated: <constraint>	<parameter>	<type>	<item type>
+# <type> is LIST, STRING, BOOLEAN or INTEGER; <item type> is the type of a LIST's
+# elements, empty for the others.
+#
+# satz reads the shape of a param no pack gives a value from where it is read (ADR 0108);
+# a param read in a managed constraint's `parameters` takes the shape this table gives
+# that parameter. The test `constraint_parameters::every_parameter_a_pack_writes_has_a_row`
+# in src/main.rs fails when a pack writes a parameter this table has no row for.
+#
+# --- GENERATED, do not edit: rewritten by scripts/update_constraint_equivalents.py
+compute.managed.restrictProtocolForwardingCreationForTypes	allowedSchemes	LIST	STRING
+essentialcontacts.managed.allowedContactDomains	allowedDomains	LIST	STRING
+iam.managed.allowedPolicyMembers	allowedMemberSubjects	LIST	STRING
+iam.managed.allowedPolicyMembers	allowedPrincipalSets	LIST	STRING
+iam.managed.disableServiceAccountApiKeyCreation	allowedServices	LIST	STRING
+storage.managed.retentionPolicySeconds	allowedRetentionPeriods	LIST	STRING

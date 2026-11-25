@@ -483,6 +483,19 @@ of any type — a string, a number, a bool, a list — and only as a param's val
   whole value, nothing inside a text, a false condition, an empty list — so the estate
   transpiles while it is being answered.
 - A param with no value is never in `variables.tf` or `terraform.tfvars`.
+- **Its shape is read from where it is read** — the shape `satz questions` reports and an
+  answer is typed in (§6.14). An attribute of a resource gives its type in the provider
+  schema: a list or a set is a list, a map or an object a map, a string, a number or a bool
+  itself; an element of a list value is the element's type, a field of an object value the
+  field's. A rule's `parameters` in an organization policy gives the type of that parameter
+  of the managed constraint (`presets/managed-constraint-parameters.txt`). `each p by …`
+  gives a list, `when p`, `use … when p` and `ask_when = p` a bool, `"…{p}…"` a string. A
+  param declared as it (`x = p`) and a local value `l = p` carry their reads to it. A string
+  agrees with a number and a bool, and the more specific one is the shape; any other two
+  shapes are refused by the transpile and by `satz questions`, naming the param and both
+  places. A param read nowhere with a shape takes its question's `recommend`, else none;
+  the estate's binding is an answer and gives no shape. A param a file gives a default has
+  the shape of that default.
 - An estate may write `p = none` too: it binds nothing, the packs' default applies and a
   question about it stays open. `satz init` writes it for a value it could not derive.
 - Refused: `none` as an input's value (an input carries its example value), as a local
@@ -2164,8 +2177,12 @@ Composition follows from that: a choice between two packs is two booleans plus t
   `unanswered` with the default a pack offers — another file's where the asking pack
   declares `none` — or `blocking` when no file gives a value or the default is built from
   a param still open, `not-applicable` when its `ask_when` is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet
-  and `--format xlsx` the workbook a customer fills in.
-  Offline and schema-free: an interview happens before anyone runs `update-schema`.
+  and `--format xlsx` the workbook a customer fills in. Each param question carries its
+  `shape`: the shape of the default a file gives the param, else of where the param is read
+  (§6.3), else of the question's `recommend`.
+  Offline. The walk is schema-free; the provider schema in `schema_dir` is read only when a
+  param no file gives a value is read inside a resource, and a missing schema is then
+  refused as the transpile refuses it.
 - `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
   `--dry-run` and `--plan` warn. `satz interview` asks and writes the answers —
   [satz interview](interview.md).
@@ -3194,6 +3211,7 @@ unknown param 'no_such_param'
 params: `a` is declared twice — line 3 and line 7; the second binding would be ignored, so delete the one that is not meant
 param `par01`: two used files declare it with different defaults — "from-a" in a.satz (line 4), "from-b" in b.satz (line 4). A param is one value in the whole estate, so b.satz would read the value of a.satz. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default
 param `region` has no value — a.satz (line 4), b.satz (line 4) declare it `none`, the estate binds none, and this reads it. Bind it in the estate's `params { … }`, or give it a default in one of those files
+param `approvers` is read as a list and as a string — a.satz:12 (`notification_emails` of `google_organization_access_approval_settings`) and a.satz:20 (inside a string). A param no file gives a value takes its shape from where it is read, and these two places disagree: read it as one shape in both
 `none` stands only as a param's value in `params { … }` — the param is declared, and this file proposes no value for it
 params: a param named `none` — `none` is the keyword of a param with no value; rename it
 inputs: `stage` = none — an input carries its example value, which the template transpiles with; write one

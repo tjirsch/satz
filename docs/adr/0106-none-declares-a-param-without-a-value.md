@@ -3,6 +3,7 @@
 - **Status:** accepted
 - **Date:** 2026-11-25
 - **Amends:** [ADR 0104](0104-two-packs-declaring-one-param-must-agree.md) (which declarations agree)
+- **Amended by:** [ADR 0108](0108-a-none-param-takes-its-shape-from-where-it-is-read.md) (the `shape` of a `none` param is read from where it is read)
 
 ## Context
 
@@ -85,6 +86,8 @@ anywhere else, `none` is a bare name, and no param carries it.
 - `satz questions` JSON: `default` is absent for a param no file gives a value, and present
   — `""`, `[]` — where a pack's default is empty. `shape` is the shape of another file's
   default or of the question's `recommend` for a `none` param, absent without either.
+  ADR 0108 replaces the second half: a param no file gives a value takes the shape of
+  where it is read, else of its `recommend`.
 - `review-preset` and `doc-presets` refuse a `none` param no question in its file asks; a
   `""` param without a question is a default like any other.
 - `satz init` writes `none` for a value it could not derive; `bootstrap --greenfield` fills
