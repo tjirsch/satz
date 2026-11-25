@@ -13,6 +13,10 @@
 # `dist-manifest.json`, which the `host` job of the Release workflow writes and attaches
 # beside the artifacts but no manifest lists as one.
 #
+# It only reads: in the Release workflow, the job that runs it first attaches the
+# `dist-manifest.json` the run built when the host job did not
+# (.github/workflows/check-release-assets.yml).
+#
 # The installers' `.sha256` sidecars are attached by `attach-checksum.yml`, a post-announce
 # job that runs beside this one; that job fails by itself when it cannot attach them.
 #

@@ -36,7 +36,7 @@ ships it).
 | `NOTICE` (its third-party entries) | by hand, one entry per piece of foreign material | material from outside the project enters or leaves the tree | **nothing** |
 | `THIRD-PARTY-LICENSES.md` | `scripts/update-third-party-licenses.sh` | `Cargo.lock` moves — a dependency added, removed or updated | the `checks` job of `smoke.yml`: `--check`, which compares byte for byte |
 | the published releases | `.github/workflows/prune-releases.yml`, after every release | a release | it keeps the five newest AND the release `satz_core::LAST_YAML_CONVERTING_RELEASE` names, read out of the source at that commit — a refusal that sends an operator to a release that was pruned is a dead end, and `--cleanup-tag` takes the tag with it |
-| the files of a published release | the `host` job of `.github/workflows/release.yml`, the `attach-checksum` job for the installers' sidecars | a release | the `check-release-assets` post-announce job: `scripts/check-release-assets.sh`, against the run's cargo-dist manifest |
+| the files of a published release | the `host` job of `.github/workflows/release.yml`, the `attach-checksum` job for the installers' sidecars | a release | the `check-release-assets` post-announce job: it attaches the run's `dist-manifest.json` when the `host` job did not, then runs `scripts/check-release-assets.sh` against the run's cargo-dist manifest |
 | `.github/workflows/release.yml` | `dist generate`, run with the cargo-dist version `dist-workspace.toml` pins | `dist-workspace.toml` changes; the `cargo-dist-version` pin moves | the `release-workflow` job of `smoke.yml`: `dist generate --check`, which prints the diff |
 | `assets/fonts/` — eight faces and the two license texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
 | `src/privacy_shapes.rs` (the gate's content rules, a second copy of `scripts/check-names.sh`'s) | by hand, in the same change as the script | a rule of the gate changes | `cargo test` (`the_gate_script_and_satz_flag_the_same_tokens_in_every_corpus_file`): both copies over `tests/privacy-shapes/`, token by token |
@@ -334,7 +334,7 @@ second kind.
 | `build-site.py` | build | render the documentation site (README, the `docs/*.md` named in `SITE_DOCS`, the presets docs) into `_site/` with a sticky navigation header, a per-page contents column (on a pack page followed by the library, grouped as `presets/library-groups.txt` sorts it) and a client-side search over every page's headings and text (`search-index.js`, no external dependencies; `/` focuses the box). Publishing is explicit: a doc must be listed in `SITE_DOCS` or `SITE_DOCS_EXCLUDED` or the build fails naming it. `.github/workflows/pages.yml` publishes on GitHub Pages on every release tag and on demand |
 | `check-names.sh` | gate | refuse any identifier that is not one of the example customers (`docs/examples.md`); judged per TOKEN (an allowed address never shields a private one beside it); CI on every PR and every push to `main` (`--commits A..B`, an unusable range is a failure, never a pass), `--staged` from the pre-commit hook, `--message FILE` from the commit-msg hook, `FILE…` for one file (missing file = failure). Its allow-lists are `scripts/check-names-allow.txt`, which satz transpiles in for `review-preset` |
 | `update-third-party-licenses.sh` | helper | regenerate `THIRD-PARTY-LICENSES.md`, the license text of every crate built into satz, from `Cargo.lock` with `cargo about`; `--check` fails on a stale file or a license outside the allow-list. CI runs `--check` in the `checks` job |
-| `check-release-assets.sh` | gate | hold a published release to the files cargo-dist planned for it — every artifact of the manifest's `releases[].artifacts`, and `dist-manifest.json` — and fail naming each one the release lacks; the Release workflow runs it after every release (`check-release-assets.yml`, a post-announce job) |
+| `check-release-assets.sh` | gate | hold a published release to the files cargo-dist planned for it — every artifact of the manifest's `releases[].artifacts`, and `dist-manifest.json` — and fail naming each one the release lacks; the Release workflow runs it after every release (`check-release-assets.yml`, a post-announce job, which first attaches the run's own `dist-manifest.json` when the release lacks it) |
 | `check-grammar.sh` | gate | hold the tree-sitter grammar `editors/zed/extension.toml` pins against the parser: every keyword in `STATEMENT_KEYWORDS` must be a node the grammar declares, and every `.satz` under `presets/` and `tests/` must parse with no `ERROR` or `MISSING` node; CI runs it on every PR and every push to `main` (`smoke.yml`, job `grammar`) |
 
 ## `check-names.sh` — the privacy gate
@@ -919,7 +919,17 @@ that changes the parser; the job fails on a PR that changes the parser without i
 Every job of the Release workflow can report success while the release is short of a
 file: the `host` job attaches what the downloaded artifacts hold, and a file that did not
 arrive is not attached and not reported. This script compares the release with
-cargo-dist's manifest for it and exits non-zero, naming each missing file.
+cargo-dist's manifest for it and exits non-zero, naming each missing file. It reads and
+changes nothing.
+
+`dist-manifest.json` is the file a release lacks most often, from a race in cargo-dist's
+generated `host` job: the job uploads the file as the artifact `artifacts-dist-manifest`
+and half a second later downloads `artifacts-*` to attach them, and the artifact listing
+does not always hold the upload yet. The `check-release-assets` job repairs that before it
+checks: it downloads `artifacts-dist-manifest` — the exact file the run built — and attaches
+it with `gh release upload` when the release lacks it. `prune-artifacts.yml` leaves that one
+artifact in place, so the two post-announce jobs may run in either order. Any other missing
+file fails the run.
 
 ```bash
 dist plan --output-format=json > /tmp/plan.json
