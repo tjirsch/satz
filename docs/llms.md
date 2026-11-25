@@ -74,6 +74,11 @@ google_storage_bucket {
 - **First definition wins, outer beats inner.** The estate declares before its packs,
   so an estate param overrides a pack default. That is the customization channel:
   reach for a param before forking a pack.
+- **One name, one meaning.** Params share one namespace across the estate and every
+  file it uses. Two packs may declare the same param only with the same default (and the
+  same question): that is a shared param. Different defaults are
+  refused, and a binding in the estate does not lift that. A param that belongs to one
+  pack carries the pack's name as its prefix (`vm_zone`); a shared one carries none.
 - Overriding a list **replaces** it. There is no concatenation for an estate. Entries from
   outside arrive one way: a workload estate's request file, a pack of `contributes_<param>` the
   estate `use`s (see *Interfaces* below).

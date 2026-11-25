@@ -2193,6 +2193,7 @@ pub fn compile_estate_bound(
         interfaces: Vec::new(),
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
+        declared: BTreeMap::new(),
     };
     w.note_inputs(&file, file_name)?;
     for r in &file.requests {
@@ -3166,7 +3167,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()] };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new() };
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -3222,6 +3223,17 @@ struct Walk<'a> {
     interfaces: Vec<(String, satz::InterfaceDecl, bool)>,
     /// generated interface files the walk visits
     interface_files: Vec<UsedInterfaceFile>,
+    /// Every param a used file declares, by name, with its default and its question — what
+    /// a later file's declaration of the same name is compared with.
+    declared: BTreeMap<String, Vec<Declaration>>,
+}
+
+/// One used file's declaration of a param.
+struct Declaration {
+    file: String,
+    line: usize,
+    value: Value,
+    question: Option<satz::QuestionDecl>,
 }
 
 /// A file's exports with the file and the interface each stands in (`None`: core), the
@@ -3389,6 +3401,48 @@ impl Walk<'_> {
             return;
         }
         self.notices.push(pack_notices(file, file_name));
+    }
+
+    /// A param two used files declare is one value in the whole estate, so their defaults
+    /// have to agree, and so do their questions: the same default in both is a shared
+    /// param, a different one is two packs meaning different things by one name, and the
+    /// second would read the first one's value. Refused whatever the estate binds — a
+    /// binding picks one value, it does not make the two packs mean the same. A file that
+    /// uses the other, directly or through others, binds the param for it: the using
+    /// document wins, and that is no disagreement. Called before the file's params are
+    /// absorbed, with the chain still ending at the file that uses it.
+    fn compare_declarations(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        for (name, value, line) in &file.params {
+            if satz::contribution_target(name).is_some() {
+                continue;
+            }
+            let question = file.questions.iter().find(|q| !q.oneof && &q.subject == name);
+            let earlier = self.declared.get(name).into_iter().flatten();
+            for d in earlier.filter(|d| d.file != file_name && !self.use_chain.contains(&d.file)) {
+                let (a, b) = (satz::value_canonical(&d.value), satz::value_canonical(value));
+                if a != b {
+                    return perr(file_name, *line, format!(
+                        "param `{}`: two used files declare it with different defaults — {} in {} (line {}), {} in {} (line {}). A param is one value in the whole estate, so {} would read the value of {}. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default",
+                        name, a, d.file, d.line, b, file_name, line, file_name, d.file
+                    ));
+                }
+                if let (Some(q1), Some(q2)) = (&d.question, question) {
+                    if !satz::same_question(q1, q2) {
+                        return perr(file_name, q2.line, format!(
+                            "question {}: two used files ask it differently — in {} (line {}) and in {} (line {}). A param is one value in the whole estate, asked once. Rename the param in the pack it belongs to, with the pack's name as its prefix, or ask the same question in both",
+                            name, d.file, q1.line, file_name, q2.line
+                        ));
+                    }
+                }
+            }
+            self.declared.entry(name.clone()).or_default().push(Declaration {
+                file: file_name.to_string(),
+                line: *line,
+                value: value.clone(),
+                question: question.cloned(),
+            });
+        }
+        Ok(())
     }
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
@@ -3668,6 +3722,7 @@ impl Walk<'_> {
         }
         let src = (self.load)(use_path).map_err(|e| PipelineError { file: file_name.to_string(), line, msg: e })?;
         let file = satz::parse(&src).map_err(|e| PipelineError { file: use_path.to_string(), line: e.line, msg: e.msg })?;
+        self.compare_declarations(&file, use_path)?;
         self.absorb_params(&file, use_path)?;
         self.absorb_hcl(&file, use_path);
         self.absorb_claims(&file, use_path);
@@ -4896,6 +4951,44 @@ mod estate_channel_tests {
 
         let e = compile_estate("t.satz", "estate t\n\nexport \"x\" = nobody\n", &Table, &load).err().expect("refused");
         assert!(e.msg.contains("unknown param 'nobody'"), "{}", e.msg);
+    }
+
+    /// A param two packs declare is one value: the same default in both is a shared param,
+    /// a different one is refused naming both files and both values, and a binding in the
+    /// estate does not lift the refusal. A pack that uses another binds the other's param.
+    #[test]
+    fn two_packs_declaring_one_param_agree_or_are_refused() {
+        let load = |p: &str| -> Result<String, String> {
+            match p {
+                "a.satz" => Ok("pack a version \"1.0\"\n\nparams {\n  par01 = \"from-a\"\n}\n".into()),
+                "b.satz" => Ok("pack b version \"1.0\"\n\nparams {\n  par01 = \"from-b\"\n}\n".into()),
+                "same.satz" => Ok("pack same version \"1.0\"\n\nparams {\n  par01 = \"from-a\"\n}\n".into()),
+                "outer.satz" => Ok("pack outer version \"1.0\"\n\nparams {\n  par01 = \"from-outer\"\n}\n\nuse \"b.satz\"\n".into()),
+                "asked.satz" => Ok("pack asked version \"1.0\"\n\nparams {\n  par01 = \"from-a\"\n}\n\nquestion par01 {\n  prompt   = \"Which one?\"\n  reversal = edit\n  blast    = none\n}\n".into()),
+                "asked_else.satz" => Ok("pack asked_else version \"1.0\"\n\nparams {\n  par01 = \"from-a\"\n}\n\nquestion par01 {\n  prompt   = \"Which other one?\"\n  reversal = edit\n  blast    = none\n}\n".into()),
+                other => Err(format!("no load: {}", other)),
+            }
+        };
+        let compile = |src: &str| compile_estate("t.satz", src, &Table, &load);
+
+        let e = compile("estate t\n\nuse \"a.satz\"\nuse \"b.satz\"\n").err().expect("two defaults for one name");
+        assert_eq!(e.file, "b.satz");
+        for part in ["`par01`", "\"from-a\" in a.satz (line", "\"from-b\" in b.satz (line", "does not settle it"] {
+            assert!(e.msg.contains(part), "{}", e.msg);
+        }
+
+        let e = compile("estate t\n\nparams {\n  par01 = \"mine\"\n}\n\nuse \"a.satz\"\nuse \"b.satz\"\n").err().expect("a binding does not lift it");
+        assert!(e.msg.contains("\"from-a\" in a.satz") && e.msg.contains("\"from-b\" in b.satz"), "{}", e.msg);
+
+        let fe = compile("estate t\n\nuse \"a.satz\"\nuse \"same.satz\"\n").expect("the same default is a shared param");
+        assert_eq!(fe.tfvars.get("par01"), Some(&serde_yaml::Value::String("from-a".into())));
+
+        let fe = compile("estate t\n\nuse \"outer.satz\"\n").expect("a pack binds the param of the pack it uses");
+        assert_eq!(fe.tfvars.get("par01"), Some(&serde_yaml::Value::String("from-outer".into())));
+
+        compile("estate t\n\nuse \"asked.satz\"\nuse \"same.satz\"\n").expect("one question, one shared default");
+        let e = compile("estate t\n\nuse \"asked.satz\"\nuse \"asked_else.satz\"\n").err().expect("two questions for one param");
+        assert!(e.msg.contains("question par01") && e.msg.contains("asked.satz (line") && e.msg.contains("asked_else.satz (line"), "{}", e.msg);
     }
 
     /// A pack's interface is common without the word; an estate's only with `common`; a
