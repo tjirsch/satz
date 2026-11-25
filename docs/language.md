@@ -405,6 +405,7 @@ header  := ("estate" | "pack") IDENT [ "version" STRING ]
          | "interface" STRING                          # a generated interface file (§6.17)
 item    := "params" "{" { param } "}"
          | "inputs" "{" { param } "}"
+         | "locals" "{" { param } "}"
          | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
          | "question" [ "oneof" ] IDENT "{" { question-entry } "}"
@@ -493,7 +494,9 @@ Resolution rules:
    one name. A file that uses another, directly or through others, binds that file's
    param — rule 1 — and is no second declaration. So a param that belongs to one pack
    carries the pack's name as its prefix (`vm_zone` in a `vm` pack), and a shared
-   param carries none.
+   param carries none. A value a pack only reads itself, and that no estate is meant to
+   set, is a local value instead (`locals`, below): no other file sees it, so it
+   cannot collide with another pack's param.
 4. Overriding a **list replaces it** — Satz has no list concatenation — so an estate
    that adds to a pack's list repeats the entries it keeps. A PACK adds to one instead
    of replacing it, through `contributes_<param>`, below.
@@ -636,6 +639,75 @@ variable holds; an object is refused. The value in the block is the example valu
 - **A pack's inputs are its contract** in the canonical form: an input's default or its
   being an input moving is a pack change, and the pack's page lists its inputs with their
   examples and descriptions.
+
+#### `locals` — values a file keeps to itself
+
+```
+params {
+  customer_shortname = "corp"
+}
+
+locals {
+  audit_bucket = "{customer_shortname}-audit-logs"
+}
+
+google_storage_bucket_iam_member {
+  bucket = "{audit_bucket}-archive"
+  "group:gcp-auditors@{customer_domain}" = [
+    "roles/storage.objectViewer",
+  ]
+}
+```
+
+(`tests/smoke/yaml/showcase.satz`; `tests/corpus/locals/`.)
+
+A local value is a value of the file that declares it, read there by its bare name —
+`audit_bucket`, `"{audit_bucket}-archive"`, `each audit_buckets by name`, `when keep_logs` — exactly
+as a param is read. It stands in a pack or in an estate, and nothing outside the file sees
+it:
+
+- **No other file reads it.** A file the declaring file uses does not see it, and neither
+  does the file that uses it; reading it there is `unknown param`. Inside the file it is
+  read wherever a param is: in a resource body, in the body of an `each`, as the list of an
+  `each`, as the condition of a `when`, in an `export`, an `action`'s args, a `suppress`, a
+  contribution and the `defaults` of an `entries` statement.
+- **Nothing binds it.** A using file that names it in its `params` is refused, naming both
+  files; `satz transpile --input` binds inputs only.
+- **It is no variable.** It is never in `variables.tf` or `terraform.tfvars`: every read is
+  written as the value, the way a param's read is (§6.3), and the HCL holds no `locals`
+  block for it.
+- **Nobody is asked for it.** No `question` asks it, and the interview, the decisions sheet
+  and `satz questions` do not list it.
+
+What a local value reads: the params as the file sees them — the using document's binding
+applied, every earlier file's params included — the other local values of the file, in
+any order (they are sorted by what they read), and an interface value
+(`"${{interface.<export>}}"`).
+
+**Its name is one thing in the whole estate.** A local value is read by its bare name, so a
+param, an input or another file's local value of the same name is refused, naming both
+files and lines. A file used twice declares its local values once.
+
+Refused, each at its line, with what to write instead:
+
+- a local value that reads `each.<field>` — it is one value for the whole file; write the
+  value inside the `each` body;
+- a local value that reads an input — it is fixed at transpile time, and an input is a
+  variable the plan reads;
+- a local value that reads itself, or two that read each other;
+- a name that is also a param or an input of the file, or a name declared twice;
+- a param's default or an input that reads a local value — a param's default is read by
+  every file that uses the declaring one;
+- a `question`, an `ask_when` or a `use … when` that names a local value — the interview and
+  the presets report decide from params alone;
+- an `entries` statement or a `contributes_<param>` whose list is a local value, in this
+  file or another — a list another file adds to is a list param;
+- a local value named `contributes_<param>`.
+
+A local value is part of the pack's canonical form: a changed one is a change of what the
+pack writes, which `check-presets` reports and `merge-presets` forks on. A pack's page under
+`presets/docs/` does not list its local values; a param another pack declares that a local
+value reads is a need of the pack, as any read is.
 
 ### 6.4 Blocks, entries and resources
 
@@ -3092,6 +3164,19 @@ unknown param 'no_such_param'
 params: `a` is declared twice — line 3 and line 7; the second binding would be ignored, so delete the one that is not meant
 param `par01`: two used files declare it with different defaults — "from-a" in a.satz (line 4), "from-b" in b.satz (line 4). A param is one value in the whole estate, so b.satz would read the value of a.satz. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default
 question par01: two used files ask it differently — in a.satz (line 7) and in b.satz (line 7). A param is one value in the whole estate, asked once. Rename the param in the pack it belongs to, with the pack's name as its prefix, or ask the same question in both
+locals: `x` is declared twice — line 4 and line 5; delete the one that is not meant
+locals: `x` is also a param (line 4) — a name is one or the other; delete the one that is not meant
+local value `x` reads `each.name` — a local value is one value for the whole file, and `each.name` is a field of one entry of an `each`; write the value inside the `each` body
+local value `x` reads the input `stage` — a local value is fixed at transpile time, and an input is a variable the plan reads; write the value
+local values `a` and `b` read each other, directly or through others — a local value reads params and the local values before it in that order; write one of them as a literal
+param `p` reads the local value `x` — a param's default is read by every file that uses this one, and a local value is this file's alone; make `x` a param, or write the value
+question x: `x` is a local value — nobody is asked for it, because no using file can bind it; make `x` a param
+use … when x: `x` is a local value — a gate decides which files the estate uses, and the interview and the presets report decide it from params alone; make `x` a param
+entries xs: `xs` is a local value of h.satz (line 4) — an `entries` statement describes a list param the estate owns; make `xs` a param there
+contributes_xs: `xs` is a local value of h.satz (line 4) — a contribution adds entries to a list param; make `xs` a param there
+`p_bucket` is a local value of p.satz (line 8); it cannot be bound — main.satz names it in its params (line 5), and a local value is read inside the file that declares it and set nowhere else. Delete the binding, or make `p_bucket` a param of p.satz
+local value `p_bucket` of p.satz (line 8) has the name of the param `p_bucket` of o.satz (line 4) — a local value is read by its bare name, as a param is, so its name is one thing in the whole estate; rename the local value
+local value `p_bucket` is declared in p.satz (line 8) and in w.satz (line 4) — a local value is read by its bare name, as a param is, so its name is one thing in the whole estate; rename one of them
 a second `estate` header (f) — the file is already `e`
 use ... as: given twice
 `lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one
@@ -3189,13 +3274,13 @@ that default; the first apply writes it and nothing about the resource changes.
 | `import organizations/<n>` \| `folders/<n>` \| `projects/<id>` (or bare `import` with `root:` in `import-config.yaml`) | brownfield: nothing is in Terraform yet | one Cloud Asset sweep of the scope; every enabled type; folders and projects nested, folders labeled by display name (the number appended only where two share one), grants collapsed to member → roles with one line per edge (a bucket's or a service account's pinned to its scope in the map, one map per scope), services into `project_service` with one line per service, an organization policy as its bare constraint with `spec { … }`, a single nested block as a block, the organization referenced as `customer_organization_id` wherever its number was written; what the platform owns — the built-in `_Default`/`_Required` sinks, service agents' grants, the legacy bucket grants, Google-created service accounts — skipped and listed under the `skip:` pattern of its import-config row that matched; a folder or project that is no longer ACTIVE, everything inside one and a service Service Usage does not report enabled skipped as `not live`; an API a resource written inside a project needs and that project has off added to its `project_service` with its import id and named, which `satz plan` switches on before `tofu` starts; a subnet's local route (`nextHopNetwork`) as `platform-managed`; the providers' quota project is the first project (by id) that enables the Organization Policy and Service Usage APIs, and the report names it, or says that none does; the bootstrap params (`presets/estate-core.satz`) bound from what the identity the sweep reads as states (`customer_id`, `customer_domain`, `first_admin`, a single open billing account) — under `--as` that identity is the estate's estate account, which is nobody's `first_admin`, and `customer_domain` is the organization's — and what the sweep implies — the service account granted organizationAdmin at the organization gives `svc_iac_account` and `infra_project_name`, that project gives `infra_folder_name`, `infra_bucket_name` (its one versioned bucket) and `billing_account_infra`, the members give `estate_account_user_group`, the regional resources give `default_region`, the leading token of the project and bucket names gives `customer_shortname` (`--customer-shortname` wins) — an inferred value carrying `// inferred:` with its rule, a value nothing states left out and reported (`customer_longname` always), and every bound literal referenced wherever the body repeats it (`"serviceAccount:{svc_iac_account}@{infra_project_name}.iam.gserviceaccount.com"`); import ids = the one derivation of §12.2 — the asset path with a project number replaced by the project's id and a DNS zone's number by its name, rendered through the row's `import_id` template where it has one (`{project} {name}` for a log metric), a template placeholder nothing fills refusing the resource; required attributes the asset lacks derived (`parent`, `org_id`/`folder`/`project`, `location`/`region` from the asset name, and from the row's `import_id` template matched against the asset path segment for segment — which tells a parent's id from the resource's own, a workload identity provider's `workload_identity_pool_id` from its `workload_identity_pool_provider_id` — else a `*_id` from the path's last segment, a service account's `account_id` from its email); API vocabulary the provider spells differently is renamed per the row's `map:` (a firewall's `allowed[].IPProtocol` → `allow { protocol }`), what the API nests is flattened onto the attribute the provider names — a value whose name is an attribute of the resource, or an object of that name holding a single `enabled`/`value` (`iamConfiguration.uniformBucketLevelAccess.enabled` → `uniform_bucket_level_access`, `iamConfiguration.publicAccessPrevention` → `public_access_prevention`, `billing.requesterPays` → `requester_pays`) —, a fact the API states in other terms is converted (a lifecycle condition's `isLive` → `with_state = "LIVE"` / `"ARCHIVED"`, an empty `expirationPolicy` → `expiration_policy { ttl = "" }`, which is never expires), an empty string on a REQUIRED attribute is a value and is carried (a subscription's `expiration_policy.ttl = ""`) while an empty string on an optional attribute — which the provider reads as unset, and which an enum it validates refuses — and an empty value on a key the schema does not name are dropped, and self-link `region`/`zone`, a disk's `type` and full-name `name` values are shortened to what the provider takes; the API's shape is the provider's — a `{ fingerprint, items }` wrapper is the set or the map the attribute is (an instance's `tags`, `metadata`), a plural list whose singular is a block is that block (`networkInterfaces` → `network_interface`), an instance's `disks` are `boot_disk`/`attached_disk` by `source`, a DNS zone's `visibility` is lower case; a log bucket config's parent is written as the provider holds it (`projects/<id>`, `folders/<n>`, `organizations/<n>`), a reference naming a project by its number names it by its id, and a disk's `architecture`, which the provider does not read back on import, is left out and listed; where the asset's parent does not decide between two types that name none, the provider schema does (a `project` argument serves a project, a `parent` of its own an organization or a folder) | only rows with `import: true` AND an `asset_type` are swept, and never a row with `importable: false` (the provider has no import for it: a service account key), which `--all` leaves off (21 enabled by default — the landing-zone types plus VPC network/subnet/firewall, Pub/Sub topic, Secret Manager secret, log metric, Artifact Registry repository, each verified live to plan as import-only; `--all` switches on every row with an `asset_type`; `--only` narrows, never widens; `--exclude` leaves types out; an enabled row with `asset_type: TODO` is an error, and an enabled row with no `asset_type` — a firewall-policy rule or association, which Cloud Asset carries inside its policy's asset — is named as state shape only); IAM conditions are not carried; no Cloud Identity groups (not in Cloud Asset — state shape or `adopt`); a resource whose required attribute cannot be derived is skipped and named; an asset type Cloud Asset Inventory does not serve is found by halving the refused request, left out and named at the end of the run with the rows that asked for it, while any other fetch error aborts the run, and so does a sweep in which EVERY type asked for was refused — that is the scope, however few types were asked; the run prints as whom it sweeps before the first request; a page is 1000 assets; a grant one principal holds on two folders or two projects is refused (the map form writes one address per member and role) unless `--on-collision counter` writes the second and later as labeled resources with a running number; a type no row maps is skipped as `unmapped` — `--generate-unmapped` asks the provider for its configuration instead (§12.2); `force_destroy` is a Terraform-only switch no API reports and is never imported — an estate that wants it declares it; a key the provider does not speak is dropped, counted per type and named with `--verbose`, while an attribute the provider schema DOES name whose value the import could not place is printed per resource with its reason on every run, because an apply would reset it |
 | `--into <estate>` | the estate exists; take over what it does not declare yet | packs `imported-<scope>[-<container>].satz` plus `use` lines inserted at the declaring folder/project, and `imported-<scope>-generated.satz` with `--generate-unmapped` (§12.2) | live shape only; the scope must be the estate's `customer_organization_id` or inside it (a folder or project is walked up through Resource Manager as the estate's identity), else refused before the sweep; runs as the estate's estate account, or as the signed-in person for a local-mode estate or under `--no-impersonate`, and says which; if ANY declared resource fails to resolve live (error, ambiguity), nothing is written — except a declared IAM grant whose import id cannot be composed, which is named, left unsubtracted, and does not stop the run; a grant whose member is a log sink's `writer_identity` resolves with the identity the live sink carries; the packs, the `use` lines and the removal of a pack nothing is left in are written only after every step that can refuse has run; the packs are regenerated wholesale on every run — hand edits go into the estate, never into an `imported-*` pack; a `use` is inserted automatically only where the container is declared in the estate file itself |
 | `--as <estate>` | the estate exists and holds the role, and you want a new file rather than the delta | the same sweep as a bare `import`, read as that estate's estate account | live shape only; refused together with `--into`, which names an estate already; refused for an estate that impersonates no service account — a local-mode estate, or any estate under `--no-impersonate` — since the sweep would read as the caller, which a bare `import` does; the scope must be the estate's `customer_organization_id` or inside it, else refused before the sweep; the estate is read for its `svc_iac_account`, `infra_project_name`, `deployment_mode` and `customer_organization_id` and nothing else, and nothing is written into it |
-| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out` — run by hand, or by `import --generate-unmapped`) | `variable`/`locals` promoted to params; schema-known, identifier-labeled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; a `count = length(<promoted list>)` whose entry is read as `<list>[count.index]` or `element(<list>, count.index)` expanded into one resource per distinct entry, labeled after the entry, a repeated entry folded with a note; a variable used as the organization bound to `customer_organization_id`; what a converted resource took from the default `google` provider carried (the project as placement or as its `project`, the region and zone into the estate's `providers`); everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block, naming the block that started a chain of wraps | the `terraform` block is dropped (the transpile writes it); a `provider` block is carried verbatim when a verbatim block or a resource naming it uses it and dropped otherwise — under `--wrap-all` every one is carried but one whose alias the estate declares itself (`google.google`, `google-beta.google-beta`), which the header and the report name; `--wrap-all` promotes nothing, since a param is a conversion; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit, and is bound to the one organization the configuration names (a literal `organizations/<n>` parent, an `org_id`, an organization policy's parent) or `--organization <n>` names — refused, writing nothing, when neither does, when the two disagree, or when the configuration names two; `--wrap-all` names none, so it needs the flag; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane; a `${…}` from a converted block to a wrapped one, or to an address no block declares, refuses the whole import |
+| `import ./hcl/ [--wrap-all]` | hand-written or generated `.tf` (`gcloud beta resource-config bulk-export`, `tofu plan -generate-config-out` — run by hand, or by `import --generate-unmapped`) | `variable` promoted to params, a `locals` entry to a local value (`local.y` read as `y`), one used as the organization to `customer_organization_id`; schema-known, identifier-labeled `resource` blocks whose values are literals, params or `${…}` references as Satz resources placed under the folder/project they reference; a `count = length(<promoted list>)` whose entry is read as `<list>[count.index]` or `element(<list>, count.index)` expanded into one resource per distinct entry, labeled after the entry, a repeated entry folded with a note; a variable used as the organization bound to `customer_organization_id`; what a converted resource took from the default `google` provider carried (the project as placement or as its `project`, the region and zone into the estate's `providers`); everything else verbatim in `hcl trust "imported from <file>:<line>"`; the report says why per block, naming the block that started a chain of wraps | the `terraform` block is dropped (the transpile writes it); a `provider` block is carried verbatim when a verbatim block or a resource naming it uses it and dropped otherwise — under `--wrap-all` every one is carried but one whose alias the estate declares itself (`google.google`, `google-beta.google-beta`), which the header and the report name; `--wrap-all` promotes nothing, since a param is a conversion; services and grants lose their labels (they become list/map entries); a `project_service` with more than `service` is wrapped; a scope written as an expression satz cannot place is wrapped; the estate gets a local backend and google/google-beta providers to edit, and is bound to the one organization the configuration names (a literal `organizations/<n>` parent, an `org_id`, an organization policy's parent) or `--organization <n>` names — refused, writing nothing, when neither does, when the two disagree, or when the configuration names two; `--wrap-all` names none, so it needs the flag; no import ids (`adopt`); a `${…}` reference is opaque to the compliance plane; a `${…}` from a converted block to a wrapped one, or to an address no block declares, refuses the whole import |
 
 ### 12.1 From existing Terraform (`./hcl/`)
 
-Three tiers. A `variable` with a literal `default`, and a `locals` entry with a
-literal value, become **params** — params are Satz's variables, so the result
-stays re-parameterizable. A `resource` block of a schema-known type becomes a **Satz
+Three tiers. A `variable` with a literal `default` becomes a **param** — params are
+Satz's variables, so the result stays re-parameterizable — and a `locals` entry with a
+literal value, or a template over those, a **local value** of the estate (§6.3). A `resource` block of a schema-known type becomes a **Satz
 resource** when every value is a literal, a promoted param, or a reference to a
 managed resource; the folder/project it references (`parent`, `folder_id`,
 `project`) decides where it is placed. Every other block is carried **verbatim**
@@ -3219,7 +3304,8 @@ carry everything verbatim with `--wrap-all`.
 | HCL | Becomes |
 |---|---|
 | `resource` of a schema-known type, identifier label, values that are literals, promoted params or `${…}` references | a Satz resource: attributes as written, repeated nested blocks → a list of objects, `lifecycle` as declared; the label kept for plain resources (services and grants become list/map entries and lose theirs) |
-| `variable "x" { default = <literal> }`, `locals { y = <literal> }` | **promoted** to `params { x = … }`; `var.x` becomes a bare param reference, `"a-${var.x}"` the interpolation `"a-{x}"` |
+| `variable "x" { default = <literal> }` | **promoted** to `params { x = … }`; `var.x` becomes a bare param reference, `"a-${var.x}"` the interpolation `"a-{x}"` |
+| `locals { y = <literal> }` | **promoted** to `locals { y = … }`; `local.y` becomes the bare name `y`, `"a-${local.y}"` the interpolation `"a-{y}"` |
 | `variable "x"` with no `default` | named in the header, given no value — `satz transpile` stops with `unknown param 'x'` until it is bound, which is the same gate the source had |
 | a variable or local used as the organization — `org_id = var.x` on any resource, `parent = "organizations/${var.x}"` | **bound** to the organization: `params { x = customer_organization_id }`. One with no `default` binds to the organization `--organization` names; without the flag, a project or folder it places wraps with that reason. One whose value is an organization number binds the estate to that number, like a literal `org_id`. Carried verbatim for a wrapped block that reads it, a declaration with no `default` is given the organization as its `default` |
 | a reference to a managed resource (`google_project.p.number`), anywhere in a value | carried verbatim as Satz `${{…}}`, which writes back byte-identically |

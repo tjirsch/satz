@@ -85,6 +85,12 @@ google_storage_bucket {
 - A PACK adds to another file's list param with `contributes_<param> = [ … ]` in its
   own `params`. The entries go after whatever the list holds, each once, they leave
   when the pack is switched off, and they are no variable of their own.
+- **A value only the file reads is a local value**, `locals { bucket = "{customer_shortname}-logs" }`,
+  read by its bare name like a param, in a pack or an estate. No other file sees it,
+  nothing binds it, no question asks it, and it is no variable — every read is written as
+  its value. Its name is unique in the whole estate: a param, an input or another file's
+  local value of that name is refused. A param's default, a `question`, `ask_when` and
+  `use … when` never read one ([language §6.3](language.md#locals--values-a-file-keeps-to-itself)).
 
 ## Hierarchy is nesting
 

@@ -291,6 +291,9 @@ impl Server {
         let mut items = Vec::new();
         match ctx.position {
             Slot::Value => {
+                for (name, value) in self.locals_of(&path, &text) {
+                    items.push(item(&name, CompletionItemKind::VARIABLE, Some(format!("local value = {}", value)), Some(LOCAL_VALUE.to_string()), "0"));
+                }
                 for (name, value) in self.params_of(&path, &text) {
                     items.push(item(&name, CompletionItemKind::VARIABLE, Some(format!("param = {}", value)), None, "1"));
                 }
@@ -337,7 +340,7 @@ impl Server {
                                     }
                                 }
                             }
-                            if k != "params" && k != "inputs" && k != "terraform" && k != "providers" && k != "interface" {
+                            if k != "params" && k != "inputs" && k != "locals" && k != "terraform" && k != "providers" && k != "interface" {
                                 push_types(&mut items, registry.as_deref(), "1");
                             }
                         }
@@ -359,6 +362,25 @@ impl Server {
             Ok(env) => env.into_iter().map(|(k, v)| (k, yaml_text(&v))).collect(),
             Err(_) => satz::parse(text).map(|f| f.params.iter().map(|(n, _, _)| (n.clone(), "…".into())).collect()).unwrap_or_default(),
         }
+    }
+
+    /// This file's local values, resolved against the params as the file sees them; `…`
+    /// for a value that does not resolve while the file is being edited.
+    fn locals_of(&self, path: &Path, text: &str) -> Vec<(String, String)> {
+        let Ok(file) = satz::parse(text) else { return Vec::new() };
+        if file.locals.is_empty() {
+            return Vec::new();
+        }
+        let dir = find_config_dir(path);
+        let config = dir.as_ref().and_then(|d| self.estates.get(d)).map(|e| e.config.clone());
+        let loader = make_loader(path, config.as_ref(), &self.docs, None);
+        let resolved = pipeline::estate_params(&path.to_string_lossy(), text, &loader)
+            .ok()
+            .and_then(|env| pipeline::file_locals(&file, &env, &path.to_string_lossy()).ok());
+        file.locals
+            .iter()
+            .map(|(n, _, _)| (n.clone(), resolved.as_ref().and_then(|r| r.get(n)).map(yaml_text).unwrap_or_else(|| "…".into())))
+            .collect()
     }
 
     // -----------------------------------------------------------------------
@@ -451,6 +473,9 @@ impl Server {
                 if word == "true" || word == "false" {
                     return None;
                 }
+                if let Some((_, value)) = self.locals_of(&path, &text).into_iter().find(|(n, _)| *n == word) {
+                    return Some(markdown(local_hover(&word, &value), tok, &text));
+                }
                 let value = self.params_of(&path, &text).into_iter().find(|(n, _)| *n == word)?.1;
                 Some(markdown(format!("param **{}** = {}", word, value), tok, &text))
             }
@@ -478,6 +503,11 @@ impl Server {
                 let ctx = context_at(&text, tok.start);
                 if ctx.position != Slot::Value {
                     return None;
+                }
+                // a local value is this file's: its line here, never a used file's
+                if let Some(line) = local_line(&text, name) {
+                    let uri = to_uri(&path)?;
+                    return Some(GotoDefinitionResponse::Scalar(Location { uri, range: line_range(&text, line) }));
                 }
                 let (file, line) = self.find_param(&path, &text, name, 0)?;
                 let uri = to_uri(&file)?;
@@ -795,10 +825,24 @@ fn block_at<'a>(root: &'a BlockSchema, frames: &[Frame], type_frame: &Frame, reg
     Some(block)
 }
 
+/// What a hover and a completion say a local value is.
+const LOCAL_VALUE: &str = "local value of this file — read by its bare name here, and in no other file";
+
+/// The hover text of a local value.
+fn local_hover(name: &str, value: &str) -> String {
+    format!("local value **{}** = {}\n\n{}", name, value, LOCAL_VALUE)
+}
+
+/// The line of `name` in this file's `locals` block, when it is one of its local values.
+fn local_line(text: &str, name: &str) -> Option<usize> {
+    satz::parse(text).ok()?.locals.iter().find(|(n, _, _)| n == name).map(|(_, _, line)| *line)
+}
+
 const TOP_LEVEL: &[(&str, &str)] = &[
     ("estate", "the header of an estate: `estate NAME`"),
     ("pack", "the header of a pack: `pack NAME version \"x.y\"`"),
     ("params", "the values this file binds; a pack's are defaults, an estate's are the answers"),
+    ("locals", "values this file reads by their bare names and no other file sees: `locals { NAME = VALUE }` — never bound, never a variable, never asked"),
     ("inputs", "a template's contract: params a reader binds — the using estate, or `satz transpile --input` — and the HCL reads as `var.<name>`"),
     ("use", "include a pack: `use \"path\" [as TYPE] [when PARAM]`"),
     ("claim", "what a control this file satisfies: `claim FRAMEWORK VERSION CONTROL implements|contributes|deviates { … }`"),
@@ -1134,6 +1178,19 @@ mod tests {
         assert!(uses_interface(&toks, at("use")));
         let pack = lex_spanned("use \"presets/x.satz\"\n", true).unwrap();
         assert!(!uses_interface(&pack, 0));
+    }
+
+    /// A local value is this file's: hover names it so, and go-to-definition lands on its
+    /// line in the `locals` block, never on a param of the same file.
+    #[test]
+    fn a_local_value_hovers_as_one_and_its_definition_is_its_locals_line() {
+        let text = "pack p version \"1.0\"\n\nparams {\n  base = \"acme\"\n}\n\nlocals {\n  bucket = \"{base}-logs\"\n}\n";
+        assert_eq!(local_line(text, "bucket"), Some(8));
+        assert_eq!(local_line(text, "base"), None, "a param is no local value");
+        let hover = local_hover("bucket", "acme-logs");
+        assert!(hover.starts_with("local value **bucket** = acme-logs"), "{}", hover);
+        assert!(hover.contains("local value of this file"), "{}", hover);
+        assert!(TOP_LEVEL.iter().any(|(k, _)| *k == "locals"), "`locals` completes at the top level");
     }
 
     #[test]

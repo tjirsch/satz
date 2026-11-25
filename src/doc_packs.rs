@@ -593,10 +593,15 @@ pub(crate) fn needs_at(file: &File) -> Refs {
             out.entry(target.to_string()).or_insert(*line);
         }
     }
+    // a local value reads params as the file's values do: a read of another pack's param
+    // inside one is a need of this pack
+    for (_, v, line) in &file.locals {
+        refs_in_value(v, *line, &mut out);
+    }
     for a in &file.actions {
         a.args.iter().chain(&a.execute_args).for_each(|p| refs_in_str(p, a.line, &mut out));
     }
-    let declared: BTreeSet<&str> = file.params.iter().map(|(n, _, _)| n.as_str()).collect();
+    let declared: BTreeSet<&str> = file.params.iter().chain(&file.locals).map(|(n, _, _)| n.as_str()).collect();
     out.retain(|n, _| !declared.contains(n.as_str()));
     out
 }

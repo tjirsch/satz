@@ -500,6 +500,14 @@ mod tests {
     }
 
     #[test]
+    fn a_locals_block_aligns_like_params_and_formats_once() {
+        let src = "locals {\n  a = 1\n    long_name = \"{a}\" # two\n}\n";
+        let once = fmt(src);
+        assert_eq!(once, "locals {\n  a         = 1\n  long_name = \"{a}\" # two\n}\n");
+        assert_eq!(fmt(&once), once, "formatting a formatted file changes nothing");
+    }
+
+    #[test]
     fn a_run_of_exports_aligns_its_equals_and_a_description_follows_the_value() {
         let src = "export \"org_id\" = customer_organization_id\nexport  \"infra_folder\"   =  \"${{google_folder.infra.name}}\"  description \"The folder\"\nexport \"regions\" = [\n\"a\"\n]\n";
         assert_eq!(

@@ -1,0 +1,54 @@
+// Corpus case: `locals { … }` — values a file keeps to itself. The estate's local values
+// read a param and each other, are the list of an `each`, the condition of a `when` and
+// the value of an export; the pack's local reads a param the estate binds. Every local
+// value is written as its literal where it is read, and none is a variable: tfvars holds
+// the params alone. Snapshot-gated.
+
+estate corpus_locals
+
+params {
+  customer_organization_id = "123456789012"
+  customer_shortname       = "acme"
+  pack_suffix              = "bound"
+}
+
+locals {
+  log_bucket = "{customer_shortname}-logs-{log_region}"
+  log_region = "europe-west3"
+  keep_logs  = true
+  scratch    = false
+  archives = [
+    { name = "archive_a" location = log_region },
+    { name = "archive_b" location = "EU" },
+  ]
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "pack.satz"
+
+google_storage_bucket {
+  logs {
+    name     = log_bucket
+    location = log_region
+    lifecycle_rule when keep_logs {
+      action {
+        type = "Delete"
+      }
+      condition {
+        age = 30
+      }
+    }
+    force_destroy = true when scratch
+  }
+  each archives by name {
+    name     = "{customer_shortname}-{each.name}"
+    location = each.location
+  }
+}
+
+export "log_bucket" = log_bucket

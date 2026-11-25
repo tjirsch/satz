@@ -160,35 +160,6 @@ pub fn expr_value(expr: &str) -> serde_yaml::Value {
     serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new("expr"), value: serde_yaml::Value::String(expr.to_string()) }))
 }
 
-/// The first of `names` a value reads — a bare reference, an interpolation in a string,
-/// anywhere inside a list or an object.
-fn reads_any(v: &Value, names: &[&str]) -> Option<String> {
-    match v {
-        Value::Ref(r) => names.contains(&r.as_str()).then(|| r.clone()),
-        Value::Str(parts) => parts.iter().find_map(|p| match p {
-            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
-            _ => None,
-        }),
-        Value::Num(_) | Value::Bool(_) => None,
-        Value::List(items) => items.iter().find_map(|i| reads_any(i, names)),
-        Value::Obj(entries) => entries.iter().find_map(|e| match e {
-            Entry::Attr { key, value, .. } => reads_key(key, names).or_else(|| reads_any(value, names)),
-            Entry::Map { key, body, .. } => reads_key(key, names).or_else(|| reads_any(&Value::Obj(body.clone()), names)),
-            _ => None,
-        }),
-    }
-}
-
-fn reads_key(k: &Key, names: &[&str]) -> Option<String> {
-    match k {
-        Key::Ident(_) => None,
-        Key::Str(parts) => parts.iter().find_map(|p| match p {
-            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
-            _ => None,
-        }),
-    }
-}
-
 /// A key the rendering holds and the judged body does not, at any depth: a key that read
 /// an input. `None` when the keys agree.
 fn key_differs(real: &serde_yaml::Value, twin: &serde_yaml::Value) -> Option<String> {
@@ -217,7 +188,7 @@ fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, Pi
 /// included: the list is declared and is a list, and every entry is an object that
 /// carries the key, uses the declared fields only, and names itself uniquely. One param
 /// has one list.
-fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Result<Vec<ResolvedRequest>, PipelineError> {
+fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env, locals_of: &BTreeMap<String, Env>) -> Result<Vec<ResolvedRequest>, PipelineError> {
     let mut out: Vec<ResolvedRequest> = Vec::new();
     for (file, r) in declared {
         if let Some(first) = out.iter().find(|x| x.param == r.param) {
@@ -233,7 +204,7 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env) -> Resu
         }
         let mut defaults = Vec::new();
         for (f, v, line) in &r.defaults {
-            defaults.push((f.clone(), resolve_value(v, env, file, *line)?));
+            defaults.push((f.clone(), resolve_value(v, &scoped(env, locals_of, file), file, *line)?));
         }
         out.push(ResolvedRequest {
             param: r.param.clone(),
@@ -693,7 +664,7 @@ fn refuse_params_reading_inputs(file: &File, file_name: &str) -> Result<(), Pipe
         return Ok(());
     }
     for (name, v, line) in &file.params {
-        if let Some(read) = reads_any(v, &input_names) {
+        if let Some(read) = satz::reads_any(v, &input_names) {
             return perr(file_name, *line, format!("param `{}` reads the input `{}` — a param is a value the transpile fixes, an input a variable the plan reads; make `{}` an input too, or write the value", name, read, name));
         }
     }
@@ -747,6 +718,58 @@ pub struct DeclaredInput {
     pub file: String,
     pub line: usize,
     pub description: Option<String>,
+}
+
+/// A file's local values, resolved in dependency order against `env` — the params as the
+/// file sees them. What an editor shows for a local value; the transpile resolves them in
+/// its walk (`Walk::open_frame`).
+pub fn file_locals(file: &File, env: &Env, file_name: &str) -> Result<Env, PipelineError> {
+    let mut scope = env.clone();
+    let mut out = Env::new();
+    for (name, v, line) in satz::sort_params_by_deps(&file.locals) {
+        let resolved = resolve_value(v, &scope, file_name, *line)?;
+        scope.insert(name.clone(), resolved.clone());
+        out.insert(name.clone(), resolved);
+    }
+    Ok(out)
+}
+
+/// The namespace `file` reads once the walk is over: the params, and the file's own local
+/// values beside them.
+fn scoped<'e>(env: &'e Env, locals_of: &BTreeMap<String, Env>, file: &str) -> std::borrow::Cow<'e, Env> {
+    match locals_of.get(file) {
+        Some(locals) if !locals.is_empty() => {
+            let mut scope = env.clone();
+            scope.extend(locals.iter().map(|(k, v)| (k.clone(), v.clone())));
+            std::borrow::Cow::Owned(scope)
+        }
+        _ => std::borrow::Cow::Borrowed(env),
+    }
+}
+
+/// A list another file adds to is a list param: an `entries` statement and a
+/// `contributes_<param>` that name a local value of another file are refused, naming both.
+/// (The same file's is the parser's refusal.)
+fn check_local_targets(
+    file: &File,
+    file_name: &str,
+    walked: &[(String, satz::RequestDecl)],
+    contributions: &[Contribution],
+    names: &BTreeMap<String, Vec<NameSite>>,
+) -> Result<(), PipelineError> {
+    let local = |name: &str| names.get(name).and_then(|sites| sites.iter().find(|s| s.kind == LOCAL));
+    let requests = file.requests.iter().map(|r| (file_name, r)).chain(walked.iter().map(|(f, r)| (f.as_str(), r)));
+    for (f, r) in requests {
+        if let Some(site) = local(&r.param) {
+            return perr(f, r.line, format!("entries {}: `{}` is a local value of {} (line {}) — an `entries` statement describes a list param the estate owns; make `{}` a param there", r.param, r.param, site.file, site.line, r.param));
+        }
+    }
+    for c in contributions {
+        if let Some(site) = local(&c.param) {
+            return perr(&c.file, c.line, format!("{}{}: `{}` is a local value of {} (line {}) — a contribution adds entries to a list param; make `{}` a param there", satz::CONTRIBUTES_PREFIX, c.param, c.param, site.file, site.line, c.param));
+        }
+    }
+    Ok(())
 }
 
 /// Front-end result for an estate: its fragments and its resolved parameter
@@ -2194,12 +2217,21 @@ pub fn compile_estate_bound(
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
         declared: BTreeMap::new(),
+        frame: Env::new(),
+        locals_of: BTreeMap::new(),
+        names: BTreeMap::new(),
     };
     w.note_inputs(&file, file_name)?;
+    w.register_names(&file, file_name)?;
+    w.open_frame(&file, file_name)?;
     for r in &file.requests {
         w.fill_defaults(r, file_name)?;
     }
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
+    // the estate's own local values leave the namespace: what remains is the params
+    w.stash_frame();
+    let locals_of = std::mem::take(&mut w.locals_of);
+    check_local_targets(&file, file_name, &w.requests, &contributions, &w.names)?;
     let mut tfvars = w.genv;
     // An acknowledgement is not configuration: nothing reads it (`satz preset-graph`
     // refuses a pack that does), so it is no variable, and binding it moves no line of
@@ -2227,14 +2259,15 @@ pub fn compile_estate_bound(
         .collect();
     hcl.extend(w.hcl);
     let mut suppressions = Vec::new();
+    let estate_scope = scoped(&env, &locals_of, file_name);
     for sup in &file.suppressions {
         suppressions.push(ResolvedSuppression {
             tf_type: sup.tf_type.clone(),
-            label: resolve_str(&sup.label, &env, file_name, sup.line)?,
+            label: resolve_str(&sup.label, &estate_scope, file_name, sup.line)?,
             role: sup
                 .role
                 .as_ref()
-                .map(|r| resolve_str(r, &env, file_name, sup.line))
+                .map(|r| resolve_str(r, &estate_scope, file_name, sup.line))
                 .transpose()?,
             file: file_name.to_string(),
             line: sup.line,
@@ -2254,10 +2287,10 @@ pub fn compile_estate_bound(
     // language and not two.
     let mut actions = Vec::new();
     for a in &file.actions {
-        actions.push(resolve_action(a, file_name, false, &tfvars)?);
+        actions.push(resolve_action(a, file_name, false, &scoped(&tfvars, &locals_of, file_name))?);
     }
     for (f, a) in &walked_actions {
-        actions.push(resolve_action(a, f, true, &tfvars)?);
+        actions.push(resolve_action(a, f, true, &scoped(&tfvars, &locals_of, f))?);
     }
     // A name is how `--only` selects one and how a runbook refers to it, so two
     // actions answering to the same name is a hard error naming both files — the
@@ -2280,14 +2313,14 @@ pub fn compile_estate_bound(
     // export (the fold's idempotence), a different one is a hard error naming both files.
     // The same interface in two files is one interface.
     let mut exports: Vec<ResolvedExport> = Vec::new();
-    let own_interfaces = interfaces_of(&file, file_name, &tfvars)?;
+    let own_interfaces = interfaces_of(&file, file_name, &scoped(&tfvars, &locals_of, file_name))?;
     let declared = exports_of(&file, file_name, &own_interfaces).into_iter().chain(walked_exports);
     for (f, interface, x) in declared {
         let r = ResolvedExport {
             interface,
             name: x.name.clone(),
             value: match &x.value {
-                satz::ExportValue::Value(v) => resolve_value(v, &tfvars, &f, x.line)?,
+                satz::ExportValue::Value(v) => resolve_value(v, &scoped(&tfvars, &locals_of, &f), &f, x.line)?,
                 satz::ExportValue::All(_) => serde_yaml::Value::Null,
             },
             all: match &x.value {
@@ -2354,7 +2387,7 @@ pub fn compile_estate_bound(
     let privates = file.privates.iter().map(|x| ResolvedPrivate { address: x.address.clone(), file: file_name.to_string(), line: x.line }).collect();
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
-    let requests = resolve_requests(&declared_requests, &tfvars)?;
+    let requests = resolve_requests(&declared_requests, &tfvars, &locals_of)?;
     let inputs: Vec<DeclaredInput> = w.inputs.into_values().collect();
     let config_rendering = w.config_rendering;
     // what satz composes from the params reads each one as its value, the read resolved
@@ -2706,6 +2739,8 @@ struct RawContribution {
     file: String,
     line: usize,
     value: Value,
+    /// the contributing file's local values as written, which the value may read
+    locals: Vec<(String, Value, usize)>,
 }
 
 fn take_contributions(file: &File, file_name: &str, out: &mut Vec<RawContribution>) {
@@ -2718,6 +2753,7 @@ fn take_contributions(file: &File, file_name: &str, out: &mut Vec<RawContributio
                 file: file_name.to_string(),
                 line: *line,
                 value: value.clone(),
+                locals: file.locals.clone(),
             });
         }
     }
@@ -2852,7 +2888,14 @@ fn contribution_seed(
                 ),
             );
         }
-        let entries = match resolve_value(&r.value, &env, &r.file, r.line)? {
+        // the contributing file's local values, resolved against the params as the seed
+        // pass holds them
+        let mut scope = std::borrow::Cow::Borrowed(&env);
+        for (name, v, line) in satz::sort_params_by_deps(&r.locals) {
+            let resolved = resolve_value(v, &scope, &r.file, *line)?;
+            scope.to_mut().insert(name.clone(), resolved);
+        }
+        let entries = match resolve_value(&r.value, &scope, &r.file, r.line)? {
             serde_yaml::Value::Sequence(s) => s,
             // `parse` refuses a contribution that is not a list.
             other => return perr(&r.file, r.line, format!("{}{}: expected a list, found {:?}", satz::CONTRIBUTES_PREFIX, r.param, other)),
@@ -3167,7 +3210,9 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new() };
+    w.register_names(&file, file_name)?;
+    w.open_frame(&file, file_name)?;
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
     all.insert(0, own);
     Ok(all)
@@ -3188,8 +3233,8 @@ struct Walk<'a> {
     types: &'a dyn TypeResolver,
     load: &'a dyn Fn(&str) -> Result<String, String>,
     /// The accumulated parameter namespace: ONE document-ordered namespace, first
-    /// definition wins, and a pack sees every earlier file's params. True lexical
-    /// pack scoping is a deliberate future semantics change.
+    /// definition wins, and a pack sees every earlier file's params — and, while one file
+    /// is walked, that file's local values (`frame`).
     genv: Env,
     /// Estate-level config blocks (terraform, providers) — resolved values,
     /// consumed by the providers/variables emitters.
@@ -3226,6 +3271,26 @@ struct Walk<'a> {
     /// Every param a used file declares, by name, with its default and its question — what
     /// a later file's declaration of the same name is compared with.
     declared: BTreeMap<String, Vec<Declaration>>,
+    /// The local values of the file being walked, resolved. They stand in `genv` too, for
+    /// that file's walk alone: `enter_use` takes them out before a used file is read and
+    /// `leave_use` puts them back, so a used file never sees them and `tfvars` holds none.
+    frame: Env,
+    /// Every walked file's local values, by file: what its exports, actions and
+    /// suppressions read once the walk is over.
+    locals_of: BTreeMap<String, Env>,
+    /// Every param, input and local value a walked file declares, by name — what a local
+    /// value's name is held unique against.
+    names: BTreeMap<String, Vec<NameSite>>,
+}
+
+/// `kind` of a `NameSite` that is a local value.
+const LOCAL: &str = "local value";
+
+/// Where a walked file declares a name: `kind` is `param`, `input` or `local value`.
+struct NameSite {
+    kind: &'static str,
+    file: String,
+    line: usize,
 }
 
 /// One used file's declaration of a param.
@@ -3496,7 +3561,7 @@ impl Walk<'_> {
         }
         for a in &file.actions {
             for arg in &a.args {
-                if let Some(n) = reads_any(&Value::Str(arg.clone()), &names) {
+                if let Some(n) = satz::reads_any(&Value::Str(arg.clone()), &names) {
                     return perr(file_name, a.line, format!("action \"{}\" reads the input `{}` in its args — an action runs with the values the transpile fixed; make `{}` a param", a.name, n, n));
                 }
             }
@@ -3504,7 +3569,7 @@ impl Walk<'_> {
         for x in &file.suppressions {
             let parts: Vec<&Vec<StrPart>> = std::iter::once(&x.label).chain(x.role.iter()).collect();
             for p in parts {
-                if let Some(n) = reads_any(&Value::Str(p.clone()), &names) {
+                if let Some(n) = satz::reads_any(&Value::Str(p.clone()), &names) {
                     return perr(file_name, x.line, format!("suppress {}: reads the input `{}` — a suppression names a resource, which no variable names; make `{}` a param", x.tf_type, n, n));
                 }
             }
@@ -3512,7 +3577,7 @@ impl Walk<'_> {
         let exports = file.exports.iter().chain(file.interfaces.iter().flat_map(|i| i.exports.iter()));
         for e in exports {
             if let satz::ExportValue::Value(v) = &e.value {
-                if let Some(n) = reads_any(v, &names) {
+                if let Some(n) = satz::reads_any(v, &names) {
                     return perr(file_name, e.line, format!("export \"{}\" reads the input `{}` — an interface carries values, not variables; make `{}` a param", e.name, n, n));
                 }
             }
@@ -3535,7 +3600,7 @@ impl Walk<'_> {
     fn key_text(&self, key: &Key, file_name: &str, line: usize) -> Result<String, PipelineError> {
         if !self.inputs.is_empty() {
             let names: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
-            if let Some(n) = reads_key(key, &names) {
+            if let Some(n) = satz::reads_key(key, &names) {
                 return perr(file_name, line, format!("input `{}` is read in a key — a key is a name, and an input is a variable the plan reads; write a literal, or make `{}` a param", n, n));
             }
         }
@@ -3709,7 +3774,7 @@ impl Walk<'_> {
     /// Load and parse a `use`d file, absorb its params/hcl/claims, and put it
     /// on the chain. A path already on the chain is a cycle, named in full.
     /// The caller pops the chain after descending.
-    fn enter_use(&mut self, use_path: &str, file_name: &str, line: usize) -> Result<satz::File, PipelineError> {
+    fn enter_use(&mut self, use_path: &str, file_name: &str, line: usize) -> Result<(satz::File, Env), PipelineError> {
         if use_path.ends_with(".yaml") || use_path.ends_with(".yml") {
             return perr(file_name, line, format!("use \"{}\": a pack is Satz — satz {} is the last release that converts the pre-Satz YAML dialect", use_path, crate::LAST_YAML_CONVERTING_RELEASE));
         }
@@ -3722,8 +3787,13 @@ impl Walk<'_> {
         }
         let src = (self.load)(use_path).map_err(|e| PipelineError { file: file_name.to_string(), line, msg: e })?;
         let file = satz::parse(&src).map_err(|e| PipelineError { file: use_path.to_string(), line: e.line, msg: e.msg })?;
+        // the using file's local values leave the namespace before anything of the used
+        // file is read: a used file never sees them
+        let saved = self.stash_frame();
         self.compare_declarations(&file, use_path)?;
         self.absorb_params(&file, use_path)?;
+        self.register_names(&file, use_path)?;
+        self.open_frame(&file, use_path)?;
         self.absorb_hcl(&file, use_path);
         self.absorb_claims(&file, use_path);
         self.absorb_questions(&file, use_path);
@@ -3731,7 +3801,97 @@ impl Walk<'_> {
         self.absorb_actions(&file, use_path);
         self.absorb_exports(&file, use_path)?;
         self.use_chain.push(use_path.to_string());
-        Ok(file)
+        Ok((file, saved))
+    }
+
+    /// Back from a used file: its local values leave the namespace, the using file's return.
+    fn leave_use(&mut self, saved: Env) {
+        self.use_chain.pop();
+        self.stash_frame();
+        for (k, v) in &saved {
+            self.genv.insert(k.clone(), v.clone());
+        }
+        self.frame = saved;
+    }
+
+    /// Takes the current file's local values out of the namespace and returns them.
+    fn stash_frame(&mut self) -> Env {
+        for k in self.frame.keys() {
+            self.genv.remove(k);
+        }
+        std::mem::take(&mut self.frame)
+    }
+
+    /// The file's local values, resolved in dependency order against the params as the
+    /// file sees them and the local values before them, put into the namespace for the
+    /// file's own walk. The namespace held no local value when this is called, and a local
+    /// value's name is no param anywhere (`register_names`), so none shadows a param.
+    fn open_frame(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        debug_assert!(self.frame.is_empty());
+        let inputs: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
+        for (name, v, line) in satz::sort_params_by_deps(&file.locals) {
+            if let Some(i) = satz::reads_any(v, &inputs) {
+                return perr(file_name, *line, format!("local value `{}` reads the input `{}` — a local value is fixed at transpile time, and an input is a variable the plan reads; write the value", name, i));
+            }
+            let resolved = resolve_value(v, &self.genv, file_name, *line)?;
+            self.genv.insert(name.clone(), resolved.clone());
+            self.frame.insert(name.clone(), resolved);
+        }
+        self.locals_of.entry(file_name.to_string()).or_insert_with(|| self.frame.clone());
+        Ok(())
+    }
+
+    /// A local value is read by its bare name, as a param is, so its name is one thing in
+    /// the whole estate: no param, no input and no other file's local value carries it.
+    /// A file that uses the declaring file, directly or through others, and names it in its
+    /// `params` is binding it, which a local value refuses. Called for every file the walk
+    /// enters, after its params and before its local values are opened; each pair of
+    /// declarations is judged when the second of the two is met.
+    fn register_names(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
+        let params = file
+            .params
+            .iter()
+            .filter(|(n, _, _)| satz::contribution_target(n).is_none())
+            .map(|(n, _, l)| (n, *l, "param"))
+            .chain(file.inputs.iter().map(|i| (&i.name, i.line, "input")));
+        for (name, line, kind) in params {
+            let sites = self.names.entry(name.clone()).or_default();
+            if let Some(local) = sites.iter().find(|s| s.kind == LOCAL && s.file != file_name) {
+                return perr(file_name, line, format!(
+                    "{} `{}` has the name of a local value of {} (line {}) — a local value is read by its bare name, as a param is, so its name is one thing in the whole estate; rename one of them",
+                    kind, name, local.file, local.line
+                ));
+            }
+            if !sites.iter().any(|s| s.file == file_name && s.kind == kind) {
+                sites.push(NameSite { kind, file: file_name.to_string(), line });
+            }
+        }
+        for (name, _, line) in &file.locals {
+            let sites = self.names.entry(name.clone()).or_default();
+            if let Some(other) = sites.iter().find(|s| s.file != file_name) {
+                let msg = if other.kind == LOCAL {
+                    format!(
+                        "local value `{}` is declared in {} (line {}) and in {} (line {}) — a local value is read by its bare name, as a param is, so its name is one thing in the whole estate; rename one of them",
+                        name, other.file, other.line, file_name, line
+                    )
+                } else if self.use_chain.contains(&other.file) {
+                    format!(
+                        "`{}` is a local value of {} (line {}); it cannot be bound — {} names it in its {} (line {}), and a local value is read inside the file that declares it and set nowhere else. Delete the binding, or make `{}` a param of {}",
+                        name, file_name, line, other.file, if other.kind == "input" { "inputs" } else { "params" }, other.line, name, file_name
+                    )
+                } else {
+                    format!(
+                        "local value `{}` of {} (line {}) has the name of the {} `{}` of {} (line {}) — a local value is read by its bare name, as a param is, so its name is one thing in the whole estate; rename the local value",
+                        name, file_name, line, other.kind, name, other.file, other.line
+                    )
+                };
+                return perr(file_name, *line, msg);
+            }
+            if !sites.iter().any(|s| s.file == file_name) {
+                sites.push(NameSite { kind: LOCAL, file: file_name.to_string(), line: *line });
+            }
+        }
+        Ok(())
     }
 
     fn items(
@@ -3768,7 +3928,7 @@ impl Walk<'_> {
                             continue;
                         }
                     }
-                    let file = self.enter_use(use_path, file_name, *line)?;
+                    let (file, saved) = self.enter_use(use_path, file_name, *line)?;
                     let mut child_own = Fragment::default();
                     match as_key {
                         // `use "…" as key`: the pack's top-level entries are the
@@ -3787,7 +3947,7 @@ impl Walk<'_> {
                             self.items(&file.items, use_path, &mut child_own, all, path)?
                         }
                     }
-                    self.use_chain.pop();
+                    self.leave_use(saved);
                     all.push(child_own);
                 }
                 Entry::Map { key, name, body, line } => {
@@ -3880,7 +4040,7 @@ impl Walk<'_> {
                                     continue;
                                 }
                             }
-                            let file = self.enter_use(use_path, file_name, *line)?;
+                            let (file, saved) = self.enter_use(use_path, file_name, *line)?;
                             let mut child_own = Fragment::default();
                             match as_key {
                                 // `use "…" as <type>` inside a folder: the pack is the
@@ -3897,7 +4057,7 @@ impl Walk<'_> {
                                     self.folder(None, &file.items, use_path, &mut child_own, all, *line, path)?
                                 }
                             }
-                            self.use_chain.pop();
+                            self.leave_use(saved);
                             all.push(child_own);
                         }
                         other => {
@@ -4260,12 +4420,12 @@ impl Walk<'_> {
                                     );
                                 }
                             }
-                            let file = self.enter_use(use_path, file_name, *line)?;
+                            let (file, saved) = self.enter_use(use_path, file_name, *line)?;
                             position::used_file_fits(map_position(rt), &file, use_path, file_name, *line, self.types)?;
                             // pack content lands in this same fragment-map scope;
                             // its own file identity is preserved via provenance.
                             self.resource_map(rt, None, &file.items, use_path, own, *line, path, pin)?;
-                            self.use_chain.pop();
+                            self.leave_use(saved);
                             continue;
                         }
                         other => {
@@ -6410,5 +6570,183 @@ entries subnets {
         assert_eq!(fe.requests[0].entries.len(), 2);
         let err = with(short).must_fail("a field the each reads");
         assert!(err.msg.contains("the entry has no field `cidr`"), "{}", err.msg);
+    }
+}
+
+#[cfg(test)]
+mod locals_tests {
+    //! `locals { … }` (ADR 0105): a file's local values are read by their bare names in
+    //! that file alone, are no variable, and carry a name no other declaration of the
+    //! estate carries.
+    use super::*;
+
+    struct Table;
+    impl TypeResolver for Table {
+        fn body_keys(&self, _tf_type: &str, _path: &[&str]) -> Option<BodyKeys> {
+            None
+        }
+        fn resolve(&self, key: &str) -> Option<ResolvedType> {
+            match key {
+                "google_storage_bucket" => Some(ResolvedType { tf_type: key.into(), class: MergeClass::Entity, scope: Scope::Node }),
+                _ => None,
+            }
+        }
+    }
+
+    fn compile_with(src: &str, files: &[(&str, &str)]) -> Result<FrontEnd, PipelineError> {
+        let load = |p: &str| files.iter().find(|(n, _)| *n == p).map(|(_, s)| s.to_string()).ok_or_else(|| format!("no such file {}", p));
+        compile_estate("main.satz", src, &Table, &load)
+    }
+
+    fn refused(src: &str, files: &[(&str, &str)]) -> PipelineError {
+        match compile_with(src, files) {
+            Ok(_) => panic!("must be refused:\n{}", src),
+            Err(e) => e,
+        }
+    }
+
+    /// The name of every bucket the estate writes, by label.
+    fn bucket_names(fe: &FrontEnd) -> BTreeMap<String, String> {
+        fe.fragments
+            .iter()
+            .flat_map(|f| f.entities.values())
+            .filter(|e| e.addr.tf_type == "google_storage_bucket")
+            .map(|e| {
+                let crate::algebra::Body::Attrs(serde_yaml::Value::Mapping(m)) = &e.body else { panic!("a bucket body") };
+                (e.addr.label.clone(), m.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string())
+            })
+            .collect()
+    }
+
+    const PACK: &str = "pack p version \"1.0\"\n\nparams {\n  p_suffix = \"default\"\n}\n\nlocals {\n  p_bucket = \"{shortname}-{p_suffix}\"\n}\n\ngoogle_storage_bucket {\n  p_b {\n    name = p_bucket\n  }\n}\n";
+
+    #[test]
+    fn a_local_value_is_read_in_its_own_file_and_is_no_variable() {
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n  p_suffix  = \"bound\"\n}\n\nlocals {\n  name = \"{shortname}-{region}\"\n  region = \"eu\"\n}\n\nuse \"p.satz\"\n\ngoogle_storage_bucket {\n  own {\n    name = name\n  }\n}\n\nexport \"bucket\" = name\n";
+        let fe = compile_with(estate, &[("p.satz", PACK)]).unwrap();
+        let names = bucket_names(&fe);
+        assert_eq!(names["own"], "acme-eu", "a local value reads a param and a local value declared after it");
+        assert_eq!(names["p_b"], "acme-bound", "a pack's local value reads the param as the estate binds it");
+        for local in ["name", "region", "p_bucket"] {
+            assert!(!fe.tfvars.contains_key(local), "`{}` is no variable: {:?}", local, fe.tfvars.keys());
+            assert!(!fe.env.contains_key(local), "`{}` is no param: {:?}", local, fe.env.keys());
+        }
+        assert_eq!(fe.exports[0].value, serde_yaml::Value::String("acme-eu".into()), "an export reads its file's local value");
+    }
+
+    /// The using file's local values are out of the namespace while a used file is
+    /// walked and back after it; a used file's are gone once it is left.
+    #[test]
+    fn a_local_value_is_seen_by_no_other_file() {
+        let reads_estate = "pack r version \"1.0\"\n\ngoogle_storage_bucket {\n  r {\n    name = name\n  }\n}\n";
+        let estate = "estate t\n\nlocals {\n  name = \"own\"\n}\n\nuse \"r.satz\"\n";
+        let e = refused(estate, &[("r.satz", reads_estate)]);
+        assert_eq!(e.file, "r.satz");
+        assert!(e.msg.contains("unknown param 'name'"), "{}", e.msg);
+
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nuse \"p.satz\"\n\ngoogle_storage_bucket {\n  own {\n    name = p_bucket\n  }\n}\n";
+        let e = refused(estate, &[("p.satz", PACK)]);
+        assert_eq!(e.file, "main.satz");
+        assert!(e.msg.contains("unknown param 'p_bucket'"), "{}", e.msg);
+
+        // after the `use`, the estate reads its own local value again
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nlocals {\n  name = \"own\"\n}\n\nuse \"p.satz\"\n\ngoogle_storage_bucket {\n  own {\n    name = name\n  }\n}\n";
+        let fe = compile_with(estate, &[("p.satz", PACK)]).unwrap();
+        assert_eq!(bucket_names(&fe)["own"], "own");
+        assert_eq!(bucket_names(&fe)["p_b"], "acme-default");
+    }
+
+    #[test]
+    fn a_local_value_name_is_one_thing_in_the_whole_estate() {
+        // the estate binding a pack's local value
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n  p_bucket  = \"mine\"\n}\n\nuse \"p.satz\"\n";
+        let e = refused(estate, &[("p.satz", PACK)]);
+        assert_eq!((e.file.as_str(), e.line), ("p.satz", 8));
+        assert!(e.msg.starts_with("`p_bucket` is a local value of p.satz (line 8); it cannot be bound — main.satz names it in its params (line 5)"), "{}", e.msg);
+
+        // a local value of one pack, a param of another
+        let other = "pack o version \"1.0\"\n\nparams {\n  p_bucket = \"x\"\n}\n";
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nuse \"p.satz\"\nuse \"o.satz\"\n";
+        let e = refused(estate, &[("p.satz", PACK), ("o.satz", other)]);
+        assert_eq!(e.file, "o.satz");
+        assert!(e.msg.starts_with("param `p_bucket` has the name of a local value of p.satz (line 8)"), "{}", e.msg);
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nuse \"o.satz\"\nuse \"p.satz\"\n";
+        let e = refused(estate, &[("p.satz", PACK), ("o.satz", other)]);
+        assert_eq!(e.file, "p.satz");
+        assert!(e.msg.starts_with("local value `p_bucket` of p.satz (line 8) has the name of the param `p_bucket` of o.satz (line 4)"), "{}", e.msg);
+
+        // two files' local values
+        let twin = "pack w version \"1.0\"\n\nlocals {\n  p_bucket = \"x\"\n}\n";
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nuse \"p.satz\"\nuse \"w.satz\"\n";
+        let e = refused(estate, &[("p.satz", PACK), ("w.satz", twin)]);
+        assert!(e.msg.starts_with("local value `p_bucket` is declared in p.satz (line 8) and in w.satz (line 4)"), "{}", e.msg);
+
+        // the estate's local value and a pack's param
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nlocals {\n  p_suffix = \"x\"\n}\n\nuse \"p.satz\"\n";
+        let e = refused(estate, &[("p.satz", PACK)]);
+        assert!(e.msg.starts_with("param `p_suffix` has the name of a local value of main.satz (line 8)"), "{}", e.msg);
+
+        // a file used twice is no second declaration
+        let estate = "estate t\n\nparams {\n  shortname = \"acme\"\n}\n\nuse \"w.satz\"\nuse \"w.satz\"\n";
+        compile_with(estate, &[("w.satz", twin)]).unwrap();
+    }
+
+    /// Each refusal of what may not read or name a local value, at its line, with its fix.
+    #[test]
+    fn what_a_local_value_refuses() {
+        let cases: &[(&str, &str, usize, &str)] = &[
+            ("reads an entry", "estate t\n\nlocals {\n  x = \"{each.name}\"\n}\n", 4, "local value `x` reads `each.name` — a local value is one value for the whole file"),
+            ("reads an input", "estate t\n\ninputs {\n  stage = \"dev\"\n}\n\nlocals {\n  x = \"{stage}\"\n}\n", 8, "local value `x` reads the input `stage`"),
+            ("reads itself", "estate t\n\nlocals {\n  x = \"{x}\"\n}\n", 4, "local value `x` reads itself"),
+            ("a cycle", "estate t\n\nlocals {\n  a = b\n  b = \"{a}\"\n}\n", 4, "local values `a` and `b` read each other"),
+            ("a param of the file", "estate t\n\nparams {\n  x = 1\n}\n\nlocals {\n  x = 2\n}\n", 8, "locals: `x` is also a param (line 4)"),
+            ("declared twice", "estate t\n\nlocals {\n  x = 1\n  x = 2\n}\n", 5, "locals: `x` is declared twice — line 4 and line 5"),
+            ("a param default", "estate t\n\nparams {\n  p = \"{x}\"\n}\n\nlocals {\n  x = 1\n}\n", 4, "param `p` reads the local value `x` — a param's default is read by every file that uses this one"),
+            ("a question", "pack q version \"1.0\"\n\nlocals {\n  x = true\n}\n\nquestion x {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n}\n", 7, "question x: `x` is a local value — nobody is asked for it"),
+            ("ask_when", "pack q version \"1.0\"\n\nparams {\n  a = false\n}\n\nlocals {\n  x = true\n}\n\nquestion a {\n  prompt   = \"?\"\n  reversal = edit\n  blast    = none\n  ask_when = x\n}\n", 11, "question a: ask_when names the local value `x`"),
+            ("a gate", "estate t\n\nlocals {\n  x = true\n}\n\nuse \"p.satz\" when x\n", 7, "use … when x: `x` is a local value — a gate decides which files the estate uses"),
+            ("an entries statement", "pack q version \"1.0\"\n\nlocals {\n  xs = []\n}\n\nentries xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", 7, "entries xs: `xs` is a local value"),
+            ("a contribution of its file", "pack q version \"1.0\"\n\nparams {\n  contributes_xs = [\"a\"]\n}\n\nlocals {\n  xs = []\n}\n", 4, "contributes_xs: `xs` is a local value of this file"),
+            ("named a contribution", "pack q version \"1.0\"\n\nlocals {\n  contributes_xs = [\"a\"]\n}\n", 4, "locals: `contributes_xs` — a contribution is a param of a pack"),
+        ];
+        for (what, src, line, msg) in cases {
+            let e = refused(src, &[]);
+            assert_eq!(e.line, *line, "{}: {}", what, e.msg);
+            assert!(e.msg.starts_with(msg), "{}: {}", what, e.msg);
+        }
+    }
+
+    /// The refusals that span files: a local value reading another file's input, and an
+    /// `entries` statement or a contribution naming another file's local value.
+    #[test]
+    fn what_a_local_value_refuses_across_files() {
+        let template = "pack tpl version \"1.0\"\n\ninputs {\n  stage = \"dev\"\n}\n";
+        let e = refused("estate t\n\nuse \"tpl.satz\"\n\nuse \"l.satz\"\n", &[("tpl.satz", template), ("l.satz", "pack l version \"1.0\"\n\nlocals {\n  x = \"{stage}\"\n}\n")]);
+        assert_eq!((e.file.as_str(), e.line), ("l.satz", 4));
+        assert!(e.msg.starts_with("local value `x` reads the input `stage`"), "{}", e.msg);
+
+        let holder = "pack h version \"1.0\"\n\nlocals {\n  xs = [\"a\"]\n}\n";
+        let lister = "pack e version \"1.0\"\n\nentries xs {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n";
+        let e = refused("estate t\n\nuse \"h.satz\"\nuse \"e.satz\"\n", &[("h.satz", holder), ("e.satz", lister)]);
+        assert_eq!((e.file.as_str(), e.line), ("e.satz", 3));
+        assert!(e.msg.starts_with("entries xs: `xs` is a local value of h.satz (line 4)"), "{}", e.msg);
+
+        let contributor = "pack c version \"1.0\"\n\nparams {\n  contributes_xs = [\"b\"]\n}\n";
+        let e = refused("estate t\n\nuse \"h.satz\"\nuse \"c.satz\"\n", &[("h.satz", holder), ("c.satz", contributor)]);
+        assert_eq!((e.file.as_str(), e.line), ("c.satz", 4));
+        assert!(e.msg.starts_with("contributes_xs: `xs` is a local value of h.satz (line 4)"), "{}", e.msg);
+    }
+
+    /// Exports, actions, suppressions and contributions are resolved after the walk, each
+    /// against its own file's local values.
+    #[test]
+    fn what_is_resolved_after_the_walk_reads_its_own_file_s_local_values() {
+        let pack = "pack k version \"1.0\"\n\nparams {\n  contributes_members = [\"{k_member}\"]\n}\n\nlocals {\n  k_member = \"user:k@example.com\"\n  k_out    = \"from-k\"\n}\n\nexport \"k\" = k_out\n\naction \"k-step\" {\n  reason = \"no provider resource does it\"\n  run    = \"k.sh\"\n  args   = [\"--value\", \"{k_out}\"]\n}\n";
+        let estate = "estate t\n\nparams {\n  members = []\n}\n\nlocals {\n  gone = \"b\"\n}\n\nuse \"k.satz\"\n\ngoogle_storage_bucket {\n  b {\n    name = \"b\"\n  }\n}\n\nsuppress google_storage_bucket \"{gone}\"\n";
+        let fe = compile_with(estate, &[("k.satz", pack)]).unwrap();
+        assert_eq!(fe.exports[0].value, serde_yaml::Value::String("from-k".into()));
+        assert_eq!(fe.actions[0].args, vec!["--value".to_string(), "from-k".to_string()]);
+        assert_eq!(fe.suppressions[0].label, "b");
+        assert_eq!(fe.tfvars["members"], serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("user:k@example.com".into())]));
     }
 }

@@ -1,0 +1,102 @@
+      age = 30
+      type = "Delete"
+    action {
+    condition {
+    }
+    }
+  lifecycle_rule {
+  location = "EU"
+  location = "EU"
+  location = "europe-west3"
+  location = "europe-west3"
+  name = "acme-archive_a"
+  name = "acme-archive_b"
+  name = "acme-logs-europe-west3"
+  name = "acme-pack-bound"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  }
+resource "google_storage_bucket" "archive_a" {
+resource "google_storage_bucket" "archive_b" {
+resource "google_storage_bucket" "logs" {
+resource "google_storage_bucket" "packed" {
+}
+}
+}
+}
+---tfvars---
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+pack-suffix = "bound"
+---imports---
+
+---outputs.tf---
+locals {
+  satz_interface = {
+    interface = 1
+    estate    = "corpus_locals"
+    core = {
+      log_bucket = "acme-logs-europe-west3"
+    }
+    interfaces = {
+    }
+  }
+}
+
+output "log_bucket" {
+  value = local.satz_interface.core.log_bucket
+}
+---core/hcl/versions.tf---
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = ">= 7.14.1"
+    }
+  }
+}
+---core/hcl/outputs.tf---
+output "log_bucket" {
+  value = "acme-logs-europe-west3"
+}
+---core/satz/interface.satz---
+interface "core"
+
+central {
+  estate        = "corpus_locals"
+  organizations = []
+}
+
+output "log_bucket" {
+  value = "acme-logs-europe-west3"
+}
+
+managed "google_storage_bucket.archive_a" {
+  ids = ["sha256:b43cac75f5aca99b039d182d6d17c45c3d722cd3057c2c799f18bad28a9a04a6"]
+  keys {
+    name = "sha256:b43cac75f5aca99b039d182d6d17c45c3d722cd3057c2c799f18bad28a9a04a6"
+  }
+}
+
+managed "google_storage_bucket.archive_b" {
+  ids = ["sha256:bf216b5ee12b35fdcc22e55a07f21d0429b323c0876358ee2c127b632ad51fe2"]
+  keys {
+    name = "sha256:bf216b5ee12b35fdcc22e55a07f21d0429b323c0876358ee2c127b632ad51fe2"
+  }
+}
+
+managed "google_storage_bucket.logs" {
+  ids = ["sha256:ea4916f95f3f8a6d0209c22fb5d36da7a6d772f63c136260e43abb24f75aaf0a"]
+  keys {
+    name = "sha256:ea4916f95f3f8a6d0209c22fb5d36da7a6d772f63c136260e43abb24f75aaf0a"
+  }
+}
+
+managed "google_storage_bucket.packed" {
+  ids = ["sha256:58350473002f40f5cea052eab36198cee419080531f149b6fb264de8002c79b3"]
+  keys {
+    name = "sha256:58350473002f40f5cea052eab36198cee419080531f149b6fb264de8002c79b3"
+  }
+}

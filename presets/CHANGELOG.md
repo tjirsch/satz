@@ -15,6 +15,14 @@ names the file and the line.
 
 ### v0.111.0
 
+**`locals` is a statement** (ADR 0105). A top-level `locals { name = value }` in a pack or
+an estate declares local values, read by their bare names in that file only. Where a type
+map holds a resource labeled `locals` written unquoted — `google_storage_bucket { locals {
+… } }` — the transpile refuses it as a statement inside a block. To find it, transpile. To
+satisfy it, quote the label, `"locals" { … }`; the address stays the same and the plan does
+not move. `satz import ./hcl/` writes a Terraform `locals` entry as a local value rather
+than a param; an estate an earlier import wrote is unchanged.
+
 **The transpile refuses two used files that declare one param with different
 defaults** (ADR 0104). A param is one value in the whole estate; where two packs declared
 the same name with different defaults, the first file's default won and the second pack

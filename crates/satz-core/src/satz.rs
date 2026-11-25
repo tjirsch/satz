@@ -671,6 +671,9 @@ pub struct File {
     /// `inputs { … }` — a template's contract: params the using document or the command
     /// line binds and the emitter writes as variables, in source order
     pub inputs: Vec<InputDecl>,
+    /// `locals { … }` — the file's local values: read by their bare names inside this
+    /// file only, never bound by a using document and never a variable, in source order
+    pub locals: Vec<(String, Value, usize)>,
     pub items: Vec<Entry>,
     pub claims: Vec<ClaimDecl>,
     pub suppressions: Vec<Suppression>,
@@ -2394,7 +2397,7 @@ fn statement_in_a_block(keyword: &str) -> String {
 /// below reads the dispatch in `parse` out of this file's source and fails when the two
 /// differ.
 pub const STATEMENT_KEYWORDS: &[&str] =
-    &["action", "claim", "entries", "estate", "export", "hcl", "inputs", "interface", "notice", "offers", "pack", "params", "private", "question", "suppress", "use"];
+    &["action", "claim", "entries", "estate", "export", "hcl", "inputs", "interface", "locals", "notice", "offers", "pack", "params", "private", "question", "suppress", "use"];
 
 /// A statement renamed before 1.0, and its name now: refused by name wherever it stands at
 /// the top of a file.
@@ -2539,6 +2542,32 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                             file.inputs.push(InputDecl { name, value: v, line, description: comment_above(&src, line) });
                         }
                         other => return err(line, format!("inputs: expected name or '}}', found {:?}", other)),
+                    }
+                }
+            }
+            Some(Tok::Ident(id)) if id == "locals" => {
+                p.next();
+                p.expect(Tok::LBrace, "'{' after locals")?;
+                loop {
+                    let line = p.line();
+                    match p.peek() {
+                        Some(Tok::RBrace) => {
+                            p.next();
+                            break;
+                        }
+                        Some(Tok::Ident(_)) => {
+                            let name = match p.next().unwrap() {
+                                Tok::Ident(n) => n,
+                                _ => unreachable!(),
+                            };
+                            p.expect(Tok::Eq, "'=' in local value")?;
+                            let v = p.value()?;
+                            if let Some((_, _, first)) = file.locals.iter().find(|(n, _, _)| n == &name) {
+                                return err(line, format!("locals: `{}` is declared twice — line {} and line {}; delete the one that is not meant", name, first, line));
+                            }
+                            file.locals.push((name, v, line));
+                        }
+                        other => return err(line, format!("locals: expected name or '}}', found {:?}", other)),
                     }
                 }
             }
@@ -2826,6 +2855,7 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
         }
     }
 
+    check_locals(&file)?;
     let declared: std::collections::BTreeSet<&str> =
         file.params.iter().map(|(n, _, _)| n.as_str()).collect();
     let inputs: std::collections::BTreeSet<&str> = file.inputs.iter().map(|i| i.name.as_str()).collect();
@@ -2915,6 +2945,138 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
     Ok(file)
 }
 
+/// Every name a value reads — bare references and interpolations, inside lists and
+/// objects, keys included — in the order written.
+pub(crate) fn value_reads(v: &Value, out: &mut Vec<String>) {
+    let key = |k: &Key, out: &mut Vec<String>| {
+        if let Key::Str(parts) = k {
+            out.extend(parts.iter().filter_map(|p| match p {
+                StrPart::Param(n) => Some(n.clone()),
+                StrPart::Lit(_) => None,
+            }));
+        }
+    };
+    match v {
+        Value::Ref(r) => out.push(r.clone()),
+        Value::Str(parts) => out.extend(parts.iter().filter_map(|p| match p {
+            StrPart::Param(n) => Some(n.clone()),
+            StrPart::Lit(_) => None,
+        })),
+        Value::Num(_) | Value::Bool(_) => {}
+        Value::List(items) => items.iter().for_each(|i| value_reads(i, out)),
+        Value::Obj(entries) => {
+            for e in entries {
+                match e {
+                    Entry::Attr { key: k, value, .. } => {
+                        key(k, out);
+                        value_reads(value, out);
+                    }
+                    Entry::Map { key: k, body, .. } => {
+                        key(k, out);
+                        value_reads(&Value::Obj(body.clone()), out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// What a `locals { … }` block may hold, judged in the file that declares it: a local
+/// value is one value of this file, read by its bare name here and nowhere else. Its name
+/// is no param or input of the file and no contribution; it reads no field of an `each`
+/// entry, no input of the file and no local value that reads it back. Nothing of the file
+/// that another file or the interview reads may read it: a param or an input default, a
+/// question, an `ask_when`, a `use … when`, an `entries` statement, a contribution. The
+/// rules that span files — a name unique in the whole estate, a binding, a contribution
+/// or an `entries` statement of another file — are the walk's (`pipeline`).
+fn check_locals(file: &File) -> Result<(), SatzError> {
+    if file.locals.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<&str> = file.locals.iter().map(|(n, _, _)| n.as_str()).collect();
+    let inputs: Vec<&str> = file.inputs.iter().map(|i| i.name.as_str()).collect();
+    for (name, v, line) in &file.locals {
+        if let Some((_, _, l)) = file.params.iter().find(|(n, _, _)| n == name) {
+            return err(*line, format!("locals: `{}` is also a param (line {}) — a name is one or the other; delete the one that is not meant", name, l));
+        }
+        if let Some(i) = file.inputs.iter().find(|i| &i.name == name) {
+            return err(*line, format!("locals: `{}` is also an input (line {}) — a name is one or the other; delete the one that is not meant", name, i.line));
+        }
+        if name.starts_with(CONTRIBUTES_PREFIX) {
+            return err(*line, format!("locals: `{}` — a contribution is a param of a pack, `{}<param>` in its `params`; a local value is read in this file only", name, CONTRIBUTES_PREFIX));
+        }
+        let mut read = Vec::new();
+        value_reads(v, &mut read);
+        if let Some(each) = read.iter().find(|r| r.starts_with("each.")) {
+            return err(*line, format!("local value `{}` reads `{}` — a local value is one value for the whole file, and `{}` is a field of one entry of an `each`; write the value inside the `each` body", name, each, each));
+        }
+        if let Some(input) = read.iter().find(|r| inputs.contains(&r.as_str())) {
+            return err(*line, format!("local value `{}` reads the input `{}` — a local value is fixed at transpile time, and an input is a variable the plan reads; make `{}` an input too, or write the value", name, input, name));
+        }
+    }
+    // the locals in dependency order: a local that reads one declared after it comes
+    // after it, and two that read each other are refused
+    let mut done: Vec<&str> = Vec::new();
+    for (name, v, line) in sort_params_by_deps(&file.locals) {
+        let mut read = Vec::new();
+        value_reads(v, &mut read);
+        if let Some(r) = read.iter().find(|r| names.contains(&r.as_str()) && !done.contains(&r.as_str())) {
+            let what = if r == name { format!("local value `{}` reads itself", name) } else { format!("local values `{}` and `{}` read each other, directly or through others", name, r) };
+            return err(*line, format!("{} — a local value reads params and the local values before it in that order; write one of them as a literal", what));
+        }
+        done.push(name);
+    }
+    for (name, v, line) in &file.params {
+        // a contribution is no param: merged into its list before the walk, it reads the
+        // file's local values as the file's exports do
+        if let Some(l) = reads_any(v, &names).filter(|_| contribution_target(name).is_none()) {
+            return err(*line, format!("param `{}` reads the local value `{}` — a param's default is read by every file that uses this one, and a local value is this file's alone; make `{}` a param, or write the value", name, l, l));
+        }
+        if let Some(target) = contribution_target(name) {
+            if names.contains(&target) {
+                return err(*line, format!("{}: `{}` is a local value of this file — a contribution adds entries to a list param; make `{}` a param", name, target, target));
+            }
+        }
+    }
+    for i in &file.inputs {
+        if let Some(l) = reads_any(&i.value, &names) {
+            return err(i.line, format!("input `{}` reads the local value `{}` — an input is bound by whoever uses the file, and a local value is this file's alone; write the value", i.name, l));
+        }
+    }
+    for q in &file.questions {
+        let asked = std::iter::once(q.subject.as_str()).chain(q.options.iter().map(|o| o.param.as_str()));
+        for p in asked {
+            if names.contains(&p) {
+                return err(q.line, format!("question {}: `{}` is a local value — nobody is asked for it, because no using file can bind it; make `{}` a param", q.subject, p, p));
+            }
+        }
+        if let Some(w) = q.ask_when.as_deref().filter(|w| names.contains(w)) {
+            return err(q.line, format!("question {}: ask_when names the local value `{}` — the interview reads params only; make `{}` a param", q.subject, w, w));
+        }
+    }
+    for r in &file.requests {
+        if names.contains(&r.param.as_str()) {
+            return err(r.line, format!("entries {}: `{}` is a local value — an `entries` statement describes a list param the estate owns; make `{}` a param", r.param, r.param, r.param));
+        }
+    }
+    fn gates<'e>(items: &'e [Entry], out: &mut Vec<(&'e str, usize)>) {
+        for e in items {
+            match e {
+                Entry::Use { when: Some(w), line, .. } => out.push((w.as_str(), *line)),
+                Entry::Map { body, .. } => gates(body, out),
+                _ => {}
+            }
+        }
+    }
+    let mut used_when = Vec::new();
+    gates(&file.items, &mut used_when);
+    if let Some((w, line)) = used_when.into_iter().find(|(w, _)| names.contains(w)) {
+        return err(line, format!("use … when {}: `{}` is a local value — a gate decides which files the estate uses, and the interview and the presets report decide it from params alone; make `{}` a param", w, w, w));
+    }
+    Ok(())
+}
+
 /// The body of a generated interface file, read into its `InterfaceFile`: `central`,
 /// `output`, `lookup` and `managed` blocks and nothing else, so nothing of it is a resource,
 /// a param or a statement of an estate.
@@ -2924,6 +3086,7 @@ fn interface_file_of(mut file: File) -> Result<File, SatzError> {
     let other = [
         (file.estate.is_some(), if file.is_pack { "a `pack` header" } else { "an `estate` header" }),
         (!file.params.is_empty(), "`params`"),
+        (!file.locals.is_empty(), "`locals`"),
         (!file.claims.is_empty(), "a `claim`"),
         (!file.suppressions.is_empty(), "a `suppress`"),
         (!file.privates.is_empty(), "a `private`"),
@@ -3105,6 +3268,35 @@ fn plain_value(v: &Value, line: usize) -> Result<serde_yaml::Value, SatzError> {
             serde_yaml::Value::Mapping(m)
         }
     })
+}
+
+/// The first of `names` a value reads — a bare reference, an interpolation in a string,
+/// anywhere inside a list or an object.
+pub(crate) fn reads_any(v: &Value, names: &[&str]) -> Option<String> {
+    match v {
+        Value::Ref(r) => names.contains(&r.as_str()).then(|| r.clone()),
+        Value::Str(parts) => parts.iter().find_map(|p| match p {
+            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
+            _ => None,
+        }),
+        Value::Num(_) | Value::Bool(_) => None,
+        Value::List(items) => items.iter().find_map(|i| reads_any(i, names)),
+        Value::Obj(entries) => entries.iter().find_map(|e| match e {
+            Entry::Attr { key, value, .. } => reads_key(key, names).or_else(|| reads_any(value, names)),
+            Entry::Map { key, body, .. } => reads_key(key, names).or_else(|| reads_any(&Value::Obj(body.clone()), names)),
+            _ => None,
+        }),
+    }
+}
+
+pub(crate) fn reads_key(k: &Key, names: &[&str]) -> Option<String> {
+    match k {
+        Key::Ident(_) => None,
+        Key::Str(parts) => parts.iter().find_map(|p| match p {
+            StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
+            _ => None,
+        }),
+    }
 }
 
 /// Params in dependency order (stable Kahn topological sort): a param may reference
@@ -3327,6 +3519,11 @@ pub fn canonical_parts(file: &File) -> Canonical {
     }
     for i in &file.inputs {
         body.push_str(&format!("input({})\n", i.name));
+    }
+    let mut locals: Vec<&(String, Value, usize)> = file.locals.iter().collect();
+    locals.sort_by(|a, b| a.0.cmp(&b.0));
+    for (n, v, _) in locals {
+        body.push_str(&format!("local({}={})\n", n, canon_value(v)));
     }
     for c in &file.claims {
         body.push_str(&format!(
@@ -4196,6 +4393,18 @@ mod empty_collection_tests {
     /// The canonical form is what drift classification compares: comments,
     /// formatting and the pack version must not move it; a param default or a
     /// resource body must.
+    /// A local value is what its file writes: a changed one is a body change, which
+    /// `check-presets` reports as drift, and its order in the block is no meaning.
+    #[test]
+    fn a_local_value_is_part_of_the_canonical_form() {
+        let a = canonical_parts(&parse("pack p version \"1.0\"\nlocals {\n  x = \"a\"\n  y = 2\n}\n").unwrap());
+        let b = canonical_parts(&parse("pack p version \"1.1\"\n// churn\nlocals {\n  y = 2\n  x = \"a\"\n}\n").unwrap());
+        let c = canonical_parts(&parse("pack p version \"1.0\"\nlocals {\n  x = \"b\"\n  y = 2\n}\n").unwrap());
+        assert_eq!(a, b);
+        assert!(a.params.is_empty(), "a local value is no param");
+        assert_ne!(a.body, c.body, "a changed local value is a body change");
+    }
+
     #[test]
     fn canonical_ignores_churn_and_version_but_sees_meaning() {
         let base = "pack demo version \"1.0\"\nparams {\n  bucket_name = \"demo-audit\"\n}\ngoogle_storage_bucket {\n  b { name = bucket_name location = \"EU\" }\n}\n";
@@ -4229,6 +4438,7 @@ pub(crate) fn statement_probe(kw: &str) -> String {
         "pack" => "pack p version \"1.0\"\n".into(),
         "params" => "estate e\nparams { a = \"1\" }\n".into(),
         "inputs" => "estate e\ninputs { a = \"1\" }\n".into(),
+        "locals" => "estate e\nlocals { a = \"1\" }\n".into(),
         "use" => "estate e\nuse \"p.satz\"\n".into(),
         "hcl" => "estate e\nhcl {\n  # raw\n}\n".into(),
         "claim" => "estate e\nclaim \"f\" \"1\" \"1.1\" implements {\n  resources = [\"google_x.y\"]\n}\n".into(),
