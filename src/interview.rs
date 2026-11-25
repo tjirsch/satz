@@ -212,6 +212,9 @@ pub(crate) fn answer(
     value: &serde_yaml::Value,
     graph: Option<&PackGraph>,
 ) -> Result<String, String> {
+    if value.is_null() {
+        return Err(format!("{}: an answer is a value — `null` is none; `\"\"` is the empty string", row.subject));
+    }
     if row.kind == "oneof" {
         let chosen = value
             .as_str()
@@ -1045,7 +1048,7 @@ google_folder {
 pack asks version "1.0"
 
 params {
-  shortname   = ""
+  shortname   = none
   region      = "europe-west3"
   project     = "{shortname}-infra-001"
   zone        = "{region}-a"
@@ -1076,17 +1079,17 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         (dir.join("e.satz"), cfg)
     }
 
-    /// `empty = "…"` makes "" an answer: offered while unbound, accepted by
-    /// `--accept-defaults`, and counted once bound. A question without it keeps "" as a
-    /// value nobody has given.
+    /// `""` is a value: a pack's `""` is a default an interview offers, and an estate's `""`
+    /// is an answer. `empty = "…"` says what it means. A param declared `none` has no default
+    /// and blocks; one the estate binds `none` is not answered.
     #[test]
-    fn a_question_that_says_what_empty_means_takes_empty_as_an_answer() {
+    fn an_empty_string_is_a_value_and_none_is_no_value() {
         let dir = std::env::temp_dir().join(format!("satz-iv-{}-empty", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("asks.satz"),
-            "pack asks version \"1.0\"\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nquestion folder { prompt = \"Folder\" reversal = edit blast = none empty = \"the organization\" }\nquestion label { prompt = \"Label\" reversal = edit blast = none }\n",
+            "pack asks version \"1.0\"\n\nparams {\n  folder = \"\"\n  label  = \"\"\n  owner  = none\n}\n\nquestion folder { prompt = \"Folder\" reversal = edit blast = none empty = \"the organization\" }\nquestion label { prompt = \"Label\" reversal = edit blast = none }\nquestion owner { prompt = \"Owner\" reversal = edit blast = none }\n",
         )
         .unwrap();
         let estate = dir.join("e.satz");
@@ -1098,18 +1101,46 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         assert_eq!(by(&r, "folder").default, Some(yaml("")), "\"\" is offered");
         assert!(!by(&r, "folder").blocking);
         assert!(present(&by(&r, "folder")).contains("[\"\" (the organization)]"), "{}", present(&by(&r, "folder")));
-        assert!(by(&r, "label").blocking, "without `empty`, \"\" is no default");
-        // accepting the defaults binds "" for the question that means something by it
-        assert_eq!(apply(&estate, &cfg, &BTreeMap::new(), true).unwrap(), 1);
+        assert_eq!(by(&r, "label").default, Some(yaml("")), "without `empty`, \"\" is offered too");
+        assert!(!by(&r, "label").blocking);
+        assert!(by(&r, "owner").blocking && by(&r, "owner").default.is_none(), "{:?}", by(&r, "owner"));
+        // accepting the defaults binds "" for both, and leaves `owner` open
+        assert_eq!(apply(&estate, &cfg, &BTreeMap::new(), true).unwrap(), 2);
         let src = std::fs::read_to_string(&estate).unwrap();
-        assert!(bound(&src, "folder", "\"\""), "{}", src);
+        assert!(bound(&src, "folder", "\"\"") && bound(&src, "label", "\"\""), "{}", src);
         let r = questions_report(&estate, &cfg).unwrap();
-        assert_eq!(by(&r, "folder").state, "answered");
-        // and bound "" by hand: answered with `empty`, still open without it
-        std::fs::write(&estate, "estate e\n\nparams {\n  folder = \"\"\n  label  = \"\"\n}\n\nuse \"asks.satz\"\n").unwrap();
+        assert_eq!((by(&r, "folder").state, by(&r, "label").state, by(&r, "owner").state), ("answered", "answered", "unanswered"));
+        // the estate's `none` binds nothing; its `""` is an answer
+        std::fs::write(&estate, "estate e\n\nparams {\n  owner = none\n}\n\nuse \"asks.satz\"\n").unwrap();
         let r = questions_report(&estate, &cfg).unwrap();
-        assert_eq!(by(&r, "folder").state, "answered");
-        assert_eq!(by(&r, "label").state, "unanswered");
+        assert!(by(&r, "owner").state == "unanswered" && by(&r, "owner").blocking);
+        std::fs::write(&estate, "estate e\n\nparams {\n  owner = \"\"\n}\n\nuse \"asks.satz\"\n").unwrap();
+        let r = questions_report(&estate, &cfg).unwrap();
+        assert_eq!(by(&r, "owner").state, "answered");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A param one pack declares `none` and asks, and another gives a default: unanswered,
+    /// the other pack's default offered, the shape that default's; answered once the
+    /// estate binds it.
+    #[test]
+    fn a_none_param_another_pack_defaults_is_offered_that_default() {
+        let dir = std::env::temp_dir().join(format!("satz-iv-{}-none-offer", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("asks.satz"), "pack asks version \"1.0\"\n\nparams {\n  zones = none\n}\n\nquestion zones { prompt = \"Zones\" reversal = edit blast = none }\n").unwrap();
+        std::fs::write(dir.join("gives.satz"), "pack gives version \"1.0\"\n\nparams {\n  zones = [\"a\"]\n}\n").unwrap();
+        let estate = dir.join("e.satz");
+        std::fs::write(&estate, "estate e\n\nparams {\n}\n\nuse \"asks.satz\"\nuse \"gives.satz\"\n").unwrap();
+        let mut cfg: ToolConfig = toml::from_str("").unwrap();
+        cfg.include_dirs = vec![dir.to_string_lossy().into_owned()];
+        let r = questions_report(&estate, &cfg).unwrap();
+        let q = r.questions.iter().find(|q| q.subject == "zones").unwrap();
+        assert_eq!((q.state, q.blocking, q.shape), ("unanswered", false, Some("list")), "{:?}", q);
+        assert_eq!(q.default, Some(serde_yaml::Value::Sequence(vec![yaml("a")])));
+        std::fs::write(&estate, "estate e\n\nparams {\n  zones = []\n}\n\nuse \"asks.satz\"\nuse \"gives.satz\"\n").unwrap();
+        let r = questions_report(&estate, &cfg).unwrap();
+        assert_eq!(r.questions.iter().find(|q| q.subject == "zones").unwrap().state, "answered", "`[]` is an answer");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1119,7 +1150,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         let r = questions_report(&estate, &cfg).unwrap();
         let by = |s: &str| r.questions.iter().find(|q| q.subject == s).unwrap().clone();
         assert_eq!(by("shortname").state, "unanswered");
-        assert!(by("shortname").blocking, "no default is possible for an empty string");
+        assert!(by("shortname").blocking, "no file gives it a value");
         assert!(!by("region").blocking);
         assert_eq!(by("region").default, Some(yaml("europe-west3")));
         // derived from an unanswered, undefaultable input: NOT offered — `-infra-001` is not a default
@@ -1216,7 +1247,7 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         if with_library {
             std::fs::write(
                 dir.join("presets/estate-core.satz"),
-                "// The bootstrap questions.\npack estate_core version \"1.0\"\n\nparams {\n  customer_longname = \"\"\n}\n\n\
+                "// The bootstrap questions.\npack estate_core version \"1.0\"\n\nparams {\n  customer_longname = none\n}\n\n\
                  question customer_longname { prompt = \"Display name\" reversal = edit blast = none }\n",
             )
             .unwrap();

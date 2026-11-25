@@ -34,18 +34,18 @@
 // question writes it, in `satz interview` or satz-studio. The folder's parent is where its
 // block stands in the estate, like any folder's.
 
-pack estate_core version "3.0"
+pack estate_core version "3.1"
 
 params {
   // ---- no possible default: the pack cannot know these --------------------
-  customer_id              = ""
-  customer_organization_id = ""
-  customer_domain          = ""
-  customer_shortname       = ""
-  first_admin              = ""
-  billing_account_infra    = ""
-  customer_longname        = ""
-  workload_folder_name     = ""
+  customer_id              = none
+  customer_organization_id = none
+  customer_domain          = none
+  customer_shortname       = none
+  first_admin              = none
+  billing_account_infra    = none
+  customer_longname        = none
+  workload_folder_name     = none
 
   // ---- derived from the answers above -------------------------------------
   infra_folder_name         = "Infrastructure"

@@ -152,7 +152,7 @@ params {
   customer_shortname       = "acme"
   customer_id              = "C0example"
   customer_domain          = "example.com"
-  customer_organization_id = ""
+  customer_organization_id = none
   billing_account_infra    = "A12345-B67890-C12345"
   infra_project_name       = "acme-infra-001"
   infra_bucket_name        = "acme-infra-001"
@@ -160,7 +160,7 @@ params {
 }
 ```
 
-Its `customer_organization_id` is empty: the state of a tenant whose Google Cloud
+Its `customer_organization_id` has no value (`none`): the state of a tenant whose Google Cloud
 organization does not exist yet. `satz bootstrap` answers that with the greenfield
 path — `--greenfield`, or `satz init` re-run with the id — rather than a bare "missing organization
 id". See [from nothing to applied](workflows.md#from-nothing-to-applied).

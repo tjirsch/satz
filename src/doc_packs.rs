@@ -91,6 +91,7 @@ pub(crate) fn value_text(v: &Value) -> String {
         Value::Num(n) => n.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Ref(r) => r.clone(),
+        Value::None => satz_core::satz::NONE.to_string(),
         Value::List(items) => {
             let inner: Vec<String> = items.iter().map(value_text).collect();
             if inner.is_empty() {
@@ -362,9 +363,8 @@ fn pack_ids(all: &[(PathBuf, File, String)]) -> Vec<String> {
     errs
 }
 
-/// The params an operator must supply and nothing asks for: every string param that
-/// defaults to `""` with no `question` on it in the same file — a `oneof` asks its options'
-/// params. A list or any other kind carries a value or a shape of its own.
+/// The params an operator must supply and nothing asks for: every param declared `none`
+/// with no `question` on it in the same file — a `oneof` asks its options' params.
 pub(crate) fn asks_its_open_params(file: &File) -> Vec<(String, usize)> {
     let asked: BTreeSet<&str> = file
         .questions
@@ -373,13 +373,9 @@ pub(crate) fn asks_its_open_params(file: &File) -> Vec<(String, usize)> {
         .collect();
     file.params
         .iter()
-        .filter(|(n, v, _)| is_empty_str(v) && !asked.contains(n.as_str()))
+        .filter(|(n, v, _)| *v == Value::None && !asked.contains(n.as_str()))
         .map(|(n, _, line)| (n.clone(), *line))
         .collect()
-}
-
-fn is_empty_str(v: &Value) -> bool {
-    matches!(v, Value::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(s) if s.is_empty())))
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +935,9 @@ fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Res
             md.push_str("  // the pack's own defaults — copy only the lines you change\n");
             for (n, v, _) in &params {
                 md.push_str(&value_block(n, v, "  "));
+                if *v == Value::None {
+                    md.push_str(" // must be provided");
+                }
                 md.push('\n');
             }
         }
@@ -1036,7 +1035,11 @@ fn render(
     } else {
         md.push_str("| param | default |\n|---|---|\n");
         for (n, v, _) in &params {
-            md.push_str(&format!("| `{}` | `{}` |\n", n, value_text(v).replace('|', "\\|")));
+            let default = match v {
+                Value::None => format!("`{}` — must be provided", satz_core::satz::NONE),
+                v => format!("`{}`", value_text(v).replace('|', "\\|")),
+            };
+            md.push_str(&format!("| `{}` | {} |\n", n, default));
         }
         md.push('\n');
     }
@@ -1494,7 +1497,7 @@ pub(crate) fn run(presets_dir: &Path, out_dir: &Path, check: bool) -> Result<(),
     for (rel, file, _) in &all {
         for (name, line) in asks_its_open_params(file) {
             errs.push(format!(
-                "presets/{}:{}: `{}` defaults to `\"\"` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
+                "presets/{}:{}: `{}` is declared `none` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
                 rel.display(),
                 line,
                 name,
@@ -1831,7 +1834,7 @@ mod tests {
 
     #[test]
     fn a_param_an_operator_must_supply_is_asked() {
-        let src = "pack p version \"1.0\"\n\nparams {\n  a = \"\"\n  b = \"\"\n  c = []\n  d = \"x\"\n  m_s1 = true\n  m_s2 = false\n}\n\nquestion b {\n  prompt   = \"b?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n}\n\nquestion oneof m {\n  prompt   = \"m?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n  option m_s1 { label = \"one\" why = \"w\" }\n  option m_s2 { label = \"two\" why = \"w\" }\n}\n";
+        let src = "pack p version \"1.0\"\n\nparams {\n  a = none\n  b = none\n  c = []\n  d = \"\"\n  m_s1 = true\n  m_s2 = false\n}\n\nquestion b {\n  prompt   = \"b?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n}\n\nquestion oneof m {\n  prompt   = \"m?\"\n  why      = \"w\"\n  reversal = edit\n  blast    = low\n  option m_s1 { label = \"one\" why = \"w\" }\n  option m_s2 { label = \"two\" why = \"w\" }\n}\n";
         let file = satz::parse(src).unwrap();
         assert_eq!(asks_its_open_params(&file), vec![("a".to_string(), 4)]);
     }
@@ -1841,13 +1844,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satz-packids-{}", std::process::id()));
         let docs = dir.join("docs");
         std::fs::create_dir_all(&docs).unwrap();
-        std::fs::write(dir.join("foo-bar.satz"), "// A pack.\n\npack wrong version \"1.0\"\n\nparams {\n  open = \"\"\n}\n").unwrap();
+        std::fs::write(dir.join("foo-bar.satz"), "// A pack.\n\npack wrong version \"1.0\"\n\nparams {\n  open = none\n}\n").unwrap();
         std::fs::write(dir.join("README.md"), "# satz library\n\n## Packs\n").unwrap();
         std::fs::write(dir.join(CHANGELOG_FILE), "# satz changelog\n\n## Changelog\n\n| pack | version | date | change |\n|---|---|---|---|\n| `wrong` | 1.0 | 2026-10-01 | first |\n").unwrap();
         std::fs::write(dir.join(GROUPS_FILE), "[Packs]\nfoo-bar.satz\n").unwrap();
         let e = run(&dir, &docs, true).unwrap_err().to_string();
         assert!(e.contains("so this one is `pack foo_bar`"), "{}", e);
-        assert!(e.contains("foo-bar.satz:6: `open` defaults to `\"\"`"), "{}", e);
+        assert!(e.contains("foo-bar.satz:6: `open` is declared `none`"), "{}", e);
         std::fs::remove_dir_all(&dir).ok();
     }
 

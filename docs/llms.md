@@ -77,7 +77,10 @@ google_storage_bucket {
 - **One name, one meaning.** Params share one namespace across the estate and every
   file it uses. Two packs may declare the same param only with the same default (and the
   same question): that is a shared param. Different defaults are
-  refused, and a binding in the estate does not lift that. A param that belongs to one
+  refused, and a binding in the estate does not lift that — `""` and `"eu"` are two
+  defaults. A pack that reads a param and proposes no value declares it `none`
+  (`region = none`): that agrees with any one default another file gives, which is then the
+  value. A param that belongs to one
   pack carries the pack's name as its prefix (`vm_zone`); a shared one carries none.
 - Overriding a list **replaces** it. There is no concatenation for an estate. Entries from
   outside arrive one way: a workload estate's request file, a pack of `contributes_<param>` the
@@ -266,7 +269,7 @@ claim "cis-gcp" "4.0" "1.4" implements {
 ## Questions — what to ask before a param can be filled
 
 ```satz
-params { customer_shortname = "" }
+params { customer_shortname = none } // declared, no value proposed
 
 question customer_shortname {
   prompt   = "Short name identifying this customer"
@@ -282,8 +285,11 @@ answer to a one-way door** — ask the human.
 
 A question is **answered when the estate's own `params {}` binds its param** — accepting
 the pack's default is an answer, written as the default. Unanswered questions carry the
-`default` the pack offers, or `blocking: true` when none is possible (a customer id, a
-billing account): those need the human's value. **Every question must be answered before
+`default` a pack offers, or `blocking: true` when no file gives the param a value — it is
+declared `none` (a customer id, a billing account): those need the human's value. `""` and
+`[]` are values, offered and bound like any other; an estate's `p = none` binds nothing.
+A param declared `none` that nothing binds and nothing asks stops the transpile at its
+read, naming every file that declares it — bind it in the estate's `params {}`. **Every question must be answered before
 bootstrap or apply**; `summary.complete` says whether they are.
 
 A question must be declared in the same file as the param it answers.

@@ -309,7 +309,7 @@ yet, and uses the second trigger:
  the timeout names the one-time console sign-in
    as the fallback.
 
-An estate whose `customer_organization_id` is empty fails with exactly this guidance
+An estate whose `customer_organization_id` has no value (`none`) or is empty fails with exactly this guidance
 instead of a bare "missing organization id".
 
 ### Transpile, plan, apply
@@ -519,18 +519,18 @@ them and is complete; one the interview wrote is complete when it says so.
 | Param | Default | Description |
 |-------|---------|-------------|
 | `infra_folder_name` | `"Infrastructure"` | Display name for the top-level folder. Leave `""` to create the project in the root. |
-| `infra_project_name` | `""` | The unique id for the infrastructure project. |
+| `infra_project_name` | `"{customer_shortname}-infra-001"` | The unique id for the infrastructure project. |
 
-| `infra_bucket_name` | `""` | The GCS bucket for Terraform state. |
+| `infra_bucket_name` | `"{customer_shortname}-infra-001-state"` | The GCS bucket for Terraform state. |
 | `customer_id` | (from CLI) | The Workspace customer id (e.g. `C01234567`). |
-| `customer_organization_id` | `"123456789012"` | The numeric Google Cloud organization id. |
-| `customer_domain` | `""` | The customer's primary domain (e.g. `example.com`). |
+| `customer_organization_id` | `none` | The numeric Google Cloud organization id. |
+| `customer_domain` | `none` | The customer's primary domain (e.g. `example.com`). |
 | `first_admin` | (from `--iac-user`) | Local part of the first admin's address; members are built as `user:{first_admin}@{customer_domain}`. |
-| `customer_longname` | `""` | The full legal name of the customer entity. |
-| `customer_shortname` | `""` | A unique slug for the customer. Names that must be globally unique derive from it. |
+| `customer_longname` | `none` | The full legal name of the customer entity. |
+| `customer_shortname` | `none` | A unique slug for the customer. Names that must be globally unique derive from it. |
 | `svc_iac_account` | `"svc-iac-001"` | The primary estate account. |
 | `estate_account_user_group` | `"svc-iac-users"` | The estate account user group. |
-| `billing_account_infra` | `""` | The billing account id (e.g. `012345-6789AB-CDEF01`). |
+| `billing_account_infra` | `none` | The billing account id (e.g. `012345-6789AB-CDEF01`). |
 | `deployment_engine` | `"tofu"` | The IaC tool: `tofu` or `terraform`. |
 | `deployment_mode` | `"local"` | `local` for the bootstrap (the signed-in person); `cloud` after it (impersonation). Switched by `satz migrate`. |
 | `default_region` | `"europe-west3"` | Default region for regional resources. |
@@ -1722,7 +1722,7 @@ estate when the estate's interface folders give every value it reads.
 
 | field | what it holds |
 |---|---|
-| `params` | each param the pack declares: `name`; `default`, the value as the pack writes it in Satz (`"europe-west3"`, `[1, 2]`, `"${{interface.project_id}}"`), or `null` where it writes `""`; `question`, whether a `question` asks for it; `prompt` and `why`, that question's prompt and why, `null` where no question asks or it has no `why` |
+| `params` | each param the pack declares: `name`; `default`, the value as the pack writes it in Satz (`"europe-west3"`, `[1, 2]`, `"${{interface.project_id}}"`), or `null` where it declares the param `none`; `question`, whether a `question` asks for it; `prompt` and `why`, that question's prompt and why, `null` where no question asks or it has no `why` |
 | `list_params` | each `entries <list param>` statement: `param`, `key`, `fields`, and `defaults` per field in Satz |
 | `exports` | each export: `name`; `interface`, the `interface "<name>"` block it stands in as written (an interface an `each` writes is named by its pattern, `ks-{each.id}`), or `null` for a core export; `description`, its `description "…"`, or `null` |
 | `reads` | each `${{interface.<folder>.<value>}}` and `${{interface.<value>}}` the pack writes in a param, a resource or an export — a comment reads nothing: `folder` (`null` for the bare form), `value`, `param` (the param whose value the read is, or `null`), how the estate gives it, and `description`, the description of the export that gives it |

@@ -40,17 +40,17 @@
 // that onboards it another way adds that account to `allowed_policy_member_subjects`
 // itself, or the managed §1.1 constraint refuses the grant.
 
-pack integrations.microsoft_defender_for_cloud version "0.8"
+pack integrations.microsoft_defender_for_cloud version "0.9"
 
 params {
   // The customer's Microsoft Entra tenant id WITHOUT dashes — that is the
   // workload identity pool id Microsoft's wizard generates. Take it from the
   // generated script; there is no default because it is per customer.
-  mdc_workload_pool_id = ""
+  mdc_workload_pool_id = none
 
   // The management project Defender is onboarded through. A full param, not
   // derived: customers name projects their own way.
-  mdc_mgmt_project_id = ""
+  mdc_mgmt_project_id = none
 
   // The folder that project is created in. Empty says nothing, and the node the
   // `use` line stands in decides — the organization at the top level. A folder

@@ -19,7 +19,7 @@
 // The parent is the folder the estate was delegated access to, read from the interface it
 // uses (`${{interface.delegated_folder}}`, the default), or a folder id.
 
-pack workload_project version "1.2"
+pack workload_project version "1.3"
 
 params {
   // The project's id, globally unique.
@@ -29,7 +29,7 @@ params {
   // The folder it is created in: `folders/<number>`, or a reference.
   workload_project_parent  = "${{interface.delegated_folder}}"
   // The billing account it is linked to.
-  workload_billing_account = ""
+  workload_billing_account = none
   // The APIs enabled on it. The first is what the grants below are calls to.
   workload_project_services = [
     "cloudresourcemanager.googleapis.com",
@@ -37,9 +37,9 @@ params {
     "serviceusage.googleapis.com",
   ]
   // The three groups, as addresses.
-  workload_viewer_group = ""
-  workload_editor_group = ""
-  workload_owner_group  = ""
+  workload_viewer_group = none
+  workload_editor_group = none
+  workload_owner_group  = none
 }
 
 question workload_project_id {

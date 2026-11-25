@@ -1,5 +1,5 @@
 // A greenfield estate: directory + billing exist, the organization does not
-// yet. `customer_organization_id` is deliberately empty — bootstrap must
+// yet. `customer_organization_id` has no value (`none`) — bootstrap must
 // explain --greenfield / init --from-live instead of a bare "missing organization id".
 
 estate greenfield_fixture
@@ -8,7 +8,7 @@ params {
   customer_shortname       = "acme"
   customer_id              = "C0example"
   customer_domain          = "example.com"
-  customer_organization_id = ""
+  customer_organization_id = none
   billing_account_infra    = "A12345-B67890-C12345"
   infra_project_name       = "acme-infra-001"
   infra_bucket_name        = "acme-infra-001"

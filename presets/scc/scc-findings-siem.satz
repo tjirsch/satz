@@ -29,11 +29,11 @@
 // NO CLAIM. No catalog control covers Security Command Center, so this pack
 // witnesses nothing.
 
-pack scc_findings_siem version "1.1"
+pack scc_findings_siem version "1.2"
 
 params {
   // No default: whose identity this is depends on which SIEM the customer runs.
-  scc_siem_subscriber           = ""
+  scc_siem_subscriber           = none
   scc_siem_subscription_name    = "{customer_shortname}-scc-findings-siem"
   // A week, so a connector that is down over a weekend still gets the findings.
   scc_siem_retention            = "604800s"

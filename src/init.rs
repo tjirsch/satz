@@ -523,7 +523,7 @@ async fn org_estate(stated: crate::init_params::Stated, rc: &ToolConfig, force: 
                     "the signed-in person",
                 );
                 let customer_id = note.fill("customer_id", customer_id, live.customer_id.clone(), "organizations:search");
-                // No organization visible is the greenfield case: the id stays empty and
+                // No organization visible is the greenfield case: the id is written `none` and
                 // `bootstrap --greenfield` fills it in.
                 let customer_organization_id = note.fill("customer_organization_id", customer_organization_id, live.org_id.clone(), "organizations:search");
                 let billing_account_infra = note.fill(
@@ -541,7 +541,7 @@ async fn org_estate(stated: crate::init_params::Stated, rc: &ToolConfig, force: 
             Err(why) => {
                 eprintln!("init: nothing could be derived from the sign-in — {}", why);
                 eprintln!(
-                    "      what you did not pass is written empty; `satz bootstrap` names each one, and \
+                    "      what you did not pass is written `none`; `satz bootstrap` names each one, and \
                      `satz init` merges them in later."
                 );
                 (customer_id, customer_shortname, billing_account_infra, customer_organization_id, customer_domain, iac_user)
@@ -558,7 +558,7 @@ async fn org_estate(stated: crate::init_params::Stated, rc: &ToolConfig, force: 
     }
 
     let domain = customer_domain.unwrap_or_default();
-    // an admin nobody named stays empty: `first.admin` looked like an answer and was not one
+    // an admin nobody named is written `none`: `first.admin` looked like an answer and was not one
     let resolved_iac_user = iac_user.unwrap_or_default();
     // The template and the shipped presets both compose members as
     // `user:{first-admin}@{customer-domain}`, so `first-admin` holds the local part only.
@@ -571,7 +571,7 @@ async fn org_estate(stated: crate::init_params::Stated, rc: &ToolConfig, force: 
         );
     }
     // the two names that FOLLOW from the short name, by the defaults
-    // `presets/estate-core.satz` documents — derived when it is known, empty when it is not
+    // `presets/estate-core.satz` documents — derived when it is known, `none` when it is not
     let shortname = customer_shortname.clone().unwrap_or_default();
     let derive_from_shortname = |given: Option<String>, suffix: &str| -> String {
         match given {
@@ -585,7 +585,7 @@ async fn org_estate(stated: crate::init_params::Stated, rc: &ToolConfig, force: 
         shortname: customer_shortname.unwrap_or_default(),
         billing_id: billing_account_infra.unwrap_or_default(),
         region: default_region.unwrap_or_else(|| crate::bootstrap::DEFAULT_REGION.to_string()),
-        // never a placeholder: unset stays empty, and the bootstrap gate refuses it by name
+        // never a placeholder: unset is written `none`, and the bootstrap gate refuses it by name
         org_id: customer_organization_id.unwrap_or_default(),
         domain: domain.clone(),
         project_id: derive_from_shortname(infra_project_name, "-infra-001"),

@@ -49,7 +49,8 @@ pub(crate) struct QuestionRow {
     #[schemars(with = "Option<serde_json::Value>")]
     pub current: Option<serde_yaml::Value>,
     /// The pack's default when unanswered and one exists — what an interview
-    /// OFFERS. Absent when the pack cannot know (an empty string, an empty list).
+    /// OFFERS. Absent when no file gives the param a value (every declaration is
+    /// `none`), and while the default is built from a param still unanswered.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<serde_json::Value>")]
     pub default: Option<serde_yaml::Value>,
@@ -58,10 +59,11 @@ pub(crate) struct QuestionRow {
     /// organization.
     pub blocking: bool,
     /// The shape the pack declares for the param — `string`, `number`, `bool`, `list`
-    /// or `map` — and so the shape an answer must have. A param declared `[]` has no
-    /// default to offer, and without this a client typing one address wrote a string
-    /// where the provider wants a set. Absent for a choice, which is answered by an
-    /// option's name.
+    /// or `map` — and so the shape an answer must have: a client typing one address where
+    /// the pack declares `[]` would write a string where the provider wants a set. A param
+    /// declared `none` takes the shape of the default another file gives it, else of the
+    /// question's `recommend`; absent without either, and for a choice, which is answered
+    /// by an option's name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shape: Option<&'static str>,
     /// The pack's own description — its header's first paragraph — so an
@@ -75,8 +77,8 @@ pub(crate) struct QuestionRow {
     /// also answered by [`NO_BRANCH`] — every option `false`.
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub required: bool,
-    /// What an empty answer means, where the question says (`empty = "…"`): `""` is then
-    /// an answer — offered, accepted and counted — rather than one still to give.
+    /// What an empty answer means, where the question says (`empty = "…"`): shown beside
+    /// `""` wherever the answer or the default is shown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub empty: Option<String>,
     /// the file that declared it — a fork asks its own questions
@@ -149,11 +151,13 @@ pub(crate) fn questions_report(
 
     // The estate's OWN bindings. The fold cannot answer "did a human decide
     // this": a pack default and an estate's decision look the same from there.
-    // What the estate file itself writes is the record.
+    // What the estate file itself writes is the record — a value, not a `none`, which
+    // binds nothing.
     let own: BTreeSet<String> = satz_core::satz::parse(&src)
         .map_err(|e| format!("{}:{}: {}", file_name, e.line, e.msg))?
         .params
         .into_iter()
+        .filter(|(_, v, _)| *v != satz_core::satz::Value::None)
         .map(|(name, _, _)| name)
         .collect();
 
@@ -194,26 +198,22 @@ pub(crate) fn questions_report(
                     let blocking = picked.is_none();
                     ("unanswered", None, picked, blocking)
                 }
-            } else if own.contains(&q.subject) && (q.empty.is_some() || !restates_unknown(&q.subject, declared, &env)) {
-                // a question that says what "" means takes "" as an answer like any other
-                ("answered", env.get(&q.subject).cloned(), None, false)
             } else if own.contains(&q.subject) {
-                // bound to nothing: open, and the derivation is the offer once its inputs
-                // are answered — the estate's `""` hides the pack's default from the fold
-                let default = derived_default(&q.subject, declared, &env);
-                let blocking = default.is_none();
-                ("unanswered", None, default, blocking)
+                // whatever the estate binds is its answer — `""` and `[]` are values
+                ("answered", env.get(&q.subject).cloned(), None, false)
             } else {
-                let empty_offer = q.empty.is_some() && env.get(&q.subject).is_some_and(is_empty);
-                let usable = empty_offer
-                    || match declared {
-                        Some(f) => default_usable(&q.subject, &f.params, &own, &env, 0),
-                        None => env.get(&q.subject).map(|v| !is_empty(v)).unwrap_or(false),
-                    };
+                let usable = match declared {
+                    Some(f) => default_usable(&q.subject, &f.params, &own, &env, 0),
+                    None => env.contains_key(&q.subject),
+                };
                 let default = if usable { env.get(&q.subject).cloned() } else { None };
                 ("unanswered", None, default, !usable)
             };
-            let shape = if q.oneof { None } else { declared_shape(&q.subject, declared.map(|f| &f.params), &env, 0) };
+            let shape = if q.oneof {
+                None
+            } else {
+                declared_shape(&q.subject, declared.map(|f| &f.params), &env, 0).or_else(|| q.recommend.as_ref().and_then(satz_shape))
+            };
             let one_way = q.reversal == satz_core::satz::Reversal::Recreate
                 || q.blast == satz_core::satz::Blast::High;
             match state {
@@ -325,7 +325,21 @@ fn declared_shape(
         Some(Value::Obj(_)) => Some("map"),
         Some(Value::Ref(other)) if depth < 8 => declared_shape(other, params, env, depth + 1),
         Some(Value::Ref(_)) => None,
-        None => env.get(name).and_then(value_shape),
+        // `none`: the shape of the default another file gives, if one does
+        Some(Value::None) | None => env.get(name).and_then(value_shape),
+    }
+}
+
+/// The shape of a value as written, where it is a literal.
+fn satz_shape(v: &satz_core::satz::Value) -> Option<&'static str> {
+    use satz_core::satz::Value;
+    match v {
+        Value::Str(_) => Some("string"),
+        Value::Num(_) => Some("number"),
+        Value::Bool(_) => Some("bool"),
+        Value::List(_) => Some("list"),
+        Value::Obj(_) => Some("map"),
+        Value::Ref(_) | Value::None => None,
     }
 }
 
@@ -367,8 +381,8 @@ fn refs(v: &satz_core::satz::Value, out: &mut Vec<String>) {
     }
 }
 
-/// May an interview OFFER the pack's default for `name`? Not when it is empty,
-/// and not when it is built from a param nobody has answered and no default can
+/// May an interview OFFER the pack's default for `name`? Not when no file gives it a
+/// value, and not when it is built from a param nobody has answered and no default can
 /// stand in for: `"{customer_shortname}-infra-001"` with the short name still
 /// open folds to `-infra-001`, which is a string and not a default.
 fn default_usable(
@@ -381,8 +395,7 @@ fn default_usable(
     if depth > 8 {
         return false;
     }
-    let Some(v) = env.get(name) else { return false };
-    if is_empty(v) {
+    if !env.contains_key(name) {
         return false;
     }
     // declared in another file: the fold has resolved it, and that is the answer
@@ -402,73 +415,6 @@ pub(crate) fn rename_to(estate: &Path, r: &QuestionsReport) -> Option<String> {
     }
     let stem = estate.file_stem()?.to_str()?;
     (stem != id).then(|| format!("{}.satz", id))
-}
-
-/// Whether the estate's own binding of a param is no answer at all. Two shapes are:
-///
-/// - The pack declares the param `""` because no default is possible — the identity
-///   params in `presets/estate-core.satz`, organization, directory customer, domain,
-///   billing account. `satz init` writes `""` for the ones it could not derive, and
-///   `bootstrap`'s gate refuses that value by name, so the question has to
-///   agree with the gate or the interview asks nothing while bootstrap refuses.
-/// - The pack DERIVES the param from others — `infra_project_name =
-///   "{customer_shortname}-infra-001"`. init writes `""` when the shortname is not
-///   known yet, and an empty binding overrides the derivation with nothing: a project
-///   id cannot be empty. It is open, and `derived_default` offers the derivation.
-///
-/// A pack default that is a plain non-empty literal is different: `infra_folder_name
-/// = ""` against `"Infrastructure"` is a real choice (no folder) and stays answered.
-fn restates_unknown(name: &str, declared: Option<&PackFacts>, env: &Env) -> bool {
-    let own_empty = env.get(name).map(is_empty).unwrap_or(true);
-    let not_a_choice = match declared.and_then(|f| f.params.get(name)) {
-        Some(satz_core::satz::Value::Str(parts)) => parts.iter().all(|p| match p {
-            satz_core::satz::StrPart::Lit(l) => l.trim().is_empty(),
-            satz_core::satz::StrPart::Param(_) => false,
-        }) || parts.iter().any(|p| matches!(p, satz_core::satz::StrPart::Param(_))),
-        Some(satz_core::satz::Value::Ref(_)) => true,
-        Some(_) => false,
-        // a pack that declares no default at all has none to restate
-        None => true,
-    };
-    own_empty && not_a_choice
-}
-
-/// The pack's derivation of a param, worked out from what the estate already
-/// answers: `"{customer_shortname}-infra-001"` with `customer_shortname = "stec"` is
-/// `"stec-infra-001"`. `None` while an input is still empty — the question is then
-/// blocking, and becomes offerable the moment that input is answered — and for a
-/// pack default that derives nothing.
-fn derived_default(name: &str, declared: Option<&PackFacts>, env: &Env) -> Option<serde_yaml::Value> {
-    let text = |v: &serde_yaml::Value| -> Option<String> {
-        match v {
-            serde_yaml::Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
-            serde_yaml::Value::Number(n) => Some(n.to_string()),
-            _ => None,
-        }
-    };
-    match declared.and_then(|f| f.params.get(name))? {
-        satz_core::satz::Value::Str(parts) if parts.iter().any(|p| matches!(p, satz_core::satz::StrPart::Param(_))) => {
-            let mut out = String::new();
-            for part in parts {
-                match part {
-                    satz_core::satz::StrPart::Lit(l) => out.push_str(l),
-                    satz_core::satz::StrPart::Param(p) => out.push_str(&text(env.get(p)?)?),
-                }
-            }
-            Some(serde_yaml::Value::String(out))
-        }
-        satz_core::satz::Value::Ref(p) => env.get(p).filter(|v| !is_empty(v)).cloned(),
-        _ => None,
-    }
-}
-
-fn is_empty(v: &serde_yaml::Value) -> bool {
-    match v {
-        serde_yaml::Value::Null => true,
-        serde_yaml::Value::String(s) => s.trim().is_empty(),
-        serde_yaml::Value::Sequence(s) => s.is_empty(),
-        _ => false,
-    }
 }
 
 fn truthy(v: Option<&serde_yaml::Value>) -> bool {
@@ -724,66 +670,6 @@ pub(crate) fn short(v: &serde_yaml::Value) -> String {
 #[cfg(test)]
 mod render_tests {
     use super::*;
-
-    /// The rule that made `init --interview` ask nothing: an estate that binds an
-    /// identity param to `""` has restated the pack's own "no default possible", and
-    /// the question is still open — the bootstrap's gate refuses the same value by name.
-    /// A param whose pack default is NOT empty is different: `""` there is a choice.
-    /// Found on a fresh estate: the shortname was answered in the interview, after
-    /// init had written `""` for the project and bucket derived from it, and neither
-    /// was asked. A derived param bound to nothing is open, and the derivation is the
-    /// offer once its input is answered.
-    #[test]
-    fn a_derived_param_bound_to_nothing_is_offered_its_derivation() {
-        let declared = PackFacts {
-            description: String::new(),
-            params: BTreeMap::from([(
-                "infra_project_name".to_string(),
-                satz_core::satz::Value::Str(vec![
-                    satz_core::satz::StrPart::Param("customer_shortname".into()),
-                    satz_core::satz::StrPart::Lit("-infra-001".into()),
-                ]),
-            )]),
-        };
-        let mut env: Env = BTreeMap::from([
-            ("infra_project_name".to_string(), serde_yaml::Value::String(String::new())),
-            ("customer_shortname".to_string(), serde_yaml::Value::String(String::new())),
-        ]);
-        assert!(restates_unknown("infra_project_name", Some(&declared), &env), "an empty project id is no answer");
-        // the input is not answered yet: nothing to offer, so the question blocks
-        assert_eq!(derived_default("infra_project_name", Some(&declared), &env), None);
-        // once it is, the derivation is the offer
-        env.insert("customer_shortname".into(), serde_yaml::Value::String("stec".into()));
-        assert_eq!(
-            derived_default("infra_project_name", Some(&declared), &env),
-            Some(serde_yaml::Value::String("stec-infra-001".into()))
-        );
-    }
-
-    #[test]
-    fn an_empty_binding_of_a_param_nobody_can_default_is_still_open() {
-        let str_lit = |s: &str| satz_core::satz::Value::Str(vec![satz_core::satz::StrPart::Lit(s.to_string())]);
-        let declared = PackFacts {
-            description: String::new(),
-            params: BTreeMap::from([
-                ("customer_organization_id".to_string(), str_lit("")),
-                ("infra_folder_name".to_string(), str_lit("Infrastructure")),
-            ]),
-        };
-        let env: Env = BTreeMap::from([
-            ("customer_organization_id".to_string(), serde_yaml::Value::String(String::new())),
-            ("infra_folder_name".to_string(), serde_yaml::Value::String(String::new())),
-            ("customer_domain".to_string(), serde_yaml::Value::String("example.com".into())),
-        ]);
-        // "" for an undefaultable param: the pack's unknown, restated — open
-        assert!(restates_unknown("customer_organization_id", Some(&declared), &env));
-        // no derivation to offer for it
-        assert_eq!(derived_default("customer_organization_id", Some(&declared), &env), None);
-        // "" where the pack offers a default: a real choice (no folder) — answered
-        assert!(!restates_unknown("infra_folder_name", Some(&declared), &env));
-        // a value is a value
-        assert!(!restates_unknown("customer_domain", Some(&declared), &env));
-    }
 
     #[test]
     fn the_catalog_workbook_carries_the_reason_and_marks_what_is_open() {

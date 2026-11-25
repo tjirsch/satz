@@ -1,7 +1,7 @@
 //! What `satz init` writes, and where each value came from.
 //!
 //! Three sources, in this order and no other: stated on the command line, derived
-//! from what the signed-in person may read, or EMPTY. There is no fourth — init
+//! from what the signed-in person may read, or NONE — the param written `none`, no value. There is no fourth — init
 //! used to substitute `"123456789012"` for an unknown organization and
 //! `"first.admin"` for an unknown admin, which produced a file that looked
 //! complete and pointed `satz bootstrap` at an organization nobody owned.
@@ -65,7 +65,7 @@ pub(crate) struct Derivations {
 
 impl Derivations {
     /// `stated` wins untouched. Otherwise take `derived` when it has a value and
-    /// say where it came from; when it has none, the param stays empty and is
+    /// say where it came from; when it has none, the param is written `none` and is
     /// named at the end. Never a placeholder.
     pub(crate) fn fill(
         &mut self,
@@ -98,7 +98,7 @@ impl Derivations {
         }
         if !self.empty.is_empty() {
             println!(
-                "init: nothing could answer {} — written empty, and `satz bootstrap` refuses by name until they are set",
+                "init: nothing could answer {} — written `none`, no value, and `satz bootstrap` refuses by name until they are set",
                 self.empty.join(", ")
             );
         }
@@ -107,9 +107,10 @@ impl Derivations {
 
 /// The value a param is bound to in an estate's `params` block, if it is bound at
 /// all: a string without its quotes, anything else (a reference, a number) as it is
-/// written. Lexical, not transpiled: this runs on a file whose params are still empty.
+/// written; `none` binds nothing. Lexical, not transpiled: this runs on a file whose
+/// params have no value yet.
 pub(crate) fn current_value(src: &str, param: &str) -> Result<Option<String>, String> {
-    let Some(lit) = crate::interview::bound_literal(src, param)? else { return Ok(None) };
+    let Some(lit) = crate::interview::bound_literal(src, param)?.filter(|l| l != satz_core::satz::NONE) else { return Ok(None) };
     Ok(Some(match lit.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
         Some(inner) => inner.to_string(),
         None => lit,
@@ -151,10 +152,10 @@ mod tests {
 
 params {
   customer_id              = "C0example"
-  customer_organization_id = ""
+  customer_organization_id = none
   customer_domain          = "example.com" // the primary domain
   customer_shortname       = "acme"
-  billing_account_infra    = ""
+  billing_account_infra    = none
   infra_project_name       = "acme-infra-001"
   default_region           = "europe-west3"
 }
@@ -226,7 +227,7 @@ params {
     fn current_value_reads_a_binding_without_compiling_the_file() {
         let read = |src: &str, p: &str| current_value(src, p).unwrap();
         assert_eq!(read(ESTATE, "customer_shortname").as_deref(), Some("acme"));
-        assert_eq!(read(ESTATE, "customer_organization_id").as_deref(), Some(""));
+        assert_eq!(read(ESTATE, "customer_organization_id"), None, "`none` binds nothing");
         assert_eq!(read(ESTATE, "customer_domain").as_deref(), Some("example.com"), "the comment is not the value");
         assert_eq!(read(ESTATE, "infra_bucket_name"), None);
         // a reference rather than a literal

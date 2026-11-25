@@ -15,6 +15,50 @@ names the file and the line.
 
 ### v0.111.0
 
+**`none` declares a param without a value, and `""` and `[]` are values** (ADR 0106).
+`p = none` in `params { … }` says the file reads `p` and proposes nothing; it agrees with
+one default another file gives, which is then the value. Four things an estate may hold
+change:
+
+- *An estate that binds `""` (or `[]`) for a param a question asks* has answered it: `satz
+  questions` reports it `answered`, and `bootstrap` and `transpile --apply` no longer refuse
+  for it. Where the empty value was a placeholder — what `satz init` wrote for a value it
+  could not derive — replace the line with `p = none`, or delete it, and the question is
+  open again. To find them, `grep -nE '= (""|\[\])' <estate>.satz`.
+- *A param every file declares `none`, that the estate does not bind and that something
+  reads,* is refused at the read, naming the declarations — unless a question asks it, when
+  the transpile runs and the question is blocking as before. The library's packs below
+  declare `none` where they wrote `""` or `[]`: an estate that used one without binding the
+  param and without its question applying is refused; bind the param.
+- *A pack default `""` or `[]` is offered* by `satz questions` and the interview, and
+  `--accept-defaults` binds it. A question that was blocking on such a default is not; the
+  packs that meant "must be provided" by it declare `none` now and stay blocking.
+- *`none` is a keyword.* A param, an input or a local value named `none` is refused; rename
+  it. `none` as an input's or a local value's value is refused; write the value.
+
+`satz init` writes `none` where it wrote `""`. The packs that declare `none` now:
+`estate_core` 3.1 (`customer_id`, `customer_organization_id`, `customer_domain`,
+`customer_shortname`, `first_admin`, `billing_account_infra`, `customer_longname`,
+`workload_folder_name`), `integrations.microsoft_sentinel` 1.2,
+`integrations.microsoft_defender_for_cloud` 0.9, `sa_security_audit` 1.2, `scc_findings_siem`
+1.2, `cis_extensions.access_approval` 1.3, `cis_extensions.api_key_services` and
+`cis_extensions.api_key_services_dry_run` 1.6, and the workload packs `workload_project` 1.3
+and `project_budget` 1.1. `packs/project-budget.satz` and
+`presets/organization-budget.satz` now agree on `budget_amount` and `budget_currency`. An
+estate that binds every param a question asks plans as before. A param with no value is no
+longer written to `variables.tf` and `terraform.tfvars` as `""`.
+
+The JSON of `satz questions` (and `satz_questions`, `satz_interview`):
+
+| before | now | where |
+|---|---|---|
+| `default` absent for a pack default `""` or `[]` | `default` is `""` or `[]`; absent for a param no file gives a value | each row of `questions` |
+| `blocking: true` for a pack default `""` or `[]` | `blocking: false`; `true` for a param no file gives a value | the same |
+| `shape` from the asking pack's own default | for a param it declares `none`, the shape of another file's default or of the question's `recommend`, else absent | the same |
+
+The JSON of `satz packs` (`params[].default`, and `satz_packs`): `null` for a param
+declared `none`, `"\"\""` for one declared `""`, where `null` stood for `""`.
+
 **`locals` is a statement** (ADR 0105). A top-level `locals { name = value }` in a pack or
 an estate declares local values, read by their bare names in that file only. Where a type
 map holds a resource labeled `locals` written unquoted — `google_storage_bucket { locals {
@@ -1571,6 +1615,14 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `estate_core` | 3.1 | 2026-11-25 | the eight params no default is possible for — `customer_id`, `customer_organization_id`, `customer_domain`, `customer_shortname`, `first_admin`, `billing_account_infra`, `customer_longname`, `workload_folder_name` — are declared `none` where they were `""`: the pack proposes no value, and each question stays blocking until the estate binds one. An estate that binds `""` for one has answered it with an empty string. Nothing emitted changes for an estate that binds them |
+| `integrations.microsoft_sentinel` | 1.2 | 2026-11-25 | `sentinel_project_number` and `sentinel_workload_pool_id` are declared `none` where they were `""`: the pack proposes no value, and the questions block until the estate binds one. Nothing emitted changes for an estate that binds them |
+| `sa_security_audit` | 1.2 | 2026-11-25 | `security_audit_sa_project` is declared `none` where it was `""`: the pack proposes no value, and the question blocks until the estate binds one. Nothing emitted changes for an estate that binds it |
+| `integrations.microsoft_defender_for_cloud` | 0.9 | 2026-11-25 | `mdc_workload_pool_id` and `mdc_mgmt_project_id` are declared `none` where they were `""`: the pack proposes no value, and the questions block until the estate binds one. `mdc_mgmt_project_folder` keeps `""`, the organization. Nothing emitted changes for an estate that binds them |
+| `scc_findings_siem` | 1.2 | 2026-11-25 | `scc_siem_subscriber` is declared `none` where it was `""`: the pack proposes no value, and the question blocks until the estate binds one. Nothing emitted changes for an estate that binds it |
+| `cis_extensions.access_approval` | 1.3 | 2026-11-25 | `access_approval_notification_emails` is declared `none` where it was `[]`: the pack proposes no value, and the question blocks until the estate binds the list. Nothing emitted changes for an estate that binds it |
+| `cis_extensions.api_key_services` | 1.6 | 2026-11-25 | `allowed_api_key_services` is declared `none` where it was `[]`: the pack proposes no value, and the question blocks until the estate binds the list — `[]` included, which is an answer. Nothing emitted changes for an estate that binds it |
+| `cis_extensions.api_key_services_dry_run` | 1.6 | 2026-11-25 | `allowed_api_key_services` is declared `none` where it was `[]`: the pack proposes no value, and the question blocks until the estate binds the list — `[]` included, which is an answer. Nothing emitted changes for an estate that binds it |
 | `estate_map` | 5.2 | 2026-11-23 | the security-group choice has a third answer, `security_model_own`: the customer's own groups, for which no model pack goes in, satz creates no group and grants no admin role; the `requires` of billing account permissions on S1 or S2 is gone — the pack reads the model's group name and shows the edge itself. Nothing emitted changes |
 | `billing_account_permissions` | 1.3 | 2026-11-23 | `billing_admins_group` defaults to `{gcp_billing_admins_name}@{customer_domain}`, the model's billing-admins group, rather than a literal of the same address, so an estate on the customer's own groups uses the pack by answering the group's address. Nothing emitted changes for an estate on S1 or S2 |
 | `delegation` | 2.1 | 2026-11-20 | the interface `delegation-<name>` also exports `estate_account_id`, the estate account's id `svc-deploy-<name>`, which a workload estate reads as its `svc_iac_account`; nothing emitted changes |

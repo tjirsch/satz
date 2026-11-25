@@ -12,14 +12,14 @@
 // are non-empty and limited to `allowed_api_key_services`, which is what the
 // control asks for.
 
-pack cis_extensions.api_key_services version "1.5"
+pack cis_extensions.api_key_services version "1.6"
 params {
   // acknowledges the notice below: the estate binds it true once `satz adopt` has run
   cis_api_key_services_adopted = false
 
   // The services an API key may target. Empty means no service-account API key
   // may be created at all — the strictest reading, and a legitimate one.
-  allowed_api_key_services = []
+  allowed_api_key_services = none
 }
 
 notice cis_api_key_services_adopted {

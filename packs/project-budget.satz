@@ -22,7 +22,7 @@
 // budget names no channel, and Google writes to the billing account's administrators —
 // who are not the team.
 
-pack project_budget version "1.0"
+pack project_budget version "1.1"
 
 params {
   // The project the budget counts, its number, and the billing account it is linked to.
@@ -30,8 +30,8 @@ params {
   budget_project_number  = "${{interface.project_number}}"
   budget_billing_account = "${{interface.billing_account}}"
   // The amount, in whole units of the currency, per calendar month.
-  budget_amount          = ""
-  budget_currency        = ""
+  budget_amount          = none
+  budget_currency        = none
   // The address that is told at each threshold: a person's or a group's. Empty names none.
   budget_email           = ""
   // The shares of the amount at which an alert is sent.
