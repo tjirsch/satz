@@ -1434,7 +1434,7 @@ check-request <file> <estate>` and vendored into the estate by pull request:
 
 | list | key | fields |
 |---|---|---|
-| `delegated_folders` | `name` | `name` (the folder's name, its label — `google_folder.<name>` — and its interface's: lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in it), `display_name` (the name it is shown under; the entry's name when left out), `parent` (`google_folder.workload_folder.name` when left out; another folder the estate declares as `google_folder.<label>.name`, or one that exists as `folders/<id>`), `budgets` (`false` when left out) |
+| `delegated_folders` | `name` | `name` (the folder's name, its label — `google_folder.<name>` — and its interface's: lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in it), `display_name` (the name it is shown under; the entry's name when left out; at most 30 letters, digits, spaces, `-` and `_`, starting and ending with a letter or digit, Google's rule for a folder's display name), `parent` (`google_folder.workload_folder.name` when left out; another folder the estate declares as `google_folder.<label>.name`, or one that exists as `folders/<id>`), `budgets` (`false` when left out) |
 
 An entry may say `budgets = true`: the account may then manage budgets for the projects in
 that folder, and for nothing else ([`delegated-budget-role.satz`](#delegated-budget-rolesatz)).
@@ -1443,7 +1443,7 @@ that folder, and for nothing else ([`delegated-budget-role.satz`](#delegated-bud
 
 | resource | what |
 |---|---|
-| `google_folder.shop_frontend` | the folder, under the entry's `parent` |
+| `google_folder.shop_frontend` | the folder, shown as the entry's `display_name`, under the entry's `parent` |
 | the account's grants | `delegated_folders_roles` on this folder, for `google_service_account.deploy_shop` |
 
 **What the account may do, and what it may not.** In its folders it creates, changes and
@@ -1540,7 +1540,7 @@ params {
 
 | list | key | fields |
 |---|---|---|
-| `delegated_projects` | `name` | `name` (the project's name, and its interface's — lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in the project), `apis` (the APIs enabled on the project; the five below when left out), `budgets` (`false` when left out) |
+| `delegated_projects` | `name` | `name` (the project's name, and its interface's — lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in the project), `display_name` (the name the project is shown under; the entry's name when left out; 4 to 30 letters, digits, spaces, `-`, `'`, `"` and `!`, Google's rule for a project's display name — an entry named `rag` carries one, `display_name = "rag-workload"`), `apis` (the APIs enabled on the project; the five below when left out), `budgets` (`false` when left out) |
 
 An entry may say `budgets = true`: the account may then manage budgets for that project,
 and for nothing else ([`delegated-budget-role.satz`](#delegated-budget-rolesatz)). `apis`
@@ -1550,7 +1550,7 @@ is a list, and an entry that states it states it whole.
 
 | resource | what |
 |---|---|
-| `google_project.shop_backend` | `{customer_shortname}-shop-backend-001` under `delegated_projects_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
+| `google_project.shop_backend` | `{customer_shortname}-shop-backend-001`, shown as the entry's `display_name`, under `delegated_projects_folder`, billed to `billing_account_infra`, with the entry's `apis` — the Cloud Resource Manager, IAM, IAM Credentials, Service Usage and Cloud Storage APIs unless it says more |
 | the account's grants | `delegated_projects_roles` on this project, for `google_service_account.deploy_shop` |
 
 A name with `-` is the label with `_`: `data-lake` is `google_project.data_lake`.

@@ -299,6 +299,29 @@ fn key_differs(real: &serde_yaml::Value, twin: &serde_yaml::Value) -> Option<Str
     None
 }
 
+/// One entry with its list's defaults written in: a field it leaves out takes the default's
+/// value, or the value of the field of its own the default reads. A field a default reads
+/// takes no default itself (the parser refuses it), so the order does not matter; an entry
+/// without that field is left without the defaulted one too.
+fn fill_entry(e: &mut serde_yaml::Value, values: &[(String, serde_yaml::Value)], reads: &[(String, String)]) {
+    let serde_yaml::Value::Mapping(fields) = e else { return };
+    for (field, value) in values {
+        let k = serde_yaml::Value::String(field.clone());
+        if !fields.contains_key(&k) {
+            fields.insert(k, value.clone());
+        }
+    }
+    for (field, read) in reads {
+        let k = serde_yaml::Value::String(field.clone());
+        if fields.contains_key(&k) {
+            continue;
+        }
+        if let Some(v) = fields.get(serde_yaml::Value::String(read.clone())).cloned() {
+            fields.insert(k, v);
+        }
+    }
+}
+
 fn resolve_key(k: &Key, env: &Env, file: &str, line: usize) -> Result<String, PipelineError> {
     match k {
         Key::Ident(s) => Ok(s.clone()),
@@ -326,9 +349,12 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env, locals_
         if let Err(msg) = check_request_entries(r, entries, &[]) {
             return perr(file, r.line, msg);
         }
-        let mut defaults = Vec::new();
+        let (mut defaults, mut field_defaults) = (Vec::new(), Vec::new());
         for (f, v, line) in &r.defaults {
-            defaults.push((f.clone(), resolve_value(v, &scoped(env, locals_of, file), file, *line)?));
+            match satz::default_reads_field(v) {
+                Some(read) => field_defaults.push((f.clone(), read.to_string())),
+                None => defaults.push((f.clone(), resolve_value(v, &scoped(env, locals_of, file), file, *line)?)),
+            }
         }
         out.push(ResolvedRequest {
             param: r.param.clone(),
@@ -336,6 +362,7 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env, locals_
             fields: r.fields.clone(),
             patterns: r.patterns.clone(),
             defaults,
+            field_defaults,
             description: r.description.clone(),
             entries: entries.clone(),
             file: file.clone(),
@@ -463,13 +490,7 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
         // transpile fills it in — so an entry already vendored compares equal to its copy in
         // the estate's list
         for e in entries.iter_mut() {
-            let serde_yaml::Value::Mapping(fields) = e else { continue };
-            for (f, v) in &point.defaults {
-                let k = serde_yaml::Value::String(f.clone());
-                if !fields.contains_key(&k) {
-                    fields.insert(k, v.clone());
-                }
-            }
+            fill_entry(e, &point.defaults, &point.field_defaults);
         }
         let decl = satz::RequestDecl {
             param: point.param.clone(),
@@ -996,6 +1017,9 @@ pub struct ResolvedRequest {
     pub patterns: Vec<(String, String)>,
     /// per field, the value an entry without it takes, resolved
     pub defaults: Vec<(String, serde_yaml::Value)>,
+    /// per field, the field of the same entry whose value an entry without it takes
+    /// (`display_name = each.name`)
+    pub field_defaults: Vec<(String, String)>,
     pub description: Option<String>,
     /// the entries the list holds now, contributions included, defaults filled in
     pub entries: Vec<serde_yaml::Value>,
@@ -3559,21 +3583,18 @@ impl Walk<'_> {
         if r.defaults.is_empty() {
             return Ok(());
         }
-        let mut values = Vec::new();
+        let (mut values, mut reads) = (Vec::new(), Vec::new());
         for (field, v, line) in &r.defaults {
-            values.push((field.clone(), resolve_value(v, &self.genv, file_name, *line)?));
+            match satz::default_reads_field(v) {
+                Some(read) => reads.push((field.clone(), read.to_string())),
+                None => values.push((field.clone(), resolve_value(v, &self.genv, file_name, *line)?)),
+            }
         }
         let Some(serde_yaml::Value::Sequence(entries)) = self.genv.get_mut(&r.param) else {
             return Ok(());
         };
         for e in entries.iter_mut() {
-            let serde_yaml::Value::Mapping(fields) = e else { continue };
-            for (field, value) in &values {
-                let k = serde_yaml::Value::String(field.clone());
-                if !fields.contains_key(&k) {
-                    fields.insert(k, value.clone());
-                }
-            }
+            fill_entry(e, &values, &reads);
         }
         Ok(())
     }
@@ -6669,6 +6690,29 @@ google_cloud_identity_group {
         // a team's file sending its vendored entry again, as written, is no collision
         let found = check_request_file(team, &fe.requests, &fe.tfvars);
         assert!(found.is_empty(), "{:?}", found);
+    }
+
+    /// A default that reads another field of the entry fills each entry from its own value,
+    /// and the list's pattern holds the filled value: an entry whose name is too short for
+    /// the field it defaults is refused naming the entry, the field, the value and the
+    /// pattern.
+    #[test]
+    fn a_default_read_from_the_entry_fills_it_and_its_pattern_holds() {
+        let pack = |list: &str| {
+            format!(
+                "pack proj version \"1.0\"\nparams {{\n  team_projects = [ {} ]\n}}\nentries team_projects {{\n  key      = \"name\"\n  fields   = [\"name\", \"display_name\"]\n  patterns = {{ display_name = \"[a-z ]{{{{4,30}}}}\" }}\n  defaults = {{ display_name = each.name }}\n}}\ngoogle_project {{\n  each team_projects by name {{\n    name       = \"{{each.display_name}}\"\n    project_id = \"acme-{{each.name}}\"\n  }}\n}}\n",
+                list
+            )
+        };
+        let src = format!("{}use \"proj.satz\"\n", HEAD);
+        let fe = compile_with(&src, &[("proj.satz", &pack("{ name = \"ledger\" }, { name = \"rag\" display_name = \"rag workload\" }"))]).expect("transpiles");
+        let got = expanded(&fe, "google_project");
+        let name = |label: &str| got.iter().find(|(l, _)| l == label).unwrap().1["name"].clone();
+        assert_eq!(name("ledger"), serde_yaml::Value::String("ledger".into()));
+        assert_eq!(name("rag"), serde_yaml::Value::String("rag workload".into()));
+        assert_eq!(fe.requests[0].field_defaults, vec![("display_name".to_string(), "name".to_string())]);
+        let e = compile_with(&src, &[("proj.satz", &pack("{ name = \"rag\" }"))]).err().expect("refused");
+        assert!(e.msg.contains("entry `rag` has `display_name` = \"rag\", which the list's pattern `[a-z ]{4,30}` does not match"), "{}", e.msg);
     }
 
     /// `each` alone, and `each <name> { … }`, are what they were: a label, a named entry.

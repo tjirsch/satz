@@ -797,7 +797,7 @@ pub(crate) enum Commands {
     },
     /// Add one entry to a list a pack declares with `entries` — a delegation, a delegated
     /// folder or project, a subnet, a budget: `satz add-entry <estate> delegated_projects
-    /// name=rag delegation=rag budgets=true`. Checked against the declaration (its fields,
+    /// name=payments delegation=payments budgets=true`. Checked against the declaration (its fields,
     /// their patterns, the key new), written into the estate's params, and the estate is
     /// transpiled and restored when it does not transpile. `satz interfaces` lists the lists.
     AddEntry {

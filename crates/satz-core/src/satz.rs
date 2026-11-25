@@ -454,9 +454,20 @@ pub struct RequestDecl {
     /// per field, the value an entry that does not carry the field takes, as written —
     /// resolved against the params when the list is read, so every reader of
     /// the list (an `each`, the request file's check, the interface, tfvars) sees it filled in
+    /// A default may read another field of the same entry, `each.<field>`
+    /// (`default_reads_field`).
     pub defaults: Vec<(String, Value, usize)>,
     pub description: Option<String>,
     pub line: usize,
+}
+
+/// The field an `entries` default reads, `display_name = each.name`: the entry's own value
+/// of that field, not a param's. `None` for every other value.
+pub fn default_reads_field(v: &Value) -> Option<&str> {
+    match v {
+        Value::Ref(r) => r.strip_prefix("each."),
+        _ => None,
+    }
 }
 
 /// `private <type>.<label>`: the estate keeps that resource — a pack's too — out of every
@@ -1936,6 +1947,18 @@ impl P {
         }
         if let Some((_, _, dl)) = defaults.iter().find(|(f, _, _)| *f == key) {
             return err(*dl, format!("entries {}: the key `{}` has no default — it names the entry, so every entry carries it", param, key));
+        }
+        for (f, v, dl) in &defaults {
+            let Some(read) = default_reads_field(v) else { continue };
+            if !fields.iter().any(|x| x == read) {
+                return err(*dl, format!("entries {}: the default of `{}` reads `each.{}`, which is no field's — the fields: {}", param, f, read, fields.join(", ")));
+            }
+            if read == f {
+                return err(*dl, format!("entries {}: the default of `{}` reads the field itself", param, f));
+            }
+            if defaults.iter().any(|(g, _, _)| g == read) {
+                return err(*dl, format!("entries {}: the default of `{}` reads `{}`, which takes a default itself — a default reads a field the entry carries as written", param, f, read));
+            }
         }
         Ok(RequestDecl { param, key, fields, patterns, defaults, description, line })
     }
@@ -4779,6 +4802,24 @@ mod review_2026_08_29_tests {
             ("  defaults = { name = \"x\" }\n", "the key `name` has no default"),
         ] {
             let src = format!("pack p\nparams {{\n  xs = []\n}}\nentries xs {{\n  key      = \"name\"\n  fields   = [\"name\", \"apis\"]\n{}}}\n", body);
+            let e = parse(&src).unwrap_err();
+            assert!(e.msg.contains(msg), "{}", e.msg);
+        }
+    }
+
+    /// A default reads another field of the entry as `each.<field>`: a field the entry
+    /// carries as written, never the field itself, a field the entries do not have, or a
+    /// field that takes a default of its own.
+    #[test]
+    fn entries_default_reads_a_field_of_the_entry() {
+        let f = parse("pack p\nparams {\n  xs = []\n}\nentries xs {\n  key      = \"name\"\n  fields   = [\"name\", \"title\"]\n  defaults = { title = each.name }\n}\n").unwrap();
+        assert_eq!(default_reads_field(&f.requests[0].defaults[0].1), Some("name"));
+        for (body, msg) in [
+            ("  defaults = { title = each.size }\n", "reads `each.size`, which is no field's"),
+            ("  defaults = { title = each.title }\n", "reads the field itself"),
+            ("  defaults = { title = each.apis apis = [] }\n", "reads `apis`, which takes a default itself"),
+        ] {
+            let src = format!("pack p\nparams {{\n  xs = []\n}}\nentries xs {{\n  key      = \"name\"\n  fields   = [\"name\", \"title\", \"apis\"]\n{}}}\n", body);
             let e = parse(&src).unwrap_err();
             assert!(e.msg.contains(msg), "{}", e.msg);
         }

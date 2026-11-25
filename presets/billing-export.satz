@@ -28,7 +28,7 @@
 //
 // NO CLAIM. No catalog control covers billing export, so this pack witnesses nothing.
 
-pack billing_export version "1.1"
+pack billing_export version "1.2"
 
 params {
   // The export's own project. Globally unique, so it derives from the short name the
@@ -80,6 +80,7 @@ question billing_export_project_folder {
   why      = "It is the only thing that decides where the project lands. Left empty, the project is created directly under the organization and inherits the organization's policies and IAM alone. Changing it afterwards moves a live project between parents, which changes the policies and the grants it inherits."
   reversal = edit
   blast    = low
+  empty    = "the organization itself; the project is created directly under it"
 }
 
 question billing_export_dataset_id {

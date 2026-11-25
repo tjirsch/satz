@@ -47,7 +47,7 @@ fn typed(request: &ResolvedRequest, field: &str, text: &str) -> Result<serde_yam
     }
 }
 
-/// An entry as Satz writes one: `{ name = "rag" delegation = "rag" budgets = true }`, the
+/// An entry as Satz writes one: `{ name = "payments" delegation = "payments" budgets = true }`, the
 /// fields in the order the declaration lists them.
 pub(crate) fn render(request: &ResolvedRequest, fields: &[(String, serde_yaml::Value)]) -> String {
     let mut parts = Vec::new();
@@ -164,6 +164,7 @@ mod tests {
                 ("apis".into(), serde_yaml::Value::Sequence(vec![serde_yaml::Value::String("iam.googleapis.com".into())])),
                 ("budgets".into(), serde_yaml::Value::Bool(false)),
             ],
+            field_defaults: Vec::new(),
             description: None,
             entries: Vec::new(),
             file: "p.satz".into(),

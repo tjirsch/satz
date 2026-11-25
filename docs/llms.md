@@ -502,7 +502,7 @@ each message's whole `message` is in the JSON, and the counts are of messages.
 | `"${{interface.f.x}}"`: no used interface folder is named `f`, or the folder `f` has no value `x`, kind `interface-use` | the folder's name is the interface's name, the folder under `interfaces/incoming/`; the message lists the folders the estate uses, or the values the folder has |
 | the `hcl` block writes `${interface.<export>}`, kind `interface-use` | a passthrough cannot read the interface; write what needs the value as a resource, where satz replaces it |
 | `entries <param>: entry … has <field>, which is no field of this list` | a request file carries a field the list does not declare; the message lists its fields |
-| `entries <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `estate_account_user_group` of `delegations` is an address `<name>@<domain>`; write the value in that form |
+| `entries <param>: entry … has <field> = "…", which the list's pattern … does not match` | the field's value is not of the form the list's `patterns` sets — `estate_account_user_group` of `delegations` is an address `<name>@<domain>`, and `display_name` of `delegated_projects`, the entry's name when left out, is 4 to 30 characters; write the value in that form, or give the entry a `display_name` that is |
 | `N silenced (…)` in the last line | the estate or the operator's machine leaves those messages out of the printed output. They are all in `satz_transpile_check`'s `findings`, each carrying `silenced` with the tier and the reason — read them there rather than asking for them to be unsilenced |
 
 ## Hard rules
