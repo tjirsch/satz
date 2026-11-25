@@ -18,7 +18,7 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 # Post-announce jobs to run in CI
-post-announce-jobs = ["./attach-checksum", "./prune-artifacts"]
+post-announce-jobs = ["./attach-checksum", "./check-release-assets", "./prune-artifacts"]
 # dist packs LICENSE and README into every archive by itself, but not NOTICE, which
 # Apache 2.0 §4(d) asks every redistribution to carry (ADR 0022), and not
 # THIRD-PARTY-LICENSES.md, the license text of every crate built into the binary

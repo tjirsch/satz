@@ -304,6 +304,15 @@ jobs:
       plan: ${{ needs.plan.outputs.val }}
     secrets: inherit
 
+  custom-check-release-assets:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/check-release-assets.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
+
   custom-prune-artifacts:
     needs:
       - plan

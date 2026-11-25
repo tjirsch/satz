@@ -1,0 +1,35 @@
+name: Check Release Assets
+
+# cargo-dist post-announce job (dist-workspace.toml: post-announce-jobs). It runs inside
+# the Release workflow once the GitHub release exists, and fails the run, naming each
+# file, when the release lacks a file cargo-dist planned for it — the `plan` input,
+# cargo-dist's manifest, is the list, so it follows the targets and installers of
+# dist-workspace.toml. Every job before it can report success while the release is
+# short of a file; this is the job that does not. scripts/check-release-assets.sh is the
+# check, and runs the same way locally.
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  check-release-assets:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+      PLAN: ${{ inputs.plan }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compare the release's files with the plan
+        run: |
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          bash scripts/check-release-assets.sh "$TAG" "$RUNNER_TEMP/plan.json" "$GITHUB_REPOSITORY"
