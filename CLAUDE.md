@@ -64,6 +64,8 @@ and in the maintainer's notes. Nothing in this file names a customer.
   `ln -sfn ../skills .claude/skills`, and Claude Code lists the skills from then on.
 - **Release flow:** work commits on `main`; `cargo release patch|minor
   --execute --no-confirm` bumps, tags and pushes; the tag triggers cargo-dist.
+  A change collects its `presets/CHANGELOG.md` notes under `### Unreleased`; the
+  version bump renames that heading to the version (`release.toml`).
   `.github/workflows/release.yml` is generated from `dist-workspace.toml`: change
   that file and run `dist generate` with the version its `cargo-dist-version`
   names, never edit the workflow. The `release-workflow` job of `smoke.yml` runs
