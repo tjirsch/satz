@@ -46,7 +46,7 @@ sentence the index can print, its id is its file name, its version has a changel
 [`CHANGELOG.md`](CHANGELOG.md), it carries no value shaped like private data that is not a
 documented example value, it declares no membership, it runs no legacy constraint beside
 its managed replacement, every resource type it writes has a row in satz's prerequisite
-table, it transpiles inside an estate, and every string param it leaves `""` has a
+table, it transpiles inside an estate, and every param it declares `none` has a
 `question` — and says what adopting it would cost that estate in roles and APIs. It warns
 on a type `satz adopt` has no rule for. It is the same bar this repository's gates hold,
 reachable without a checkout.
@@ -1964,7 +1964,7 @@ use "presets/security-audit/sa-security-audit.satz"
 
 | Param | Default | Meaning |
 |---|---|---|
-| `security_audit_sa_project` | `""` | **effectively required** — project hosting the SA |
+| `security_audit_sa_project` | `none` | **must be provided** — project hosting the SA |
 | `security_audit_sa_name` | `"sa-security-audit"` | SA account_id |
 | `security_audit_sa_display_name` | `"Security Audit (read-only)"` | |
 | `security_audit_auditors_group` | `"grp-security-auditors"` | impersonation group |

@@ -59,7 +59,14 @@ pub enum Value {
     Ref(String),
     List(Vec<Value>),
     Obj(Vec<Entry>),
+    /// `none` as a param's value in `params { … }`: the param is declared and this file
+    /// proposes no value for it. It stands nowhere else — read anywhere else, `none` is the
+    /// bare name of a param, and no param may carry that name.
+    None,
 }
+
+/// The keyword that declares a param without a value (`p = none`).
+pub const NONE: &str = "none";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrPart {
@@ -260,9 +267,8 @@ pub struct QuestionDecl {
     pub ask_when: Option<String>,
     /// `oneof` only: exactly one option must be true, rather than at most one.
     pub required: bool,
-    /// What an empty answer MEANS (`empty = "the organization"`). With it, `""` is an
-    /// answer like any other — offered, accepted and counted; without it, an empty
-    /// value is one nobody has given yet.
+    /// What an empty answer MEANS (`empty = "the organization"`), shown beside `""` wherever
+    /// the answer or the default is shown. `""` is an answer with it or without it.
     pub empty: Option<String>,
     pub options: Vec<QuestionOption>,
     pub line: usize,
@@ -2486,7 +2492,13 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                                 _ => unreachable!(),
                             };
                             p.expect(Tok::Eq, "'=' in param")?;
-                            let v = p.value()?;
+                            if name == NONE {
+                                return err(line, "params: a param named `none` — `none` is the keyword of a param with no value; rename it");
+                            }
+                            let v = match p.value()? {
+                                Value::Ref(r) if r == NONE => Value::None,
+                                v => v,
+                            };
                             if let Some((_, _, first)) = file.params.iter().find(|(n, _, _)| n == &name) {
                                 return err(
                                     line,
@@ -2521,7 +2533,13 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                                 _ => unreachable!(),
                             };
                             p.expect(Tok::Eq, "'=' in input")?;
+                            if name == NONE {
+                                return err(line, "inputs: an input named `none` — `none` is the keyword of a param with no value; rename it");
+                            }
                             let v = p.value()?;
+                            if v == Value::Ref(NONE.to_string()) {
+                                return err(line, format!("inputs: `{}` = none — an input carries its example value, which the template transpiles with; write one", name));
+                            }
                             let scalar = |v: &Value| matches!(v, Value::Str(_) | Value::Num(_) | Value::Bool(_) | Value::Ref(_));
                             let shape = match &v {
                                 v if scalar(v) => None,
@@ -2561,7 +2579,13 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                                 _ => unreachable!(),
                             };
                             p.expect(Tok::Eq, "'=' in local value")?;
+                            if name == NONE {
+                                return err(line, "locals: a local value named `none` — `none` is the keyword of a param with no value; rename it");
+                            }
                             let v = p.value()?;
+                            if v == Value::Ref(NONE.to_string()) {
+                                return err(line, format!("locals: `{}` = none — nothing binds a local value, so it would never have one; write the value, or make `{}` a param", name, name));
+                            }
                             if let Some((_, _, first)) = file.locals.iter().find(|(n, _, _)| n == &name) {
                                 return err(line, format!("locals: `{}` is declared twice — line {} and line {}; delete the one that is not meant", name, first, line));
                             }
@@ -2962,7 +2986,7 @@ pub(crate) fn value_reads(v: &Value, out: &mut Vec<String>) {
             StrPart::Param(n) => Some(n.clone()),
             StrPart::Lit(_) => None,
         })),
-        Value::Num(_) | Value::Bool(_) => {}
+        Value::Num(_) | Value::Bool(_) | Value::None => {}
         Value::List(items) => items.iter().for_each(|i| value_reads(i, out)),
         Value::Obj(entries) => {
             for e in entries {
@@ -3248,6 +3272,7 @@ fn plain_value(v: &Value, line: usize) -> Result<serde_yaml::Value, SatzError> {
         Value::Num(n) => serde_yaml::from_str::<serde_yaml::Value>(n).map_err(|e| SatzError { line, msg: format!("`{}`: {}", n, e) })?,
         Value::Bool(b) => serde_yaml::Value::Bool(*b),
         Value::Ref(r) => return err(line, format!("`{}`: a value in an interface file is a literal, never a param", r)),
+        Value::None => return err(line, "`none`: a value in an interface file is a literal"),
         Value::List(items) => serde_yaml::Value::Sequence(items.iter().map(|i| plain_value(i, line)).collect::<Result<_, _>>()?),
         Value::Obj(entries) => {
             let mut m = serde_yaml::Mapping::new();
@@ -3279,7 +3304,7 @@ pub(crate) fn reads_any(v: &Value, names: &[&str]) -> Option<String> {
             StrPart::Param(n) if names.contains(&n.as_str()) => Some(n.clone()),
             _ => None,
         }),
-        Value::Num(_) | Value::Bool(_) => None,
+        Value::Num(_) | Value::Bool(_) | Value::None => None,
         Value::List(items) => items.iter().find_map(|i| reads_any(i, names)),
         Value::Obj(entries) => entries.iter().find_map(|e| match e {
             Entry::Attr { key, value, .. } => reads_key(key, names).or_else(|| reads_any(value, names)),
@@ -3689,6 +3714,7 @@ fn canon_value(v: &Value) -> String {
         Value::Num(n) => n.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Ref(r) => r.clone(),
+        Value::None => NONE.to_string(),
         Value::List(items) => {
             let inner: Vec<String> = items.iter().map(canon_value).collect();
             format!("[{}]", inner.join(","))
@@ -3877,6 +3903,30 @@ mod tests {
         assert_eq!(f.questions[0].options.len(), 2);
     }
 
+    /// `none` is a param's value in `params` and nothing else: a param of any type, in a pack
+    /// or an estate; refused as an input's or a local value's value, and as a name.
+    #[test]
+    fn none_is_a_param_s_value_and_no_name() {
+        let f = parse("pack p version \"1.0\"\n\nparams {\n  region = none\n  size   = none\n  list   = [none]\n}\n").expect("parse");
+        assert_eq!(f.params[0].1, Value::None);
+        assert_eq!(f.params[1].1, Value::None);
+        assert_eq!(f.params[2].1, Value::List(vec![Value::Ref("none".into())]), "inside a list it is a read");
+        assert_eq!(value_canonical(&f.params[0].1), "none");
+        let f = parse("estate e\n\nparams {\n  region = none\n}\n").expect("an estate may write it");
+        assert_eq!(f.params[0].1, Value::None);
+        for (src, says) in [
+            ("params {\n  none = 1\n}\n", "a param named `none`"),
+            ("inputs {\n  none = 1\n}\n", "an input named `none`"),
+            ("locals {\n  none = 1\n}\n", "a local value named `none`"),
+            ("inputs {\n  stage = none\n}\n", "an input carries its example value"),
+            ("locals {\n  bucket = none\n}\n", "nothing binds a local value"),
+            ("pack p version \"1.0\"\n\nparams {\n  contributes_xs = none\n}\n", "a contribution is a list"),
+        ] {
+            let e = parse(src).unwrap_err();
+            assert!(e.msg.contains(says), "{}: {}", src, e.msg);
+        }
+    }
+
     /// `empty = "…"` says what an empty answer means; it is a string that says something,
     /// on a question about one param.
     #[test]
@@ -3884,7 +3934,7 @@ mod tests {
         let f = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \"the default region\"\n}")).expect("parse");
         assert_eq!(f.questions[0].empty.as_deref(), Some("the default region"));
         let f = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n}")).expect("parse");
-        assert_eq!(f.questions[0].empty, None, "without it, an empty value is no answer");
+        assert_eq!(f.questions[0].empty, None);
         let e = parse(&q("question region {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \" \"\n}")).unwrap_err();
         assert!(e.msg.contains("says nothing"), "{}", e.msg);
         let e = parse(&q("question oneof m {\n  prompt = \"?\"\n  reversal = edit\n  blast = none\n  empty = \"x\"\n  option a { label = \"A\" }\n}")).unwrap_err();

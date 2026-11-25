@@ -835,7 +835,7 @@ pub(crate) fn render_update(r: &UpdateReport) -> String {
 pub(crate) struct ParamDecl {
     pub name: String,
     /// the value as the pack writes it, in Satz (`"europe-west3"`, `0.5`, `["a", "b"]`,
-    /// `"${{interface.project_id}}"`); none where it writes `""`, a value nobody has given yet
+    /// `"${{interface.project_id}}"`); absent where it declares the param `none`, proposing no value
     pub default: Option<String>,
     /// the pack asks for it: a `question` names it, or an option of a `oneof` question does
     pub question: bool,
@@ -970,6 +970,7 @@ fn satz_text(v: &satz_core::satz::Value) -> String {
         Value::Num(n) => n.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Ref(r) => r.clone(),
+        Value::None => satz_core::satz::NONE.to_string(),
         Value::List(items) => format!("[{}]", items.iter().map(satz_text).collect::<Vec<_>>().join(", ")),
         Value::Obj(entries) => {
             let inner: Vec<String> = entries
@@ -984,12 +985,6 @@ fn satz_text(v: &satz_core::satz::Value) -> String {
     }
 }
 
-/// `""`: a param declared without a value.
-fn is_unset(v: &satz_core::satz::Value) -> bool {
-    use satz_core::satz::{StrPart, Value};
-    matches!(v, Value::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(t) if t.is_empty())))
-}
-
 /// Every text in a value, keys included, `{param}` parts written as such.
 fn texts_of_value(v: &satz_core::satz::Value, out: &mut Vec<String>) {
     use satz_core::satz::{StrPart, Value};
@@ -1000,7 +995,7 @@ fn texts_of_value(v: &satz_core::satz::Value, out: &mut Vec<String>) {
         }).collect()),
         Value::List(items) => items.iter().for_each(|i| texts_of_value(i, out)),
         Value::Obj(entries) => entries.iter().for_each(|e| texts_of_entry(e, out)),
-        Value::Num(_) | Value::Bool(_) | Value::Ref(_) => {}
+        Value::Num(_) | Value::Bool(_) | Value::Ref(_) | Value::None => {}
     }
 }
 
@@ -1060,7 +1055,7 @@ pub(crate) fn declarations(file: &satz_core::satz::File) -> Declarations {
         .filter(|(name, _, _)| satz_core::satz::contribution_target(name).is_none())
         .map(|(name, v, _)| ParamDecl {
             name: name.clone(),
-            default: (!is_unset(v)).then(|| satz_text(v)),
+            default: (*v != satz_core::satz::Value::None).then(|| satz_text(v)),
             question: asked(name).is_some(),
             prompt: asked(name).map(|q| q.prompt.clone()),
             why: asked(name).and_then(|q| q.why.clone()),
@@ -1536,7 +1531,7 @@ mod tests {
         params {\n\
           region  = \"europe-west3\"\n\
           project = \"${{interface.project_id}}\"\n\
-          owner   = \"\"\n\
+          owner   = none\n\
           sizes   = [1, 2]\n\
           stores  = []\n\
         }\n\n\
@@ -1604,7 +1599,7 @@ mod tests {
         assert_eq!(param("region").default.as_deref(), Some("\"europe-west3\""));
         assert_eq!(param("project").default.as_deref(), Some("\"${{interface.project_id}}\""));
         assert_eq!(param("sizes").default.as_deref(), Some("[1, 2]"));
-        assert_eq!(param("owner").default, None, "a param written \"\" has no default");
+        assert_eq!(param("owner").default, None, "a param declared `none` has no default");
         assert!(param("owner").question && param("owner").prompt.as_deref() == Some("The group that owns it"));
         assert_eq!(param("owner").why.as_deref(), Some("Its members are the ones paged"));
         assert!(!param("region").question && param("region").prompt.is_none() && param("region").why.is_none());

@@ -189,9 +189,8 @@ the packs that implement them.
 - **A pack's id is its file name**, `-` written `_`, and unique in the library (ADR
   0077): `doc-presets` and `review-preset` refuse any other. The ids that predate the rule
   stand in `LEGACY_PACK_IDS` (`src/doc_packs.rs`), which refuses a row whose pack now
-  conforms, so the table only shrinks. A string param that defaults to `""` — a value
-  the operator must supply — has a `question` in the same file, or both commands
-  refuse the pack.
+  conforms, so the table only shrinks. A param declared `none` — a value the operator
+  must supply — has a `question` in the same file, or both commands refuse the pack.
 
 ## The estate account's role table
 

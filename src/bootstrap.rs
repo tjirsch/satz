@@ -280,19 +280,20 @@ fn write_param_value(estate: &Path, param: &str, value: &str) -> Result<(), Stri
 }
 
 /// The pure half of the write-back, pinned by tests. The estate binds the param
-/// already — greenfield fills what `init` left empty — and a present, different value
-/// is an error, never a silent overwrite. The write itself is `interview::bind`, the
+/// already — greenfield fills what `init` wrote `none` (or an empty id) — and a present,
+/// different value is an error, never a silent overwrite. The write itself is `interview::bind`, the
 /// one writer of a param, so the line keeps its indentation and its alignment and
 /// nothing is ever bound a second time.
 fn fill_param(text: &str, param: &str, value: &str) -> Result<String, String> {
     let current = crate::interview::bound_literal(text, param)?
         .ok_or_else(|| format!("param `{}` not found in the estate", param))?;
+    let current = if current == satz_core::satz::NONE { "\"\"".to_string() } else { current };
     let Some(current) = current.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
         return Err(format!("param `{}` is not a quoted string in the estate", param));
     };
     if !current.is_empty() && current != value {
         return Err(format!(
-            "param `{}` already carries {:?} (expected empty or {:?}) — not overwriting",
+            "param `{}` already carries {:?} (expected `none`, empty or {:?}) — not overwriting",
             param, current, value
         ));
     }
@@ -1097,7 +1098,9 @@ mod tests {
     // --- greenfield write-back ---------------------------------------------
 
     #[test]
-    fn filling_an_empty_param_preserves_the_alignment() {
+    fn filling_a_param_with_no_value_preserves_the_alignment() {
+        let none = "params {\n  customer_organization_id = none\n  other = \"x\"\n}\n";
+        assert_eq!(fill_param(none, "customer_organization_id", "123456789012").unwrap(), "params {\n  customer_organization_id = \"123456789012\"\n  other = \"x\"\n}\n");
         let text = "params {\n  customer_organization_id = \"\"\n  other = \"x\"\n}\n";
         let out = fill_param(text, "customer_organization_id", "123456789012").unwrap();
         assert_eq!(

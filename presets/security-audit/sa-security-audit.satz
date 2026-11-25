@@ -20,10 +20,10 @@
 // - no service-account keys: access is by token-creator impersonation only
 // - no remediation rights: every role in the set is read-only
 
-pack sa_security_audit version "1.1"
+pack sa_security_audit version "1.2"
 
 params {
-  security_audit_sa_project      = ""
+  security_audit_sa_project      = none
   security_audit_sa_name         = "sa-security-audit"
   security_audit_sa_display_name = "Security Audit (read-only)"
   security_audit_auditors_group  = "grp-security-auditors"

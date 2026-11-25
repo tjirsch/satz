@@ -1,6 +1,6 @@
 # 0104 — two packs declaring one param must agree, and a pack's own param carries its name
 
-- **Status:** accepted
+- **Status:** accepted; amended by [ADR 0106](0106-none-declares-a-param-without-a-value.md) — a declaration `none` agrees with any default
 - **Date:** 2026-11-25
 
 ## Context

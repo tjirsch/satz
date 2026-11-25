@@ -358,10 +358,19 @@ impl Server {
         let dir = find_config_dir(path);
         let config = dir.as_ref().and_then(|d| self.estates.get(d)).map(|e| e.config.clone());
         let loader = make_loader(path, config.as_ref(), &self.docs, None);
-        match pipeline::estate_params(&path.to_string_lossy(), text, &loader) {
+        let mut out: Vec<(String, String)> = match pipeline::estate_params(&path.to_string_lossy(), text, &loader) {
             Ok(env) => env.into_iter().map(|(k, v)| (k, yaml_text(&v))).collect(),
             Err(_) => satz::parse(text).map(|f| f.params.iter().map(|(n, _, _)| (n.clone(), "…".into())).collect()).unwrap_or_default(),
+        };
+        // a param this file declares `none` that no file gives a value: no value to show
+        if let Ok(f) = satz::parse(text) {
+            for (n, v, _) in &f.params {
+                if *v == satz::Value::None && !out.iter().any(|(k, _)| k == n) {
+                    out.push((n.clone(), NO_DEFAULT.to_string()));
+                }
+            }
         }
+        out
     }
 
     /// This file's local values, resolved against the params as the file sees them; `…`
@@ -472,6 +481,9 @@ impl Server {
             Slot::Value => {
                 if word == "true" || word == "false" {
                     return None;
+                }
+                if word == satz::NONE {
+                    return Some(markdown(format!("**none** — {}", NO_DEFAULT), tok, &text));
                 }
                 if let Some((_, value)) = self.locals_of(&path, &text).into_iter().find(|(n, _)| *n == word) {
                     return Some(markdown(local_hover(&word, &value), tok, &text));
@@ -824,6 +836,9 @@ fn block_at<'a>(root: &'a BlockSchema, frames: &[Frame], type_frame: &Frame, reg
     }
     Some(block)
 }
+
+/// What a hover says of a param declared `none` that no file gives a value.
+const NO_DEFAULT: &str = "no default — must be provided: this file declares the param and proposes no value; the estate binds it, or another file's default is its value";
 
 /// What a hover and a completion say a local value is.
 const LOCAL_VALUE: &str = "local value of this file — read by its bare name here, and in no other file";

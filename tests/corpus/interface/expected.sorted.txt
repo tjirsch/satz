@@ -41,7 +41,6 @@ infra-bucket-name = "acme-infra-001-state"
 infra-folder-name = "Infrastructure"
 infra-project-name = "acme-infra-001"
 svc-iac-account = "svc-iac-001"
-workload-folder-name = ""
 ---imports---
 
 ---outputs.tf---

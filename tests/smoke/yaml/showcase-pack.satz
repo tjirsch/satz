@@ -7,6 +7,9 @@ params {
   pack_bucket_location = "EU"
   // acknowledges the notice below; the estate binds it true once the command has run
   pack_bucket_adopted  = false
+  // read below and proposed by nobody here: `none` declares it without a value, so the
+  // estate binds it — unbound, the transpile stops at the read, naming this line
+  infra_project_name   = none
 
   // A CONTRIBUTION, not a param: `contributes_<param>` adds its entries to the list
   // param `<param>` that another file declares — here the estate's

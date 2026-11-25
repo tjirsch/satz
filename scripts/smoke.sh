@@ -82,15 +82,15 @@ grep -q 'workload_folder_name\|export "workload_folder"\|google_folder.workload_
   && fail "satz init must leave the workload folder to the answer of workload_folder_name:\n$(grep -n workload_folder tmp/init/satz/C0example.satz)"
 "$satz" init --workload-folder-name Workloads > tmp/init-flag.txt 2>&1 && fail "satz init took the removed --workload-folder-name"
 grep -q -- "--workload-folder-name" tmp/init-flag.txt || fail "the refusal of --workload-folder-name does not name it:\n$(cat tmp/init-flag.txt)"
-# init invents nothing: a value nobody supplied and nothing could derive is EMPTY.
+# init invents nothing: a value nobody supplied and nothing could derive is written `none`.
 rm -rf tmp/init-bare && mkdir -p tmp/init-bare && seed_schemas tmp/init-bare
 (cd tmp/init-bare && GOOGLE_APPLICATION_CREDENTIALS=/nonexistent CLOUDSDK_CONFIG=/nonexistent \
   "$satz" init --customer-id C0bare > ../init-bare.txt 2>&1) \
   || fail "satz init with nobody signed in must still write an estate:\n$(cat tmp/init-bare.txt)"
-grep -qE '^  customer_organization_id += ""$' tmp/init-bare/satz/C0bare.satz \
-  || fail "an organization id nobody supplied must be empty, never a placeholder:\n$(grep organization tmp/init-bare/satz/C0bare.satz)"
-grep -qE '^  first_admin += ""$' tmp/init-bare/satz/C0bare.satz \
-  || fail "an admin nobody supplied must be empty:\n$(grep first_admin tmp/init-bare/satz/C0bare.satz)"
+grep -qE '^  customer_organization_id += none$' tmp/init-bare/satz/C0bare.satz \
+  || fail "an organization id nobody supplied must be none, never a placeholder:\n$(grep organization tmp/init-bare/satz/C0bare.satz)"
+grep -qE '^  first_admin += none$' tmp/init-bare/satz/C0bare.satz \
+  || fail "an admin nobody supplied must be none:\n$(grep first_admin tmp/init-bare/satz/C0bare.satz)"
 grep -q 'nothing could be derived' tmp/init-bare.txt \
   || fail "init must say that it derived nothing:\n$(cat tmp/init-bare.txt)"
 # the pack menu is written commented out: an init estate transpiles with no presets fetched
@@ -769,12 +769,12 @@ cmp -s tmp/pub/packs/team/budget.satz tmp/pub-shared/team/budget.satz || fail "p
 python3 - <<'PYEOF' || fail "publish-pack did not report what it did:\n$(cat tmp/pub-published.json)"
 import json
 p = json.load(open("tmp/pub-published.json"))
-assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.0", "shared", "../pub-shared", "copied"), p
+assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.1", "shared", "../pub-shared", "copied"), p
 assert p["path"].endswith("pub-shared/team/budget.satz") and p["estate"].endswith("team.satz"), p
 PYEOF
 grep -q '^source = "shared"$' tmp/pub/packs/origin.toml && grep -q '^dir = "../pub-shared"$' tmp/pub/packs/origin.toml || fail "publish-pack wrote no row naming the source and its folder:\n$(cat tmp/pub/packs/origin.toml)"
 pub update-pack team/budget > tmp/pub-update.txt 2>&1 || fail "update-pack failed on a published pack:\n$(cat tmp/pub-update.txt)"
-grep -q '^team/budget  1.0  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
+grep -q '^team/budget  1.1  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
 pub packs --source shared --format json --out tmp/pub-packs.json > /dev/null 2>&1 || fail "satz packs --source failed on the publishing estate"
 python3 - <<'PYEOF' || fail "satz packs does not list the published pack:\n$(cat tmp/pub-packs.json)"
 import json

@@ -429,15 +429,15 @@ pub(crate) fn review(
         }
     }
 
-    // 6b. a value the operator must supply is asked for (ADR 0077): a string param that
-    //     defaults to `""` with no `question` on it reaches the customer as a blank.
+    // 6b. a value the operator must supply is asked for (ADR 0077): a param declared `none`
+    //     with no `question` on it reaches the customer as a refusal nobody asked about.
     for (name, line) in crate::doc_packs::asks_its_open_params(&file) {
         f.push(at(
             &pack,
             Some(line as u32),
             Severity::Error,
             format!(
-                "`{}` defaults to `\"\"` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
+                "`{}` is declared `none` — a value the operator must supply — and nothing asks for it: add `question {} {{ … }}` or give it a default",
                 name, name
             ),
         ));

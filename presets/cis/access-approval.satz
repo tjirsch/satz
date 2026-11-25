@@ -14,12 +14,12 @@
 //
 // Deleting these settings switches Access Approval off for the organization.
 
-pack cis_extensions.access_approval version "1.2"
+pack cis_extensions.access_approval version "1.3"
 
 params {
-  // Who receives approval requests. The pack cannot know; empty blocks the
-  // interview until the customer names at least one address.
-  access_approval_notification_emails = []
+  // Who receives approval requests. The pack cannot know, so it proposes no value:
+  // the question blocks until the customer names at least one address.
+  access_approval_notification_emails = none
 }
 
 question access_approval_notification_emails {

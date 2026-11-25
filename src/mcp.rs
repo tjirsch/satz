@@ -1516,7 +1516,7 @@ impl SatzMcp {
         output_schema = rmcp::handler::server::tool::schema_for_output::<InterviewReport>(),
         description = "Run an interview against an estate: the questions its packs declare that the estate has not \
                        answered yet (or all of them, with `filter: all`), each with the default the pack offers — \
-                       or `blocking: true` when no default is possible and a value must be typed. `answers` writes \
+                       or `blocking: true` when no file gives the param a value (it is declared `none`) and one must be typed. `answers` writes \
                        the human's decisions into the estate's `params {}` and `accept_defaults` writes every \
                        offered default (both need 'write'); an answer is checked against the question's shape, and \
                        one refused answer writes nothing. Answering a pack's gate `true` switches its line on as \

@@ -106,12 +106,130 @@ fn perr<T>(file: &str, line: usize, msg: impl Into<String>) -> Result<T, Pipelin
 /// (Default < Set: the using document's binding wins).
 pub type Env = BTreeMap<String, serde_yaml::Value>;
 
+/// A param no file gives a value (`p = none` wherever it is declared, nothing bound), as
+/// it stands in a namespace while the walk runs: tagged, carrying the param's name, the
+/// declarations and whether a question that applies asks it. A later file's default
+/// replaces it (`absorb`); every read checks it (`read_no_value`); no namespace a caller gets
+/// back holds one (`drop_no_values`), so `variables.tf` and `terraform.tfvars` never do.
+const NO_VALUE_TAG: &str = "none";
+
+fn no_value(param: &str, declared: Vec<String>, asked: bool) -> serde_yaml::Value {
+    let mut m = serde_yaml::Mapping::new();
+    m.insert("param".into(), param.into());
+    m.insert("declared".into(), serde_yaml::Value::Sequence(declared.into_iter().map(serde_yaml::Value::String).collect()));
+    m.insert("asked".into(), asked.into());
+    serde_yaml::Value::Tagged(Box::new(serde_yaml::value::TaggedValue { tag: serde_yaml::value::Tag::new(NO_VALUE_TAG), value: serde_yaml::Value::Mapping(m) }))
+}
+
+/// Whether `v` is a param with no value.
+fn is_no_value(v: &serde_yaml::Value) -> bool {
+    matches!(v, serde_yaml::Value::Tagged(t) if t.tag == NO_VALUE_TAG)
+}
+
+/// The param, its declarations and whether a question asks it, for a param with no value.
+fn no_value_of(v: &serde_yaml::Value) -> Option<(String, Vec<String>, bool)> {
+    let serde_yaml::Value::Tagged(t) = v else { return None };
+    if t.tag != NO_VALUE_TAG {
+        return None;
+    }
+    let m = t.value.as_mapping()?;
+    let param = m.get("param").and_then(|p| p.as_str()).unwrap_or_default().to_string();
+    let declared = m.get("declared").and_then(|d| d.as_sequence()).map(|d| d.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let asked = m.get("asked").and_then(|a| a.as_bool()).unwrap_or(false);
+    Some((param, declared, asked))
+}
+
+/// A read of a param with no value, at `file`:`line`. A question that applies asks it: the
+/// estate is still being answered, and the read is of the empty value — `""` where the
+/// param is the whole value, nothing inside a text, a false condition, an empty list —
+/// while `satz questions` reports it `blocking`, `transpile --plan` warns and `transpile
+/// --apply` and `bootstrap` refuse. No question asks it: the transpile stops here, naming
+/// it.
+fn read_no_value(v: &serde_yaml::Value, file: &str, line: usize) -> Result<bool, PipelineError> {
+    match no_value_of(v) {
+        None => Ok(false),
+        Some((_, _, true)) => Ok(true),
+        Some((param, declared, false)) => perr(
+            file,
+            line,
+            format!(
+                "param `{}` has no value — {} declare{} it `none`, the estate binds none, and this reads it. Bind it in the estate's `params {{ … }}`, or give it a default in one of those files",
+                param,
+                declared.join(", "),
+                if declared.len() == 1 { "s" } else { "" }
+            ),
+        ),
+    }
+}
+
+/// `env` without its params that have no value: what a caller of the pipeline gets back.
+fn drop_no_values(env: &mut Env) {
+    env.retain(|_, v| !is_no_value(v));
+}
+
+/// A file's params into `env`, in dependency order, first definition wins — the one step
+/// every walk takes. A `none` declares the param and proposes nothing: it stands as a
+/// param with no value until a file gives one (a later default replaces it) or nothing
+/// does. Returns the params whose `none` this file's default replaced.
+fn absorb(file: &File, file_name: &str, env: &mut Env) -> Result<Vec<String>, PipelineError> {
+    // A question that applies asks a param with no value: it is blocking, read as the empty
+    // value. A question whose `ask_when` reads a param not resolved yet is judged again below.
+    let asks = |name: &str, env: &Env| {
+        file.questions.iter().any(|q| !q.oneof && q.subject == name && q.ask_when.as_ref().is_none_or(|gate| truthy(env.get(gate))))
+    };
+    let mut filled = Vec::new();
+    for (name, v, line) in satz::sort_params_by_deps(&file.params) {
+        if satz::contribution_target(name).is_some() {
+            continue;
+        }
+        if let Some(e) = renamed_param(name, file_name, *line) {
+            return Err(e);
+        }
+        let site = format!("{} (line {})", file_name, line);
+        match (env.get(name).and_then(no_value_of), v) {
+            (Some((param, mut declared, asked)), Value::None) => {
+                if !declared.contains(&site) {
+                    declared.push(site);
+                }
+                let asked = asked || asks(name, env);
+                env.insert(name.clone(), no_value(&param, declared, asked));
+                continue;
+            }
+            (None, _) if env.contains_key(name) => continue, // the using document's binding wins (Default < Set)
+            (None, Value::None) => {
+                let asked = asks(name, env);
+                env.insert(name.clone(), no_value(name, vec![site], asked));
+                continue;
+            }
+            (Some(_), _) => filled.push(name.clone()),
+            (None, _) => {}
+        }
+        // a bare read of a param with no value is that param with no value, not nothing
+        let resolved = match v {
+            Value::Ref(r) if env.get(r).is_some_and(is_no_value) => env[r].clone(),
+            v => resolve_value(v, env, file_name, *line)?,
+        };
+        if let Some(msg) = renamed_field_in(name, &resolved) {
+            return perr(file_name, *line, msg);
+        }
+        env.insert(name.clone(), resolved);
+    }
+    for (name, v, _) in &file.params {
+        let Some((param, declared, false)) = env.get(name).and_then(no_value_of) else { continue };
+        if *v == Value::None && asks(name, env) {
+            env.insert(name.clone(), no_value(&param, declared, true));
+        }
+    }
+    Ok(filled)
+}
+
 fn resolve_str(parts: &[StrPart], env: &Env, file: &str, line: usize) -> Result<String, PipelineError> {
     let mut out = String::new();
     for p in parts {
         match p {
             StrPart::Lit(s) => out.push_str(s),
             StrPart::Param(name) => match env.get(name) {
+                Some(v) if read_no_value(v, file, line)? => {}
                 Some(serde_yaml::Value::String(s)) => out.push_str(s),
                 Some(serde_yaml::Value::Number(n)) => out.push_str(&n.to_string()),
                 Some(serde_yaml::Value::Bool(b)) => out.push_str(if *b { "true" } else { "false" }),
@@ -143,14 +261,18 @@ fn resolve_value(v: &Value, env: &Env, file: &str, line: usize) -> Result<serde_
         Value::Num(n) => serde_yaml::from_str(n)
             .map_err(|e| PipelineError { file: file.to_string(), line, msg: format!("bad number '{}': {}", n, e) })?,
         Value::Bool(b) => serde_yaml::Value::Bool(*b),
-        Value::Ref(name) => env
-            .get(name)
-            .cloned()
-            .ok_or_else(|| PipelineError { file: file.to_string(), line, msg: format!("unknown param '{}'", name) })?,
+        Value::Ref(name) => match env.get(name) {
+            Some(v) if read_no_value(v, file, line)? => serde_yaml::Value::String(String::new()),
+            Some(v) => v.clone(),
+            None if name == satz::NONE => return perr(file, line, "`none` stands only as a param's value in `params { … }` — the param is declared, and this file proposes no value for it"),
+            None => return perr(file, line, format!("unknown param '{}'", name)),
+        },
         Value::List(items) => serde_yaml::Value::Sequence(
             items.iter().map(|i| resolve_value(i, env, file, line)).collect::<Result<_, _>>()?,
         ),
         Value::Obj(entries) => serde_yaml::Value::Mapping(resolve_obj(entries, env, file)?),
+        // the walks put a param declared `none` into the namespace themselves (`absorb`)
+        Value::None => return perr(file, line, "`none` stands only as a param's value in `params { … }`"),
     })
 }
 
@@ -194,7 +316,9 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env, locals_
         if let Some(first) = out.iter().find(|x| x.param == r.param) {
             return perr(file, r.line, format!("entries {}: declared twice — here and {}:{}; one list has one list", r.param, first.file, first.line));
         }
+        let none = Vec::new();
         let entries = match env.get(&r.param) {
+            Some(v) if read_no_value(v, file, r.line)? => &none,
             Some(serde_yaml::Value::Sequence(s)) => s,
             Some(other) => return perr(file, r.line, format!("entries {}: `{}` is {} — a list is a list param", r.param, r.param, yaml_kind(other))),
             None => return perr(file, r.line, format!("entries {}: unknown param '{}' — the list names a list param a file of the estate declares", r.param, r.param)),
@@ -386,6 +510,7 @@ fn when_in_a_value(cond: &satz::Cond) -> String {
 fn each_list<'e>(env: &'e Env, list: &str, key: &str, file_name: &str, line: usize) -> Result<Vec<(String, &'e serde_yaml::Mapping)>, PipelineError> {
     let what = format!("each {} by {}", list, key);
     let entries = match env.get(list) {
+        Some(v) if read_no_value(v, file_name, line)? => return Ok(Vec::new()),
         Some(serde_yaml::Value::Sequence(s)) => s,
         Some(other) => return perr(file_name, line, format!("`{}`: `{}` is {} — `each` expands a list of objects", what, list, yaml_kind(other))),
         None => return perr(file_name, line, format!("`{}`: unknown param '{}' — declare the list in `params {{ … }}` before the map that expands it", what, list)),
@@ -577,7 +702,7 @@ fn each_value(v: &Value, fields: &serde_yaml::Mapping, line: usize) -> Result<Va
         },
         Value::List(items) => Value::List(items.iter().map(|i| each_value(i, fields, line)).collect::<Result<_, _>>()?),
         Value::Obj(entries) => Value::Obj(each_entries(entries, fields, line)?),
-        Value::Num(_) | Value::Bool(_) => v.clone(),
+        Value::Num(_) | Value::Bool(_) | Value::None => v.clone(),
     })
 }
 
@@ -675,28 +800,11 @@ fn build_env(file: &File, outer: &Env, file_name: &str) -> Result<Env, PipelineE
     refuse_params_reading_inputs(file, file_name)?;
     let mut env = outer.clone();
     // Params may reference each other regardless of declaration order — the same
-    // dependency-ordered resolution the YAML emitter uses.
-    for (name, v, line) in satz::sort_params_by_deps(&file.params) {
-        // A `contributes_<target>` declaration is no param: it is merged into the
-        // target before this env is built (`contribution_seed`), and it names no
-        // value of its own.
-        if satz::contribution_target(name).is_some() {
-            continue;
-        }
-        // Before anything else: a param a release renamed stops the transpile here,
-        // whether it is the estate's own binding or a fork's default.
-        if let Some(e) = renamed_param(name, file_name, *line) {
-            return Err(e);
-        }
-        if env.contains_key(name) {
-            continue; // the using document's binding wins (Default < Set)
-        }
-        let resolved = resolve_value(v, &env, file_name, *line)?;
-        if let Some(msg) = renamed_field_in(name, &resolved) {
-            return perr(file_name, *line, msg);
-        }
-        env.insert(name.clone(), resolved);
-    }
+    // dependency-ordered resolution the YAML emitter uses. A `contributes_<target>`
+    // declaration is no param: it is merged into the target before this env is built
+    // (`contribution_seed`). A param a release renamed stops the transpile here, whether
+    // it is the estate's own binding or a fork's default.
+    absorb(file, file_name, &mut env)?;
     // An input is a param the using document binds, resolved after the params it may
     // read, the binding winning as for any param.
     for i in &file.inputs {
@@ -2392,6 +2500,8 @@ pub fn compile_estate_bound(
     let config_rendering = w.config_rendering;
     // what satz composes from the params reads each one as its value, the read resolved
     let mut env = env;
+    drop_no_values(&mut env);
+    drop_no_values(&mut tfvars);
     resolve_interface_in_params(&mut env, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     resolve_interface_in_tfvars(&mut tfvars, &inputs, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
@@ -2468,6 +2578,9 @@ fn resolve_interfaces(
                         u.line,
                         format!("use interface … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the interface", p, p),
                     );
+                }
+                if let Some(v) = env.get(p) {
+                    read_no_value(v, f, u.line)?;
                 }
                 if !truthy(env.get(p)) {
                     continue;
@@ -2693,10 +2806,11 @@ pub fn estate_params(
     let mut sink = Vec::new();
     let mut inputs = Vec::new();
     let mut used = Vec::new();
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs, &mut used)?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs, &mut used, &mut Vec::new())?;
     if let Some(e) = deferred {
         return Err(e);
     }
+    drop_no_values(&mut env);
     let used = merge_interface_files(used)?;
     resolve_interface_in_params(&mut env, &used).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     Ok(env)
@@ -2828,7 +2942,7 @@ fn bind_inputs(file: &File, used: &[RawInput], bindings: &[(String, String)], fi
             );
         };
         let value = match default {
-            Value::Str(_) | Value::Ref(_) => serde_yaml::Value::String(text.clone()),
+            Value::Str(_) | Value::Ref(_) | Value::None => serde_yaml::Value::String(text.clone()),
             Value::Num(_) => match serde_yaml::from_str::<serde_yaml::Value>(text) {
                 Ok(v @ serde_yaml::Value::Number(_)) => v,
                 _ => return perr(file_name, 0, format!("--input {}={}: `{}` is a number, and `{}` is none", name, text, name, text)),
@@ -2869,11 +2983,19 @@ fn contribution_seed(
     let mut raw = Vec::new();
     let mut inputs = Vec::new();
     let mut env = build_env(file, &Env::new(), file_name)?;
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs, &mut Vec::new())?;
+    let mut filled = Vec::new();
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs, &mut Vec::new(), &mut filled)?;
+    // A param one file declares `none` and a later file gives a default has that default
+    // from the start: a file walked before the default's is read with it, not without. One
+    // no file gives a value has its every declaration from the start, so a read names them.
+    let mut seed: Env = env
+        .iter()
+        .filter(|(n, v)| filled.contains(n) || is_no_value(v))
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect();
     if raw.is_empty() {
-        return Ok((Env::new(), Vec::new(), inputs));
+        return Ok((seed, Vec::new(), inputs));
     }
-    let mut seed = Env::new();
     let mut records = Vec::new();
     for r in raw {
         // A list a release renamed: no pack declares the old name any more, so the
@@ -2902,6 +3024,20 @@ fn contribution_seed(
         };
         let values: Vec<String> = entries.iter().map(contributed_entry).collect();
         let base = seed.get(&r.param).or_else(|| env.get(&r.param)).cloned();
+        if let Some((_, declared, _)) = base.as_ref().and_then(no_value_of) {
+            return perr(
+                &r.file,
+                r.line,
+                format!(
+                    "{}{}: `{}` has no value — {} declare{} it `none` and the estate binds none; a contribution adds entries to a list a file gives a value",
+                    satz::CONTRIBUTES_PREFIX,
+                    r.param,
+                    r.param,
+                    declared.join(", "),
+                    if declared.len() == 1 { "s" } else { "" }
+                ),
+            );
+        }
         let applied = match base {
             None => false,
             Some(serde_yaml::Value::Sequence(mut list)) => {
@@ -2967,6 +3103,7 @@ pub fn estate_questions(
     if let Some(e) = deferred {
         return Err(e);
     }
+    drop_no_values(&mut env);
     Ok((out.0, out.1, env))
 }
 
@@ -3009,6 +3146,9 @@ fn collect_questions(
                     if !env.contains_key(p) {
                         return perr(file_name, *line, format!("use … when {}: unknown param `{}`", p, p));
                     }
+                    if let Some(v) = env.get(p) {
+                        read_no_value(v, file_name, *line)?;
+                    }
                     if !truthy(env.get(p)) {
                         continue;
                     }
@@ -3017,13 +3157,7 @@ fn collect_questions(
                     .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
                 let used = satz::parse(&src)
                     .map_err(|e| PipelineError { file: path.to_string(), line: e.line, msg: e.msg })?;
-                for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
-                    if satz::contribution_target(name).is_some() || env.contains_key(name) {
-                        continue;
-                    }
-                    let resolved = resolve_value(v, env, path, *pline)?;
-                    env.insert(name.clone(), resolved);
-                }
+                absorb(&used, path, env)?;
                 if !used.questions.is_empty() {
                     out.0.push(pack_questions(&used, path));
                 }
@@ -3048,6 +3182,7 @@ fn collect_params(
     contributions: &mut Vec<RawContribution>,
     inputs: &mut Vec<RawInput>,
     interface_files: &mut Vec<UsedInterfaceFile>,
+    filled: &mut Vec<String>,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
         return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
@@ -3067,6 +3202,9 @@ fn collect_params(
                     if inputs.iter().any(|i| &i.name == p) {
                         return perr(file_name, *line, format!("use … when {}: `{}` is an input — a gate decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", p, p, p));
                     }
+                    if let Some(v) = env.get(p) {
+                        read_no_value(v, file_name, *line)?;
+                    }
                     if !truthy(env.get(p)) {
                         continue;
                     }
@@ -3082,13 +3220,7 @@ fn collect_params(
                 if let Some(i) = &used.interface_file {
                     interface_files.push(UsedInterfaceFile { file: path.clone(), interface: i.clone() });
                 }
-                for (name, v, pline) in satz::sort_params_by_deps(&used.params) {
-                    if satz::contribution_target(name).is_some() || env.contains_key(name) {
-                        continue;
-                    }
-                    let resolved = resolve_value(v, env, path, *pline)?;
-                    env.insert(name.clone(), resolved);
-                }
+                filled.extend(absorb(&used, path, env)?);
                 for i in &used.inputs {
                     inputs.push(RawInput { name: i.name.clone(), value: i.value.clone(), file: path.clone(), line: i.line });
                     if !env.contains_key(&i.name) {
@@ -3096,9 +3228,9 @@ fn collect_params(
                         env.insert(i.name.clone(), resolved);
                     }
                 }
-                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs, interface_files)?;
+                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs, interface_files, filled)?;
             }
-            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs, interface_files)?,
+            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs, interface_files, filled)?,
         }
     }
     Ok(())
@@ -3223,6 +3355,7 @@ fn truthy(v: Option<&serde_yaml::Value>) -> bool {
         Some(serde_yaml::Value::Bool(b)) => *b,
         Some(serde_yaml::Value::String(s)) => !s.is_empty() && s != "false",
         Some(serde_yaml::Value::Null) | None => false,
+        Some(v) if is_no_value(v) => false,
         Some(_) => true,
     }
 }
@@ -3484,10 +3617,11 @@ impl Walk<'_> {
             let question = file.questions.iter().find(|q| !q.oneof && &q.subject == name);
             let earlier = self.declared.get(name).into_iter().flatten();
             for d in earlier.filter(|d| d.file != file_name && !self.use_chain.contains(&d.file)) {
+                // `none` proposes no value, so it agrees with any default
                 let (a, b) = (satz::value_canonical(&d.value), satz::value_canonical(value));
-                if a != b {
+                if a != b && d.value != Value::None && *value != Value::None {
                     return perr(file_name, *line, format!(
-                        "param `{}`: two used files declare it with different defaults — {} in {} (line {}), {} in {} (line {}). A param is one value in the whole estate, so {} would read the value of {}. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default",
+                        "param `{}`: two used files declare it with different defaults — {} in {} (line {}), {} in {} (line {}). A param is one value in the whole estate, so {} would read the value of {}. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, give both the same default, or declare it `none` in the one that proposes no value",
                         name, a, d.file, d.line, b, file_name, line, file_name, d.file
                     ));
                 }
@@ -3512,22 +3646,7 @@ impl Walk<'_> {
 
     fn absorb_params(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
         refuse_params_reading_inputs(file, file_name)?;
-        for (name, v, line) in satz::sort_params_by_deps(&file.params) {
-            if satz::contribution_target(name).is_some() {
-                continue; // merged into its target before the walk, never a value of its own
-            }
-            if let Some(e) = renamed_param(name, file_name, *line) {
-                return Err(e);
-            }
-            if self.genv.contains_key(name) {
-                continue;
-            }
-            let resolved = resolve_value(v, &self.genv, file_name, *line)?;
-            if let Some(msg) = renamed_field_in(name, &resolved) {
-                return perr(file_name, *line, msg);
-            }
-            self.genv.insert(name.clone(), resolved);
-        }
+        absorb(file, file_name, &mut self.genv)?;
         self.note_inputs(file, file_name)
     }
 
@@ -3668,6 +3787,9 @@ impl Walk<'_> {
         if self.inputs.contains_key(param) {
             return perr(file_name, line, format!("use … when {}: `{}` is an input — a gate decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", param, param, param));
         }
+        if let Some(v) = self.genv.get(param) {
+            read_no_value(v, file_name, line)?;
+        }
         Ok(truthy(self.genv.get(param)))
     }
 
@@ -3752,6 +3874,9 @@ impl Walk<'_> {
                     }
                     if self.inputs.contains_key(&cond.name) {
                         return perr(file_name, *line, format!("`{}`: `{}` is an input — a condition decides what the estate holds, and an input is a variable the plan reads; make `{}` a param", said, cond.name, cond.name));
+                    }
+                    if let Some(v) = self.genv.get(&cond.name) {
+                        read_no_value(v, file_name, *line)?;
                     }
                     if truthy(self.genv.get(&cond.name)) != cond.not {
                         out.extend(self.settle_when(std::slice::from_ref(entry.as_ref()), file_name)?);
@@ -5149,6 +5274,81 @@ mod estate_channel_tests {
         compile("estate t\n\nuse \"asked.satz\"\nuse \"same.satz\"\n").expect("one question, one shared default");
         let e = compile("estate t\n\nuse \"asked.satz\"\nuse \"asked_else.satz\"\n").err().expect("two questions for one param");
         assert!(e.msg.contains("question par01") && e.msg.contains("asked.satz (line") && e.msg.contains("asked_else.satz (line"), "{}", e.msg);
+    }
+
+    /// `none` declares a param and proposes no value: it agrees with one default in another
+    /// file, which is the value; two real defaults still disagree; a param every file
+    /// declares `none` and something reads is refused with its declarations and the read —
+    /// unless a question asks it, when the read is of the empty value.
+    #[test]
+    fn none_proposes_no_value_and_a_read_of_no_value_is_refused() {
+        let group = |param: &str| format!("google_org_policy_policy {{\n  g {{\n    display_name = \"{{{}}}\"\n  }}\n}}\n", param);
+        let load = |p: &str| -> Result<String, String> {
+            Ok(match p {
+                "reads.satz" => format!("pack reads version \"1.0\"\n\nparams {{\n  region = none\n}}\n\n{}", group("region")),
+                "eu.satz" => "pack eu version \"1.0\"\n\nparams {\n  region = \"eu\"\n}\n".into(),
+                "empty.satz" => "pack empty version \"1.0\"\n\nparams {\n  region = \"\"\n}\n".into(),
+                "also_none.satz" => "pack also_none version \"1.0\"\n\nparams {\n  region = none\n}\n".into(),
+                "asked.satz" => format!("pack asked version \"1.0\"\n\nparams {{\n  region = none\n}}\n\nquestion region {{\n  prompt   = \"Which region?\"\n  reversal = edit\n  blast    = none\n}}\n\n{}", group("region")),
+                "typed.satz" => "pack typed version \"1.0\"\n\nparams {\n  size = none\n  on   = none\n}\n\ngoogle_org_policy_policy {\n  g {\n    display_name = \"{size}\"\n    labels = { on = on }\n  }\n}\n".into(),
+                other => return Err(format!("no load: {}", other)),
+            })
+        };
+        let compile = |src: &str| compile_estate("t.satz", src, &Table, &load);
+        let name = |fe: &FrontEnd| -> String {
+            let g = fe.fragments.iter().flat_map(|f| f.entities.values()).find(|e| e.addr.tf_type == "google_org_policy_policy").expect("the policy");
+            match &g.body {
+                crate::algebra::Body::Attrs(v) => v.get("display_name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                other => panic!("{:?}", other),
+            }
+        };
+
+        // `none` and one default, in either order: the default is the value
+        let fe = compile("estate t\n\nuse \"reads.satz\"\nuse \"eu.satz\"\n").expect("none and one default agree");
+        assert_eq!(name(&fe), "eu", "a file walked before the default's reads it with the default");
+        assert_eq!(fe.tfvars.get("region"), Some(&serde_yaml::Value::String("eu".into())));
+        let fe = compile("estate t\n\nuse \"eu.satz\"\nuse \"reads.satz\"\n").expect("one default and none agree");
+        assert_eq!(name(&fe), "eu");
+        // the estate's binding wins; an estate's `none` binds nothing
+        let fe = compile("estate t\n\nparams {\n  region = \"us\"\n}\n\nuse \"reads.satz\"\nuse \"eu.satz\"\n").unwrap();
+        assert_eq!(name(&fe), "us");
+        let fe = compile("estate t\n\nparams {\n  region = none\n}\n\nuse \"reads.satz\"\nuse \"eu.satz\"\n").unwrap();
+        assert_eq!(name(&fe), "eu");
+
+        // `""` is a value: against another default it disagrees
+        let e = compile("estate t\n\nuse \"empty.satz\"\nuse \"eu.satz\"\n").err().expect("\"\" and \"eu\" disagree");
+        assert!(e.msg.contains("\"\" in empty.satz (line") && e.msg.contains("\"eu\" in eu.satz (line"), "{}", e.msg);
+        let fe = compile("estate t\n\nuse \"reads.satz\"\nuse \"empty.satz\"\n").expect("none and \"\" agree");
+        assert_eq!(fe.tfvars.get("region"), Some(&serde_yaml::Value::String(String::new())));
+
+        // `none` and `none`, nothing bound, read: refused, naming every declaration and the read
+        let e = compile("estate t\n\nuse \"reads.satz\"\nuse \"also_none.satz\"\n").err().expect("a read of no value");
+        assert_eq!((e.file.as_str(), e.line), ("reads.satz", 9), "{:?}", e);
+        for part in ["param `region` has no value", "reads.satz (line 4)", "also_none.satz (line 4)", "declare it `none`", "the estate binds none"] {
+            assert!(e.msg.contains(part), "{}: {}", part, e.msg);
+        }
+        // declared and read by nothing: no variable
+        let fe = compile("estate t\n\nuse \"also_none.satz\"\n").expect("unread, nothing to refuse");
+        assert!(!fe.tfvars.contains_key("region") && !fe.env.contains_key("region"), "{:?}", fe.tfvars);
+        // bound by the estate: the value
+        compile("estate t\n\nparams {\n  region = \"eu\"\n}\n\nuse \"reads.satz\"\nuse \"also_none.satz\"\n").expect("bound");
+
+        // a question asks it: blocking, read as the empty value, and still no variable
+        let fe = compile("estate t\n\nuse \"asked.satz\"\n").expect("a question that asks it lets the transpile run");
+        assert_eq!(name(&fe), "");
+        assert!(!fe.tfvars.contains_key("region"), "{:?}", fe.tfvars);
+        let (asked, _, env) = estate_questions("t.satz", "estate t\n\nuse \"asked.satz\"\n", &load).unwrap();
+        assert_eq!(asked.len(), 1);
+        assert!(!env.contains_key("region"), "the questions see no value: {:?}", env);
+
+        // a number and a bool declared `none`: one value each, from the estate
+        let e = compile("estate t\n\nuse \"typed.satz\"\n").err().expect("no value for size");
+        assert!(e.msg.contains("param `size` has no value"), "{}", e.msg);
+        let fe = compile("estate t\n\nparams {\n  size = 3\n  on   = true\n}\n\nuse \"typed.satz\"\n").expect("bound");
+        assert_eq!(name(&fe), "3");
+        assert_eq!(fe.tfvars.get("on"), Some(&serde_yaml::Value::Bool(true)));
+        let e = compile("estate t\n\nparams {\n  size = 3\n}\n\nuse \"typed.satz\"\n").err().expect("no value for on");
+        assert!(e.msg.contains("param `on` has no value"), "{}", e.msg);
     }
 
     /// A pack's interface is common without the word; an estate's only with `common`; a

@@ -465,8 +465,30 @@ params {
   extra_members            = []
   audit_bucket_name        = "{customer_shortname}-audit-001"
   log_bucket_name          = audit_bucket_name # bare identifier = param reference
+  billing_account_infra    = none              # declared, no value proposed
 }
 ```
+
+**`none` declares a param without a value.** The file reads the param and proposes nothing
+for it: the estate binds it, or another file's default is its value. It stands for a param
+of any type — a string, a number, a bool, a list — and only as a param's value in
+`params { … }`. `""` and `[]` are values: an empty string, an empty list.
+
+- A read of a param no file gives a value — the estate binds nothing, every declaration is
+  `none` — stops the transpile at the read, naming every declaration. Declared and read by
+  nothing, it stops nothing.
+- A question in the declaring file that asks it makes it `blocking` instead (§6.14): `satz
+  questions` lists it, `transpile --plan` warns, `transpile --apply` and `bootstrap`
+  refuse, and the plain transpile reads it as the empty value — `""` where the param is the
+  whole value, nothing inside a text, a false condition, an empty list — so the estate
+  transpiles while it is being answered.
+- A param with no value is never in `variables.tf` or `terraform.tfvars`.
+- An estate may write `p = none` too: it binds nothing, the packs' default applies and a
+  question about it stays open. `satz init` writes it for a value it could not derive.
+- Refused: `none` as an input's value (an input carries its example value), as a local
+  value's (nothing binds a local value), as a `contributes_<param>`, and a param, an input or
+  a local value named `none`. Anywhere else `none` is read as a param's bare name, which no
+  param carries.
 
 Resolution rules:
 
@@ -484,11 +506,12 @@ Resolution rules:
    without the pack that declares the name, the reference stops with
    `unknown param`, and the estate has to bind the value.
 
-   Two used files may declare the same param only when they agree: the same default,
-   and the same question if both ask one. That is a shared param — one value several
+   Two used files may declare the same param only when they agree: the same default —
+   `none` agrees with any default, and that default is then the value from the start of the
+   walk, in the files walked before it too — and the same question if both ask one. That is a shared param — one value several
    packs declare alike, as the two security-group models declare the group names.
    Two different defaults for one name are refused, naming both files, their lines
-   and both values, because the param is one value and one pack would read the
+   and both values — `""` and `"eu"` are two defaults — because the param is one value and one pack would read the
    other's. A binding in the estate does not lift
    the refusal: it picks one value, and the two packs still mean different things by
    one name. A file that uses another, directly or through others, binds that file's
@@ -2021,7 +2044,7 @@ fold, and never reaches the transpile's manifest.
 
 ```
 params {
-  customer_shortname         = ""
+  customer_shortname         = none
   default_region             = "europe-west3"
   deploys_regional_resources = true
 }
@@ -2053,13 +2076,12 @@ safely deferred when both are low.
 satz refuses or warns it can quote the pack's own sentence rather than a generic
 one — the same rule that makes `reason` mandatory on a `deviates` claim.
 
-**An empty answer that means something.** A question whose param may be `""` says what
-`""` means with `empty = "…"`. The empty value is then an answer like any other: `satz
-questions` shows it with its meaning, `satz interview` offers it, `--accept-defaults` and
-`satz_interview`'s `accept_defaults` bind it, and a bound `""` counts as answered for the
-gate. Without `empty`, a `""` the estate binds for a param whose pack default is also `""`
-is a value nobody has given, and the question stays open. `empty` belongs to a question
-about one param; a choice's "none" is its empty answer.
+**An empty answer that means something.** `""` is a value: a pack default `""` is offered
+like any other, `--accept-defaults` binds it, and a bound `""` is an answer. A question
+whose param may be `""` says what `""` means with `empty = "…"`, and `satz questions`, the
+interview and the decisions sheet show the meaning beside it. A param the pack cannot know
+is declared `none` (§6.3), not `""`. `empty` belongs to a question about one param; a
+choice's "none" is its empty answer.
 
 ```
 params {
@@ -2137,10 +2159,11 @@ Composition follows from that: a choice between two packs is two booleans plus t
 
 - `satz questions <estate> --format … --out <file>` — every question its packs contribute
   with its state:
-  `answered` when the estate's own `params {}` binds the param (accepting a default
-  is an answer, written as the default), `unanswered` with the default the pack
-  offers or `blocking` when none is possible, `not-applicable` when its `ask_when`
-  is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet
+  `answered` when the estate's own `params {}` binds the param to a value (accepting a
+  default is an answer, written as the default; an estate's `none` binds nothing),
+  `unanswered` with the default a pack offers — another file's where the asking pack
+  declares `none` — or `blocking` when no file gives a value or the default is built from
+  a param still open, `not-applicable` when its `ask_when` is false. `--unanswered` is the worklist, `--format markdown` the decisions sheet
   and `--format xlsx` the workbook a customer fills in.
   Offline and schema-free: an interview happens before anyone runs `update-schema`.
 - `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
@@ -3163,6 +3186,11 @@ malformed number `1.2.3`
 unknown param 'no_such_param'
 params: `a` is declared twice — line 3 and line 7; the second binding would be ignored, so delete the one that is not meant
 param `par01`: two used files declare it with different defaults — "from-a" in a.satz (line 4), "from-b" in b.satz (line 4). A param is one value in the whole estate, so b.satz would read the value of a.satz. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default
+param `region` has no value — a.satz (line 4), b.satz (line 4) declare it `none`, the estate binds none, and this reads it. Bind it in the estate's `params { … }`, or give it a default in one of those files
+`none` stands only as a param's value in `params { … }` — the param is declared, and this file proposes no value for it
+params: a param named `none` — `none` is the keyword of a param with no value; rename it
+inputs: `stage` = none — an input carries its example value, which the template transpiles with; write one
+locals: `bucket` = none — nothing binds a local value, so it would never have one; write the value, or make `bucket` a param
 question par01: two used files ask it differently — in a.satz (line 7) and in b.satz (line 7). A param is one value in the whole estate, asked once. Rename the param in the pack it belongs to, with the pack's name as its prefix, or ask the same question in both
 locals: `x` is declared twice — line 4 and line 5; delete the one that is not meant
 locals: `x` is also a param (line 4) — a name is one or the other; delete the one that is not meant

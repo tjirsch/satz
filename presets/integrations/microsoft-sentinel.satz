@@ -47,7 +47,7 @@
 // satisfy a retention control — `monitoring/organization-audit-logsink.satz` is what
 // claims those — and Sentinel is itself in no catalog.
 
-pack integrations.microsoft_sentinel version "1.1"
+pack integrations.microsoft_sentinel version "1.2"
 
 params {
   // The project that holds the federation and, with the log fragments, the topics
@@ -60,11 +60,11 @@ params {
   // Google assigns the project NUMBER at creation and the principal set is built
   // from it, so it cannot be derived from the id:
   //   gcloud projects describe <project-id> --format='value(projectNumber)'
-  sentinel_project_number = ""
+  sentinel_project_number = none
 
   // The customer's Microsoft Entra tenant id WITHOUT dashes — what Microsoft's
   // script names the pool after. Per customer, so no default.
-  sentinel_workload_pool_id = ""
+  sentinel_workload_pool_id = none
 
   sentinel_sa_account = "sentinel-service-account"
 

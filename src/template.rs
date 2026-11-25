@@ -531,6 +531,16 @@ pub fn generate_template(args: &TemplateArgs, graph: Option<&PackGraph>, output_
     crate::fsx::write_generated_satz(output_path, &template_text(args, graph))
 }
 
+/// A value init knows as a string literal, one it does not as `none`: the line is there to
+/// edit, and binds nothing until it holds a value.
+fn binding(value: &str) -> String {
+    if value.is_empty() {
+        satz_core::satz::NONE.to_string()
+    } else {
+        format!("\"{}\"", value)
+    }
+}
+
 /// The text of the estate `satz init` writes, with the pack lines of `graph` — none
 /// without one, as [`skeleton`] does.
 pub(crate) fn template_text(args: &TemplateArgs, graph: Option<&PackGraph>) -> String {
@@ -542,17 +552,17 @@ estate {estate}
 
 params {{
   infra_folder_name         = "Infrastructure"
-  infra_project_name        = "{project_id}"
-  infra_bucket_name         = "{bucket_id}"
+  infra_project_name        = {project_id}
+  infra_bucket_name         = {bucket_id}
   customer_id               = "{customer_id}"
-  customer_organization_id  = "{org_id}"
-  customer_domain           = "{domain}"
-  first_admin               = "{first_admin}"
-  customer_longname         = ""
-  customer_shortname        = "{shortname}"
+  customer_organization_id  = {org_id}
+  customer_domain           = {domain}
+  first_admin               = {first_admin}
+  customer_longname         = none
+  customer_shortname        = {shortname}
   svc_iac_account           = "svc-iac-001"
   estate_account_user_group = "svc-iac-users"
-  billing_account_infra     = "{billing_id}"
+  billing_account_infra     = {billing_id}
   deployment_engine         = "tofu"
   deployment_mode           = "local" // switched by `satz migrate`
   default_region            = "{region}"
@@ -581,13 +591,13 @@ params {{
         menu = graph.map(|g| format!("{}\n", pack_menu(g))).unwrap_or_default(),
         estate = estate_name(&args.customer_id),
         customer_id = args.customer_id,
-        project_id = args.project_id,
-        bucket_id = args.bucket_id,
-        org_id = args.org_id,
-        domain = args.domain,
-        first_admin = args.first_admin,
-        shortname = args.shortname,
-        billing_id = args.billing_id,
+        project_id = binding(&args.project_id),
+        bucket_id = binding(&args.bucket_id),
+        org_id = binding(&args.org_id),
+        domain = binding(&args.domain),
+        first_admin = binding(&args.first_admin),
+        shortname = binding(&args.shortname),
+        billing_id = binding(&args.billing_id),
         region = args.region,
     );
     // the bare lists into the map of their type, from the same graph — so `init` and

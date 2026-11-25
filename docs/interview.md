@@ -345,8 +345,9 @@ and every question says what it costs to be wrong about. The rules, from the
 - `why` is required wherever satz will refuse or warn — on every `recreate` and every
   `blast = high` — because that is the sentence the interview reads out before a
   one-way door.
-- A param whose value the pack **cannot know** defaults to `""`, so it is
-  `blocking` and the interview requires a typed value.
+- A param whose value the pack **cannot know** is declared `none`, so it is
+  `blocking` and the interview requires a typed value. `""` and `[]` are values: a pack
+  default `""` is offered like any other, and an estate that binds `""` has answered.
 - A param **derived** from another interpolates it: `"{customer_shortname}-infra-001"`.
   The interview offers it once the input is answered, resolved. Declare the input's
   question first, so the derived one arrives as an offer rather than a block.
