@@ -73,6 +73,7 @@ The spelling is American English.
 | **question** | | Something a preset or workload pack asks before it can be used: "which region?". | `satz questions`; satz-studio Decisions |
 | **answer** | | The value given to a question; stored as a param in the estate file. | `satz interview` |
 | **param** | | A named value in the estate file's `params { }` block: `default_region = "europe-west3"`. An answer is stored as one. | satz-studio Estate → Params |
+| **local value** | | A named value in a file's `locals { }` block, read by its bare name in that file and in no other: never bound by a using file, never a variable, never asked by a question. Not a param, and not `private`, which keeps a resource out of an interface. | the `locals` statement; `satz lsp` hover |
 | **decision** | | A question together with its answer — chosen, or taken as offered — and what changing it later costs. What the customer signs on the decisions sheet. | satz-studio Decisions |
 | **interview** | | Going through the open questions one by one. | `satz interview` |
 
@@ -145,5 +146,5 @@ These names stay as they are: `satz transpile`, `hcl/`, `hcl_dir`, `satz bootstr
 `--no-impersonate`, `--iac-user`, `satz check-consumer`, `workload_folder`,
 `workload_folder_name`, `infra_folder_name`, the project ids `<shortname>-infra-001` and
 `<shortname>-deploy-<name>`, the account ids `svc-iac-001` and `svc-deploy-<name>`,
-`deployment_mode`, the statement `pack`, the prefix `contributes_` of a request file, `satz get-pack`, `satz packs`,
+`deployment_mode`, the statements `pack` and `locals`, the prefix `contributes_` of a request file, `satz get-pack`, `satz packs`,
 the export `account_group_roles` of a delegation's interface, and the report fields `packs` and `pack`.

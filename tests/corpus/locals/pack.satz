@@ -1,0 +1,18 @@
+// A pack with a local value that reads its own param, which the estate binds.
+
+pack corpus_locals_pack version "1.0"
+
+params {
+  pack_suffix = "default"
+}
+
+locals {
+  pack_bucket = "{customer_shortname}-pack-{pack_suffix}"
+}
+
+google_storage_bucket {
+  packed {
+    name     = pack_bucket
+    location = "EU"
+  }
+}

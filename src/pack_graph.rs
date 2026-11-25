@@ -338,7 +338,7 @@ fn check_notices(g: &PackGraph, by_path: &BTreeMap<String, &File>, declared: &BT
     for (path, f) in by_path {
         let mut r = doc_packs::Refs::new();
         f.items.iter().for_each(|e| doc_packs::refs_in_entry(e, &mut r));
-        for (_, v, line) in &f.params {
+        for (_, v, line) in f.params.iter().chain(&f.locals) {
             doc_packs::refs_in_value(v, *line, &mut r);
         }
         for a in &f.actions {
@@ -762,6 +762,25 @@ mod tests {
         let b = g.nodes.iter().find(|n| n.path == "presets/b.satz").unwrap();
         assert_eq!(b.follows.as_deref(), Some("use_a"), "a gate defaulting to another gate follows it");
         assert_eq!(b.gate_declared_in.as_deref(), Some("presets/estate-map.satz"));
+    }
+
+    /// A local value reads params as the pack's resources do: a read of another pack's
+    /// param inside one is a `data` edge, and a read of a notice's param is check 9.
+    #[test]
+    fn a_local_value_s_reads_are_the_pack_s_reads() {
+        let m = map(
+            "  use_a = true\n  use_b = use_a",
+            "offers \"presets/a.satz\" {\n  when = use_a\n}\n\noffers \"presets/b.satz\" {\n  when = use_b\n}\n",
+        );
+        let b = "pack b version \"1.0\"\n\nlocals {\n  b_name = \"{a_value}-b\"\n}\n";
+        let (g, found) = build(&lib(&[("estate-map.satz", &m), ("a.satz", A), ("b.satz", b)])).unwrap();
+        assert!(found.is_empty(), "{:?}", found);
+        let e = g.edges.iter().find(|e| e.kind == EdgeKind::Data).expect("b's local value reads a's param");
+        assert_eq!((e.from.as_str(), e.to.as_str(), e.params.clone()), ("presets/b.satz", "presets/a.satz", vec!["a_value".to_string()]));
+
+        let a = "pack a version \"1.0\"\n\nparams {\n  a_adopted = false\n}\n\nnotice a_adopted {\n  text = \"t\"\n  run  = \"satz adopt <estate> --execute --import\"\n}\n";
+        let b = "pack b version \"1.0\"\n\nlocals {\n  b_flag = a_adopted\n}\n";
+        assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", a), ("b.satz", b)]), vec![9]);
     }
 
     /// A `use interface` names an interface, not a file: the graph gains no node, no edge

@@ -186,7 +186,7 @@ grep -q 'name = "corp-billing"' "$sc" && grep -q 'message_retention_duration = "
 grep -q 'resource "google_pubsub_subscription" "orders"' "$sc" || fail "each … when did not write the entry that carries the field"
 grep -q 'resource "google_pubsub_subscription" "billing"' "$sc" && fail "each … when wrote an entry that does not carry the field"
 grep -q 'google_storage_bucket_iam_member' "$sc" || fail "bucket-scoped grant missing"
-grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant did not reach main.tf"
+grep -q 'bucket = "corp-audit-logs-archive"' "$sc" || fail "the member-map form of a bucket-scoped grant, its scope read from a local value, did not reach main.tf"
 [ "$(grep -c 'resource "google_storage_bucket_iam_member"' "$sc")" = 2 ] || fail "both bucket-scoped grant forms should write one resource each"
 "$satz" --config . require cis-gcp-4.0 showcase.satz --format text --out tmp/showcase-require.txt 2>/dev/null || true
 grep -q 'DEVIATION' tmp/showcase-require.txt || fail "the deviates claim did not read as a deviation"
@@ -195,6 +195,8 @@ grep -q '0 contradicted claim(s)' tmp/showcase-require.txt || fail "a claim cont
 grep -q 'description = "Short name identifying this customer"' tmp/showcase-hcl/variables.tf \
   || fail "the question's prompt did not become the variable's description"
 grep -q 'question' "$sc" && fail "a question must write nothing into main.tf"
+# a local value is written as its value where it is read, and is no variable
+grep -q 'audit-bucket' tmp/showcase-hcl/variables.tf tmp/showcase-hcl/terraform.tfvars && fail "a local value became a variable"
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
@@ -2245,7 +2247,7 @@ grep -q 'resource "google_storage_bucket" "logs"' tmp/imported-hcl-hcl/main.tf |
 grep -q 'raw HCL passthrough' tmp/transpile-hcl.txt || fail "passthrough blocks must be announced"
 "$satz" --config . import tf -o imported-hcl2.satz --verbose | tee tmp/import-hcl2.txt
 grep -q '9 block(s) translated' tmp/import-hcl2.txt || fail "folder, project, service, grants and buckets should translate, the count over a list as two:\n$(cat tmp/import-hcl2.txt)"
-grep -q '3 promoted to params' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
+grep -q '3 promoted to params or local values' tmp/import-hcl2.txt || fail "both variables and the locals block should be promoted, not wrapped:\n$(cat tmp/import-hcl2.txt)"
 grep -q 'no longer write the `depends_on`' tmp/import-hcl2.txt || fail "the dropped ordering edges were not reported:\n$(cat tmp/import-hcl2.txt)"
 grep -q 'ordering   google_project_iam_member' tmp/import-hcl2.txt || fail "--verbose did not name the dropped edge:\n$(cat tmp/import-hcl2.txt)"
 ! grep -q 'depends_on' yaml/imported-hcl2.satz || fail "an ordering edge reached the estate; satz derives ordering itself"

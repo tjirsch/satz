@@ -41,6 +41,14 @@ params {
     { name = "billing" },
   ]
 }
+
+// --- Local values: read by their bare names in this file and in no other. A local value
+//     reads params and the other local values; nothing binds it, no question asks it, and
+//     it is no variable — every read is written as its value.
+locals {
+  audit_bucket = "{customer_shortname}-audit-logs"
+}
+
 // ---------------------------------------------------------------------------
 // QUESTIONS — what to ask a customer so a param can be filled, and what getting
 // it wrong costs. Metadata: they write nothing, and a question must be declared
@@ -206,7 +214,7 @@ google_folder {
         // namespaces the grant, so a second map for a second bucket is a second
         // grant even with the same member and role.
         google_storage_bucket_iam_member {
-          bucket = "{customer_shortname}-audit-logs-archive"
+          bucket = "{audit_bucket}-archive"
           "group:gcp-auditors@{customer_domain}" = [
             "roles/storage.objectViewer",
           ]

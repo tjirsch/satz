@@ -414,6 +414,19 @@ pub fn convert_value(
     params: &[(String, String)],
     header: &[String],
 ) -> Result<String, MigrateError> {
+    convert_value_with_locals(top, kind_keyword, name, params, &[], header)
+}
+
+/// `convert_value` with a `locals { … }` block after the params: the file's local values,
+/// each `(name, Satz value text)`.
+pub fn convert_value_with_locals(
+    top: &serde_yaml::Mapping,
+    kind_keyword: &str,
+    name: &str,
+    params: &[(String, String)],
+    locals: &[(String, String)],
+    header: &[String],
+) -> Result<String, MigrateError> {
     let mut out = String::new();
     for h in header {
         if h.is_empty() {
@@ -430,6 +443,13 @@ pub fn convert_value(
     if !params.is_empty() {
         out.push_str("params {\n");
         for (name, value) in params {
+            let _ = writeln!(out, "  {} = {}", name, value);
+        }
+        out.push_str("}\n\n");
+    }
+    if !locals.is_empty() {
+        out.push_str("locals {\n");
+        for (name, value) in locals {
             let _ = writeln!(out, "  {} = {}", name, value);
         }
         out.push_str("}\n\n");

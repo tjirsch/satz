@@ -387,6 +387,10 @@ impl<'a> View<'a> {
         let reads = |r: &crate::doc_packs::Refs| params.iter().any(|p| r.contains_key(p));
         let mut direct = crate::doc_packs::Refs::new();
         f.items.iter().for_each(|e| crate::doc_packs::refs_in_entry(e, &mut direct));
+        // a local value is read where the pack writes it, so its reads are direct ones
+        for (_, v, line) in &f.locals {
+            crate::doc_packs::refs_in_value(v, *line, &mut direct);
+        }
         for a in &f.actions {
             a.args.iter().chain(&a.execute_args).for_each(|p| crate::doc_packs::refs_in_str(p, a.line, &mut direct));
         }

@@ -871,12 +871,18 @@ fn one_pass(
 
     // params: the inferred organization id, then every promoted constant
     let mut params: Vec<(String, String)> = Vec::new();
+    let mut locals: Vec<(String, String)> = Vec::new();
     let mut required: Vec<String> = Vec::new();
     for (hcl_name, c) in &consts.by_name {
         if c.conflict.is_some() {
             continue;
         }
         match (&c.value, c.origin) {
+            // a `locals` entry is a value of this file, read by its bare name as `local.x`
+            // was; one used as the organization is `customer_organization_id`, a param
+            (Some(v), Origin::Local) if c.organization.is_none() => {
+                locals.push((c.param.clone(), migrate::param_value(v).map_err(|e| e.to_string())?));
+            }
             (Some(v), _) => {
                 params.push((c.param.clone(), migrate::param_value(v).map_err(|e| e.to_string())?));
             }
@@ -887,7 +893,7 @@ fn one_pass(
 
     // header and notes
     let mut header = vec![
-        "Imported from existing Terraform. `variable` and `locals` became params; resource".to_string(),
+        "Imported from existing Terraform. `variable` became params, `locals` local values; resource".to_string(),
         "blocks whose values are literals, params or `${…}` references are Satz resources,".to_string(),
         "placed by the folder/project they reference. Everything else is carried verbatim".to_string(),
         "inside `hcl trust` (it is applied as written; the compliance plane cannot see into it)".to_string(),
@@ -961,7 +967,7 @@ fn one_pass(
         0,
         ("customer_organization_id".to_string(), migrate::param_value(&serde_yaml::Value::String(org)).map_err(|e| e.to_string())?),
     );
-    let satz = render(&top, name, &params, &header, &verbatim)?;
+    let satz = render(&top, name, &params, &locals, &header, &verbatim)?;
     Ok(Pass::Done(Box::new(Imported { satz, rows, notes, ordering_dropped: dropped_edges })))
 }
 
@@ -1007,10 +1013,11 @@ fn render(
     top: &serde_yaml::Mapping,
     name: &str,
     params: &[(String, String)],
+    locals: &[(String, String)],
     header: &[String],
     verbatim: &[(String, usize, String)],
 ) -> Result<String, String> {
-    let mut satz = migrate::convert_value(top, "estate", &sanitize_name(name), params, header).map_err(|e| e.to_string())?;
+    let mut satz = migrate::convert_value_with_locals(top, "estate", &sanitize_name(name), params, locals, header).map_err(|e| e.to_string())?;
     if !satz.ends_with("\n\n") {
         satz.push('\n');
     }
@@ -1087,7 +1094,7 @@ fn wrap_everything(parsed: &[(&Input, Body)], name: &str, organization: Option<&
         header.push("It is applied as written except where a `provider` block is not carried:".to_string());
         header.extend(changed.iter().map(|c| format!("  {}", c)));
     }
-    let satz = render(&base_estate()?, name, &params, &header, &verbatim)?;
+    let satz = render(&base_estate()?, name, &params, &[], &header, &verbatim)?;
     let notes = changed.into_iter().map(|c| format!("not carried: {}", c)).collect();
     Ok(Imported { satz, rows, notes, ordering_dropped: Vec::new() })
 }
@@ -1185,6 +1192,9 @@ fn describe_promotion(d: &Decl, consts: &Consts) -> String {
     let mut out = if d.promoted.len() == 1 {
         let n = &d.promoted[0];
         match consts.by_name.get(n) {
+            Some(Const { value: Some(v), origin: Origin::Local, organization: None, .. }) => {
+                format!("local value {} = {} (locals)", migrate::param_name(n), migrate::param_value(v).unwrap_or_else(|_| "…".into()))
+            }
             Some(Const { value: Some(v), origin, organization, .. }) => format!(
                 "param {} = {} ({})",
                 migrate::param_name(n),
@@ -1202,8 +1212,10 @@ fn describe_promotion(d: &Decl, consts: &Consts) -> String {
             _ => format!("param {} (variable without a default — bind it before applying)", migrate::param_name(n)),
         }
     } else {
+        let local = |n: &String| consts.by_name.get(n).is_some_and(|c| c.origin == Origin::Local && c.organization.is_none());
         format!(
-            "params {}",
+            "{} {}",
+            if d.promoted.iter().all(local) { "local values" } else { "params" },
             d.promoted.iter().map(|n| migrate::param_name(n)).collect::<Vec<_>>().join(", ")
         )
     };
@@ -2756,7 +2768,7 @@ fn sanitize_name(s: &str) -> String {
 pub fn summary(rows: &[Row]) -> String {
     let count = |f: &dyn Fn(&Action) -> bool| rows.iter().filter(|r| f(&r.action)).count();
     format!(
-        "import: {} block(s) translated to Satz, {} promoted to params, {} wrapped verbatim, {} dropped (terraform/provider)",
+        "import: {} block(s) translated to Satz, {} promoted to params or local values, {} wrapped verbatim, {} dropped (terraform/provider)",
         count(&|a| *a == Action::Translated) + rows.iter().filter_map(|r| match r.action {
             Action::Expanded(n) => Some(n),
             _ => None,
@@ -3319,7 +3331,38 @@ resource "google_project" "infra" {
         // the declarations are consumed, not wrapped
         let by = by_what(&imported);
         assert!(matches!(by["variable \"pid\""], Action::Promoted(d) if d.contains("acme-infra-001")), "{:?}", by["variable \"pid\""]);
-        assert!(matches!(by["locals"], Action::Promoted(d) if d.contains("pretty")), "{:?}", by["locals"]);
+        assert!(matches!(by["locals"], Action::Promoted(d) if d.contains("local value pretty")), "{:?}", by["locals"]);
+        // a `locals` entry is a local value of the estate, read by its bare name, never a param
+        let parsed = satz_core::satz::parse(s).unwrap();
+        assert_eq!(parsed.locals.iter().map(|(n, _, _)| n.as_str()).collect::<Vec<_>>(), vec!["pretty"]);
+        assert!(!parsed.params.iter().any(|(n, _, _)| n == "pretty"), "{}", s);
+        // and it transpiles back to the literal the source wrote, with no variable of its own
+        struct Types;
+        impl satz_core::pipeline::TypeResolver for Types {
+            fn resolve(&self, key: &str) -> Option<satz_core::pipeline::ResolvedType> {
+                (key == "google_project").then(|| satz_core::pipeline::ResolvedType {
+                    tf_type: key.into(),
+                    class: satz_core::MergeClass::Entity,
+                    scope: satz_core::Scope::Node,
+                })
+            }
+            fn body_keys(&self, _: &str, _: &[&str]) -> Option<satz_core::pipeline::BodyKeys> {
+                None
+            }
+        }
+        let bound = s.replace("params {\n", "params {\n  billing = \"012345-6789AB-CDEF01\"\n");
+        let fe = satz_core::pipeline::compile_estate("acme.satz", &bound, &Types, &|p: &str| Err(format!("no {}", p))).unwrap();
+        let names: Vec<String> = fe
+            .fragments
+            .iter()
+            .flat_map(|f| f.entities.values())
+            .filter_map(|e| match &e.body {
+                satz_core::algebra::Body::Attrs(serde_yaml::Value::Mapping(m)) => m.get("name").and_then(|v| v.as_str()).map(str::to_string),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["Infra".to_string()], "{}", bound);
+        assert!(!fe.tfvars.contains_key("pretty"), "{:?}", fe.tfvars.keys());
         assert!(matches!(by["variable \"billing\""], Action::Promoted(d) if d.contains("bind it")), "{:?}", by["variable \"billing\""]);
         assert_eq!(imported.rows.iter().filter(|r| r.action == Action::Translated).count(), 1);
         assert!(!imported.satz.contains("hcl trust \"imported"), "nothing should wrap:\n{}", imported.satz);
