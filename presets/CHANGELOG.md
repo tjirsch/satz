@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.112.0
 
 **A delegated project's or folder's display name is held to Google's rule** (`delegated_projects`
 2.1, `delegated_folders` 1.2). Each entry's `display_name` — the entry's `name` when the entry
