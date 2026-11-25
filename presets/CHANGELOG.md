@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.113.0
 
 **A param no file gives a value takes its shape from where it is read, and two reads that
 disagree are refused** (ADR 0108). A param every used file declares `none` is read for its
