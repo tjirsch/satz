@@ -1,0 +1,46 @@
+# The files the preset library carried and carries no more, one path per line under presets/.
+#
+# `satz merge-presets` reads this list from the library it merges. A file on it that an
+# estate's presets/ folder still holds is removed when the estate does not use it, and
+# forked to `<stem>.local.satz` with the estate repointed at the fork when it does; the
+# adoption delta `<stem>.diff.satz` beside it is removed, and a fork `<stem>.local.satz` is
+# kept. A file in presets/ that is not a library file, a fork, an adoption delta or on this
+# list is never deleted: `merge-presets` and `check-presets` warn about it. Both commands
+# refuse a library without this file, and a line that names a file the library carries.
+#
+# A change that removes or moves a file under presets/ adds its old path here in the same
+# commit: `cargo test` compares presets/ with the last release tag and fails naming each
+# file the tag has, presets/ does not, and this list does not name (ADR 0103).
+
+CIS-GCP-Foundation-4.0.satz
+cis-extensions/access-approval.satz
+cis-extensions/api-key-services-dry-run.satz
+cis-extensions/api-key-services.satz
+cis-extensions/block-project-ssh-keys-dry-run.satz
+cis-extensions/block-project-ssh-keys.satz
+cis-extensions/bucket-retention-dry-run.satz
+cis-extensions/bucket-retention.satz
+cis-extensions/cloud-sql-dry-run.satz
+cis-extensions/cloud-sql-iam-and-deletion-protection-dry-run.satz
+cis-extensions/cloud-sql-iam-and-deletion-protection.satz
+cis-extensions/cloud-sql.satz
+cis-extensions/cmek.satz
+cis-extensions/confidential-computing-dry-run.satz
+cis-extensions/confidential-computing.satz
+cis-extensions/dns-logging.satz
+cis-extensions/internet-ssh-rdp.satz
+cis-extensions/shielded-vm.satz
+discovery-config.yaml
+docs/folder-workload.md
+docs/project-onboarding.md
+docs/project-workload.md
+docs/s1-group-definitions.md
+docs/s1-group-permissions.md
+docs/vpc-flow-logs.md
+docs/workload-deployer.md
+folder-workload.satz
+project-onboarding.satz
+project-workload.satz
+security-group-models/s1-group-definitions.satz
+security-group-models/s1-group-permissions.satz
+workload-deployer.satz

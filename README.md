@@ -1208,7 +1208,7 @@ satz get-presets --pristine-dir ~/src/satz/presets   # skip the download
 - GitHub's unauthenticated quota is 60 requests/hour and is shared with `self-update`. Set `GITHUB_TOKEN` to raise it, or pass `--pristine-dir` to skip the network entirely; exhaustion is reported as a rate limit with the wait, not as a parse error. See [docs/workflows.md](docs/workflows.md#when-upstream-stops-answering-the-github-quota).
 - Then decides per file: **missing** → installed; **identical** → skipped; **differs but the estate does not use it** → refreshed; **differs and the estate USES it** → **refused**, naming `merge-presets` / `merge-presets --adopt <stem>` instead. A changed pack the estate uses changes the organization; `merge-presets` reports that change before any `tofu plan`. `--force` overwrites anyway, listing each in-use pack as it does.
 - `X.local.*` files have no upstream counterpart, so nothing here can touch them.
-- A pack the library **moved** is installed at its new path like any missing file. The copy at the old path, a `.local.satz` fork and a `.diff.satz` delta beside it, and the estate's `use` lines stay as they are: a `use` of the old path is refused naming the new one and the edit — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack).
+- A pack the library **moved** is installed at its new path like any missing file. `get-presets` leaves the copy at the old path, a `.local.satz` fork and a `.diff.satz` delta beside it, and the estate's `use` lines as they are: a `use` of the old path is refused naming the new one and the edit — see [docs/workflows.md](docs/workflows.md#when-a-release-moves-a-pack). Once the estate no longer uses the old path, `merge-presets` removes the copy there and its `.diff.satz`, and keeps the fork.
 
 ### The decisions sheet (`questions --format markdown`)
 
@@ -1649,7 +1649,11 @@ One `presets/` folder; the **filename suffix declares provenance**:
 | `X.satz` | upstream-owned, pristine | always overwritable |
 | `X.local.satz` | your fork — the *rename is the fork declaration* | **never touched** |
 | `X.diff.satz` | the CURRENT adoption delta: `diff(X.local, pristine X)` | rewritten on every run |
-| `<own>.satz` | no upstream counterpart | local-only, kept |
+| a file the library dropped | listed in the library's `dropped-files.txt` | removed, or forked when the estate uses it |
+| any other file | not the library's, a fork or a delta | kept, and named in a warning |
+
+The folder is satz's: the preset library's files, the forks and the adoption deltas
+belong in it, and nothing else.
 
 Pack **versions live inside the file** (`pack <name> version "1.2"`); filenames
 carry only framework versions (CIS-GCP-Foundation-**4.0**, catalogs). Never a
@@ -1689,6 +1693,20 @@ default discovery (the single `estate` .satz in yaml_dir).
 A semantic change without a version bump warns (an upstream release bug); a bump
 with identical semantics upgrades in place.
 
+**When the library drops a file.** The library lists every file it carried and carries
+no more in `presets/dropped-files.txt`, and merge-presets reads that list from the
+library it merges; a library without it is refused, and so is a line naming a file the
+library carries. A dropped file the estate does not use is removed (`removed X.satz: the
+preset library no longer carries it, and the estate does not use it`), and so is a
+folder that removal leaves empty. A dropped pack the estate uses is forked like a
+changed one — preserved as `X.local.satz`, the estate repointed and checked by
+transpile identity — and its pristine copy removed: the fork is the estate's own file
+from then on, since nothing upstream is left to compare it with. The `X.diff.satz` of a
+dropped pack is removed, and its `X.local.satz` is kept, with a line that says the
+original is gone. Any other file in `presets/` — not the library's, not `*.local.satz`,
+not `*.diff.satz`, not on the list — is never deleted: merge-presets and `check-presets`
+print a `WARNING` naming it, and the file is moved out of the folder by hand.
+
 **A pack line without its gate** is not written by this command. The transpile reports an
 active `use` of a gated pack that has no `when` as an `ungated-pack` message, which names
 the line to write — see [docs/workflows.md](docs/workflows.md#when-a-pack-line-has-no-gate).
@@ -1701,7 +1719,8 @@ needs attention. Its transpiles do not report that gap as a message, so at `--va
 error` it is written rather than refused.
 
 The exit is non-zero when anything needs attention (a fork was created or its
-upstream moved, or a repoint was refused), so CI can gate on it.
+upstream moved, a dropped pack the estate uses was forked, or a repoint was refused),
+so CI can gate on it.
 
 > **Which command when?** [docs/workflows.md](docs/workflows.md)
 > walks the whole decision — how to tell a newer preset exists, whether your copy
@@ -1737,8 +1756,14 @@ Every local preset is compared against its pristine upstream version and classif
   differ; not mechanically migratable, review by hand. Same version with different
   content means a local edit, or an upstream release that moved without a bump.
 - **fork** — `X.local.*` files are forks, reported as such (never an error);
-  their upstream deltas live in `X.diff.satz`.
-- **local-only** / **missing locally** — customer-own files and new upstream presets.
+  their upstream deltas live in `X.diff.satz`. A fork whose original the library
+  dropped says so: it is the estate's own file.
+- **dropped** — a file on the library's `dropped-files.txt`, or the `.diff.satz` of one:
+  `merge-presets` removes it. A dropped pack the estate uses reads **DROPPED [included]**
+  and fails the gate; `merge-presets` forks it.
+- **WARNING** — a file that is not the library's, a fork, an adoption delta or dropped,
+  whatever its kind; it does not belong in `presets/` and is moved out by hand.
+- **missing locally** — a new upstream preset.
 
 Presets actually used by `<INPUT>` (via `use`) are tagged
 `[included]`; drift in an included preset makes the command exit non-zero, so it can

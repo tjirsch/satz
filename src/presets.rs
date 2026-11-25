@@ -372,7 +372,7 @@ pub(crate) struct PresetRow {
     pub file: String,
     /// in the estate's `use` graph
     pub included: bool,
-    /// clean | stale | edited | fork | local-only | missing-locally
+    /// clean | stale | edited | questions-changed | fork | dropped | foreign | missing-locally
     pub status: &'static str,
     /// for `edited`: "variables only" | "structural"
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -384,6 +384,9 @@ pub(crate) struct PresetRow {
     /// for a `.local` fork: the pristine stem it forked from
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub fork_of: Option<String>,
+    /// for a `.local` fork: the preset library no longer carries its original
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub fork_original_dropped: bool,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub changed_defaults: Vec<ChangedDefault>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -406,6 +409,10 @@ pub(crate) struct PresetRow {
 pub(crate) struct CheckPresetsSummary {
     pub clean: usize,
     pub stale: usize,
+    /// files the preset library no longer carries: `merge-presets` removes or forks them
+    pub dropped: usize,
+    /// files that are not the preset library's, a fork or an adoption delta
+    pub foreign: usize,
     pub drift_in_use: bool,
 }
 
@@ -469,6 +476,10 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
         match row.status {
             // a clean, current preset is counted, not printed
             "clean" => {}
+            "fork" if row.fork_original_dropped => {
+                let original = Path::new(&row.file).with_file_name(format!("{}.satz", row.fork_of.clone().unwrap_or_default()));
+                out.push_str(&format!("  fork{}: {} ({})\n", tag, row.file, fork_kept_text(&original)));
+            }
             "fork" => {
                 let stem = row.fork_of.clone().unwrap_or_default();
                 out.push_str(&format!(
@@ -476,8 +487,28 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
                     tag, row.file, stem, stem
                 ));
             }
-            "local-only" => {
-                out.push_str(&format!("  local-only{}: {} (not an upstream preset — kept as-is)\n", tag, row.file));
+            "dropped" if row.file.ends_with(".diff.satz") => {
+                out.push_str(&format!(
+                    "  dropped: {} — the preset library no longer carries its original; `merge-presets` removes it\n",
+                    row.file
+                ));
+            }
+            "dropped" if row.included => {
+                out.push_str(&format!(
+                    "  DROPPED{}: {} — the preset library no longer carries it; `merge-presets` forks it to {} and repoints the estate\n",
+                    tag,
+                    row.file,
+                    fork_sibling(Path::new(&row.file)).display()
+                ));
+            }
+            "dropped" => {
+                out.push_str(&format!(
+                    "  dropped: {} — the preset library no longer carries it and the estate does not use it; `merge-presets` removes it\n",
+                    row.file
+                ));
+            }
+            "foreign" => {
+                out.push_str(&format!("  WARNING {}: {}\n", row.file, foreign_text(&r.presets_dir)));
             }
             "missing-locally" => {
                 out.push_str(&format!(
@@ -539,6 +570,15 @@ pub(crate) fn render_check_presets(r: &CheckPresetsReport) -> String {
     if r.summary.stale > 0 {
         out.push_str("`clean` means unedited, not current — the version line is the staleness signal.\n");
     }
+    if r.summary.dropped > 0 {
+        out.push_str(&format!(
+            "{} file(s) the preset library no longer carries — `merge-presets` removes or forks them.\n",
+            r.summary.dropped
+        ));
+    }
+    if r.summary.foreign > 0 {
+        out.push_str(&format!("{} file(s) in {} that do not belong there — move them out.\n", r.summary.foreign, r.presets_dir));
+    }
     if r.summary.drift_in_use {
         out.push_str("Drift detected in included preset(s) — exit code 1.\n");
     } else {
@@ -584,41 +624,61 @@ pub(crate) async fn check_presets_report(
     walk_preset_sources(&pristine_base, &pristine_base, &mut pristine_files)?;
     let local_set: BTreeSet<_> = local_files.into_iter().collect();
     let pristine_set: BTreeSet<_> = pristine_files.into_iter().collect();
+    // every file of the library, whatever its kind, and what it no longer carries
+    let carried: BTreeSet<PathBuf> = library_files(&pristine_base)?.into_iter().collect();
+    let dropped = dropped_files(&pristine_base, &carried)?;
 
     let mut summary = CheckPresetsSummary::default();
     let mut packs = Vec::new();
+    let new_row = |rel: &Path, included: bool, status: &'static str| PresetRow {
+        file: rel.display().to_string(),
+        included,
+        status,
+        kind: None,
+        local_version: None,
+        upstream_version: None,
+        fork_of: None,
+        fork_original_dropped: false,
+        changed_defaults: Vec::new(),
+        structural_summary: None,
+        questions_summary: None,
+        baseline_for_fork: false,
+        same_version_different_content: false,
+        semantics_unchanged: false,
+    };
 
     for rel in local_set.union(&pristine_set) {
         let in_use = included.contains(rel);
-        let mut row = PresetRow {
-            file: rel.display().to_string(),
-            included: in_use,
-            status: "clean",
-            kind: None,
-            local_version: None,
-            upstream_version: None,
-            fork_of: None,
-            changed_defaults: Vec::new(),
-            structural_summary: None,
-            questions_summary: None,
-            baseline_for_fork: false,
-            same_version_different_content: false,
-            semantics_unchanged: false,
-        };
+        let mut row = new_row(rel, in_use, "clean");
 
         match (local_set.contains(rel), pristine_set.contains(rel)) {
-            (true, false) => {
-                let name = rel.file_name().unwrap_or_default().to_string_lossy();
-                if name.contains(".local.") {
+            (true, false) => match classify_stray(rel, &dropped) {
+                Stray::Fork => {
+                    let name = rel.file_name().unwrap_or_default().to_string_lossy();
+                    let stem = name.strip_suffix(".local.satz").unwrap_or_default().to_string();
                     row.status = "fork";
-                    row.fork_of = Some(name.split(".local.").next().unwrap_or_default().to_string());
-                } else if name.ends_with(".diff.satz") {
-                    // ledger files are artifacts of merge-presets, not presets
-                    continue;
-                } else {
-                    row.status = "local-only";
+                    row.fork_original_dropped = dropped.contains(&rel.with_file_name(format!("{stem}.satz")));
+                    row.fork_of = Some(stem);
                 }
-            }
+                // an adoption delta is merge-presets' artifact, not a preset
+                Stray::Delta => continue,
+                Stray::DroppedDelta(_) => {
+                    row.status = "dropped";
+                    row.included = false;
+                    summary.dropped += 1;
+                }
+                Stray::Dropped => {
+                    row.status = "dropped";
+                    summary.dropped += 1;
+                    if in_use {
+                        summary.drift_in_use = true;
+                    }
+                }
+                Stray::Foreign => {
+                    row.status = "foreign";
+                    summary.foreign += 1;
+                }
+            },
             (false, true) => row.status = "missing-locally",
             (true, true) => {
                 let local_text = crate::fsx::read_to_string(local_base.join(rel))?;
@@ -699,6 +759,25 @@ pub(crate) async fn check_presets_report(
         packs.push(row);
     }
 
+    // The files beside the packs — docs, data, scripts — the library does not carry:
+    // the packs are judged above, these only by whether they belong in the folder.
+    for rel in library_files(&local_base)? {
+        if carried.contains(&rel) || rel.extension().is_some_and(|x| x == "satz") {
+            continue;
+        }
+        match classify_stray(&rel, &dropped) {
+            Stray::Dropped => {
+                summary.dropped += 1;
+                packs.push(new_row(&rel, false, "dropped"));
+            }
+            Stray::Foreign => {
+                summary.foreign += 1;
+                packs.push(new_row(&rel, false, "foreign"));
+            }
+            Stray::Fork | Stray::Delta | Stray::DroppedDelta(_) => {}
+        }
+    }
+
     Ok(CheckPresetsReport {
         presets_dir: local_base.display().to_string(),
         packs,
@@ -721,6 +800,126 @@ pub(crate) async fn check_presets_report(
 fn library_entry(path: &Path) -> bool {
     let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
     !name.starts_with('.') && name != "__pycache__"
+}
+
+/// Every file of a library folder, or of an estate's `presets/` folder, relative to it:
+/// what [`library_entry`] admits, whatever its kind, sorted.
+fn library_files(dir: &Path) -> Result<Vec<PathBuf>, BoxErr> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in crate::fsx::read_dir_entries(&d).map_err(|e| format!("{}: {}", d.display(), e))? {
+            let p = e.path();
+            if !library_entry(&p) {
+                continue;
+            }
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            out.push(p.strip_prefix(dir)?.to_path_buf());
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// The file of the preset library that lists the files it carried and carries no more,
+/// one path per line under `presets/` (ADR 0103).
+pub(crate) const DROPPED_FILES: &str = "dropped-files.txt";
+
+/// The files the preset library at `library` no longer carries, read from its
+/// [`DROPPED_FILES`]. `carried` is every file the library holds.
+///
+/// It is what tells a file the library dropped from a file that never was one, so a
+/// library without the list is refused rather than read as having dropped nothing. A
+/// line that names a file the library carries, or a path that leaves the folder, is
+/// refused too: the list decides what `merge-presets` deletes.
+fn dropped_files(library: &Path, carried: &BTreeSet<PathBuf>) -> Result<BTreeSet<PathBuf>, BoxErr> {
+    let path = library.join(DROPPED_FILES);
+    let text = crate::fsx::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {} — the preset library lists the files it no longer carries in {}, which is how satz tells a file the library dropped from one it never had. \
+             The library of a satz release carries it; a library folder (`[preset_library] dir`, `--pristine-dir`) adds it, empty when it never dropped a file",
+            path.display(),
+            e,
+            DROPPED_FILES
+        )
+    })?;
+    let mut out = BTreeSet::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let rel = PathBuf::from(line);
+        if !rel.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+            return Err(format!("{}:{}: `{}` is not a path under presets/ — a line names one file of the library, relative to its folder", path.display(), n + 1, line).into());
+        }
+        if carried.contains(&rel) {
+            return Err(format!("{}:{}: the preset library carries {} and lists it as dropped — remove the line", path.display(), n + 1, line).into());
+        }
+        out.insert(rel);
+    }
+    Ok(out)
+}
+
+/// What a file in an estate's `presets/` folder is when the preset library does not
+/// carry it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Stray {
+    /// a file the library dropped
+    Dropped,
+    /// `X.diff.satz` of an `X.satz` the library dropped: nothing left to compare against
+    DroppedDelta(PathBuf),
+    /// `X.local.satz`, the estate's own fork
+    Fork,
+    /// `X.diff.satz` of a pack the library carries, or of a fork with no original
+    Delta,
+    /// none of these: the folder is satz's, and this file does not belong in it
+    Foreign,
+}
+
+pub(crate) fn classify_stray(rel: &Path, dropped: &BTreeSet<PathBuf>) -> Stray {
+    let name = rel.file_name().unwrap_or_default().to_string_lossy();
+    if let Some(stem) = name.strip_suffix(".diff.satz") {
+        let original = rel.with_file_name(format!("{stem}.satz"));
+        return if dropped.contains(&original) { Stray::DroppedDelta(original) } else { Stray::Delta };
+    }
+    if name.ends_with(".local.satz") {
+        return Stray::Fork;
+    }
+    if dropped.contains(rel) { Stray::Dropped } else { Stray::Foreign }
+}
+
+/// What `merge-presets` and `check-presets` say about a [`Stray::Foreign`] file.
+pub(crate) fn foreign_text(presets_dir: &str) -> String {
+    format!(
+        "not a file of the preset library, a fork (`.local.satz`) or an adoption delta (`.diff.satz`) — {} is satz's folder, and only forks and adoption deltas belong there beside the preset library. Move this file out; satz does not delete it",
+        presets_dir
+    )
+}
+
+/// The text of a fork whose original the preset library dropped.
+fn fork_kept_text(original: &Path) -> String {
+    format!(
+        "the preset library no longer carries {}, so the fork is the estate's own file from now on",
+        original.display()
+    )
+}
+
+/// Remove the folders above `rel` that removing it left empty, up to `base`.
+fn remove_emptied_dirs(base: &Path, rel: &Path) -> Result<(), BoxErr> {
+    let mut dir = rel.parent();
+    while let Some(d) = dir.filter(|d| !d.as_os_str().is_empty()) {
+        let full = base.join(d);
+        if !crate::fsx::read_dir_entries(&full)?.is_empty() {
+            break;
+        }
+        std::fs::remove_dir(&full).map_err(|e| format!("{}: {}", full.display(), e))?;
+        dir = d.parent();
+    }
+    Ok(())
 }
 
 fn install(path: &Path, contents: &str) -> Result<(), BoxErr> {
@@ -929,6 +1128,15 @@ pub(crate) enum MergeAction {
     Refused,
     /// `--adopt all` met a local EDIT at the same version, not staleness
     SkippedEdited,
+    /// the preset library no longer carries it, and the estate does not use it — or an
+    /// adoption delta whose original the library no longer carries: removed
+    DroppedRemoved,
+    /// the preset library no longer carries it, and the estate uses it: forked to
+    /// `X.local.satz`, the estate repointed, the pristine copy removed
+    DroppedForked,
+    /// a fork whose original the preset library no longer carries, and whose pristine
+    /// copy or adoption delta this run removed: kept, the estate's own file
+    ForkKept,
 }
 
 /// One line of a merge run, in the walk's own order. The CLI renders these; the
@@ -1010,6 +1218,9 @@ pub(crate) struct MergeCounts {
     pub deferred: usize,
     pub refused: usize,
     pub skipped_edited: usize,
+    pub dropped_removed: usize,
+    pub dropped_forked: usize,
+    pub forks_kept: usize,
 }
 
 /// A merge run as a value.
@@ -1044,6 +1255,9 @@ impl MergeReport {
                     MergeAction::Deferred => &mut counts.deferred,
                     MergeAction::Refused => &mut counts.refused,
                     MergeAction::SkippedEdited => &mut counts.skipped_edited,
+                    MergeAction::DroppedRemoved => &mut counts.dropped_removed,
+                    MergeAction::DroppedForked => &mut counts.dropped_forked,
+                    MergeAction::ForkKept => &mut counts.forks_kept,
                 };
                 *n += 1;
             }
@@ -1132,6 +1346,30 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
                     (MergeAction::Refused, _) => {
                         Some(format!("  REFUSED {}: {}", file, reason.clone().unwrap_or_default()))
                     }
+                    (MergeAction::DroppedRemoved, _) => Some(format!(
+                        "  {} {}: {}",
+                        if dry { "would remove" } else { "removed" },
+                        file,
+                        reason.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::DroppedForked, true) => Some(format!(
+                        "  would fork {} -> {} and repoint the estate: {}",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        reason.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::DroppedForked, false) => Some(format!(
+                        "  forked {} -> {}; estate repointed: {}",
+                        file,
+                        fork.clone().unwrap_or_default(),
+                        reason.clone().unwrap_or_default()
+                    )),
+                    (MergeAction::ForkKept, _) => Some(format!(
+                        "  {} {}: {}",
+                        if dry { "would keep" } else { "kept" },
+                        file,
+                        reason.clone().unwrap_or_default()
+                    )),
                 };
                 if let Some(l) = line {
                     out.push_str(&l);
@@ -1143,7 +1381,8 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
     let c = &r.counts;
     out.push_str(&format!(
         "\nmerge-presets: {} installed, {} current, {} artifacts updated, {} doc-only, {} unused overwritten, \
-         {} adopted in place, {} forked+repointed, {} fork diffs refreshed, {} deferred, {} refused, {} skipped (local edits).\n",
+         {} adopted in place, {} forked+repointed, {} fork diffs refreshed, {} dropped and removed, {} dropped and forked, \
+         {} forks kept, {} deferred, {} refused, {} skipped (local edits).\n",
         c.installed,
         c.current,
         c.artifacts_updated,
@@ -1152,6 +1391,9 @@ pub(crate) fn render_merge(r: &MergeReport) -> String {
         c.adopted_in_place,
         c.forked_and_repointed,
         c.fork_diffs_refreshed,
+        c.dropped_removed,
+        c.dropped_forked,
+        c.forks_kept,
         c.deferred,
         c.refused,
         c.skipped_edited
@@ -1209,6 +1451,7 @@ pub(crate) async fn run_merge_presets(
         None => find_estate(&runtime_config.yaml_dir),
     };
     let mut used_stems: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut used_files: BTreeSet<PathBuf> = BTreeSet::new();
     if let Some(est) = &estate {
         // The same `use`-graph walk `check-presets` makes — no include manifest,
         // so a satz estate is read as satz rather than through a generated twin.
@@ -1216,6 +1459,7 @@ pub(crate) async fn run_merge_presets(
             if let Some(stem) = pack_stem(&rel) {
                 used_stems.insert(stem);
             }
+            used_files.insert(rel);
         }
     } else {
         events.push(MergeEvent::Note {
@@ -1281,6 +1525,8 @@ pub(crate) async fn run_merge_presets(
     }
     upstream_files.sort();
     upstream_files.dedup();
+    let library: BTreeSet<PathBuf> = upstream_files.iter().cloned().collect();
+    let dropped = dropped_files(&pristine, &library)?;
     let mut adopted = 0usize;
     let mut needs_attention = false;
     // one place builds a pack's event, so an outcome cannot be recorded with one
@@ -1480,6 +1726,122 @@ pub(crate) async fn run_merge_presets(
                 });
                 needs_attention = true;
             }
+        }
+    }
+
+    // ---- what the folder holds beside the library (ADR 0103) ------------------
+    // A file the library dropped is removed, or forked when the estate uses it; the
+    // adoption delta of a dropped pack goes, its fork stays; anything else that is not
+    // the library's, a fork or a delta is named and left where it is.
+    let mut kept_forks: BTreeSet<PathBuf> = BTreeSet::new();
+    for rel in library_files(&local_base)? {
+        if library.contains(&rel) {
+            continue;
+        }
+        let file = rel.display().to_string();
+        let event = |action: MergeAction, fork: Option<String>, reason: String| MergeEvent::Pack {
+            file: file.clone(),
+            action,
+            fork,
+            diff: None,
+            versions: None,
+            reason: Some(reason),
+        };
+        match classify_stray(&rel, &dropped) {
+            Stray::Fork | Stray::Delta => {}
+            Stray::Foreign => events.push(MergeEvent::Warning { file: file.clone(), text: foreign_text(presets_dir) }),
+            Stray::DroppedDelta(original) => {
+                events.push(event(
+                    MergeAction::DroppedRemoved,
+                    None,
+                    format!("the preset library no longer carries {}, so there is nothing to compare its fork against", original.display()),
+                ));
+                kept_forks.insert(original);
+                if report_only { continue; }
+                crate::fsx::remove_file(local_base.join(&rel))?;
+                remove_emptied_dirs(&local_base, &rel)?;
+            }
+            Stray::Dropped if !used_files.contains(&rel) => {
+                events.push(event(
+                    MergeAction::DroppedRemoved,
+                    None,
+                    "the preset library no longer carries it, and the estate does not use it".to_string(),
+                ));
+                kept_forks.insert(rel.clone());
+                if report_only { continue; }
+                crate::fsx::remove_file(local_base.join(&rel))?;
+                remove_emptied_dirs(&local_base, &rel)?;
+            }
+            // USED, and the library no longer carries it: the fork a changed pack gets,
+            // with nothing left upstream to compare it with
+            Stray::Dropped => {
+                let fork_rel = fork_sibling(&rel);
+                let fork_path = local_base.join(&fork_rel);
+                let lo_path = local_base.join(&rel);
+                needs_attention = true;
+                if fork_path.exists() {
+                    events.push(event(
+                        MergeAction::Refused,
+                        None,
+                        format!(
+                            "the estate uses it, the preset library no longer carries it, and {} exists already — point the estate's `use` at that fork, or move the fork aside, and run merge-presets again",
+                            fork_rel.display()
+                        ),
+                    ));
+                    continue;
+                }
+                if adopting {
+                    events.push(pack(MergeAction::Deferred, &rel));
+                    continue;
+                }
+                if report_only {
+                    events.push(event(MergeAction::DroppedForked, Some(fork_rel.display().to_string()), fork_kept_text(&rel)));
+                    continue;
+                }
+                if estate_dirty {
+                    events.push(event(
+                        MergeAction::Refused,
+                        None,
+                        "estate file has uncommitted changes — commit/stash it so the repoint stays an isolated edit (pack left untouched)".to_string(),
+                    ));
+                    continue;
+                }
+                let est = estate.clone().expect("a used file implies an estate");
+                let est_text = crate::fsx::read_to_string(&est)?;
+                let lo = crate::fsx::read_to_string(&lo_path)?;
+                match rewrite_estate_uses(&est_text, &est, &runtime_config.include_dirs, &lo_path, &fork_rel) {
+                    Some(new_text) => {
+                        if journal.iter().all(|(p, _)| p != &est) {
+                            journal.push((est.clone(), est_text.clone()));
+                        }
+                        crate::fsx::write_verbatim(&fork_path, lo.as_bytes())?;
+                        created.push(fork_path.clone());
+                        journal.push((lo_path.clone(), lo));
+                        crate::fsx::remove_file(&lo_path)?;
+                        crate::fsx::write_edited_satz(&est, &est_text, &new_text)?;
+                        estate_edited = true;
+                        events.push(event(MergeAction::DroppedForked, Some(fork_rel.display().to_string()), fork_kept_text(&rel)));
+                    }
+                    None => events.push(event(
+                        MergeAction::Refused,
+                        None,
+                        "could not locate the estate `use` for this pack (used via another pack?) — fork it by hand".to_string(),
+                    )),
+                }
+            }
+        }
+    }
+    for original in kept_forks {
+        let fork = fork_sibling(&original);
+        if local_base.join(&fork).exists() {
+            events.push(MergeEvent::Pack {
+                file: fork.display().to_string(),
+                action: MergeAction::ForkKept,
+                fork: None,
+                diff: None,
+                versions: None,
+                reason: Some(fork_kept_text(&original)),
+            });
         }
     }
 
@@ -1932,6 +2294,7 @@ mod tests {
             local_version: None,
             upstream_version: None,
             fork_of: None,
+            fork_original_dropped: false,
             changed_defaults: Vec::new(),
             structural_summary: None,
             questions_summary: None,
@@ -1992,10 +2355,9 @@ mod tests {
                 edited,
                 structural,
                 fork,
-                prow("g.satz", "local-only"),
                 prow("h.satz", "missing-locally"),
             ],
-            CheckPresetsSummary { clean: 1, stale: 3, drift_in_use: true },
+            CheckPresetsSummary { clean: 1, stale: 3, dropped: 0, foreign: 0, drift_in_use: true },
         ));
 
         // a clean, current preset is counted and NOT printed
@@ -2012,7 +2374,6 @@ mod tests {
         assert!(out.contains("same version as upstream, different content"), "{out}");
         assert!(out.contains("2 resource(s) differ — not mechanically migratable"), "{out}");
         assert!(out.contains("fork [included]: f.local.satz (deliberate fork of f"), "{out}");
-        assert!(out.contains("local-only [included]: g.satz"), "{out}");
         assert!(out.contains("missing locally: h.satz"), "{out}");
         assert!(out.contains("1 preset(s) clean, 3 behind upstream."), "{out}");
         assert!(out.contains("Drift detected in included preset(s) — exit code 1."), "{out}");
@@ -2024,10 +2385,88 @@ mod tests {
     fn drift_outside_the_use_graph_does_not_fail() {
         let out = render_check_presets(&report(
             vec![prow("x.satz", "edited")],
-            CheckPresetsSummary { clean: 0, stale: 0, drift_in_use: false },
+            CheckPresetsSummary { clean: 0, stale: 0, dropped: 0, foreign: 0, drift_in_use: false },
         ));
         assert!(out.contains("No drift in included presets."), "{out}");
         assert!(!out.contains("exit code 1"), "{out}");
+    }
+
+    /// What the preset library dropped, a fork whose original it dropped, and a file that
+    /// does not belong in the folder: each named, with what `merge-presets` does about it.
+    #[test]
+    fn dropped_and_foreign_files_are_named() {
+        let used = prow("project-workload.satz", "dropped");
+        let mut unused = prow("folder-workload.satz", "dropped");
+        unused.included = false;
+        let mut delta = prow("old.diff.satz", "dropped");
+        delta.included = false;
+        let mut fork = prow("old.local.satz", "fork");
+        fork.fork_of = Some("old".into());
+        fork.fork_original_dropped = true;
+        let mut foreign = prow("notes.md", "foreign");
+        foreign.included = false;
+        let out = render_check_presets(&report(
+            vec![used, unused, delta, fork, foreign],
+            CheckPresetsSummary { clean: 0, stale: 0, dropped: 3, foreign: 1, drift_in_use: true },
+        ));
+        assert!(out.contains("DROPPED [included]: project-workload.satz — the preset library no longer carries it; `merge-presets` forks it to project-workload.local.satz"), "{out}");
+        assert!(out.contains("dropped: folder-workload.satz — the preset library no longer carries it and the estate does not use it; `merge-presets` removes it"), "{out}");
+        assert!(out.contains("dropped: old.diff.satz — the preset library no longer carries its original"), "{out}");
+        assert!(out.contains("fork [included]: old.local.satz (the preset library no longer carries old.satz, so the fork is the estate's own file from now on)"), "{out}");
+        assert!(out.contains("WARNING notes.md: not a file of the preset library, a fork (`.local.satz`) or an adoption delta (`.diff.satz`) — presets is satz's folder"), "{out}");
+        assert!(out.contains("3 file(s) the preset library no longer carries"), "{out}");
+        assert!(out.contains("1 file(s) in presets that do not belong there"), "{out}");
+    }
+
+    /// A file of `presets/` the library does not carry is a fork, an adoption delta, a
+    /// file the library dropped, the delta of one, or foreign — by its name and the list.
+    #[test]
+    fn a_file_the_library_does_not_carry_is_classified_by_name_and_list() {
+        let dropped: BTreeSet<PathBuf> =
+            ["project-workload.satz", "cis-extensions/cmek.satz", "docs/project-workload.md"].iter().map(PathBuf::from).collect();
+        let at = |p: &str| classify_stray(Path::new(p), &dropped);
+        assert_eq!(at("project-workload.satz"), Stray::Dropped);
+        assert_eq!(at("docs/project-workload.md"), Stray::Dropped);
+        assert_eq!(at("cis-extensions/cmek.diff.satz"), Stray::DroppedDelta(PathBuf::from("cis-extensions/cmek.satz")));
+        assert_eq!(at("project-workload.local.satz"), Stray::Fork);
+        assert_eq!(at("logs.diff.satz"), Stray::Delta);
+        assert_eq!(at("logs.local.satz"), Stray::Fork);
+        assert_eq!(at("notes.md"), Stray::Foreign);
+        assert_eq!(at("own.satz"), Stray::Foreign);
+        assert_eq!(at("cis-extensions/other.satz"), Stray::Foreign);
+    }
+
+    /// The list decides what `merge-presets` deletes, so a library without it, a line that
+    /// names a file the library carries, and a path that leaves the folder are refused.
+    #[test]
+    fn the_dropped_list_is_required_and_checked() {
+        let dir = std::env::temp_dir().join(format!("satz-dropped-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let carried: BTreeSet<PathBuf> = [PathBuf::from("logs.satz")].into_iter().collect();
+        let err = dropped_files(&dir, &carried).unwrap_err().to_string();
+        assert!(err.contains("dropped-files.txt") && err.contains("empty when it never dropped a file"), "{err}");
+        std::fs::write(dir.join("dropped-files.txt"), "# comment\n\nold.satz\ndocs/old.md\n").unwrap();
+        let got = dropped_files(&dir, &carried).unwrap();
+        assert!(got.contains(Path::new("old.satz")) && got.contains(Path::new("docs/old.md")) && got.len() == 2, "{got:?}");
+        std::fs::write(dir.join("dropped-files.txt"), "logs.satz\n").unwrap();
+        let err = dropped_files(&dir, &carried).unwrap_err().to_string();
+        assert!(err.contains("carries logs.satz and lists it as dropped"), "{err}");
+        for bad in ["../outside.satz", "/etc/x.satz", "a/../b.satz"] {
+            std::fs::write(dir.join("dropped-files.txt"), format!("{bad}\n")).unwrap();
+            let err = dropped_files(&dir, &carried).unwrap_err().to_string();
+            assert!(err.contains("is not a path under presets/"), "{bad}: {err}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The repository's own library carries the list, and every line of it parses.
+    #[test]
+    fn the_librarys_dropped_list_parses() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
+        let carried: BTreeSet<PathBuf> = super::library_files(&root).unwrap().into_iter().collect();
+        let dropped = super::dropped_files(&root, &carried).unwrap();
+        assert!(dropped.contains(Path::new("project-workload.satz")) && dropped.contains(Path::new("folder-workload.satz")), "{dropped:?}");
     }
 
     use super::*;
@@ -2225,6 +2664,40 @@ mod merge_report_tests {
         assert!(out.contains("\n  emission delta after adoption:\n    + google_x.y  (added)\n"), "{out}");
         assert!(out.contains("  hcl/ on disk is NOT regenerated by this command"), "{out}");
     }
+
+    /// A file the preset library dropped: removed, or forked when the estate uses it; the
+    /// delta beside it removed, its fork kept — each line says why, and each is counted.
+    #[test]
+    fn what_the_library_dropped_is_said_and_counted() {
+        let ev = |file: &str, action: MergeAction, fork: Option<&str>, reason: String| MergeEvent::Pack {
+            file: file.into(),
+            action,
+            fork: fork.map(str::to_string),
+            diff: None,
+            versions: None,
+            reason: Some(reason),
+        };
+        let events = vec![
+            ev("folder-workload.satz", MergeAction::DroppedRemoved, None, "the preset library no longer carries it, and the estate does not use it".into()),
+            ev("project-workload.satz", MergeAction::DroppedForked, Some("project-workload.local.satz"), fork_kept_text(Path::new("project-workload.satz"))),
+            ev("old.diff.satz", MergeAction::DroppedRemoved, None, "the preset library no longer carries old.satz, so there is nothing to compare its fork against".into()),
+            ev("old.local.satz", MergeAction::ForkKept, None, fork_kept_text(Path::new("old.satz"))),
+            MergeEvent::Warning { file: "notes.md".into(), text: foreign_text("presets") },
+        ];
+        let real = MergeReport::counted(events.clone(), false, true);
+        assert_eq!((real.counts.dropped_removed, real.counts.dropped_forked, real.counts.forks_kept), (2, 1, 1));
+        let out = render_merge(&real);
+        assert!(out.contains("  removed folder-workload.satz: the preset library no longer carries it, and the estate does not use it\n"), "{out}");
+        assert!(out.contains("  forked project-workload.satz -> project-workload.local.satz; estate repointed: the preset library no longer carries project-workload.satz, so the fork is the estate's own file from now on\n"), "{out}");
+        assert!(out.contains("  removed old.diff.satz: the preset library no longer carries old.satz, so there is nothing to compare its fork against\n"), "{out}");
+        assert!(out.contains("  kept old.local.satz: the preset library no longer carries old.satz, so the fork is the estate's own file from now on\n"), "{out}");
+        assert!(out.contains("  WARNING notes.md: not a file of the preset library"), "{out}");
+        assert!(out.contains("2 dropped and removed, 1 dropped and forked, 1 forks kept"), "{out}");
+        let dry = render_merge(&MergeReport::counted(events, true, true));
+        assert!(dry.contains("  would remove folder-workload.satz:"), "{dry}");
+        assert!(dry.contains("  would fork project-workload.satz -> project-workload.local.satz and repoint the estate:"), "{dry}");
+        assert!(dry.contains("  would keep old.local.satz:"), "{dry}");
+    }
 }
 
 
@@ -2261,10 +2734,8 @@ mod release_version_tests {
             .expect("git: the last release is read from the repository, so git must run")
     }
 
-    #[test]
-    fn a_pack_whose_meaning_changed_since_the_last_release_carries_a_new_version() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let base = match std::env::var("SATZ_PACK_BASE") {
+    fn last_release(root: &Path) -> String {
+        match std::env::var("SATZ_PACK_BASE") {
             Ok(b) => b,
             Err(_) => {
                 let out = git(root, &["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"]);
@@ -2275,7 +2746,39 @@ mod release_version_tests {
                 );
                 String::from_utf8_lossy(&out.stdout).trim().to_string()
             }
-        };
+        }
+    }
+
+    /// A file the last release's library carried and presets/ does not is on
+    /// `presets/dropped-files.txt`, so `merge-presets` removes it from every estate rather
+    /// than warn about it there forever (ADR 0103).
+    #[test]
+    fn a_file_the_last_release_carried_and_presets_does_not_is_listed_as_dropped() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let base = last_release(root);
+        let out = git(root, &["ls-tree", "-r", "-z", "--name-only", &base, "--", "presets"]);
+        assert!(out.status.success(), "git ls-tree {base} failed: {}", String::from_utf8_lossy(&out.stderr));
+        let presets = root.join("presets");
+        let carried: BTreeSet<PathBuf> = library_files(&presets).unwrap().into_iter().collect();
+        let dropped = dropped_files(&presets, &carried).unwrap_or_else(|e| panic!("{e}"));
+        let missing: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .split('\0')
+            .filter_map(|f| f.strip_prefix("presets/"))
+            .map(PathBuf::from)
+            .filter(|rel| library_entry(rel) && !carried.contains(rel) && !dropped.contains(rel))
+            .map(|rel| format!("  {}", rel.display()))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{base} carried these files and presets/ does not — add each to presets/{DROPPED_FILES}:\n{}",
+            missing.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_pack_whose_meaning_changed_since_the_last_release_carries_a_new_version() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let base = last_release(root);
         let out = git(root, &["ls-files", "-z", "--", "presets", "packs"]);
         assert!(out.status.success(), "git ls-files failed: {}", String::from_utf8_lossy(&out.stderr));
         let files: Vec<String> = String::from_utf8_lossy(&out.stdout)

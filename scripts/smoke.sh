@@ -1743,7 +1743,7 @@ import json
 d = json.load(open("tmp/presets.json"))
 assert d["packs"], "no pack rows"
 assert d["summary"]["drift_in_use"] is False, d["summary"]
-assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","fork","local-only","missing-locally"}
+assert {p["status"] for p in d["packs"]} <= {"clean","stale","edited","questions-changed","fork","dropped","foreign","missing-locally"}
 PYEOF
 grep -q 'satz v' tmp/presets.json && fail "the version banner reached the report file"
 
@@ -1764,6 +1764,8 @@ prq_pack() { # $1 version, $2 extra resources
   printf '// A log bucket, and what later versions add beside it.\npack logs version "%s"\n\ngoogle_storage_bucket {\n  logs {\n    name     = "acme-logs"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n%b' "$1" "$2"
 }
 prq_pack 1.0 '' > tmp/prq/pristine/logs.satz
+# a library lists the files it dropped, none yet
+: > tmp/prq/pristine/dropped-files.txt
 "$satz" --config tmp/prq/config.toml get-presets --pristine-dir tmp/prq/pristine > tmp/prq-get.txt 2>&1 \
   || fail "get-presets failed:\n$(cat tmp/prq-get.txt)"
 cmp -s tmp/prq/pristine/logs.satz tmp/prq/presets/logs.satz || fail "get-presets did not install the pack:\n$(cat tmp/prq-get.txt)"
@@ -1826,6 +1828,67 @@ rm tmp/prq/presets/action.py
 cmp -s tmp/prq/pristine/action.py tmp/prq/presets/action.py || fail "get-presets did not install the Python file:\n$(cat tmp/prq-get-py.txt)"
 [ -e tmp/prq/presets/.DS_Store ] || [ -e tmp/prq/presets/__pycache__ ] && fail "get-presets copied a hidden file or __pycache__"
 grep -q 'forked logs\|estate edit' tmp/prq-again.txt && fail "a second merge-presets edited the estate again:\n$(cat tmp/prq-again.txt)"
+
+step "merge-presets removes what the library dropped, forks what the estate still uses, keeps forks and names a foreign file"
+# Four packs and a page arrive: `gone` the estate uses, `spare` and its page it does not,
+# `based` it runs as a fork, whose adoption delta merge-presets writes.
+drp_pack() { # $1 name
+  printf '// The %s bucket.\npack %s version "1.0"\n\ngoogle_storage_bucket {\n  %s {\n    name     = "acme-%s"\n    project  = "acme-infra-001"\n    location = "EU"\n  }\n}\n' "$1" "$1" "$1" "$1"
+}
+for p in gone spare based; do drp_pack "$p" > "tmp/prq/pristine/$p.satz"; done
+mkdir -p tmp/prq/pristine/docs && printf '# spare\n' > tmp/prq/pristine/docs/spare.md
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/drp-install.txt 2>&1 \
+  || fail "merge-presets did not install the packs:\n$(cat tmp/drp-install.txt)"
+drp_pack based | sed 's/acme-based/acme-based-own/' > tmp/prq/presets/based.local.satz
+printf 'use "presets/gone.satz"\nuse "presets/based.local.satz"\n' >> tmp/prq/yaml/prq.satz
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm uses)
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/drp-delta.txt 2>&1 || true
+[ -f tmp/prq/presets/based.diff.satz ] || fail "the fork's adoption delta was not written:\n$(cat tmp/drp-delta.txt)"
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm delta)
+# The next library drops all four, lists them, and the folder gains a file of nobody's.
+rm tmp/prq/pristine/gone.satz tmp/prq/pristine/spare.satz tmp/prq/pristine/based.satz tmp/prq/pristine/docs/spare.md
+printf '# dropped\ngone.satz\nspare.satz\nbased.satz\ndocs/spare.md\n' > tmp/prq/pristine/dropped-files.txt
+printf 'my notes\n' > tmp/prq/presets/notes.md
+if "$satz" --config tmp/prq/config.toml check-presets prq.satz --pristine-dir tmp/prq/pristine --format text --out tmp/drp-check.txt > /dev/null 2>&1; then
+  fail "check-presets passed with a used pack the library dropped:\n$(cat tmp/drp-check.txt)"
+fi
+for want in \
+  'DROPPED [included]: gone.satz — the preset library no longer carries it; `merge-presets` forks it to gone.local.satz' \
+  'dropped: spare.satz — the preset library no longer carries it and the estate does not use it' \
+  'dropped: docs/spare.md — the preset library no longer carries it' \
+  'dropped: based.diff.satz — the preset library no longer carries its original' \
+  'based.local.satz (the preset library no longer carries based.satz, so the fork is the estate'"'"'s own file from now on)' \
+  'WARNING notes.md: not a file of the preset library, a fork (`.local.satz`) or an adoption delta (`.diff.satz`)'; do
+  grep -qF "$want" tmp/drp-check.txt || fail "check-presets did not say: $want\n$(cat tmp/drp-check.txt)"
+done
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/drp-merge.txt 2>&1 || true
+for want in \
+  'removed spare.satz: the preset library no longer carries it, and the estate does not use it' \
+  'removed docs/spare.md: the preset library no longer carries it, and the estate does not use it' \
+  'removed based.satz: the preset library no longer carries it, and the estate does not use it' \
+  'removed based.diff.satz: the preset library no longer carries based.satz, so there is nothing to compare its fork against' \
+  'kept based.local.satz: the preset library no longer carries based.satz, so the fork is the estate'"'"'s own file from now on' \
+  'forked gone.satz -> gone.local.satz; estate repointed: the preset library no longer carries gone.satz' \
+  'estate edit verified: transpiled output identical' \
+  'WARNING notes.md: not a file of the preset library'; do
+  grep -qF "$want" tmp/drp-merge.txt || fail "merge-presets did not say: $want\n$(cat tmp/drp-merge.txt)"
+done
+for f in spare.satz based.satz based.diff.satz gone.satz docs; do
+  [ -e "tmp/prq/presets/$f" ] && fail "merge-presets left presets/$f behind:\n$(cat tmp/drp-merge.txt)"
+done
+[ -f tmp/prq/presets/based.local.satz ] && grep -q 'acme-based-own' tmp/prq/presets/based.local.satz || fail "the fork of a dropped pack was not kept as it was"
+grep -q 'acme-gone' tmp/prq/presets/gone.local.satz || fail "the used dropped pack was not forked with its content"
+grep -q '^use "presets/gone.local.satz"$' tmp/prq/yaml/prq.satz || fail "the estate was not repointed at the fork:\n$(grep -n '^use' tmp/prq/yaml/prq.satz)"
+[ -f tmp/prq/presets/notes.md ] || fail "merge-presets deleted a file that is not the library's"
+(cd tmp/prq && git add -A && git -c user.name=smoke -c user.email=smoke@example.com commit -qm dropped)
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/drp-again.txt 2>&1 \
+  || fail "a second merge-presets after the drop needs attention:\n$(cat tmp/drp-again.txt)"
+grep -q 'removed \|forked \|kept ' tmp/drp-again.txt && fail "a second merge-presets acted on the dropped files again:\n$(cat tmp/drp-again.txt)"
+grep -qF 'WARNING notes.md' tmp/drp-again.txt || fail "the second run did not name the foreign file:\n$(cat tmp/drp-again.txt)"
+rm -f tmp/prq/pristine/dropped-files.txt
+"$satz" --config tmp/prq/config.toml merge-presets --pristine-dir tmp/prq/pristine > tmp/drp-nolist.txt 2>&1 \
+  && fail "merge-presets ran against a library without dropped-files.txt"
+grep -q 'dropped-files.txt' tmp/drp-nolist.txt || fail "the refusal does not name the missing list:\n$(cat tmp/drp-nolist.txt)"
 
 step "get-presets reads the preset library [preset_library] names instead of satz's"
 rm -rf tmp/lib && mkdir -p tmp/lib/est tmp/lib/library/presets

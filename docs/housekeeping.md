@@ -170,6 +170,13 @@ the packs that implement them.
   naming no pack, an empty group, and a group `presets/README.md` has no `## <group>`
   heading for or carries out of order. A new pack gets its line in the same commit; the
   index `presets/docs/README.md` and the site's side menu follow the file.
+- `presets/dropped-files.txt` — every file the library carried and carries no more, one
+  path under `presets/` per line, by hand (ADR 0103). `merge-presets` removes those files
+  from an estate's `presets/`, or forks one the estate uses; `merge-presets` and
+  `check-presets` refuse a library without the list. `cargo test` compares `presets/`
+  with the last release tag and fails naming each file the tag has, `presets/` does not
+  and the list does not name, so a change that removes or moves a library file adds its
+  old path in the same commit.
 - `presets/CHANGELOG.md` `## Changelog` — one row per pack version, by hand.
   `doc-presets` parses it and fails on three things: a pack
   version with no row, a row naming a pack that does not exist, and a table whose

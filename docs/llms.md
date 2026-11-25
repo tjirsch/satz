@@ -194,6 +194,10 @@ pack declares a `question oneof` over them, satz refuses two true branches by na
 | `X.local.satz` | a deliberate fork, never touched by updates |
 | `X.diff.satz` | the current adoption delta, rewritten on every merge |
 
+Nothing else belongs in `presets/`. A file the library dropped (its `dropped-files.txt`
+lists it) is removed by `merge-presets`, or forked when the estate uses it; any other
+file there is named in a warning, and moving it out is the operator's call.
+
 To change what a pristine pack does, **use a param**. If no param exists for what you
 need, say so instead of forking.
 
