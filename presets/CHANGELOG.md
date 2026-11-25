@@ -15,6 +15,22 @@ names the file and the line.
 
 ### v0.111.0
 
+**The transpile refuses two used files that declare one param with different
+defaults** (ADR 0104). A param is one value in the whole estate; where two packs declared
+the same name with different defaults, the first file's default won and the second pack
+read it without a message. The error names the param, both files with their lines and both
+defaults, and comes whatever the estate binds. Two `question` blocks for one param that ask
+differently are refused the same way. To find it, transpile. To satisfy it, rename the
+param in the pack it belongs to, with the pack's name as its prefix (`vm_zone` in a `vm`
+pack), in its `params`, its `question` and every read; or, where the two packs mean the
+same value, give both the same default and the same question. A file that uses another
+still binds that file's param, and the estate's own binding still wins over every default.
+In the preset library two pairs disagree: the security-group models S1 and S2
+(`gcp_project_admins_roles`), which the map lets an estate take one of, and
+`presets/organization-budget.satz` with the workload pack `packs/project-budget.satz`
+(`budget_amount`, `budget_currency`) — an estate that uses both budget packs is refused. The
+plan does not move.
+
 **`merge-presets` and `check-presets` refuse a preset library without
 `dropped-files.txt`** (ADR 0103). The list names every file the library carried and
 carries no more; satz's own library carries it. A library named by `[preset_library]` in

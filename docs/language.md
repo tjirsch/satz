@@ -482,6 +482,18 @@ Resolution rules:
    alerts with it; a repeated literal would keep pointing at the old name. Used
    without the pack that declares the name, the reference stops with
    `unknown param`, and the estate has to bind the value.
+
+   Two used files may declare the same param only when they agree: the same default,
+   and the same question if both ask one. That is a shared param — one value several
+   packs declare alike, as the two security-group models declare the group names.
+   Two different defaults for one name are refused, naming both files, their lines
+   and both values, because the param is one value and one pack would read the
+   other's. A binding in the estate does not lift
+   the refusal: it picks one value, and the two packs still mean different things by
+   one name. A file that uses another, directly or through others, binds that file's
+   param — rule 1 — and is no second declaration. So a param that belongs to one pack
+   carries the pack's name as its prefix (`vm_zone` in a `vm` pack), and a shared
+   param carries none.
 4. Overriding a **list replaces it** — Satz has no list concatenation — so an estate
    that adds to a pack's list repeats the entries it keeps. A PACK adds to one instead
    of replacing it, through `contributes_<param>`, below.
@@ -3078,6 +3090,8 @@ unterminated block comment
 malformed number `1.2.3`
 unknown param 'no_such_param'
 params: `a` is declared twice — line 3 and line 7; the second binding would be ignored, so delete the one that is not meant
+param `par01`: two used files declare it with different defaults — "from-a" in a.satz (line 4), "from-b" in b.satz (line 4). A param is one value in the whole estate, so b.satz would read the value of a.satz. A binding in the estate does not settle it: the two files mean different things by one name. Rename the param in the pack it belongs to, with the pack's name as its prefix, or give both the same default
+question par01: two used files ask it differently — in a.satz (line 7) and in b.satz (line 7). A param is one value in the whole estate, asked once. Rename the param in the pack it belongs to, with the pack's name as its prefix, or ask the same question in both
 a second `estate` header (f) — the file is already `e`
 use ... as: given twice
 `lifecycle_rule` is given twice in this block (first at line 12) — a repeated key would silently last-win; write a list (`lifecycle_rule = [ … ]`) or remove one

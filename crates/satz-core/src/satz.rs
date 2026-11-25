@@ -313,6 +313,23 @@ pub fn contribution_target(name: &str) -> Option<&str> {
     name.strip_prefix(CONTRIBUTES_PREFIX).filter(|t| !t.is_empty())
 }
 
+/// A value in one canonical line: the text two declarations are compared by, and the text
+/// a message quotes. The line numbers inside an object are not part of it.
+pub fn value_canonical(v: &Value) -> String {
+    canon_value(v)
+}
+
+/// Two questions that ask the same thing in the same words, wherever they stand.
+pub fn same_question(a: &QuestionDecl, b: &QuestionDecl) -> bool {
+    let strip = |q: &QuestionDecl| QuestionDecl {
+        line: 0,
+        recommend: None,
+        options: q.options.iter().map(|o| QuestionOption { line: 0, ..o.clone() }).collect(),
+        ..q.clone()
+    };
+    a.recommend.as_ref().map(canon_value) == b.recommend.as_ref().map(canon_value) && strip(a) == strip(b)
+}
+
 /// How much a pack-declared message holds back, declared by the pack that says it.
 ///
 /// The pack sets the floor: a reader may silence an `Info` or a `Warning`, never an
