@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.114.0
 
 **A row of `origin.toml` records a folder source's folder relative to the packs folder, and
 every estate that reads the record declares its sources alike** (ADR 0097, amended). A row
