@@ -750,7 +750,7 @@ grep -q 'prerequisites\|roles/' tmp/bud-plain.txt && fail "a workload estate is 
 "$satz" --config tmp/bud/plain update-prerequisites team.satz --report-only > tmp/bud-plain-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/bud-plain-report.txt)"
 grep -q '^  roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/bud-plain-report.txt \
   || fail "the report does not list the billing role the budget needs:\n$(cat tmp/bud-plain-report.txt)"
-step "named uses: the budget pack used once per project, each under a name, with params of its own (ADR 0109)"
+step "named uses: the budget pack used once per project, each under a name, with params of its own, its questions asked once per use (ADR 0109)"
 # the workload estate of the budgets step, given the folder of a second project: one named use
 # of the budget pack per project, each binding the project it counts
 nb=tmp/bud/named
@@ -798,9 +798,37 @@ sed -i.bak 's|^use "interfaces/incoming/plain/plain/satz/interface.satz"$||' "$n
 "$satz" --config "$nb" transpile same.satz --check > tmp/named-same.txt 2>&1 && fail "two named uses that count one project transpiled"
 grep -q 'the named uses `team_a` and `team_b` write the same resource' tmp/named-same.txt && grep -q 'team_a.budget_project_id' tmp/named-same.txt \
   || fail "the refusal does not name the two uses and the param to bind:\n$(cat tmp/named-same.txt)"
-# a command that reads every pack once refuses a named use, naming it
 rm -f "$nb/satz/same.satz"
-for c in "questions team.satz --format text --out -" "presets team.satz --format text --out -" "packs --local --format json --out -"; do
+# the questions are asked once per use, under the names the estate binds
+"$satz" --config "$nb" questions team.satz --format json --out tmp/named-q.json > /dev/null 2>tmp/named-q.err || fail "satz questions failed on an estate with named uses:\n$(cat tmp/named-q.err)"
+python3 - tmp/named-q.json <<'PY2' || fail "satz questions does not report a row per named use:\n$(cat tmp/named-q.json)"
+import json, sys
+rows = {q["subject"]: q for q in json.load(open(sys.argv[1]))["questions"]}
+assert set(rows) == {f"{u}.{p}" for u in ("team_a", "team_b") for p in ("budget_amount", "budget_currency", "budget_email")}, sorted(rows)
+a = rows["team_a.budget_amount"]
+assert (a["named"], a["param"], a["state"], a["current"], a["pack"]) == ("team_a", "budget_amount", "answered", "300", "project_budget"), a
+assert rows["team_b.budget_amount"]["current"] == "120", rows["team_b.budget_amount"]
+e = rows["team_b.budget_email"]
+assert (e["named"], e["param"], e["state"], e["default"], e["blocking"]) == ("team_b", "budget_email", "unanswered", "", False), e
+assert rows["team_a.budget_email"]["state"] == "answered", rows["team_a.budget_email"]
+PY2
+# an open question of a use is named as the estate binds it, and the interview answers it there
+sed 's|^  team_b.budget_amount .*||' "$nb/satz/team.satz" > "$nb/satz/open.satz"
+if "$satz" --config "$nb" transpile open.satz --apply --output "$PWD/tmp/named-open-hcl" > tmp/named-apply.txt 2>&1; then fail "apply on an estate with an open question of a named use was not refused"; fi
+grep -q 'apply refused: 2 question(s) unanswered — team_b.budget_amount (needs a value), team_b.budget_email' tmp/named-apply.txt || fail "the refusal does not name the open questions of the use:\n$(cat tmp/named-apply.txt)"
+printf '120\n' | "$satz" --config "$nb" interview open.satz --accept-defaults > tmp/named-iv.txt 2>&1 || fail "satz interview failed on an estate with named uses:\n$(cat tmp/named-iv.txt)"
+grep -q '── team_b — packs/project-budget.satz ──' tmp/named-iv.txt && grep -q '✓ team_b.budget_amount = "120"' tmp/named-iv.txt && grep -q 'complete — every question is answered' tmp/named-iv.txt \
+  || fail "the interview does not ask the use's question under its name:\n$(cat tmp/named-iv.txt)"
+grep -q '^  team_b.budget_amount *= "120"$' "$nb/satz/open.satz" && grep -q '^  team_b.budget_email *= ""$' "$nb/satz/open.satz" \
+  || fail "the interview did not bind the use's params:\n$(cat "$nb/satz/open.satz")"
+"$satz" fmt --check "$nb/satz/open.satz" || fail "the interview left the estate with named uses unformatted"
+"$satz" --config "$nb" transpile open.satz --check > tmp/named-open.txt 2>&1 || fail "the interviewed estate does not transpile:\n$(cat tmp/named-open.txt)"
+"$satz" --config "$nb" questions open.satz --format markdown --out tmp/named-decisions.md > /dev/null 2>&1 || fail "the decisions sheet failed on an estate with named uses"
+grep -q '^## team_a — packs/project-budget.satz$' tmp/named-decisions.md && grep -q '^## team_b — packs/project-budget.satz$' tmp/named-decisions.md \
+  || fail "the decisions sheet has no section per use:\n$(cat tmp/named-decisions.md)"
+rm -f "$nb/satz/open.satz"
+# a command that reads every pack once refuses a named use, naming it
+for c in "presets team.satz --format text --out -" "packs --local --format json --out -"; do
   "$satz" --config "$nb" $c > tmp/named-refused.txt 2>&1 && fail "satz $c read an estate with a named use"
   grep -q 'named team_a: named uses are not supported by' tmp/named-refused.txt || fail "satz $c does not say why it refuses:\n$(cat tmp/named-refused.txt)"
 done

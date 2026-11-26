@@ -206,10 +206,12 @@ pack declares a `question oneof` over them, satz refuses two true branches by na
 (`payments.budget_amount = "300"`); every other name it reads comes from the estate. Its
 resources are written as `<name>__<label>` and its params as the variables `<name>--<param>`;
 its grants are not prefixed. Bind each use's names differently: two uses that write one
-resource are refused, naming the params to bind. A named use stands in the estate file only
-and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `notice`;
-`satz_questions`, `satz_interview`, `satz_presets`, `satz_add_preset`, `satz_remove_preset`,
-`satz_adopt` and `satz_packs` refuse an estate with one — say so rather than working around it
+resource are refused, naming the params to bind. Its questions are asked once per use:
+`satz_questions` reports `payments.budget_amount` with `named` and `param`, and
+`satz_interview` takes the dotted subject as the key of an answer. A named use stands in the
+estate file only and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or
+`notice`; `satz_presets`, `satz_add_preset`, `satz_remove_preset`, `satz_adopt` and
+`satz_packs` refuse an estate with one — say so rather than working around it
 ([language §6.9](language.md#named--one-pack-used-several-times)).
 
 **Provenance by suffix**, and it is enforced:

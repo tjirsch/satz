@@ -60,6 +60,14 @@ string through `satz_interview` — and `yes` for a bool is `true`. An answer wh
 contradicts it — the string `"true"` for a bool, a list for a string — is refused, naming
 the param and the shape to use.
 
+**A named use is asked once per use.** A pack used under a name
+([language §6.9](language.md#named--one-pack-used-several-times)) asks each of its questions
+for each use, under the name the estate binds: `team_a.budget_amount` and
+`team_b.budget_amount` for the one question `budget_amount`. Each row carries `named`, the
+use (`team_a`), and `param`, the pack's own name (`budget_amount`); a choice is
+`team_a.<choice>` and its options `team_a.<option>`. The row is answered when the estate binds
+`team_a.budget_amount`; its default, its `ask_when` and its shape are read inside the use.
+
 A default is usable when it is not empty and not built from something still open.
 `infra_project_name` defaults to `"{customer_shortname}-infra-001"`; with the short
 name unanswered that is `-infra-001`, which is a string and not a default, so the
@@ -81,6 +89,9 @@ answered before the estate touches an organization. `satz questions C0example.sa
 --unanswered --format text --out -` lists them with their defaults; write the answer (or the default) into
 the estate's params.
 ```
+
+Each named use's questions count on their own: an open `team_b.budget_amount` is named so,
+and answered by binding it.
 
 `summary.complete` in the JSON report is the same boolean. Bare `satz plan` and
 `satz apply` are not gated: they run the tool in `hcl_dir` and know no estate.
@@ -241,7 +252,8 @@ infra_project_name — The infrastructure project id
   ✓ infra_project_name = "acme-infra-001"
 ```
 
-- The pack's own description opens its section; a question shows its prompt, its
+- The pack's own description opens its section — for a named use, headed by the use and the
+  pack's file, `── team_a — packs/project-budget.satz ──`; a question shows its prompt, its
   `why`, and the cost of changing the answer later. A one-way door is marked.
 - **Enter** accepts the default in brackets. A `oneof` lists its options numbered,
   the default marked; answer with the number. A choice that is not required also lists
@@ -275,7 +287,7 @@ Its arguments:
 | `estate` | the file; omit for the open estate |
 | `filter` | `unanswered` (default) — the worklist; `all` — every question with its state |
 | `create` | write the estate first if it does not exist, as `--create` does. Needs `write` |
-| `answers` | `{subject: value}` to write before reporting — a param's value, or for a `oneof` the chosen option's param name — or `none` for a choice that is not required. Each must name a question the estate asks; one refused answer means nothing is written. Needs `write` |
+| `answers` | `{subject: value}` to write before reporting — a param's value, or for a `oneof` the chosen option's param name — or `none` for a choice that is not required. A question of a named use is named as its subject is, `team_a.budget_amount`, and written as that binding. Each must name a question the estate asks; one refused answer means nothing is written. Needs `write` |
 | `accept_defaults` | also write every default the report offers. Needs `write` |
 
 The report's `core` says what the call did about a commented-out
@@ -308,7 +320,8 @@ Before an organization is touched, the customer sees what was decided:
 satz questions C0example.satz --format markdown --out decisions.md
 ```
 
-One table per pack, opened by the pack's description: the question, the answer the
+One table per pack — per use, for a named use, headed `team_a — packs/project-budget.satz`
+— opened by the pack's description: the question, the answer the
 estate carries (or the default it would accept, or **needs a value**), and what
 changing it later costs.
 
@@ -323,7 +336,8 @@ later costs in words rather than two enum names.
 
 `--format xlsx` writes the same catalog as a workbook, which is the one format a customer can
 fill in and send back: the `your answer` column is theirs, and `needs an answer` says which
-rows are still waiting. It is a format like the others — one invocation, one rendering, at
+rows are still waiting. The `use` column names the named use a row is asked for, and is empty
+for a pack used without a name. It is a format like the others — one invocation, one rendering, at
 the path `--out` names.
 
 Over MCP, `satz_questions` returns the same data as JSON and an agent renders its own — the

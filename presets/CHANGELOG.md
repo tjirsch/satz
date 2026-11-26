@@ -32,6 +32,18 @@ says `multiple`: an estate given several projects uses it once per project, each
 currency. Its resources are written as `payments__budget_api`, `payments__project` and so on,
 its params as `payments--budget-amount`. An estate that uses it once plans as before.
 
+**`satz questions`, the interview and the gate before `--apply` and `bootstrap` read a named
+use** (ADR 0109). Each question of a named use's pack is asked once per use, reported under
+the name the estate binds — the subject `payments.budget_amount`, with the new optional fields
+`named` (`payments`) and `param` (`budget_amount`); a choice's options are
+`payments.<option>` — and answered by binding that name; `satz interview`, `satz_interview`
+and `--accept-defaults` write `payments.budget_amount = …` into the estate's `params`. The
+interview and the decisions sheet head a use's questions `payments —
+packs/project-budget.satz`, and the workbook has a last column, `use`. An estate with a named
+use is no longer refused by these commands; `satz presets`, `add-preset`, `remove-preset`,
+`satz adopt` and `satz packs` still refuse it, and a `notice` in a named use's pack is still
+refused.
+
 ### v0.114.0
 
 **A row of `origin.toml` records a folder source's folder relative to the packs folder, and

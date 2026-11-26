@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 mod named;
 mod param_kind;
 mod position;
-pub use named::NamedUse;
+pub use named::{bound_name as named_bound_name, NamedUse};
 use named::{NamedBindings, NamedPack};
 pub use param_kind::{AttrType, ParamUses, Shape};
 use param_kind::{map_seg, Seg};
@@ -1149,6 +1149,12 @@ pub struct PackQuestions {
     pub version: String,
     pub file: String,
     pub questions: Vec<satz::QuestionDecl>,
+    /// The named use whose questions these are (ADR 0109): each is asked once per use, its
+    /// params named as the estate binds them. `None` for a flat use.
+    pub named: Option<String>,
+    /// The params the named use owns — every param a file of its pack declares — as the
+    /// pack names them; empty for a flat use.
+    pub named_params: std::collections::BTreeSet<String>,
 }
 
 /// One `hcl { … }` block with the file it came from.
@@ -2871,16 +2877,34 @@ fn pack_questions(file: &satz::File, file_name: &str) -> PackQuestions {
         version: file.version.clone().unwrap_or_else(|| "unversioned".to_string()),
         file: file_name.to_string(),
         questions: file.questions.clone(),
+        named: None,
+        named_params: Default::default(),
     }
 }
 
 /// A named use's questions under the names the HCL code gives its params: `web__vm_zone`
 /// for `vm_zone`, so the description of `variable "web--vm-zone"` is the question's prompt
 /// and a choice is judged against the use's own params.
-fn named_questions(mut pq: PackQuestions, name: &str, owned: &std::collections::BTreeSet<String>) -> PackQuestions {
+fn named_questions(pq: PackQuestions, name: &str, owned: &std::collections::BTreeSet<String>) -> PackQuestions {
+    renamed_questions(pq, name, owned, named::variable_name)
+}
+
+/// A named use's questions under the names the estate binds: `web.vm_zone` for `vm_zone`, and
+/// a choice's name `web.<choice>` — what `satz questions` reports and an answer is written as.
+fn bound_questions(pq: PackQuestions, name: &str, owned: &std::collections::BTreeSet<String>) -> PackQuestions {
+    let mut pq = renamed_questions(pq, name, owned, named::bound_name);
+    for q in pq.questions.iter_mut().filter(|q| q.oneof) {
+        q.subject = named::bound_name(name, &q.subject);
+    }
+    pq
+}
+
+/// `pq` of the named use `name`: every param it names that the use owns, renamed by `to`. A
+/// question asks only params of the file that declares it, so every one is the use's.
+fn renamed_questions(mut pq: PackQuestions, name: &str, owned: &std::collections::BTreeSet<String>, to: fn(&str, &str) -> String) -> PackQuestions {
     let rename = |p: &mut String| {
         if owned.contains(p.as_str()) {
-            *p = named::variable_name(name, p);
+            *p = to(name, p);
         }
     };
     for q in &mut pq.questions {
@@ -2890,6 +2914,8 @@ fn named_questions(mut pq: PackQuestions, name: &str, owned: &std::collections::
             rename(w);
         }
     }
+    pq.named = Some(name.to_string());
+    pq.named_params = owned.clone();
     pq
 }
 
@@ -3224,7 +3250,9 @@ const MAX_USE_DEPTH: usize = 64;
 /// indistinguishable from resource maps without a schema, and guessing made this
 /// walk reject `google_labels` on estates `transpile` transpiles happily.
 /// The questions an estate can be asked, from itself and every pack it actually
-/// uses — with the params they answer, resolved.
+/// uses — with the params they answer, resolved. A named use's questions are asked once
+/// per use under the names the estate binds (`web.vm_zone`), and the params are those
+/// names too: every param a named use owns, resolved inside the use, as `<name>.<param>`.
 ///
 /// Schema-free on purpose, like `estate_params`: an interview happens before
 /// anyone has run `update-schema`, and a question is metadata about a param, not
@@ -3249,7 +3277,6 @@ pub fn estate_questions_and_uses(
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env, ParamUses), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    refuse_named_uses(&file, file_name, "the questions of the estate — `satz questions`, the interview and the check before `transpile --apply` and `bootstrap` —")?;
     questions_walk(file, file_name, load)
 }
 
@@ -3269,9 +3296,8 @@ pub fn refuse_named_uses(file: &File, file_name: &str, command: &str) -> Result<
     }
 }
 
-/// The walk behind `estate_questions_and_uses`, which a named use does not stop: the
-/// transpile reads the shapes off it (`check_param_shapes`), each named use's reads under its
-/// own params.
+/// The walk behind `estate_questions_and_uses`: the transpile reads the shapes off it
+/// (`check_param_shapes`), each named use's reads under its own params.
 fn questions_walk(
     mut file: File,
     file_name: &str,
@@ -3286,8 +3312,10 @@ fn questions_walk(
     }
     let mut uses = ParamUses::default();
     uses.note_params(&file, file_name, true);
-    let mut walk = QuestionsWalk { load, env: &mut env, out: &mut out, uses: &mut uses, bindings: &bindings, named: None };
+    let mut named_env = Env::new();
+    let mut walk = QuestionsWalk { load, env: &mut env, out: &mut out, uses: &mut uses, bindings: &bindings, named: None, named_env: &mut named_env };
     walk.items(&file.items, &file, file_name, &mut Vec::new(), 0)?;
+    env.extend(named_env);
     // Contradictions only: a required choice nobody has made yet is what this
     // report is for.
     check_oneof(&out.0, &env, false)?;
@@ -3336,6 +3364,8 @@ struct QuestionsWalk<'a, 'b> {
     bindings: &'b NamedBindings,
     /// the named use being walked: its name and the params it owns
     named: Option<(String, std::collections::BTreeSet<String>)>,
+    /// every param of every named use walked, resolved inside the use, as `<name>.<param>`
+    named_env: &'b mut Env,
 }
 
 impl QuestionsWalk<'_, '_> {
@@ -3381,13 +3411,18 @@ impl QuestionsWalk<'_, '_> {
                         let mut env = ne.start;
                         std::mem::swap(self.env, &mut env);
                         self.named = Some((n.clone(), owned.clone()));
-                        self.uses.scope(Some((n.clone(), owned)));
+                        self.uses.scope(Some((n.clone(), owned.clone())));
                         let entry = Entry::Use { path: path.clone(), as_key: None, named: None, when: None, line: *line };
                         let walked = self.items(std::slice::from_ref(&entry), file, file_name, segs, depth + 1);
                         self.uses.scope(None);
                         self.named = None;
                         std::mem::swap(self.env, &mut env);
                         walked?;
+                        for p in &owned {
+                            if let Some(v) = env.remove(p) {
+                                self.named_env.insert(named::bound_name(n, p), v);
+                            }
+                        }
                         continue;
                     }
                     let src = (self.load)(path)
@@ -3399,7 +3434,7 @@ impl QuestionsWalk<'_, '_> {
                     if !used.questions.is_empty() {
                         let pq = pack_questions(&used, path);
                         self.out.0.push(match &self.named {
-                            Some((n, owned)) => named_questions(pq, n, owned),
+                            Some((n, owned)) => bound_questions(pq, n, owned),
                             None => pq,
                         });
                     }

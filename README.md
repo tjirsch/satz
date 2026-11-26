@@ -383,7 +383,9 @@ for that project or folder, with nothing on the billing account
 `packs/project-budget.satz` is the budget itself. A workload estate given several projects
 uses it once per project, each a named use that binds the project it counts —
 `use "packs/project-budget.satz" named payments`, `payments.budget_project_id = …` — whose
-resources are written as `payments__<label>` ([language §6.9](docs/language.md#named--one-pack-used-several-times)).
+resources are written as `payments__<label>` and whose questions `satz questions` and the
+interview ask once per use, `payments.budget_amount`
+([language §6.9](docs/language.md#named--one-pack-used-several-times)).
 
 Each pack publishes what it delegated in an interface the workload estate reads —
 `delegation-<name>` for the base, `<name>` for each delegated resource. The two packs are the

@@ -87,12 +87,35 @@ params {
    use's own params, else the flat namespace.
 
 The commands that read every pack once refuse an estate with a named use rather than misread
-it, naming the line: `satz questions`, the interview and `satz_interview`, the check of open
-questions before `transpile --apply` and `bootstrap`, `satz presets`, `add-preset`,
-`remove-preset`, `satz adopt`, `satz packs` and the workload pack commands that read the
-estate. The pack graph refuses a named use of a preset of the library. The editor's
-completion and hover show the flat namespace. The second and third parts of this change teach
-them named uses; the fourth lifts the refusal of exports and list params.
+it, naming the line: `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs`
+and the workload pack commands that read the estate. The pack graph refuses a named use of a
+preset of the library. The editor's completion and hover show the flat namespace. The third
+part of this change teaches them named uses; the fourth lifts the refusal of exports and list
+params. The second part taught the questions, below.
+
+### The second part: questions, the interview and the gate
+
+`satz questions`, the interview and `satz_interview`, and the check of open questions before
+`transpile --apply` and `bootstrap` read a named use. Each question of the use's pack is asked
+once per use:
+
+1. **One row per use.** The row's `subject` is the name the estate binds, `web.vm_zone`; a
+   choice's is `web.<choice>` and its options' `param` are `web.<option>`. The JSON report gains
+   two optional fields, absent for a flat use: `named` (`web`) and `param` (`vm_zone`, the
+   pack's own name). No field is removed or renamed, so a reader of the flat report reads it
+   unchanged.
+2. **Answered** means the estate's `params` binds `web.<param>`. The default, the shape (ADR
+   0108) and `ask_when` are read inside the use: the schema-free walk keeps each use's
+   namespace as `<name>.<param>` beside the flat one. A param declared `none` blocks per use.
+3. **Written** by the one writer of a param (`bind`): `web.vm_zone = …`, aligned like any other
+   binding. `--accept-defaults` binds each use's offers.
+4. **Grouped by use.** The terminal interview and the decisions sheet head a use's questions
+   `web — packs/vm.satz`; the workbook has a `use` column, the last, empty for a flat use.
+5. **The gate** counts each use's open questions and names them `web.<param>`.
+
+The internal name of a use's param in the HCL code, `web__vm_zone`, stays the transpile's: the
+questions the transpile carries for a variable's description are renamed so, the questions the
+report carries are renamed to the dotted name. Neither is shown where the other is.
 
 ## Options
 
@@ -154,7 +177,20 @@ liftable.*
   the node's path, so the grants two uses write on their own nodes are two resources.
 - **An `import_id` check without `presets/import-config.yaml`** in the presets directory has
   no template to render and judges nothing; identical bodies are refused without it.
-- **A notice in a named use** is refused (the decision named no rule for it).
+- **A notice in a named use** is refused (the decision named no rule for it). The second part
+  keeps the refusal: a notice is closed by running its command — in the library an `adopt
+  --execute --import`, which binds the acknowledgement — and `satz adopt` refuses an estate
+  with a named use until the third part. A notice per use that no command can close would be
+  a gate that only a hand edit opens, and the transpile's warnings, the refusal of a command
+  that writes to the organization and the report of `satz presets` read the notice's param
+  flat. The third part decides it with `adopt`.
+- **A choice's name in a named use** is `web.<choice>`, though a choice's name is no param:
+  the subject is what an answer is keyed by, and two uses of one choice need two keys.
+- **The workbook's `use` column** is the last, after `param`, so no column a reader finds by
+  position moves.
+- **A yes to a gate of a named use** binds `web.<gate>` and switches no pack line: the pack
+  graph knows no gate of a named use, and the pack's own `use … when` lines read the use's
+  params.
 - **The workload pack's changelog.** `presets/CHANGELOG.md`'s table is the library's;
   `project_budget` 1.2 is recorded under `### Unreleased`, as its 1.1 was.
 - **The showcase.** `tests/smoke/yaml/showcase.satz` is read by `satz questions`, the
@@ -171,5 +207,5 @@ liftable.*
   header; the canonical form carries both only where written, so no pack's form moves.
 - A property test holds every pack of the library and the corpus that a named use takes to
   the flat use's HCL under the prefix; `tests/corpus/named-uses/` is the snapshot.
-- Until the second and third parts ship, an estate with a named use transpiles and plans but
-  is refused by `--apply`, `bootstrap`, `satz questions` and the commands named above.
+- Until the third part ships, an estate with a named use transpiles, plans, applies and is
+  interviewed, and is refused by the commands named above.
