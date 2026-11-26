@@ -493,7 +493,7 @@ mod tests {
         std::fs::write(dir.join("packs/demo.satz"), "pack demo version \"1.0\"\n").unwrap();
         std::fs::write(
             dir.join("packs/origin.toml"),
-            "[[pack]]\nid = \"demo\"\nsource = \"local\"\ndir = \"up\"\nversion = \"1.0\"\nsha256 = \"x\"\n",
+            "[[pack]]\nid = \"demo\"\nsource = \"local\"\nfolder = \"../up\"\nversion = \"1.0\"\nsha256 = \"x\"\n",
         )
         .unwrap();
         let err = remove(&file, &load(), "local").unwrap_err();

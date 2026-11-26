@@ -13,6 +13,21 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**A row of `origin.toml` records a folder source's folder relative to the packs folder, and
+every estate that reads the record declares its sources alike** (ADR 0097, amended). A row
+of a folder source writes `folder`, the folder relative to the folder that holds
+`origin.toml`, in place of `dir`, which was relative to the `config.toml` that fetched it.
+Every command that reads the record refuses a row that writes `dir`, naming the `folder` to
+write: in `packs_dir/origin.toml`, replace `dir = "../shared-packs"` with the value the
+refusal names — `folder = "../../shared-packs"` for a `packs/` beside `config.toml`.
+`get-pack`, `update-pack`, `publish-pack` and `satz packs` also refuse a row whose source the
+estate's `config.toml` does not declare, or declares as another repository or a `dir` that
+resolves to another folder, naming the row and the `[[pack_source]]` line to write. Where
+several estates share one packs folder, each declares every source its rows name, under the
+same name and pointing at the same place. Nothing a plan shows changes.
+
 ### v0.113.0
 
 **A param no file gives a value takes its shape from where it is read, and two reads that

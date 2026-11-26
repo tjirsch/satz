@@ -773,7 +773,7 @@ p = json.load(open("tmp/pub-published.json"))
 assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.1", "shared", "../pub-shared", "copied"), p
 assert p["path"].endswith("pub-shared/team/budget.satz") and p["estate"].endswith("team.satz"), p
 PYEOF
-grep -q '^source = "shared"$' tmp/pub/packs/origin.toml && grep -q '^dir = "../pub-shared"$' tmp/pub/packs/origin.toml || fail "publish-pack wrote no row naming the source and its folder:\n$(cat tmp/pub/packs/origin.toml)"
+grep -q '^source = "shared"$' tmp/pub/packs/origin.toml && grep -q '^folder = "../../pub-shared"$' tmp/pub/packs/origin.toml || fail "publish-pack wrote no row naming the source and its folder:\n$(cat tmp/pub/packs/origin.toml)"
 pub update-pack team/budget > tmp/pub-update.txt 2>&1 || fail "update-pack failed on a published pack:\n$(cat tmp/pub-update.txt)"
 grep -q '^team/budget  1.1  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
 pub packs --source shared --format json --out tmp/pub-packs.json > /dev/null 2>&1 || fail "satz packs --source failed on the publishing estate"
@@ -1930,7 +1930,7 @@ wp packs --source up --format json --out tmp/wp/list0.json > /dev/null 2>&1 || f
 wp get-pack demo --source up > tmp/wp/get.txt 2>&1 || fail "get-pack --source failed:\n$(cat tmp/wp/get.txt)"
 cmp -s tmp/wp/up/demo.satz tmp/wp/est/packs/demo.satz || fail "get-pack did not install the pack:\n$(cat tmp/wp/get.txt)"
 grep -q 'use "packs/demo.satz"' tmp/wp/get.txt || fail "get-pack did not print the use line:\n$(cat tmp/wp/get.txt)"
-grep -q '^source = "up"$' tmp/wp/est/packs/origin.toml && grep -q '^dir = "../up"$' tmp/wp/est/packs/origin.toml || fail "the origin record names no source and folder:\n$(cat tmp/wp/est/packs/origin.toml)"
+grep -q '^source = "up"$' tmp/wp/est/packs/origin.toml && grep -q '^folder = "../../up"$' tmp/wp/est/packs/origin.toml || fail "the origin record names no source and folder:\n$(cat tmp/wp/est/packs/origin.toml)"
 if wp get-pack demo --source up > tmp/wp/again.txt 2>&1; then fail "a second get-pack overwrote a pack that is there"; fi
 grep -q 'update-pack demo' tmp/wp/again.txt || fail "the refusal must name update-pack:\n$(cat tmp/wp/again.txt)"
 if wp get-pack demo --source nowhere > tmp/wp/unknown.txt 2>&1; then fail "get-pack read a source config.toml does not name"; fi
@@ -1943,6 +1943,22 @@ grep -q 'version "1.0"' tmp/wp/est/packs/demo.satz || fail "--report-only wrote 
 wp update-pack demo > tmp/wp/update.txt 2>&1 || fail "update-pack failed:\n$(cat tmp/wp/update.txt)"
 cmp -s tmp/wp/up/demo.satz tmp/wp/est/packs/demo.satz || fail "update-pack did not write the pack:\n$(cat tmp/wp/update.txt)"
 grep -q '^version = "1.1"$' tmp/wp/est/packs/origin.toml || fail "the origin record did not follow the update"
+# a second estate shares the packs folder and declares the sources in its own config.toml: the
+# same folder, spelled from where it stands, is followed; a source it lacks or points elsewhere is refused
+mkdir -p tmp/wp/second
+wp2() { "$satz" --config tmp/wp/second/config.toml "$@"; }
+printf 'yaml_dir = "satz"\npacks_dir = "../est/packs"\nschema_dir = "%s/tests/schemas"\n' "$root" > tmp/wp/second/base.toml
+mkdir -p tmp/wp/second/satz && printf 'estate second\n' > tmp/wp/second/satz/second.satz
+{ cat tmp/wp/second/base.toml; printf '\n[[pack_source]]\nname = "up"\ndir = "../est/../up/"\n'; } > tmp/wp/second/config.toml
+wp2 update-pack --all --report-only > tmp/wp/second.txt 2>&1 || fail "an estate declaring the source alike was refused:\n$(cat tmp/wp/second.txt)"
+cp tmp/wp/second/base.toml tmp/wp/second/config.toml
+if wp2 update-pack --all --report-only > tmp/wp/second.txt 2>&1; then fail "an estate that does not declare the source was accepted"; fi
+grep -q 'origin.toml: the pack `demo` was fetched from the pack source `up`, which .*second/config.toml does not declare — add `\[\[pack_source\]\] name = "up"` with dir = "../up" to' tmp/wp/second.txt || fail "the refusal must name the row and the line to add:\n$(cat tmp/wp/second.txt)"
+{ cat tmp/wp/second/base.toml; printf '\n[[pack_source]]\nname = "up"\ndir = "../other"\n'; } > tmp/wp/second/config.toml
+if wp2 update-pack --all --report-only > tmp/wp/second.txt 2>&1; then fail "an estate whose source points elsewhere was accepted"; fi
+grep -q 'names dir = "../other", the folder .* — write dir = "../up" in that table' tmp/wp/second.txt || fail "the refusal must name both folders and the line to fix:\n$(cat tmp/wp/second.txt)"
+if wp2 packs --local --format json --out - > tmp/wp/second.txt 2>&1; then fail "satz packs listed a packs folder whose source points elsewhere"; fi
+grep -q 'names dir = "../other"' tmp/wp/second.txt || fail "satz packs must name the line to fix:\n$(cat tmp/wp/second.txt)"
 # edited: left byte-identical, exit 1, the difference printed; --take-upstream overwrites
 printf '// mine\n' >> tmp/wp/est/packs/demo.satz
 cp tmp/wp/est/packs/demo.satz tmp/wp/edited.satz
@@ -1993,13 +2009,13 @@ if wp update-pack --all > tmp/wp/old.txt 2>&1; then fail "a row of the old form 
 grep -q 'satz pack-source add <name> --dir <folder>' tmp/wp/old.txt || fail "the refusal must name the edit:\n$(cat tmp/wp/old.txt)"
 sed 's/^source = "up"$/source = "gone"/' tmp/wp/origin.good > tmp/wp/est/packs/origin.toml
 if wp update-pack --all > tmp/wp/gone.txt 2>&1; then fail "a row whose source config.toml does not name was accepted"; fi
-grep -q '`gone`, which config.toml does not name' tmp/wp/gone.txt || fail "the refusal must name the source:\n$(cat tmp/wp/gone.txt)"
+grep -q 'the pack source `gone`, which .*config.toml does not declare' tmp/wp/gone.txt || fail "the refusal must name the source:\n$(cat tmp/wp/gone.txt)"
 # a GitHub row records its repository: one config.toml names another for the source is refused before anything is read
 cp tmp/wp/est/config.toml tmp/wp/config.good
 printf '\n[[pack_source]]\nname = "remote"\ngithub = "acme/packs"\n' >> tmp/wp/est/config.toml
 printf '[[pack]]\nid = "sub/nested"\nsource = "remote"\ngithub = "acme/old-packs"\ncommit = "0123456789abcdef0123456789abcdef01234567"\nversion = "0.3"\nsha256 = "x"\n' > tmp/wp/est/packs/origin.toml
 if wp update-pack --all > tmp/wp/repo.txt 2>&1; then fail "a row whose repository config.toml no longer names was accepted"; fi
-grep -q 'fetched from github.com/acme/old-packs/packs as `remote`, and config.toml names github.com/acme/packs/packs' tmp/wp/repo.txt && grep -q 'write github = "acme/packs" and no `path`' tmp/wp/repo.txt || fail "the refusal must name both repositories and the edit:\n$(cat tmp/wp/repo.txt)"
+grep -q 'fetched from github.com/acme/old-packs/packs as `remote`, and the `\[\[pack_source\]\]` `remote` of .*config.toml names github.com/acme/packs/packs — write github = "acme/old-packs" in that table' tmp/wp/repo.txt && grep -q 'write github = "acme/packs" and no `path` in the row' tmp/wp/repo.txt || fail "the refusal must name both repositories and the edit:\n$(cat tmp/wp/repo.txt)"
 cp tmp/wp/config.good tmp/wp/est/config.toml
 printf 'nonsense = [\n' > tmp/wp/est/packs/origin.toml
 if wp update-pack --all > tmp/wp/corrupt.txt 2>&1; then fail "a record that does not parse was accepted"; fi

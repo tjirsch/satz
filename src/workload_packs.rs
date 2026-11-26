@@ -42,9 +42,14 @@ pub(crate) struct Row {
     /// for a GitHub source: the commit the file was read at
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
-    /// for a folder source: the folder, as config.toml writes it
+    /// for a folder source: the folder, relative to the folder that holds origin.toml, so
+    /// every estate that shares this packs folder reads the same folder from it
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dir: Option<String>,
+    pub folder: Option<String>,
+    /// the key a row of an earlier release wrote its folder under, relative to the
+    /// config.toml that fetched it; read only to refuse it with the edit
+    #[serde(default, rename = "dir", skip_serializing)]
+    pub legacy_dir: Option<String>,
     /// the version the pack stated when it was fetched
     pub version: String,
     /// SHA-256 of the file as it was fetched
@@ -62,10 +67,16 @@ fn record_path(packs_dir: &Path) -> PathBuf {
     packs_dir.join(RECORD)
 }
 
+/// The origin record of the packs folder `runtime` names, its rows checked by `read_record_at`.
+fn read_record(runtime: &ToolConfig) -> Result<Vec<Row>, String> {
+    read_record_at(Path::new(&runtime.packs_dir), runtime.dir.as_deref())
+}
+
 /// The origin record of `packs_dir`: no file is no row. A file that does not parse, a
 /// row that repeats an id, a row whose id is no pack id and a row in a form this
-/// release does not write are errors naming the file.
-fn read_record(packs_dir: &Path) -> Result<Vec<Row>, String> {
+/// release does not write are errors naming the file. `config_dir`, the folder of the
+/// estate's config.toml, lets the refusal of a row's `dir` name the `folder` to write.
+fn read_record_at(packs_dir: &Path, config_dir: Option<&Path>) -> Result<Vec<Row>, String> {
     let path = record_path(packs_dir);
     if !path.exists() {
         return Ok(Vec::new());
@@ -78,19 +89,19 @@ fn read_record(packs_dir: &Path) -> Result<Vec<Row>, String> {
         if !seen.insert(row.id.as_str()) {
             return Err(format!("{}: the pack `{}` has two rows", path.display(), row.id));
         }
-        check_row(row).map_err(|e| format!("{}: {}", path.display(), e))?;
+        check_row(row, packs_dir, config_dir).map_err(|e| format!("{}: {}", path.display(), e))?;
     }
     Ok(record.packs)
 }
 
 /// A row in the form this release writes: a source name, and a repository with a commit
-/// or a folder. The two values an earlier release wrote, which named neither, are refused
-/// with the edit.
-fn check_row(row: &Row) -> Result<(), String> {
+/// or a folder. The forms an earlier release wrote — two values that named neither, and a
+/// folder written relative to the config.toml that fetched it — are refused with the edit.
+fn check_row(row: &Row, packs_dir: &Path, config_dir: Option<&Path>) -> Result<(), String> {
     let id = &row.id;
     if row.source == "dir" {
         return Err(format!(
-            "the pack `{id}` records `source = \"dir\"`, which names no folder — add the folder it was fetched from as a pack source (`satz pack-source add <name> --dir <folder>`), then write `source = \"<name>\"` and `dir = \"<folder>\"`, the folder as config.toml writes it, in its row"
+            "the pack `{id}` records `source = \"dir\"`, which names no folder — add the folder it was fetched from as a pack source (`satz pack-source add <name> --dir <folder>`), then write `source = \"<name>\"` and `folder = \"<folder>\"`, the folder relative to the one that holds origin.toml, in its row"
         ));
     }
     if row.source.starts_with("github") {
@@ -100,11 +111,23 @@ fn check_row(row: &Row) -> Result<(), String> {
             crate::github::REPO
         ));
     }
+    if let Some(dir) = &row.legacy_dir {
+        let edit = match config_dir.and_then(|c| relative(&resolved(packs_dir), &resolved(&c.join(dir)))) {
+            Some(folder) => format!("folder = \"{folder}\""),
+            None => "folder = \"<the folder, relative to the one that holds origin.toml>\"".to_string(),
+        };
+        return Err(format!(
+            "the pack `{id}` records dir = \"{dir}\", a folder relative to the config.toml of the estate that fetched it, which an estate elsewhere that shares this packs folder reads as another folder — write {edit} in its place, the same folder relative to the one that holds origin.toml, as this estate's config.toml reaches it (if another estate fetched it, as that estate's config.toml reaches it)"
+        ));
+    }
     crate::pack_sources::valid_name(&row.source).map_err(|e| format!("the pack `{id}`: {e}"))?;
     let github = row.github.is_some() || row.path.is_some() || row.commit.is_some();
-    match (github, &row.dir) {
-        (true, Some(_)) => Err(format!("the pack `{id}` records both a repository and `dir` — a GitHub source records `github` and `commit`, a folder source `dir`")),
-        (false, None) => Err(format!("the pack `{id}` records neither a repository nor `dir` — a GitHub source records `github` and the `commit` the file was read at, a folder source `dir`")),
+    match (github, &row.folder) {
+        (true, Some(_)) => Err(format!("the pack `{id}` records both a repository and `folder` — a GitHub source records `github` and `commit`, a folder source `folder`")),
+        (false, None) => Err(format!("the pack `{id}` records neither a repository nor `folder` — a GitHub source records `github` and the `commit` the file was read at, a folder source `folder`")),
+        (false, Some(f)) if f.trim().is_empty() || Path::new(f).has_root() || Path::new(f).is_absolute() => {
+            Err(format!("the pack `{id}` records folder = \"{f}\" — a folder source records its folder relative to the one that holds origin.toml"))
+        }
         (false, Some(_)) => Ok(()),
         (true, None) => match (&row.github, &row.commit) {
             (None, _) => Err(format!("the pack `{id}` records a commit and no `github` — write the repository it was read from, `github = \"<owner>/<repository>\"`, in its row")),
@@ -115,30 +138,87 @@ fn check_row(row: &Row) -> Result<(), String> {
     }
 }
 
-/// Each row's source as config.toml defines it now, and the row in the form that source
-/// writes: the same repository and folder of it for a GitHub source, the same folder for a
-/// folder.
+/// The estate's config.toml, for a message that names the file to edit.
+fn config_file(runtime: &ToolConfig) -> String {
+    match &runtime.dir {
+        Some(dir) => dir.join("config.toml").display().to_string(),
+        None => "config.toml".to_string(),
+    }
+}
+
+/// The folder a row's `folder` names, resolved against the folder that holds origin.toml.
+fn recorded_folder(runtime: &ToolConfig, folder: &str) -> PathBuf {
+    resolved(&Path::new(&runtime.packs_dir).join(folder))
+}
+
+/// A folder as config.toml writes it for a `dir` source, resolved against config.toml's folder.
+fn configured_folder(runtime: &ToolConfig, written: &str) -> PathBuf {
+    resolved(&crate::pack_sources::folder(runtime, written))
+}
+
+/// `to` relative to `from`, both resolved, its segments joined by `/`: `.` for the same
+/// folder. None where no relative path joins the two — on two drives.
+fn relative(from: &Path, to: &Path) -> Option<String> {
+    let (from, to): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    if common == 0 || !matches!(from[0], std::path::Component::RootDir | std::path::Component::Prefix(_)) {
+        return None;
+    }
+    let mut parts: Vec<String> = from[common..].iter().map(|_| "..".to_string()).collect();
+    parts.extend(to[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned()));
+    Some(if parts.is_empty() { ".".to_string() } else { parts.join("/") })
+}
+
+/// Where a row says its pack came from, as a `[[pack_source]]` table of this estate's
+/// config.toml writes it: the repository and its folder, or the folder relative to config.toml.
+fn as_configured(runtime: &ToolConfig, row: &Row) -> String {
+    match (&row.github, &row.folder) {
+        (Some(repo), _) => match &row.path {
+            Some(path) => format!("github = \"{repo}\" and path = \"{path}\""),
+            None => format!("github = \"{repo}\""),
+        },
+        (None, Some(folder)) => {
+            let at = recorded_folder(runtime, folder);
+            let config_dir = runtime.dir.as_deref().map(resolved);
+            match config_dir.and_then(|c| relative(&c, &at)) {
+                Some(dir) => format!("dir = \"{dir}\""),
+                None => format!("dir = \"{}\"", at.display()),
+            }
+        }
+        (None, None) => String::new(),
+    }
+}
+
+/// Each row's source as this estate's config.toml declares it, pointing where the row
+/// records: the same repository and folder of it for a GitHub source, the same folder on
+/// disk for a folder source. Several estates may share one packs folder, each declaring
+/// the sources in its own config.toml; this is where their declarations are held to agree.
 fn check_rows(runtime: &ToolConfig, rows: &[Row]) -> Result<(), String> {
-    let record = record_path(Path::new(&runtime.packs_dir));
+    let record = record_path(&resolved(Path::new(&runtime.packs_dir)));
     for row in rows {
         let def = crate::pack_sources::find(runtime, &row.source).map_err(|_| {
             format!(
-                "{}: the pack `{}` was fetched from the pack source `{}`, which config.toml does not name — add it with `satz pack-source add {} --github <owner>/<repository>` or `--dir <folder>`, or remove the row with `satz detach-pack {}`",
+                "{}: the pack `{}` was fetched from the pack source `{}`, which {} does not declare — add `[[pack_source]] name = \"{}\"` with {} to {}, as the estate that fetched it declares it, or remove the row with `satz detach-pack {}`",
                 record.display(),
                 row.id,
                 row.source,
+                config_file(runtime),
                 row.source,
+                as_configured(runtime, row),
+                config_file(runtime),
                 row.id
             )
         })?;
-        follows(&def, row).map_err(|e| format!("{}: {e}", record.display()))?;
+        follows(runtime, &def, row).map_err(|e| format!("{}: {e}", record.display()))?;
     }
     Ok(())
 }
 
-fn follows(def: &Def, row: &Row) -> Result<(), String> {
-    let (id, name) = (&row.id, &def.name);
-    match (&def.location, &row.dir) {
+fn follows(runtime: &ToolConfig, def: &Def, row: &Row) -> Result<(), String> {
+    let (id, name, config) = (&row.id, &def.name, config_file(runtime));
+    let in_config = format!("the `[[pack_source]]` `{name}` of {config}");
+    let shared = "in every config.toml that shares this packs folder";
+    match (&def.location, &row.folder) {
         (Location::Github { repo, path, .. }, None) => {
             let recorded = (row.github.as_deref().unwrap_or_default(), row.path.as_deref().unwrap_or(crate::pack_sources::DEFAULT_PATH));
             if recorded == (repo.as_str(), path.as_str()) {
@@ -151,21 +231,42 @@ fn follows(def: &Def, row: &Row) -> Result<(), String> {
                 format!("github = \"{repo}\" and path = \"{path}\"")
             };
             Err(format!(
-                "the pack `{id}` was fetched from {was} as `{name}`, and config.toml names {now} for it — if {now} holds the same packs, write {edit} in the row; if not, add {was} as a pack source of its own and name that source in the row"
+                "the pack `{id}` was fetched from {was} as `{name}`, and {in_config} names {now} — write {} in that table, so it names where the row was fetched from; if {now} holds the same packs, write {edit} in the row, and the same source {shared}; if not, add {was} as a pack source of its own and name that source in the row",
+                as_configured(runtime, row)
             ))
         }
-        (Location::Github { .. }, Some(_)) => Err(format!("the pack `{id}` records a folder, and `{name}` is a GitHub repository in config.toml — a row of a GitHub source records `github` and `commit`")),
-        (Location::Dir(_), None) => Err(format!("the pack `{id}` records a repository, and `{name}` is a folder in config.toml — a row of a folder source records `dir`")),
-        (Location::Dir(written), Some(dir)) if dir == written => Ok(()),
-        (Location::Dir(written), Some(dir)) => Err(format!(
-            "the pack `{id}` was fetched from the folder `{dir}` of `{name}`, and config.toml names `{written}` for it — if `{written}` holds the same packs, write dir = \"{written}\" in the row; if not, add `{dir}` as a pack source of its own and name that source in the row"
+        (Location::Github { .. }, Some(_)) => Err(format!(
+            "the pack `{id}` records a folder, and {in_config} is a GitHub repository — write {} in that table, as the estate that fetched it declares it",
+            as_configured(runtime, row)
         )),
+        (Location::Dir(_), None) => Err(format!(
+            "the pack `{id}` records a repository, and {in_config} is a folder — write {} in that table, as the estate that fetched it declares it",
+            as_configured(runtime, row)
+        )),
+        (Location::Dir(written), Some(folder)) => {
+            let (was, now) = (recorded_folder(runtime, folder), configured_folder(runtime, written));
+            if was == now {
+                return Ok(());
+            }
+            let row_edit = match relative(&resolved(Path::new(&runtime.packs_dir)), &now) {
+                Some(f) => format!("folder = \"{f}\""),
+                None => format!("folder = \"{}\"", now.display()),
+            };
+            Err(format!(
+                "the pack `{id}` was fetched from the folder {} as `{name}` (folder = \"{folder}\" in its row), and {in_config} names dir = \"{written}\", the folder {} — write {} in that table, so it names where the row was fetched from; if {} holds the same packs, write {row_edit} in the row, and the same source {shared}; if not, add {} as a pack source of its own and name that source in the row",
+                was.display(),
+                now.display(),
+                as_configured(runtime, row),
+                now.display(),
+                was.display()
+            ))
+        }
     }
 }
 
 /// The ids of the packs the origin record says came from the source `name`.
 pub(crate) fn recorded_from(runtime: &ToolConfig, name: &str) -> Result<Vec<String>, String> {
-    Ok(read_record(Path::new(&runtime.packs_dir))?.into_iter().filter(|r| r.source == name).map(|r| r.id).collect())
+    Ok(read_record(runtime)?.into_iter().filter(|r| r.source == name).map(|r| r.id).collect())
 }
 
 /// Write the record, rows in id order. A record without rows is no file.
@@ -292,17 +393,33 @@ impl Source {
 
     /// A row for a pack this source just gave: its name, and its repository, the folder of
     /// it where that is not `packs`, and the commit — or its folder.
-    fn row(&self, id: &str, version: &str, text: &str) -> Row {
-        let mut row = Row { id: id.to_string(), source: self.def.name.clone(), github: None, path: None, commit: None, dir: None, version: version.to_string(), sha256: sha256(text) };
+    fn row(&self, packs_dir: &Path, id: &str, version: &str, text: &str) -> Result<Row, String> {
+        let mut row = Row {
+            id: id.to_string(),
+            source: self.def.name.clone(),
+            github: None,
+            path: None,
+            commit: None,
+            folder: None,
+            legacy_dir: None,
+            version: version.to_string(),
+            sha256: sha256(text),
+        };
         match &self.place {
             Place::Github { repo, path, commit, .. } => {
                 row.github = Some(repo.name.clone());
                 row.path = (path != crate::pack_sources::DEFAULT_PATH).then(|| path.clone());
                 row.commit = Some(commit.clone());
             }
-            Place::Dir { written, .. } => row.dir = Some(written.clone()),
+            Place::Dir { folder, .. } => {
+                let (from, to) = (resolved(packs_dir), resolved(folder));
+                let rel = relative(&from, &to).ok_or_else(|| {
+                    format!("{}: no relative path leads from {} to the folder of `{}`, {} — keep the packs folder and the source's folder on one drive", self.describe(), from.display(), self.def.name, to.display())
+                })?;
+                row.folder = Some(rel);
+            }
         }
-        row
+        Ok(row)
     }
 
     async fn fetch(&self, id: &str) -> Result<Option<String>, String> {
@@ -552,7 +669,7 @@ impl Which {
 /// not give is reported, and the pack is fetched all the same.
 pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Which, estate: &Estate) -> Result<GetReport, String> {
     let packs_dir = Path::new(&runtime.packs_dir);
-    let mut rows = read_record(packs_dir)?;
+    let mut rows = read_record(runtime)?;
     check_rows(runtime, &rows)?;
     let def = crate::pack_sources::find(runtime, source.unwrap_or(BUILTIN))?;
 
@@ -600,7 +717,7 @@ pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Whic
         }
         fsx::write_verbatim(&file, text.as_bytes()).map_err(|e| e.to_string())?;
         rows.retain(|r| r.id != id);
-        rows.push(source.row(&id, &version, &text));
+        rows.push(source.row(packs_dir, &id, &version, &text)?);
         // the record follows every file as it lands: a later pack that fails leaves
         // the earlier ones recorded
         write_record(packs_dir, rows.clone())?;
@@ -686,7 +803,7 @@ pub(crate) struct UpdateReport {
 /// is not looked at.
 pub(crate) async fn update(runtime: &ToolConfig, only: Option<&str>, which: &Which, report_only: bool, take_upstream: bool) -> Result<UpdateReport, String> {
     let packs_dir = Path::new(&runtime.packs_dir);
-    let mut rows = read_record(packs_dir)?;
+    let mut rows = read_record(runtime)?;
     check_rows(runtime, &rows)?;
     if let Some(name) = only {
         crate::pack_sources::find(runtime, name)?;
@@ -744,7 +861,7 @@ pub(crate) async fn update(runtime: &ToolConfig, only: Option<&str>, which: &Whi
         // the one write: the source's file over the local one, and the row after it
         let take = |text: &str, rows: &mut Vec<Row>| -> Result<(), String> {
             fsx::write_verbatim(pack_file(packs_dir, &row.id), text.as_bytes()).map_err(|e| e.to_string())?;
-            let fresh = source.row(&row.id, upstream_version.as_deref().unwrap_or_default(), text);
+            let fresh = source.row(packs_dir, &row.id, upstream_version.as_deref().unwrap_or_default(), text)?;
             for r in rows.iter_mut().filter(|r| r.id == row.id) {
                 *r = fresh.clone();
             }
@@ -1187,7 +1304,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, 
         return Err("--local reads no pack source and --source names one to read — give one of the two".to_string());
     }
     let packs_dir = Path::new(&runtime.packs_dir);
-    let rows = read_record(packs_dir)?;
+    let rows = read_record(runtime)?;
     for row in &rows {
         recorded_text(packs_dir, row)?;
     }
@@ -1371,7 +1488,7 @@ pub(crate) struct Detached {
 pub(crate) fn detach(runtime: &ToolConfig, id: &str) -> Result<Detached, String> {
     valid_id(id)?;
     let packs_dir = Path::new(&runtime.packs_dir);
-    let mut rows = read_record(packs_dir)?;
+    let mut rows = read_record(runtime)?;
     let Some(at) = rows.iter().position(|r| r.id == id) else {
         return Err(format!("`{id}` has no recorded origin in {} — nothing to detach", record_path(packs_dir).display()));
     };
@@ -1420,7 +1537,7 @@ pub(crate) struct Published {
 pub(crate) fn publish(tool: &ToolConfig, runtime: &ToolConfig, id: &str, source: &str, estate: &Path, force: bool) -> Result<Published, String> {
     valid_id(id)?;
     let packs_dir = Path::new(&runtime.packs_dir);
-    let mut rows = read_record(packs_dir)?;
+    let mut rows = read_record(runtime)?;
     check_rows(runtime, &rows)?;
     let def = crate::pack_sources::find(runtime, source)?;
     let written = match &def.location {
@@ -1493,7 +1610,7 @@ pub(crate) fn publish(tool: &ToolConfig, runtime: &ToolConfig, id: &str, source:
         }
         fsx::write_verbatim(&target, text.as_bytes()).map_err(|e| e.to_string())?;
     }
-    rows.push(source.row(id, &version, &text));
+    rows.push(source.row(packs_dir, id, &version, &text)?);
     write_record(packs_dir, rows)?;
     Ok(Published {
         id: id.to_string(),
@@ -1523,7 +1640,7 @@ mod tests {
     const V2: &str = "pack demo version \"1.1\"\n";
 
     fn row(text: &str) -> Row {
-        Row { id: "demo".into(), source: "local".into(), github: None, path: None, commit: None, dir: Some("up".into()), version: "1.0".into(), sha256: sha256(text) }
+        Row { id: "demo".into(), source: "local".into(), github: None, path: None, commit: None, folder: Some("../up".into()), legacy_dir: None, version: "1.0".into(), sha256: sha256(text) }
     }
 
     const DECLARING: &str = "// `${{interface.delegated_folder}}` in a comment is read by nobody\n\
@@ -1748,34 +1865,106 @@ mod tests {
         }
     }
 
-    /// A row is followed through config.toml: its source must be named there, and in the
-    /// form that source writes — a commit for a repository, the same folder for a folder.
-    #[test]
-    fn a_row_follows_the_source_config_toml_names() {
-        let config: ToolConfig = toml::from_str("[[pack_source]]\nname = \"local\"\ndir = \"up\"\n\n[[pack_source]]\nname = \"official\"\ngithub = \"acme/packs\"\n").unwrap();
-        let commit = Some("0123456789abcdef0123456789abcdef01234567".to_string());
-        check_rows(&config, &[row(V1)]).unwrap();
-        let official = Row { source: "official".into(), github: Some("acme/packs".into()), commit: commit.clone(), dir: None, ..row(V1) };
-        check_rows(&config, std::slice::from_ref(&official)).unwrap();
-        check_rows(&config, &[Row { source: "satz".into(), github: Some("tjirsch/satz".into()), commit: commit.clone(), dir: None, ..row(V1) }]).unwrap();
-        // a row whose repository or folder of it is not the one config.toml names is refused with the edit
-        let err = check_rows(&config, &[Row { github: Some("acme/old".into()), ..official.clone() }]).unwrap_err();
-        assert!(err.contains("fetched from github.com/acme/old/packs as `official`, and config.toml names github.com/acme/packs/packs") && err.contains("write github = \"acme/packs\" and no `path`"), "{err}");
-        let err = check_rows(&config, &[Row { path: Some("catalog".into()), ..official.clone() }]).unwrap_err();
-        assert!(err.contains("github.com/acme/packs/catalog"), "{err}");
-        let moved: ToolConfig = toml::from_str("[[pack_source]]\nname = \"official\"\ngithub = \"acme/packs\"\npath = \"catalog\"\n").unwrap();
-        let err = check_rows(&moved, std::slice::from_ref(&official)).unwrap_err();
-        assert!(err.contains("write github = \"acme/packs\" and path = \"catalog\""), "{err}");
-        check_rows(&moved, &[Row { path: Some("catalog".into()), ..official.clone() }]).unwrap();
+    fn fetched_row(id: &str, source: &str, text: &str) -> Row {
+        Row { id: id.into(), source: source.into(), github: None, path: None, commit: None, folder: None, legacy_dir: None, version: "1.0".into(), sha256: sha256(text) }
+    }
 
-        let err = check_rows(&config, &[Row { source: "other".into(), ..row(V1) }]).unwrap_err();
-        assert!(err.contains("`other`, which config.toml does not name") && err.contains("satz pack-source add other"), "{err}");
-        let err = check_rows(&config, &[Row { dir: Some("../moved".into()), ..row(V1) }]).unwrap_err();
-        assert!(err.contains("folder `../moved` of `local`, and config.toml names `up`"), "{err}");
-        let err = check_rows(&config, &[Row { source: "official".into(), ..row(V1) }]).unwrap_err();
-        assert!(err.contains("is a GitHub repository"), "{err}");
-        let err = check_rows(&config, &[Row { github: Some("acme/packs".into()), commit, dir: None, ..row(V1) }]).unwrap_err();
-        assert!(err.contains("is a folder"), "{err}");
+    /// A repository with one packs folder, `packs/`, a folder source beside it,
+    /// `shared-packs/`, another folder, `other-packs/`, and one estate per customer under
+    /// `estates/<name>/`, each with its own config.toml.
+    fn shared_packs_folder(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("satz-shared-packs-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in ["packs", "shared-packs", "other-packs", "estates"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        root
+    }
+
+    /// An estate under `estates/<name>/` of `root`, sharing `packs/`, with the sources `sources`.
+    fn customer(root: &Path, name: &str, sources: &str) -> ToolConfig {
+        let dir = root.join("estates").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, format!("packs_dir = \"../../packs\"\n\n{sources}")).unwrap();
+        crate::settings::resolved_config(&crate::settings::parse_tool_config(&file).unwrap(), &dir)
+    }
+
+    const SHARED: &str = "[[pack_source]]\nname = \"shared\"\ndir = \"../../shared-packs\"\n\n[[pack_source]]\nname = \"official\"\ngithub = \"acme/packs\"\n";
+
+    /// Several estates share one packs folder and each declares the sources in its own
+    /// config.toml. A row is followed through the config.toml of the estate that reads it:
+    /// the source must be declared there, and point where the row was fetched from — the
+    /// same repository and folder of it, or a `dir` that resolves to the same folder however
+    /// it is spelled.
+    #[test]
+    fn estates_that_share_a_packs_folder_declare_its_sources_alike() {
+        let root = shared_packs_folder("agree");
+        let commit = Some("0123456789abcdef0123456789abcdef01234567".to_string());
+        let folder_row = Row { folder: Some("../shared-packs".into()), ..fetched_row("data/warehouse", "shared", V1) };
+        let github_row = Row { github: Some("acme/packs".into()), commit: commit.clone(), ..fetched_row("budget", "official", V1) };
+        let builtin_row = Row { github: Some("tjirsch/satz".into()), commit, ..fetched_row("project-budget", "satz", V1) };
+        let rows = [folder_row.clone(), github_row.clone(), builtin_row];
+
+        // two estates whose config.toml agree pass; the second spells the folder another way
+        check_rows(&customer(&root, "acme", SHARED), &rows).unwrap();
+        let respelled = SHARED.replace("../../shared-packs", "../.././estates/../shared-packs/");
+        check_rows(&customer(&root, "example", &respelled), &rows).unwrap();
+
+        // a third that does not declare `shared`: refused, naming the row and the config.toml line
+        let missing = customer(&root, "missing", "[[pack_source]]\nname = \"official\"\ngithub = \"acme/packs\"\n");
+        let err = check_rows(&missing, &rows).unwrap_err();
+        let record = resolved(&root.join("packs")).join("origin.toml");
+        let config = root.join("estates").join("missing").join("config.toml");
+        assert!(err.contains(&record.display().to_string()) && err.contains("the pack `data/warehouse` was fetched from the pack source `shared`"), "{err}");
+        assert!(
+            err.contains(&format!("which {} does not declare — add `[[pack_source]] name = \"shared\"` with dir = \"../../shared-packs\" to {}, as the estate that fetched it declares it", config.display(), config.display())),
+            "{err}"
+        );
+        let err = check_rows(&customer(&root, "no-github", "[[pack_source]]\nname = \"shared\"\ndir = \"../../shared-packs\"\n"), &rows).unwrap_err();
+        assert!(err.contains("`[[pack_source]] name = \"official\"` with github = \"acme/packs\""), "{err}");
+
+        // a fourth whose `shared` is another folder: refused, naming both folders and the line
+        let elsewhere = customer(&root, "elsewhere", &SHARED.replace("shared-packs", "other-packs"));
+        let err = check_rows(&elsewhere, &rows).unwrap_err();
+        let (was, now) = (resolved(&root.join("shared-packs")), resolved(&root.join("other-packs")));
+        assert!(err.contains(&format!("the pack `data/warehouse` was fetched from the folder {} as `shared` (folder = \"../shared-packs\" in its row)", was.display())), "{err}");
+        assert!(err.contains(&format!("names dir = \"../../other-packs\", the folder {} — write dir = \"../../shared-packs\" in that table", now.display())), "{err}");
+        assert!(err.contains("write folder = \"../other-packs\" in the row, and the same source in every config.toml that shares this packs folder"), "{err}");
+
+        // and one whose `official` is another repository, or another folder of it
+        let err = check_rows(&customer(&root, "moved", &SHARED.replace("acme/packs", "acme/old")), &rows).unwrap_err();
+        assert!(err.contains("fetched from github.com/acme/packs/packs as `official`, and the `[[pack_source]]` `official` of") && err.contains("names github.com/acme/old/packs — write github = \"acme/packs\" in that table"), "{err}");
+        let catalog = customer(&root, "catalog", &format!("{SHARED}path = \"catalog\"\n"));
+        let err = check_rows(&catalog, std::slice::from_ref(&github_row)).unwrap_err();
+        assert!(err.contains("write github = \"acme/packs\" and path = \"catalog\" in the row"), "{err}");
+        check_rows(&catalog, &[Row { path: Some("catalog".into()), ..github_row.clone() }]).unwrap();
+
+        // a source of the other kind is refused with the table that matches the row
+        let err = check_rows(&customer(&root, "kind", &SHARED.replace("dir = \"../../shared-packs\"", "github = \"acme/shared\"")), &rows).unwrap_err();
+        assert!(err.contains("records a folder") && err.contains("is a GitHub repository — write dir = \"../../shared-packs\" in that table"), "{err}");
+        let swapped = Row { source: "shared".into(), ..github_row };
+        let err = check_rows(&customer(&root, "acme", SHARED), &[swapped]).unwrap_err();
+        assert!(err.contains("records a repository") && err.contains("is a folder — write github = \"acme/packs\" in that table"), "{err}");
+
+        // a row an earlier release wrote, its folder relative to config.toml: refused with the folder to write
+        std::fs::write(&record, "[[pack]]\nid = \"data/warehouse\"\nsource = \"shared\"\ndir = \"../../shared-packs\"\nversion = \"1.0\"\nsha256 = \"x\"\n").unwrap();
+        let err = read_record(&customer(&root, "acme", SHARED)).unwrap_err();
+        assert!(err.contains("records dir = \"../../shared-packs\"") && err.contains("write folder = \"../shared-packs\" in its place"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The folder a fetch records is the source's folder relative to the packs folder: the
+    /// same row whichever estate sharing it fetched the pack.
+    #[test]
+    fn a_folder_is_recorded_relative_to_the_packs_folder() {
+        let root = shared_packs_folder("relative");
+        let packs = resolved(&root.join("packs"));
+        assert_eq!(relative(&packs, &resolved(&root.join("shared-packs"))).as_deref(), Some("../shared-packs"));
+        assert_eq!(relative(&packs, &packs).as_deref(), Some("."));
+        assert_eq!(relative(&resolved(&root), &packs.join("team")).as_deref(), Some("packs/team"));
+        assert_eq!(relative(Path::new("packs"), &packs), None, "a path that is not resolved has no relative path to one that is");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// An estate whose own pack `team/logs` it uses, a folder source `shared`, a GitHub
@@ -1819,8 +2008,8 @@ mod tests {
         assert_eq!(published.action, PublishAction::Copied);
         assert_eq!((published.version.as_str(), published.location.as_str()), ("1.0", "shared"));
         assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), LOGS);
-        let rows = read_record(&dir.join("packs")).unwrap();
-        let want = Row { id: "team/logs".into(), source: "shared".into(), github: None, path: None, commit: None, dir: Some("shared".into()), version: "1.0".into(), sha256: sha256(LOGS) };
+        let rows = read_record_at(&dir.join("packs"), None).unwrap();
+        let want = Row { folder: Some("../shared".into()), legacy_dir: None, ..fetched_row("team/logs", "shared", LOGS) };
         assert_eq!(rows, vec![want]);
         check_rows(&cfg, &rows).unwrap();
         assert_eq!(classify(rows.first(), Some(LOGS), Upstream::Found(LOGS)), Some(State::Current));
@@ -1831,7 +2020,7 @@ mod tests {
         detach(&cfg, "team/logs").unwrap();
         let again = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap();
         assert_eq!(again.action, PublishAction::Identical);
-        assert_eq!(read_record(&dir.join("packs")).unwrap().len(), 1);
+        assert_eq!(read_record_at(&dir.join("packs"), None).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1854,7 +2043,7 @@ mod tests {
         let here = dir.join("packs").join("team").join("logs.satz");
         assert!(err.contains(&format!("{} holds another `team/logs` than {}", there.display(), here.display())) && err.contains("--force"), "{err}");
         assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), theirs, "a refusal wrote the file");
-        assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refusal wrote a row");
+        assert!(read_record_at(&dir.join("packs"), None).unwrap().is_empty(), "a refusal wrote a row");
         let forced = publish(&cfg, &cfg, "team/logs", "shared", &estate, true).unwrap();
         assert_eq!(forced.action, PublishAction::Overwritten);
         assert_eq!(std::fs::read_to_string(dir.join("shared/team/logs.satz")).unwrap(), LOGS);
@@ -1872,7 +2061,7 @@ mod tests {
         assert!(err.contains("no pack source `nowhere`"), "{err}");
         let err = publish(&cfg, &cfg, "team/none", "shared", &estate, false).unwrap_err();
         assert!(err.contains("`team/none` is not in"), "{err}");
-        assert!(!dir.join("shared/team").exists() && read_record(&dir.join("packs")).unwrap().is_empty());
+        assert!(!dir.join("shared/team").exists() && read_record_at(&dir.join("packs"), None).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1890,7 +2079,7 @@ mod tests {
         let err = publish(&cfg, &cfg, "team/logs", "shared", &estate, false).unwrap_err();
         assert!(err.contains("not formatted") && err.contains("satz review-pack"), "{err}");
         assert!(!dir.join("shared/team/logs.satz").exists(), "a refused pack was copied");
-        assert!(read_record(&dir.join("packs")).unwrap().is_empty(), "a refused pack was recorded");
+        assert!(read_record_at(&dir.join("packs"), None).unwrap().is_empty(), "a refused pack was recorded");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1906,10 +2095,10 @@ mod tests {
         let commit = "0123456789abcdef0123456789abcdef01234567";
         let fetched = |id: &str, text: &str| {
             std::fs::write(dir.join(format!("packs/team/{id}.satz")), text).unwrap();
-            Row { id: format!("team/{id}"), source: "remote".into(), github: Some("acme/no-such-repository".into()), path: None, commit: Some(commit.into()), dir: None, version: "1.0".into(), sha256: sha256(text) }
+            Row { github: Some("acme/no-such-repository".into()), commit: Some(commit.into()), ..fetched_row(&format!("team/{id}"), "remote", text) }
         };
         let kept = fetched("kept", &DECLARING.replace("declaring", "kept"));
-        let changed = Row { source: "gone".into(), github: None, commit: None, dir: Some("no-such-folder".into()), ..fetched("changed", &LOGS.replace("logs", "changed")) };
+        let changed = Row { source: "gone".into(), github: None, commit: None, folder: Some("../no-such-folder".into()), ..fetched("changed", &LOGS.replace("logs", "changed")) };
         std::fs::write(dir.join("packs/team/changed.satz"), LOGS.replace("logs", "changed") + "// changed here\n").unwrap();
         write_record(&dir.join("packs"), vec![kept, changed]).unwrap();
         let against = estate(&[], &[("delegation-vm", &[("instance_name", "vm-1")]), ("vm-users", &[("zone", "europe-west3-a"), ("project_id", "acme-vm")])]);
@@ -1965,38 +2154,41 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satz-origin-record-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(read_record(&dir).unwrap(), Vec::new(), "no file is no row");
+        assert_eq!(read_record_at(&dir, None).unwrap(), Vec::new(), "no file is no row");
 
         write_record(&dir, vec![row(V1)]).unwrap();
-        assert_eq!(read_record(&dir).unwrap(), vec![row(V1)]);
+        assert_eq!(read_record_at(&dir, None).unwrap(), vec![row(V1)]);
 
         let path = record_path(&dir);
         std::fs::write(&path, "[[pack]]\nid = \"demo\"\nsource = \"dir\"\nversion = \"1.0\"\nsha256 = \"x\"\nextra = 1\n").unwrap();
-        let err = read_record(&dir).unwrap_err();
+        let err = read_record_at(&dir, None).unwrap_err();
         assert!(err.contains("origin.toml") && err.contains("not a valid origin record"), "{err}");
 
-        std::fs::write(&path, "[[pack]]\nid = \"demo\"\nsource = \"local\"\ndir = \"up\"\nversion = \"1.0\"\nsha256 = \"x\"\n".repeat(2)).unwrap();
-        assert!(read_record(&dir).unwrap_err().contains("has two rows"));
+        std::fs::write(&path, "[[pack]]\nid = \"demo\"\nsource = \"local\"\nfolder = \"../up\"\nversion = \"1.0\"\nsha256 = \"x\"\n".repeat(2)).unwrap();
+        assert!(read_record_at(&dir, None).unwrap_err().contains("has two rows"));
 
         // the new form: a GitHub source records its commit, a folder source its folder
         let commit = "0123456789abcdef0123456789abcdef01234567";
-        let github = Row { source: "satz".into(), github: Some("tjirsch/satz".into()), commit: Some(commit.into()), dir: None, ..row(V1) };
+        let github = Row { source: "satz".into(), github: Some("tjirsch/satz".into()), commit: Some(commit.into()), folder: None, ..row(V1) };
         write_record(&dir, vec![github.clone()]).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains(&format!("source = \"satz\"\ngithub = \"tjirsch/satz\"\ncommit = \"{commit}\"\n")), "{text}");
-        assert_eq!(read_record(&dir).unwrap(), vec![github]);
+        assert_eq!(read_record_at(&dir, None).unwrap(), vec![github]);
 
         let refused = |body: &str, says: &str| {
             std::fs::write(&path, format!("[[pack]]\nid = \"demo\"\n{body}version = \"1.0\"\nsha256 = \"x\"\n")).unwrap();
-            let err = read_record(&dir).unwrap_err();
+            let err = read_record_at(&dir, None).unwrap_err();
             assert!(err.contains("origin.toml") && err.contains(says), "{body}\n→ {err}");
         };
         // the two values an earlier release wrote are refused with the edit
         refused("source = \"github:tjirsch/satz\"\n", "write `source = \"satz\"`, `github = \"tjirsch/satz\"` and `commit = \"<sha>\"`");
         refused("source = \"dir\"\n", "satz pack-source add <name> --dir <folder>");
-        refused("source = \"Local\"\ndir = \"up\"\n", "no pack source name");
-        refused("source = \"local\"\n", "neither a repository nor `dir`");
-        refused("source = \"local\"\ndir = \"up\"\ngithub = \"acme/packs\"\ncommit = \"0123456789abcdef0123456789abcdef01234567\"\n", "both a repository and `dir`");
+        refused("source = \"Local\"\nfolder = \"../up\"\n", "no pack source name");
+        refused("source = \"local\"\n", "neither a repository nor `folder`");
+        refused("source = \"local\"\nfolder = \"../up\"\ngithub = \"acme/packs\"\ncommit = \"0123456789abcdef0123456789abcdef01234567\"\n", "both a repository and `folder`");
+        refused("source = \"local\"\nfolder = \"/up\"\n", "relative to the one that holds origin.toml");
+        // a folder an earlier release wrote relative to the config.toml that fetched it
+        refused("source = \"local\"\ndir = \"../up\"\n", "write folder = \"<the folder, relative to the one that holds origin.toml>\" in its place");
         refused("source = \"satz\"\ngithub = \"tjirsch/satz\"\ncommit = \"main\"\n", "no commit");
         refused("source = \"satz\"\ncommit = \"0123456789abcdef0123456789abcdef01234567\"\n", "no `github`");
         refused("source = \"satz\"\ngithub = \"tjirsch/satz\"\n", "no `commit`");
