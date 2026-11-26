@@ -211,8 +211,8 @@ resource are refused, naming the params to bind. Its questions are asked once pe
 `satz_interview` takes the dotted subject as the key of an answer. A notice of its pack is
 acknowledged per use, `payments.<param> = true`, and a notice row's `param` is that dotted name. A core export of its pack is the output `<name>__<export>`, reading the use's own resources. An
 `interface "<x>" { … }` of its pack is the use's own interface folder `<name>-<x>`, never common —
-`interface "store"` in the use `rag` is `interfaces/outgoing/rag-store/`, read as
-`"${{interface.rag-store.<value>}}"` — its exports resolved inside the use; `satz interfaces` gives
+`interface "project"` in the use `books` is `interfaces/outgoing/books-project/`, read as
+`"${{interface.books-project.<value>}}"` — its exports resolved inside the use; `satz interfaces` gives
 it `named`. A
 list param of its pack is the use's own: `satz_add_entry` takes `payments.<list>` as its `list`,
 `satz interfaces` reports it dotted with `named`, and a `contributes_<list>` from another pack or a

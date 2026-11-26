@@ -396,14 +396,15 @@ what one kind of workload is given and grants the delegation's estate account it
 it; the workload estate builds inside it with workload packs and checks no role ([What an
 estate must declare](#what-an-estate-must-declare-update-prerequisites)). The tutorial [workload estates beside
 the organization](docs/tutorial-projects.md) says which delegated resource is for whom and walks both;
-[delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organization
-team and the workload's team follow, by side; the next section is the project pack in short.
+[delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organization's
+team and the workload's team follow, by side — for a pack pair of the workload's own and for these
+ready-made packs; the next section is the project pack in short.
 
 A workload with needs of its own ships its own pair, named after it: `<workload>-delegation.satz`
 for the organization's estate and `<workload>-workload.satz` for the workload estate. A delegation
 pack whose header says `multiple` holds one instance of the workload and is used once per instance,
-`use "packs/rag-store-delegation.satz" named rag`; its `interface "store"` is the folder
-`rag-store`, and its `contributes_delegations` adds the instance's delegation to `delegations`
+`use "packs/catalog-delegation.satz" named books`; its `interface "project"` is the folder
+`books-project`, and its `contributes_delegations` adds the instance's delegation to `delegations`
 ([workflows](docs/workflows.md#delegated-access-a-folder-for-a-team)).
 
 ### Delegating a project (`presets/delegated-projects.satz`)

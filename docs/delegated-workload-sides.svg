@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 800" width="960" height="800" role="img" aria-label="The two sides of a delegated workload. On the left the workload repository of the workload's team: packs/ with the delegation pack catalog-delegation.satz and the workload pack catalog-workload.satz; the workload estate satz/books.satz, which uses the workload pack and reads the organization's values with named reads such as interface.books-project.project_id; interfaces/incoming/ with the folders delegation-books and books-project, which satz never writes; and the estate account it runs as, svc-deploy-books, acted as by the members of the estate account user group. On the right the organization's repository of the organization's team: packs/ with the fetched delegation pack and its row in origin.toml; the organization's estate C0example.satz with the line use packs/catalog-delegation.satz named books and the values books.catalog_name and books.catalog_estate_account_user_group; interfaces/outgoing/ with delegation-books and books-project, written whole by every transpile; and the delegation books of presets/delegation.satz, which the pack adds to the list delegations. In the middle what crosses: the delegation pack goes from the workload's team to the organization's team through a pack source — the packs folder itself, a GitHub repository, or a folder satz publish-pack stores it in — and the interface folders go back from the organization's team to the workload's team, copied whole, by hand or as a pull request. Below, in the cloud: the delegation's infrastructure project acme-deploy-books with the estate account and the state bucket, created by presets/delegation.satz and kept in the organization's state, the bucket holding the workload's state; and the project acme-books-001, created by the delegation pack with the account's grants on it and kept in the organization's state, holding the bucket and the topic the workload pack creates, kept in the workload's state.">
+  <defs>
+    <marker id="s-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/></marker>
+    <marker id="s-arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/></marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="800" fill="#FFFFFF"/>
+
+  <!-- the workload repository -->
+  <rect x="20" y="20" width="300" height="460" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">WORKLOAD REPOSITORY</text>
+  <text x="34" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">the workload's team, its own state</text>
+
+  <rect x="34" y="78" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="46" y="98" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">packs/</text>
+  <text x="46" y="118" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#0F766E">catalog-delegation.satz</text>
+  <text x="46" y="131" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10" fill="#1B2430" opacity="0.8">the delegation pack, for the organization's estate</text>
+  <text x="46" y="145" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#1B2430">catalog-workload.satz <tspan font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10" opacity="0.8">the workload pack</tspan></text>
+
+  <rect x="34" y="178" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="46" y="198" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">satz/books.satz</text>
+  <text x="46" y="216" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the workload estate: uses the workload pack,</text>
+  <text x="46" y="230" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">reads the organization's values by name:</text>
+  <text x="46" y="246" font-family="IBM Plex Mono, Menlo, monospace" font-size="9.5" fill="#1B2430">${{interface.books-project.project_id}}</text>
+
+  <rect x="34" y="278" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="46" y="298" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">interfaces/incoming/</text>
+  <text x="46" y="317" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#0F766E">delegation-books/  books-project/</text>
+  <text x="46" y="335" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">copied in whole; satz never writes here</text>
+
+  <rect x="34" y="378" width="272" height="86" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="46" y="398" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">runs as svc-deploy-books</text>
+  <text x="46" y="416" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the delegation's estate account, which the</text>
+  <text x="46" y="430" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">members of its estate account user group act as;</text>
+  <text x="46" y="444" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">plan and apply in deployment_mode = "cloud"</text>
+
+  <line x1="170" y1="158" x2="170" y2="176" stroke="#1B2430" marker-end="url(#s-arr)"/>
+  <line x1="170" y1="278" x2="170" y2="260" stroke="#1B2430" marker-end="url(#s-arr)"/>
+
+  <!-- the organization's repository -->
+  <rect x="640" y="20" width="300" height="460" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="654" y="42" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">ORGANIZATION'S REPOSITORY</text>
+  <text x="654" y="60" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">the organization's team, its own state</text>
+
+  <rect x="654" y="78" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="666" y="98" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">packs/</text>
+  <text x="666" y="118" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#0F766E">catalog-delegation.satz</text>
+  <text x="666" y="133" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">fetched with satz get-pack; its row in</text>
+  <text x="666" y="147" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">origin.toml names the pack source</text>
+
+  <rect x="654" y="178" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="666" y="198" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">satz/C0example.satz</text>
+  <text x="666" y="216" font-family="IBM Plex Mono, Menlo, monospace" font-size="9.5" fill="#1B2430">use "packs/catalog-delegation.satz"</text>
+  <text x="666" y="230" font-family="IBM Plex Mono, Menlo, monospace" font-size="9.5" fill="#1B2430">    named books</text>
+  <text x="666" y="246" font-family="IBM Plex Mono, Menlo, monospace" font-size="9.5" fill="#1B2430">books.catalog_name = "books" …</text>
+
+  <rect x="654" y="278" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="666" y="298" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">interfaces/outgoing/</text>
+  <text x="666" y="317" font-family="IBM Plex Mono, Menlo, monospace" font-size="10.5" fill="#0F766E">delegation-books/  books-project/</text>
+  <text x="666" y="335" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">written whole by every transpile</text>
+
+  <rect x="654" y="378" width="272" height="86" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="666" y="398" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">the delegation books</text>
+  <text x="666" y="416" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">one entry of delegations, presets/delegation.satz,</text>
+  <text x="666" y="430" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">added by the pack's contributes_delegations:</text>
+  <text x="666" y="444" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">estate account, infrastructure project, state</text>
+  <text x="666" y="458" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">bucket, estate account user group</text>
+
+  <line x1="790" y1="158" x2="790" y2="176" stroke="#1B2430" marker-end="url(#s-arr)"/>
+  <line x1="790" y1="258" x2="790" y2="276" stroke="#1B2430" marker-end="url(#s-arr)"/>
+
+  <!-- what crosses -->
+  <text x="480" y="42" text-anchor="middle" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#0F766E" font-weight="500">WHAT CROSSES</text>
+
+  <rect x="344" y="78" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <text x="356" y="98" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="14" fill="#1B2430">the delegation pack</text>
+  <text x="356" y="117" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">through a pack source: the workload repository's</text>
+  <text x="356" y="131" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">packs/ folder, a GitHub repository, or a folder</text>
+  <text x="356" y="145" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">that satz publish-pack stores it in</text>
+  <line x1="306" y1="114" x2="342" y2="114" stroke="#0F766E" stroke-width="1.5" marker-end="url(#s-arr-acc)"/>
+  <line x1="616" y1="114" x2="652" y2="114" stroke="#0F766E" stroke-width="1.5" marker-end="url(#s-arr-acc)"/>
+
+  <rect x="344" y="278" width="272" height="80" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-opacity="0.95" stroke-dasharray="5 4"/>
+  <text x="356" y="298" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="14" fill="#1B2430">the interface folders, copied whole</text>
+  <text x="356" y="317" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">by hand, or as a pull request in the</text>
+  <text x="356" y="331" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">workload repository; names and what was</text>
+  <text x="356" y="345" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">granted, nothing secret</text>
+  <line x1="654" y1="314" x2="618" y2="314" stroke="#0F766E" stroke-width="1.5" marker-end="url(#s-arr-acc)"/>
+  <line x1="344" y1="314" x2="308" y2="314" stroke="#0F766E" stroke-width="1.5" marker-end="url(#s-arr-acc)"/>
+
+  <!-- the cloud -->
+  <rect x="20" y="500" width="920" height="232" rx="6" fill="#EEF1F3" stroke="#1B2430" stroke-opacity="0.35"/>
+  <text x="34" y="522" font-family="IBM Plex Mono, Menlo, monospace" font-size="11.5" letter-spacing="1.2" fill="#1B2430" font-weight="500">IN THE CLOUD</text>
+  <text x="34" y="540" font-family="Newsreader, Georgia, serif" font-style="italic" font-size="13" fill="#1B2430">whoever creates a resource keeps it in its state</text>
+
+  <rect x="34" y="556" width="420" height="160" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="46" y="576" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">acme-deploy-books</text>
+  <text x="46" y="594" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the delegation's infrastructure project, with the estate account</text>
+  <text x="46" y="608" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">svc-deploy-books and the state bucket acme-deploy-books-state;</text>
+  <text x="46" y="622" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">created by presets/delegation.satz, in the organization's state</text>
+  <rect x="58" y="636" width="380" height="64" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="70" y="656" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">the workload's state</text>
+  <text x="70" y="674" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">kept in the state bucket under books/state; the workload</text>
+  <text x="70" y="688" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">estate's calls are billed to this project</text>
+
+  <rect x="506" y="556" width="420" height="160" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="518" y="576" font-family="IBM Plex Mono, Menlo, monospace" font-size="12" fill="#1B2430" font-weight="500">acme-books-001</text>
+  <text x="518" y="594" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the project the delegation pack creates, with the roles of</text>
+  <text x="518" y="608" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">svc-deploy-books on it and nowhere else;</text>
+  <text x="518" y="622" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">in the organization's state</text>
+  <rect x="530" y="636" width="380" height="64" rx="4" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="542" y="656" font-family="IBM Plex Mono, Menlo, monospace" font-size="11" fill="#0F766E" font-weight="500">what the workload pack creates</text>
+  <text x="542" y="674" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">the bucket, the topic, the API it switches on:</text>
+  <text x="542" y="688" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">in the workload's state</text>
+
+  <!-- legend -->
+  <rect x="20" y="748" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#0F766E" stroke-dasharray="5 4"/>
+  <text x="74" y="761" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">what crosses between the two teams</text>
+  <rect x="330" y="748" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#1B2430" stroke-opacity="0.6"/>
+  <text x="384" y="761" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">the organization's state</text>
+  <rect x="580" y="748" width="46" height="18" rx="3" fill="#FFFFFF" stroke="#0F766E" stroke-width="1.5"/>
+  <text x="634" y="761" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="11" fill="#1B2430">the workload's state</text>
+  <text x="20" y="786" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="10.5" fill="#1B2430" opacity="0.8">The example: the workload catalog, the named use books, the organization Acme Corp. of docs/examples.md.</text>
+</svg>

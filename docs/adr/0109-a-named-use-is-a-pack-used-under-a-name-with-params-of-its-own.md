@@ -193,15 +193,15 @@ named use of the pack. Each instance hands its workload estate an interface fold
 named use publishes interfaces:
 
 1. **The use's own folder.** An `interface "<x>" { … }` block in a file of the use is the use's
-   interface, published as the folder `<use>-<x>` (`rag-store` for the interface `store` of the
-   use `rag`). It is never common, whether the file is a pack or not: the rule that makes a pack's
+   interface, published as the folder `<use>-<x>` (`books-project` for the interface `project` of the
+   use `books`). It is never common, whether the file is a pack or not: the rule that makes a pack's
    interface outside an `each` common does not reach into a named use. Two uses publish two
    folders, `rag1-store` and `rag2-store`.
 2. **Exports resolved inside the use.** An interface's export is resolved as a core export of the
    use is (fourth part): a param reads the use's value, a local value its file's own, and a
    `${type.label…}` reference that names a resource of the use is rewritten to the prefixed address.
    The export keeps its name in the folder; its output in the HCL code is `<folder>__<export>`
-   with `-` as `_`, as any interface's (`rag_store__project_id`).
+   with `-` as `_`, as any interface's (`books_project__project_id`).
 3. **`use interface` inside the use.** A name that an interface of the use carries — written as its
    file gives it, `use interface "base"` — names the use's own folder, `<use>-base`; any other name
    is an interface of the flat namespace, read as it stands, as every other name a use reads is.
@@ -212,7 +212,7 @@ named use publishes interfaces:
 5. **Refused.** `interface "<x>" common` in a file of the use, at the `use` line: a common interface
    travels into every workload estate's folder, and the use's values are for the workload estate
    its own interface is for. A use's folder that is also the name of an interface declared outside
-   the use (`interface "rag-store"` in the estate beside the use `rag`'s `store`), naming both:
+   the use (`interface "books-project"` in the estate beside the use `books`'s `project`), naming both:
    two declarations of one interface name merge, and the use's values would reach the other's
    readers. A use whose pack declares an interface and whose name holds `_`: the folder is an
    interface name, lowercase letters, digits and `-`.
@@ -268,11 +268,11 @@ the names come from params. Costs: a pack must be edited and versioned to be use
 
 **A use's interface folder: `<use>-<x>` / `<use>__<x>` / the interface's own name.** The folder
 is an interface name — lowercase letters, digits and `-` — and the name a workload estate reads it
-by, `${{interface.rag-store.project_id}}`; `__` is no character of it. The interface's own name
+by, `${{interface.books-project.project_id}}`; `__` is no character of it. The interface's own name
 would make two uses publish one folder, which the merge of one interface's declarations would join.
 `<use>-<x>` keeps the use's name in front, as the use's addresses (`<use>__<label>`) and outputs
 (`<use>__<export>`) carry it, and two uses' folders differ because use names do; a use's name holds
-no `-`, so `rag-store` reads back as the use `rag` and the interface `store`. Costs: a folder of the
+no `-`, so `books-project` reads back as the use `books` and the interface `project`. Costs: a folder of the
 use can meet a flat interface of that name, refused; and a use name holding `_` makes no folder
 name, refused for a use that publishes an interface. *Chosen: `<use>-<x>`.*
 

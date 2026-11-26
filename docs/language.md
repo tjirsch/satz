@@ -1719,11 +1719,11 @@ used without a name as any other.
   addresses above do — and it goes wherever a core export goes: `outputs.tf`, every interface
   folder, `satz interfaces` and the interface READMEs.
 - **Interfaces.** An `interface "<x>" { … }` block in a file of the use (§6.17) is the use's own
-  interface, published as the folder `<name>-<x>` and never common: `interface "store"` in the use
-  `rag` is the folder `rag-store`, which a workload estate reads as
-  `"${{interface.rag-store.project_id}}"`, and a second use `rag2` publishes `rag2-store`. Its
+  interface, published as the folder `<name>-<x>` and never common: `interface "project"` in the use
+  `books` is the folder `books-project`, which a workload estate reads as
+  `"${{interface.books-project.project_id}}"`, and a second use `music` publishes `music-project`. Its
   exports are resolved inside the use as a core export is, and keep their names in the folder; the
-  output in the HCL code is `rag_store__<export>`. A `use interface "<y>"` line in it names the use's
+  output in the HCL code is `books_project__<export>`. A `use interface "<y>"` line in it names the use's
   own `<name>-<y>` where a file of the use declares `<y>`, else the interface `<y>` of the flat
   namespace, and its `when` reads the use's params. An `each` around an interface expands over the
   use's own list, `<name>-<entry name>`. A use that publishes an interface takes a name without

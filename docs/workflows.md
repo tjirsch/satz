@@ -1217,15 +1217,18 @@ of its own ships its own pair
 
 A workload's own pair is named after the workload: `<workload>-delegation.satz` for the
 organization's estate and `<workload>-workload.satz` for the workload estate
-(`rag-store-delegation.satz`, `rag-store-workload.satz`). A delegation pack that says `multiple`
+(`catalog-delegation.satz`, `catalog-workload.satz`). A delegation pack that says `multiple`
 holds one instance of the workload — its project, its grants, its interface — and the
 organization's estate uses it once per instance, each a named use
 ([language §6.9](language.md#named--one-pack-used-several-times)):
-`use "packs/rag-store-delegation.satz" named rag`. Its `interface "store"` is then the
-folder `rag-store`, which that instance's workload estate copies; a second use `rag2` writes
-`rag2-store` for a second workload estate. The pack can add the instance's own delegation to
+`use "packs/catalog-delegation.satz" named books`. Its `interface "project"` is then the
+folder `books-project`, which that instance's workload estate copies; a second use `music` writes
+`music-project` for a second workload estate. The pack can add the instance's own delegation to
 the flat list `delegations` through `contributes_delegations = [{ name = <param> … }]`, read
-inside the use, so deleting its `use` line removes the instance and its delegation together.
+inside the use, so deleting its `use` line removes the instance and its delegation together. The
+procedure between the two teams — writing the pair, the pack source, the named use, the
+interface folders copied back — is [delegated access: the procedure for both
+sides](tutorial-delegated-access.md).
 
 A workload that creates Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an estate account of its own, never
