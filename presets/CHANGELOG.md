@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.117.0
 
 **`satz preset-graph` refuses an offered pack whose header says `multiple`** (ADR 0109, check
 11). The map offers a pack once, to an estate that uses it once; a pack that says `multiple` is
