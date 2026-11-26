@@ -614,13 +614,22 @@ pub(crate) fn use_path(runtime: &ToolConfig, id: &str) -> Result<String, String>
 // get-pack
 // ---------------------------------------------------------------------------
 
+/// The line an estate reads a pack with. A pack whose header says `multiple` is used under
+/// a name (ADR 0109): its line carries `named <name>`, the placeholder the estate replaces
+/// with the use's name — a line pasted as it stands is refused, `<name>` being no name.
+fn use_line_for(path: &str, text: &str, what: &str) -> Result<String, String> {
+    let file = satz_core::satz::parse(text).map_err(|e| format!("{what}: line {}: {}", e.line, e.msg))?;
+    Ok(if file.multiple { format!("use \"{path}\" named <name>") } else { format!("use \"{path}\"") })
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Installed {
     pub id: String,
     pub version: String,
     /// the file written
     pub path: String,
-    /// the line an estate reads the pack with
+    /// the line an estate reads the pack with; for a pack whose header says `multiple`,
+    /// `use "…" named <name>`, `<name>` to be replaced by the use's name
     pub use_line: String,
     /// the interface values the pack reads that the estate does not give, each with why —
     /// the transpile refuses them once the estate uses the pack
@@ -705,10 +714,10 @@ pub(crate) async fn get(runtime: &ToolConfig, source: Option<&str>, which: &Whic
 
     for id in ids {
         valid_id(&id)?;
-        let use_line = format!("use \"{}\"", use_path(runtime, &id)?);
         let Some(text) = source.fetch(&id).await? else {
             return Err(format!("{} holds no pack `{id}` — `satz packs --source {}` lists the packs it holds", source.describe(), source.name()));
         };
+        let use_line = use_line_for(&use_path(runtime, &id)?, &text, &format!("{} `{id}`", source.describe()))?;
         let version = version_of(&id, &source, &text)?;
         let unmet = unmet(&matched(declarations_of(&text, &format!("{} `{id}`", source.describe()))?, estate));
         let file = pack_file(packs_dir, &id);
@@ -1376,7 +1385,10 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, 
             },
             source: row.map(|r| r.source.clone()),
             commit: row.and_then(|r| r.commit.clone()),
-            use_line: use_path(runtime, id).ok().map(|p| format!("use \"{p}\"")),
+            use_line: match use_path(runtime, id) {
+                Ok(p) => Some(use_line_for(&p, &text, &path.display().to_string())?),
+                Err(_) => None,
+            },
             named: uses.into_iter().flatten().collect(),
         });
     }
@@ -2077,6 +2089,18 @@ mod tests {
         assert_eq!(again.action, PublishAction::Identical);
         assert_eq!(read_record_at(&dir.join("packs"), None).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pack whose header says `multiple` is read under a name, so its line says so; a
+    /// file that does not parse is an error, never a plain line.
+    #[test]
+    fn a_multiple_pack_is_read_under_a_name() {
+        assert_eq!(use_line_for("packs/vm.satz", "pack vm version \"1.0\"\n", "vm").unwrap(), "use \"packs/vm.satz\"");
+        assert_eq!(
+            use_line_for("packs/vm.satz", "pack vm version \"1.0\" multiple\n", "vm").unwrap(),
+            "use \"packs/vm.satz\" named <name>"
+        );
+        assert!(use_line_for("packs/vm.satz", "pack vm version\n", "vm").unwrap_err().starts_with("vm: line 1:"));
     }
 
     /// An id's segments are path parts, and a dot inside an id stays part of its name.
