@@ -109,7 +109,7 @@ selection, the MANUAL-control sampling.
 
 ### I2 — Findings corroborate the evidence report (fix, then extend)
 
-*Status 2026-08-29: the fix and the CONTESTED / unmanaged / MANUAL verdicts shipped (v0.46.33); the triage buckets of I3 and the accepted-exception join of I4 shipped the same day (v0.46.34, `satz triage`).*
+*Implemented: OCSF parsing and the CONTESTED / unmanaged / MANUAL verdicts in `report-compliance`; the triage buckets of I3 and the accepted-exception join of I4 in `satz triage`.*
 
 **What.** Parse OCSF: `status_code`, `severity`, `finding_info.{uid,title}`,
 `unmapped.compliance`, `unmapped.check_id`, `resources[].{uid,name,type}`,
@@ -141,7 +141,7 @@ severity, resource, project}]` and `verdict`. The report's Prowler column shows
 
 ### I3 — The remediation plan is input for Satz: triage
 
-*Status 2026-08-29: shipped as `satz triage` (v0.46.34) — buckets A–E as below, markdown and JSON; bucket B uses a suffix reverse index from the finding's resource uid to the declaring block; the param link of bucket A waits for I5.*
+*Implemented as `satz triage` — buckets A–E as below, markdown and JSON; bucket B uses a suffix reverse index from the finding's resource uid to the declaring block; bucket A does not link a control to a param.*
 
 **What.** `satz triage <framework> <estate> --prowler <ocsf.json>` sorts
 every FAIL into the bucket that says *who fixes it and how*:
@@ -149,7 +149,7 @@ every FAIL into the bucket that says *who fixes it and how*:
 | bucket | test | plan skeleton says |
 |---|---|---|
 | **A · a pack already covers it** | the control is unmet and the library index has a provider | "adopt `<pack>` (v`<n>`)" — or, if the pack is included and the control is still FAIL, "set param `<p>`" (once I5 links controls to params) |
-| **B · Satz declares the resource** | the finding's resource matches an written address (needs the reverse index, see §4) | "the estate declares this at `<file>:<line>`; witness is `<state>`" — usually a CONTESTED case from I2 |
+| **B · Satz declares the resource** | the finding's resource matches a written address (the suffix reverse index from the finding's resource uid) | "the estate declares this at `<file>:<line>`; witness is `<state>`" — usually a CONTESTED case from I2 |
 | **C · declared exception** | a `deviates` claim covers the control | "accepted: `<reason>`; open duties: `<…>`" — nothing to fix, something to re-assess |
 | **D · unmanaged, expressible** | the resource type has a provider schema entry and a scope Satz can hold | "bring under management: declare or `import-id` in `<estate>`, or generalize into a pack" |
 | **E · not IaC** | MANUAL controls, console-only settings, Workspace, things `gcloud` cannot read | "manual: `<audit procedure>`" — stays a duty |
@@ -168,12 +168,12 @@ means an exception is a *record*, not a recurring argument.
 
 **What changes.** A command that composes three things satz has —
 the library claim index, the transpile's address set, the `deviates` claims —
-with the I2 findings. Buckets A, C, E need nothing new; B needs the reverse
-index (§4); the param link in A is I5's `governs`.
+with the I2 findings. Buckets A, C, E need nothing new; B uses the suffix reverse
+index; the param link in A would be I5's `governs`.
 
 ### I6 — The dossier: everything mechanical about the findings, settled first
 
-*Status: shipped as `satz remediation-plan` — the dossier and the workbook,
+*Implemented as `satz remediation-plan` — the dossier and the workbook,
 offline — and the authored round trip: `--merge <authored.json>` on the command
 line, `satz_remediation_items` and `satz_remediation_annotate` over MCP. The model
 pass is the agent's.*
@@ -219,7 +219,7 @@ so the hash that names the run stays the hash of what satz computed.
 
 ### I4 — `deviates` is the exception register
 
-*Status 2026-08-29: the join shipped (v0.46.34) — a FAIL on a deviated control renders as **accepted exception — <reason>** in the Prowler column and lands in triage bucket C. `--review` (audit-side false positives) is still a proposal.*
+*Implemented: the join — a FAIL on a deviated control renders as **accepted exception — <reason>** in the Prowler column and lands in triage bucket C. `--review` (audit-side false positives) is not implemented.*
 
 **What.** Nothing new in the language. A `claim … deviates { reason = "…" }` is
 already the only way an estate can decline a control on the record, with a
@@ -341,7 +341,7 @@ can never be accused of muting its own auditor.
 
 ---
 
-## 4. Scope model: what Satz covers, what it cannot yet
+## 4. Scope model: what Satz covers, what it does not
 
 The toolset's three scope types map onto Satz unevenly, and the concept must
 say so per scope rather than paper over it.
@@ -350,46 +350,11 @@ say so per scope rather than paper over it.
 |---|---|---|---|
 | **platform only** | organization structure, IAM/groups, organization policies, organization-level logging and alerting, essential contacts, budgets, the audit SA | project-level drift, hand-made resources, SCC findings, everything MANUAL | the platform chapter is mostly I5 facts + open duties |
 | **full organization** | as above, for every project the estate declares | every workload in every project | platform chapter as above **plus** an unmanaged-inventory appendix from bucket D/E |
-| **one application + its infrastructure** | the platform controls the app inherits; the app's projects if declared | the app itself: Cloud Run, Functions, Firebase/Firestore, IAP, Identity Platform, secrets, CI/CD — **CIS barely covers these** and Satz has no packs for them yet | inherited controls from I5; the app-side analysis (ten analyses, H/M/W findings) is the toolset's methodology and is not a Satz concern; the own-controls section closes what CIS does not cover |
-
-Two things follow for the roadmap:
-
-- **Workload packs** are the way bucket D findings stop recurring: a Cloud Run
-  hardening pack, a Firestore rules baseline, an IAP-in-front pattern — each
-  with claims against whichever framework has a control for it, and against an
-  **own catalog** (`presets/catalogs/workload-baseline.yaml`) where none does.
-  The catalog format carries that already; only the packs are missing.
-- **The reverse index** (live resource → declaring address) is the piece bucket
-  B needs and the codebase lacks. It is not discovery reborn: the transpile
-  already knows every written address and, for the six matched types, the live
-  id it resolved to. Keeping that map (address ↔ live id ↔ project) from
-  `report-compliance` and reading it in `triage` is enough for the platform
-  scope; extending live matching beyond six types is the same work the evidence
-  report needs anyway.
+| **one application + its infrastructure** | the platform controls the app inherits; the app's projects if declared | the app itself: Cloud Run, Functions, Firebase/Firestore, IAP, Identity Platform, secrets, CI/CD — **CIS barely covers these** and Satz has no packs for them | inherited controls from I5; the app-side analysis (ten analyses, H/M/W findings) is the toolset's methodology and is not a Satz concern; the own-controls section closes what CIS does not cover |
 
 ---
 
-## 5. Sequence
-
-Small, in dependency order, each one useful alone. Numbers are task ids.
-
-| # | work | size | unblocks |
-|---|---|---|---|
-| **#35** | OCSF parser for `--prowler` with a fixture test; per-resource findings; check-id matching with compliance-list fallback | S | I2, I3 |
-| **#36** | `catalog import` from Prowler compliance JSON; `checks:` + `source:` in the schema; re-import preserves paraphrases; first ISO 27001:2022 catalog as the proof | M | I1, cross-framework `require` |
-| **#37** | keep pack version/file/line through the compliance boundary; render interpretation + duties; `require --format json`; structured evidence rows | S–M | I5, I2 verdicts, I3 bucket B |
-| **#38** | combined verdicts in `report-compliance` (corroborated / CONTESTED / accepted exception / unmanaged); `--review findings-review.yaml` annotation | M | I2, I4 |
-| **#39** | `triage` command, buckets A–E, md + json; reverse index kept from the evidence run | M | I3 |
-| **#40** | `concept-facts` export; `governs` on claims; `layer` in pack headers; skill contract for `konzept-erstellen` | M | I5 |
-| later | workload packs + own catalog; `delta` over two OCSF runs; extend live matching beyond six types | L | scope type 3 |
-
-#35 and #37 are worth doing first regardless of the rest: the first makes the
-existing `--prowler` flag true to its README, the second stops throwing away
-data that is already parsed.
-
----
-
-## 6. Boundaries that do not move
+## 5. Boundaries that do not move
 
 - **Read-only audit.** The audit SA is `viewer` + `securityReviewer` +
   `securitycenter.adminViewer` + `cloudasset.viewer`, impersonated; no keys.

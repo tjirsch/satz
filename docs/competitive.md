@@ -2,9 +2,8 @@
 
 How satz compares with other frameworks for a Google Cloud organization foundation.
 Detailed technical diffs are in their own audit docs
-([fast-delta.md](fast-delta.md)); this page holds the landscape, the differences
-and the review log. Every audit adds a row, and its raw results stay in the
-repository.
+([fast-delta.md](fast-delta.md)); this page holds the landscape and the
+differences.
 
 ## Landscape
 
@@ -23,8 +22,7 @@ repository.
    cannot be replayed. satz calls no model; an agent uses it through MCP.
 2. **Multi-customer maintenance.** N customers on FAST are N diverged copies of
    the FAST repository, with no upstream/fork/ledger tooling, no `merge-presets`
-   and no proof that an upgrade preserves behavior.
- satz keeps provenance per
+   and no proof that an upgrade preserves behavior. satz keeps provenance per
    pack — `X.satz` pristine, `X.local.satz` fork, `X.diff.satz` ledger, the
    version in the file — and `merge-presets` upgrades an estate with a
    transpile-identity proof.
@@ -37,20 +35,3 @@ repository.
    commented out), with claims on every written resource.
 5. **Brownfield import.** Import ids and import blocks bring existing resources
    under the estate. GHT generates fix blueprints and leaves no managed estate.
-
-## Watch list
-
-- **GHT**: Google, Gemini-based, free, aimed at brownfield organizations. Track
-  whether it gains CIS mapping, import, or multi-org support.
-- **FAST**: its factory/context-interpolation design is close to satz's param
-  model. Track whether it adds fork/upgrade tooling.
-
-## Battle-review log
-
-Each re-audit of the landscape appends a dated entry here.
-
-- **2026-08-22** — initial audit (FAST delta + kill-check, docs/fast-delta.md).
-  Verdict: no kill; category validated by Google's GHT entry; differentiators
-  sharpened (determinism, multi-customer maintenance, escape hatches, evidence
-  plane). Actions: Phase 6 apply integration on roadmap, tag-conditional
-  policy-lift feature on roadmap, LLM targeted-exploration step on roadmap.
