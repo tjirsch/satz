@@ -25,8 +25,16 @@ pub(crate) const NO_BRANCH: &str = "none";
 /// One question, joined with the answer the estate currently carries.
 #[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct QuestionRow {
-    /// the param it answers, or the group name for a choice
+    /// the param it answers, or the group name for a choice — as the estate binds it: a
+    /// question of a named use is asked once per use, `web.vm_zone` (ADR 0109)
     pub subject: String,
+    /// The named use the question is asked for, `web`; absent for a flat use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
+    /// A named use's question only: the param, or the choice, as its pack names it —
+    /// `vm_zone` for the subject `web.vm_zone`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param: Option<String>,
     /// param | oneof
     pub kind: &'static str,
     pub prompt: String,
@@ -90,6 +98,7 @@ pub(crate) struct QuestionRow {
 
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct OptionRow {
+    /// the option's param as the estate binds it: `web.<param>` in a named use
     pub param: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,16 +173,23 @@ pub(crate) fn questions_report(
         .map(|(name, _, _)| name)
         .collect();
 
-    // Each declaring file once: its description (the header's first paragraph)
+    // Each declaring file once per use: its description (the header's first paragraph)
     // and its raw param declarations — the latter to see what a default is
-    // BUILT FROM, which decides whether it may be offered.
-    let mut facts: BTreeMap<String, PackFacts> = BTreeMap::new();
+    // BUILT FROM, which decides whether it may be offered. A named use's are named as the
+    // estate binds them, as its questions are.
+    let mut facts: BTreeMap<(String, Option<String>), PackFacts> = BTreeMap::new();
     for pq in &packs {
-        if facts.contains_key(&pq.file) {
+        let key = (pq.file.clone(), pq.named.clone());
+        if facts.contains_key(&key) {
             continue;
         }
         let text = if pq.file == file_name { Ok(src.clone()) } else { load(&pq.file) };
-        facts.insert(pq.file.clone(), pack_facts(text, &pq.file));
+        let f = pack_facts(text, &pq.file);
+        let f = match &pq.named {
+            Some(n) => f.named(n, &pq.named_params),
+            None => f,
+        };
+        facts.insert(key, f);
     }
 
     let mut rows = Vec::new();
@@ -181,7 +197,7 @@ pub(crate) fn questions_report(
     for pq in &packs {
         for q in &pq.questions {
             let applicable = q.ask_when.as_ref().map(|gate| truthy(env.get(gate))).unwrap_or(true);
-            let declared = facts.get(&pq.file);
+            let declared = facts.get(&(pq.file.clone(), pq.named.clone()));
             let (state, current, default, blocking) = if !applicable {
                 ("not-applicable", None, None, false)
             } else if q.oneof {
@@ -242,6 +258,8 @@ pub(crate) fn questions_report(
             }
             rows.push(QuestionRow {
                 subject: q.subject.clone(),
+                named: pq.named.clone(),
+                param: pq.named.as_ref().map(|n| q.subject.strip_prefix(&format!("{}.", n)).unwrap_or(&q.subject).to_string()),
                 kind: if q.oneof { "oneof" } else { "param" },
                 prompt: q.prompt.clone(),
                 why: q.why.clone(),
@@ -381,6 +399,39 @@ struct PackFacts {
     params: BTreeMap<String, satz_core::satz::Value>,
 }
 
+impl PackFacts {
+    /// The facts of a file of the named use `name`, which owns `owned`: its params named as
+    /// the estate binds them, `web.vm_zone`, and every reference to a param of the use
+    /// renamed alike. A param the use does not own is read from the flat namespace.
+    fn named(self, name: &str, owned: &BTreeSet<String>) -> PackFacts {
+        let bound = |p: &str| satz_core::pipeline::named_bound_name(name, p);
+        let is_owned = |p: &str| owned.contains(p);
+        let params = self.params.iter().map(|(k, v)| (if is_owned(k) { bound(k) } else { k.clone() }, renamed(v, &is_owned, &bound))).collect();
+        PackFacts { description: self.description, params }
+    }
+}
+
+/// `v` with every param `is_owned` names renamed by `to`: what a default of a named use is
+/// built from, under the names the estate binds.
+fn renamed(v: &satz_core::satz::Value, is_owned: &dyn Fn(&str) -> bool, to: &dyn Fn(&str) -> String) -> satz_core::satz::Value {
+    use satz_core::satz::{StrPart, Value};
+    let name = |n: &String| if is_owned(n) { to(n) } else { n.clone() };
+    match v {
+        Value::Ref(n) => Value::Ref(name(n)),
+        Value::Str(parts) => Value::Str(
+            parts
+                .iter()
+                .map(|p| match p {
+                    StrPart::Param(n) => StrPart::Param(name(n)),
+                    other => other.clone(),
+                })
+                .collect(),
+        ),
+        Value::List(items) => Value::List(items.iter().map(|i| renamed(i, is_owned, to)).collect()),
+        other => other.clone(),
+    }
+}
+
 fn pack_facts(src: Result<String, String>, rel: &str) -> PackFacts {
     let Ok(src) = src else { return PackFacts::default() };
     // The first paragraph: what the pack is FOR. The rest of the header is how to
@@ -452,6 +503,15 @@ fn truthy(v: Option<&serde_yaml::Value>) -> bool {
     matches!(v, Some(serde_yaml::Value::Bool(true)))
 }
 
+/// What a run of questions is grouped under: the pack's name, and for a named use the use's
+/// name and the pack's file, `web — packs/vm.satz`, since one pack is asked once per use.
+pub(crate) fn group_heading(q: &QuestionRow) -> String {
+    match &q.named {
+        Some(n) => format!("{} — {}", n, q.from),
+        None => q.pack.clone(),
+    }
+}
+
 /// Render for a terminal. Takes the report and nothing else.
 pub(crate) fn render_questions(r: &QuestionsReport) -> String {
     let mut out = format!("\nquestions — {}\n\n", r.estate);
@@ -517,15 +577,16 @@ pub(crate) fn render_questions(r: &QuestionsReport) -> String {
 
 /// The catalog as a workbook — the format a customer can fill in and send back.
 ///
-/// One row per question, grouped by pack in the order the interview asks them. The
+/// One row per question, grouped by pack in the order the interview asks them; the `use`
+/// column names the named use a row is asked for, and is empty for a flat use. The
 /// "your answer" column is the customer's to edit; "needs an answer" says which rows are
 /// still waiting. `why` and the cost of a later change travel with each row, because a
 /// decision read six months later without its reason is not a decision anybody can defend.
 pub(crate) fn xlsx(r: &QuestionsReport) -> Result<Vec<u8>, String> {
     use rust_xlsxwriter::{Format, FormatAlign, Workbook};
 
-    const COLUMNS: [&str; 8] =
-        ["pack", "decision", "your answer", "needs an answer", "how it was set", "why it is asked", "changing it later", "param"];
+    const COLUMNS: [&str; 9] =
+        ["pack", "decision", "your answer", "needs an answer", "how it was set", "why it is asked", "changing it later", "param", "use"];
 
     let mut wb = Workbook::new();
     let header = Format::new().set_bold().set_background_color("#D9D9D9").set_align(FormatAlign::Center);
@@ -552,6 +613,7 @@ pub(crate) fn xlsx(r: &QuestionsReport) -> Result<Vec<u8>, String> {
             q.why.clone().unwrap_or_default(),
             cost_in_words(q),
             q.subject.clone(),
+            q.named.clone().unwrap_or_default(),
         ];
         for (c, cell) in cells.iter().enumerate() {
             let f = match c {
@@ -570,7 +632,7 @@ pub(crate) fn xlsx(r: &QuestionsReport) -> Result<Vec<u8>, String> {
         ws.autofilter(0, 0, n, (COLUMNS.len() - 1) as u16).map_err(|e| e.to_string())?;
     }
     ws.set_freeze_panes(1, 0).map_err(|e| e.to_string())?;
-    for (c, w) in [(0u16, 28.0), (1, 52.0), (2, 28.0), (3, 22.0), (4, 24.0), (5, 64.0), (6, 44.0), (7, 30.0)] {
+    for (c, w) in [(0u16, 28.0), (1, 52.0), (2, 28.0), (3, 22.0), (4, 24.0), (5, 64.0), (6, 44.0), (7, 30.0), (8, 16.0)] {
         ws.set_column_width(c, w).map_err(|e| e.to_string())?;
     }
     wb.save_to_buffer().map_err(|e| e.to_string())
@@ -607,10 +669,10 @@ pub(crate) fn cost_in_words(q: &QuestionRow) -> String {
 }
 
 /// The decisions sheet — "these are your decisions, shall we start?" — and the catalog a
-/// customer keeps afterwards. Grouped by pack, each pack introduced by its own
-/// description, each question with the answer the estate carries or the default it would
-/// accept, WHY it is asked at all, and what changing it later costs. Markdown, because it
-/// is given to the customer.
+/// customer keeps afterwards. Grouped by pack — a named use of a pack by the use — each
+/// introduced by its pack's description, each question with the answer the estate carries
+/// or the default it would accept, WHY it is asked at all, and what changing it later
+/// costs. Markdown, because it is given to the customer.
 pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
     let mut out = format!(
         "# Decisions — {}\n\nEvery decision this estate rests on: what was asked, what it is set to, \
@@ -631,11 +693,12 @@ pub(crate) fn render_decisions(r: &QuestionsReport) -> String {
             s.unanswered, s.total, s.blocking
         ));
     }
-    let mut packs: Vec<&str> = r.questions.iter().map(|q| q.pack.as_str()).collect();
-    packs.dedup();
-    for pack in packs {
-        let rows: Vec<&QuestionRow> = r.questions.iter().filter(|q| q.pack == pack).collect();
-        out.push_str(&format!("## {}\n\n", pack));
+    // one section per pack, and one per named use of a pack
+    let mut groups: Vec<String> = r.questions.iter().map(group_heading).collect();
+    groups.dedup();
+    for group in groups {
+        let rows: Vec<&QuestionRow> = r.questions.iter().filter(|q| group_heading(q) == group).collect();
+        out.push_str(&format!("## {}\n\n", group));
         if let Some(d) = rows.first().map(|q| q.pack_description.as_str()).filter(|d| !d.is_empty()) {
             out.push_str(&format!("{}\n\n", d));
         }

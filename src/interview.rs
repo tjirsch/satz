@@ -610,20 +610,21 @@ pub(crate) fn run(
     }
 
     let mut done: BTreeSet<String> = BTreeSet::new();
-    let mut last_pack = String::new();
+    let mut last_group = String::new();
     loop {
         let next = report
             .questions
             .iter()
             .find(|q| !done.contains(&q.subject) && (q.state == "unanswered" || (all && q.state == "answered")));
         let Some(q) = next else { break };
-        if q.pack != last_pack {
-            w(out, &format!("\n── {} ──", q.pack))?;
+        let group = crate::questions::group_heading(q);
+        if group != last_group {
+            w(out, &format!("\n── {} ──", group))?;
             if !q.pack_description.is_empty() {
                 w(out, &format!("\n{}", q.pack_description))?;
             }
             w(out, "\n")?;
-            last_pack = q.pack.clone();
+            last_group = group;
         }
         w(out, &format!("\n{}", present(q)))?;
         out.flush().map_err(|e| e.to_string())?;
@@ -1018,6 +1019,8 @@ google_folder {
     fn an_answer_that_contradicts_the_declared_shape_is_refused_by_name() {
         let row = |shape: &'static str| QuestionRow {
             subject: "access_approval_notification_emails".into(),
+            named: None,
+            param: None,
             kind: "param",
             prompt: String::new(),
             why: None,
@@ -1400,5 +1403,173 @@ question paid { prompt = "Switch the paid service on?" why = "It is billed per h
         run(&estate, &cfg, false, false, &mut input, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("accepted 1 default(s)") && text.contains("complete — every question is answered"), "{}", text);
+    }
+
+    // ---- named uses: one pack asked once per use (ADR 0109) --------------------
+
+    const VM: &str = r#"// A machine, used once per machine.
+//
+//   use "vm.satz" named web
+
+pack vm version "1.0" multiple
+
+params {
+  vm_name   = none
+  vm_zone   = "europe-west3-a"
+  vm_disk   = "{vm_name}-disk"
+  vm_small  = true
+  vm_big    = false
+  want_logs = false
+  log_days  = 30
+}
+
+question vm_name { prompt = "Machine name" why = "The disk is named after it." reversal = recreate blast = high }
+question vm_zone { prompt = "Zone" why = "A machine cannot move." reversal = recreate blast = low }
+question vm_disk { prompt = "Disk" why = "A disk cannot be renamed." reversal = recreate blast = low }
+question oneof vm_size {
+  prompt = "Size?" why = "A size change recreates it." reversal = recreate blast = low required = true
+  option vm_small { label = "Small" }
+  option vm_big { label = "Big" }
+}
+question want_logs { prompt = "Logs?" reversal = edit blast = none }
+question log_days { prompt = "Days" reversal = edit blast = none ask_when = want_logs }
+"#;
+
+    fn named_fixture(name: &str) -> (PathBuf, ToolConfig) {
+        let dir = std::env::temp_dir().join(format!("satz-iv-{}-named-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("vm.satz"), VM).unwrap();
+        std::fs::write(
+            dir.join("e.satz"),
+            "estate e\n\nparams {\n  web.vm_name  = \"acme-web\"\n  db.want_logs = true\n}\n\nuse \"vm.satz\" named web\nuse \"vm.satz\" named db\n",
+        )
+        .unwrap();
+        let mut cfg: ToolConfig = toml::from_str("").unwrap();
+        cfg.include_dirs = vec![dir.to_string_lossy().into_owned()];
+        (dir.join("e.satz"), cfg)
+    }
+
+    /// Each question of a named use's pack is one row per use, named as the estate binds it:
+    /// answered when the estate binds `<use>.<param>`, its default resolved inside the use, its
+    /// `ask_when` read inside the use, a choice's options `<use>.<option>`.
+    #[test]
+    fn a_named_use_is_asked_its_questions_once_per_use() {
+        let (estate, cfg) = named_fixture("rows");
+        let r = questions_report(&estate, &cfg).unwrap();
+        let by = |r: &QuestionsReport, s: &str| r.questions.iter().find(|q| q.subject == s).unwrap_or_else(|| panic!("no row {}", s)).clone();
+        let subjects: Vec<&str> = r.questions.iter().map(|q| q.subject.as_str()).collect();
+        assert_eq!(subjects.iter().filter(|s| s.starts_with("web.")).count(), 6, "{:?}", subjects);
+        assert_eq!(subjects.iter().filter(|s| s.starts_with("db.")).count(), 6, "{:?}", subjects);
+        assert!(!subjects.contains(&"vm_name"), "no flat row: {:?}", subjects);
+
+        let q = by(&r, "web.vm_name");
+        assert_eq!((q.named.as_deref(), q.param.as_deref(), q.state), (Some("web"), Some("vm_name"), "answered"));
+        assert_eq!(q.current, Some(yaml("acme-web")));
+        let q = by(&r, "db.vm_name");
+        assert_eq!((q.state, q.blocking), ("unanswered", true), "declared `none`, bound by no use: {:?}", q);
+        // a default built from a param of the use: offered where the use answered it
+        assert_eq!(by(&r, "web.vm_disk").default, Some(yaml("acme-web-disk")));
+        assert!(by(&r, "db.vm_disk").blocking, "{:?}", by(&r, "db.vm_disk"));
+        assert_eq!(by(&r, "web.vm_zone").shape, Some("string"));
+        // a choice: its name and its options dotted
+        let q = by(&r, "web.vm_size");
+        assert_eq!((q.kind, q.param.as_deref()), ("oneof", Some("vm_size")));
+        assert_eq!(q.options.iter().map(|o| o.param.as_str()).collect::<Vec<_>>(), ["web.vm_small", "web.vm_big"]);
+        assert_eq!(q.default, Some(yaml("web.vm_small")));
+        // `ask_when` inside the use
+        assert_eq!(by(&r, "web.log_days").state, "not-applicable");
+        assert_eq!((by(&r, "db.log_days").state, by(&r, "db.log_days").default.clone()), ("unanswered", Some(yaml_num(30))));
+        assert_eq!(by(&r, "db.want_logs").state, "answered");
+
+        // the JSON a client reads, whole: the dotted subject, the use and the pack's own name,
+        // a choice's options dotted
+        let golden = serde_json::json!([
+            {
+                "subject": "web.vm_zone", "named": "web", "param": "vm_zone", "kind": "param",
+                "prompt": "Zone", "why": "A machine cannot move.", "reversal": "recreate", "blast": "low",
+                "state": "unanswered", "default": "europe-west3-a", "blocking": false, "shape": "string",
+                "pack_description": "A machine, used once per machine.", "from": "vm.satz", "pack": "vm"
+            },
+            {
+                "subject": "web.vm_size", "named": "web", "param": "vm_size", "kind": "oneof",
+                "prompt": "Size?", "why": "A size change recreates it.", "reversal": "recreate", "blast": "low",
+                "state": "unanswered", "default": "web.vm_small", "blocking": false,
+                "pack_description": "A machine, used once per machine.", "required": true,
+                "options": [
+                    { "param": "web.vm_small", "label": "Small", "selected": true },
+                    { "param": "web.vm_big", "label": "Big", "selected": false }
+                ],
+                "from": "vm.satz", "pack": "vm"
+            }
+        ]);
+        let rows = serde_json::to_value([by(&r, "web.vm_zone"), by(&r, "web.vm_size")]).unwrap();
+        assert_eq!(rows, golden, "{}", serde_json::to_string_pretty(&rows).unwrap());
+        // a flat question carries neither field
+        let (flat_estate, flat_cfg) = fixture("named-json-flat");
+        let flat = serde_json::to_value(by(&questions_report(&flat_estate, &flat_cfg).unwrap(), "region")).unwrap();
+        assert!(flat.get("named").is_none() && flat.get("param").is_none(), "{}", flat);
+        let _ = std::fs::remove_dir_all(flat_estate.parent().unwrap());
+
+        // the gate names what is open as the estate binds it
+        let gate = crate::questions::require_complete(&estate, &cfg, "apply").unwrap_err();
+        assert!(gate.contains("db.vm_name (needs a value)") && gate.contains("db.vm_disk (needs a value)"), "{}", gate);
+
+        // the decisions sheet has a section per use; the workbook a column for the use
+        let sheet = crate::questions::render_decisions(&r);
+        let web = sheet.find("## web — vm.satz").expect(&sheet);
+        let db = sheet.find("## db — vm.satz").expect(&sheet);
+        assert!(web < db && sheet.matches("| Machine name |").count() == 2, "{}", sheet);
+        let bytes = crate::questions::xlsx(&r).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut strings = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("xl/sharedStrings.xml").unwrap(), &mut strings).unwrap();
+        assert!(strings.contains("<t>use</t>") && strings.contains("<t>db.vm_name</t>") && strings.contains("<t>web</t>"), "{}", strings);
+        let _ = std::fs::remove_dir_all(estate.parent().unwrap());
+    }
+
+    /// An answer to a named use's question binds `<use>.<param>` in the estate's params,
+    /// aligned with the rest, and `--accept-defaults` binds each use's defaults.
+    #[test]
+    fn an_answer_of_a_named_use_binds_the_dotted_param() {
+        let (estate, cfg) = named_fixture("answers");
+        let answers = BTreeMap::from([("db.vm_name".to_string(), yaml("acme-db")), ("web.vm_size".to_string(), yaml("web.vm_big"))]);
+        apply(&estate, &cfg, &answers, true).unwrap();
+        let src = std::fs::read_to_string(&estate).unwrap();
+        for (name, value) in [
+            ("db.vm_name", "\"acme-db\""),
+            ("db.vm_disk", "\"acme-db-disk\""),
+            ("web.vm_disk", "\"acme-web-disk\""),
+            ("web.vm_zone", "\"europe-west3-a\""),
+            ("web.vm_big", "true"),
+            ("web.vm_small", "false"),
+            ("db.vm_small", "true"),
+            ("db.log_days", "30"),
+        ] {
+            assert!(bound(&src, name, value), "{} = {}:\n{}", name, value, src);
+        }
+        assert!(!src.contains("web.log_days"), "a question not asked binds nothing:\n{}", src);
+        // aligned as `satz fmt` lays the block out
+        assert_eq!(satz_core::fmt::format(&src).unwrap(), src);
+        let r = questions_report(&estate, &cfg).unwrap();
+        assert!(r.summary.complete, "{:?}", r.questions.iter().filter(|q| q.state == "unanswered").map(|q| &q.subject).collect::<Vec<_>>());
+        // the pack's own name is no subject
+        let e = apply(&estate, &cfg, &BTreeMap::from([("vm_zone".to_string(), yaml("x"))]), false).unwrap_err();
+        assert!(e.contains("no pack this estate uses asks that"), "{}", e);
+        let _ = std::fs::remove_dir_all(estate.parent().unwrap());
+    }
+
+    /// The terminal asks a use's questions under one heading, the use and the pack's file.
+    #[test]
+    fn the_interview_groups_a_named_use_under_its_name() {
+        let (estate, cfg) = named_fixture("terminal");
+        let mut input = std::io::Cursor::new("acme-db\n");
+        let mut out = Vec::new();
+        run(&estate, &cfg, false, true, &mut input, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("── db — vm.satz ──") && text.contains("db.vm_name — Machine name"), "{}", text);
+        assert!(text.contains("✓ db.vm_name = \"acme-db\""), "{}", text);
+        assert!(bound(&std::fs::read_to_string(&estate).unwrap(), "db.vm_name", "\"acme-db\""));
+        let _ = std::fs::remove_dir_all(estate.parent().unwrap());
     }
 }

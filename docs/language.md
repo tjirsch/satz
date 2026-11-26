@@ -1711,6 +1711,11 @@ used without a name as any other.
 - **Contributions.** A file of the use that declares `contributes_<param>` adds its entries to
   the estate's list `<param>`, read inside the use; an entry two uses contribute alike is
   added once.
+- **Questions.** Each question of the use's pack is asked once per use, under the name the
+  estate binds (§6.14): `satz questions` reports `web.vm_zone` for the question `vm_zone`,
+  answered when the estate binds `web.vm_zone`, its default resolved inside the use, its
+  `ask_when` read inside the use; a choice is `web.<choice>` and its options `web.<option>`.
+  The interview writes `web.vm_zone = …` into the estate's `params`.
 
 Refused, each naming the line:
 
@@ -1726,11 +1731,10 @@ Refused, each naming the line:
   one too), an `export`, an `entries` statement, a `notice`, an `offers` entry and a named use;
 - a `contributes_<param>` whose list param a named use declares.
 
-`satz questions`, the interview, the check of open questions before `transpile --apply` and
-`bootstrap`, `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs` and the
-workload pack commands that read the estate refuse an estate with a named use, naming the
-line; `transpile` and `--plan` write it. A named use of a preset of the library is refused by
-the pack graph.
+`satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs` and the workload
+pack commands that read the estate refuse an estate with a named use, naming the line;
+`transpile`, `--plan`, `--apply`, `bootstrap`, `satz questions` and the interview read it. A
+named use of a preset of the library is refused by the pack graph.
 
 ### 6.10 `suppress` — the subtractive channel
 
@@ -2274,6 +2278,12 @@ Composition follows from that: a choice between two packs is two booleans plus t
   Offline. The walk is schema-free; the provider schema in `schema_dir` is read only when a
   param no file gives a value is read inside a resource, and a missing schema is then
   refused as the transpile refuses it.
+- A question of a named use (§6.9) is asked once per use and reported under the name the
+  estate binds: the subject `web.vm_zone`, with `named` (`web`) and `param` (`vm_zone`, the
+  pack's own name) beside it; a choice's options are `web.<option>`. It is answered when
+  the estate binds `web.vm_zone`. The decisions sheet has a section per use, headed
+  `web — packs/vm.satz`, and the workbook a `use` column, empty for a question of a pack
+  used without a name.
 - `bootstrap` and `transpile --apply` **refuse while a question is unanswered**;
   `--dry-run` and `--plan` warn. `satz interview` asks and writes the answers —
   [satz interview](interview.md).

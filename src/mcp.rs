@@ -365,8 +365,9 @@ pub(crate) struct InterviewArgs {
     /// Answers to write before reporting, keyed by the question's subject: a param's
     /// value, or for a `oneof` the chosen option's param name (its siblings are set
     /// false) — or `none` for a choice that is not required, which sets every option
-    /// false. Each is checked against a question the estate asks; one refused
-    /// answer means nothing is written. Needs 'write'.
+    /// false. A question of a named use is keyed by its dotted subject, `web.vm_zone`, and
+    /// written as that binding. Each is checked against a question the estate asks; one
+    /// refused answer means nothing is written. Needs 'write'.
     #[serde(default)]
     pub answers: BTreeMap<String, serde_json::Value>,
     /// Also write every default the report offers — the answer a customer gives

@@ -147,7 +147,7 @@ pub(crate) fn check_bindings(name: &str, path: &str, pack: &NamedPack, bindings:
 }
 
 /// The name a param of a named use is shown under: `web.vm_zone`, as the estate binds it.
-pub(crate) fn bound_name(name: &str, param: &str) -> String {
+pub fn bound_name(name: &str, param: &str) -> String {
     format!("{}.{}", name, param)
 }
 
@@ -725,14 +725,18 @@ claim "cis-gcp" "4.0" "5.1" contributes {
     }
 
     #[test]
-    fn the_questions_of_the_estate_refuse_a_named_use() {
-        let src = estate("  web.vm_name = \"acme-web\"\n") + "\nuse \"vm.satz\" named web\n";
+    fn the_questions_of_the_estate_are_asked_once_per_named_use() {
+        let src = estate("  web.vm_zone = \"europe-west3-b\"\n") + "\nuse \"vm.satz\" named web\nuse \"vm.satz\" named db\n";
         let load = |p: &str| if p == "vm.satz" { Ok(VM.to_string()) } else { Err(p.to_string()) };
-        let Err(e) = estate_questions_and_uses("main.satz", &src, &load) else { panic!("refused") };
-        says(&e, "named uses are not supported by the questions of the estate");
-        assert_eq!(e.line, 9);
-        // the notices and the params of the flat namespace are read
-        assert!(estate_questions("main.satz", &src, &load).is_ok());
+        let (asked, _, env, _) = estate_questions_and_uses("main.satz", &src, &load).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let subjects: Vec<(Option<&str>, &str)> = asked.iter().flat_map(|pq| pq.questions.iter().map(move |q| (pq.named.as_deref(), q.subject.as_str()))).collect();
+        assert_eq!(subjects, [(Some("web"), "web.vm_zone"), (Some("db"), "db.vm_zone")]);
+        assert!(asked.iter().all(|pq| pq.named_params.contains("vm_zone") && pq.named_params.contains("vm_name")));
+        // each use's params, resolved inside the use, under the names the estate binds
+        assert_eq!(env.get("web.vm_zone"), Some(&serde_yaml::Value::String("europe-west3-b".into())));
+        assert_eq!(env.get("db.vm_zone"), Some(&serde_yaml::Value::String("europe-west3-a".into())));
+        assert_eq!(env.get("db.vm_name"), Some(&serde_yaml::Value::String("acme-vm".into())));
+        assert!(!env.contains_key("vm_zone"), "a param of a named use is no flat param");
         assert!(!estate_params("main.satz", &src, &load).unwrap().contains_key("vm_name"));
     }
 
