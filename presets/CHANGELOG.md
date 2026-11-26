@@ -15,6 +15,8 @@ names the file and the line.
 
 ### Unreleased
 
+**`get-pack` prints the named line for a pack that says `multiple`:** `use "…" named <name>`, the estate writing the use's name in place of `<name>`; the same in the `use_line` of `satz packs` and `satz_get_pack`.
+
 **A named use publishes interfaces of its own** (ADR 0109, fifth part). An `interface "<x>" { … }`
 block in a named use's pack is no longer refused: it is the use's own interface, the folder
 `interfaces/outgoing/<use>-<x>/` (`rag-store` for the interface `store` of the use `rag`), never

@@ -1843,7 +1843,8 @@ estate uses a stand-in interface folder per folder the pack names, and `review` 
 bare reads, each giving every value read as an example.
 
 `get-pack` writes `packs_dir/<id>.satz` and the row, and prints the `use` line that reaches
-the file. It is refused when `packs_dir` already holds a pack of that id, and when
+the file — for a pack whose header says `multiple`, `use "…" named <name>`, where the estate
+writes the use's name in place of `<name>` (a line pasted as it stands is refused). It is refused when `packs_dir` already holds a pack of that id, and when
 `packs_dir` is under none of the config's `include_dirs` — `use` resolves against those
 folders, so an estate whose packs are shared by several estates names the shared folder in
 both keys:
