@@ -168,8 +168,8 @@ pub fn bound_name(name: &str, param: &str) -> String {
     format!("{}.{}", name, param)
 }
 
-/// The folder an interface of a named use is published as: `rag-store` for the interface
-/// `store` of the use `rag` — the use's own, never common.
+/// The folder an interface of a named use is published as: `books-project` for the interface
+/// `project` of the use `books` — the use's own, never common.
 pub(crate) fn interface_folder(name: &str, interface: &str) -> String {
     format!("{}-{}", name, interface)
 }

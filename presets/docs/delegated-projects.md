@@ -19,8 +19,8 @@ ONE LIST. One entry of `delegated_projects`,
 is one Google project `{customer_shortname}-<name>-001`, shown under its `display_name`, the
 entry's name when left out. Google takes a project display name of 4 to 30 letters, digits,
 spaces, hyphens, single and double quotes and exclamation points, so the list's pattern
-refuses an entry whose display name is not one — `{ name = "rag" … }` needs a
-`display_name = "rag-workload"` — before anything is planned. One account works in as many
+refuses an entry whose display name is not one — `{ name = "cat" … }` needs a
+`display_name = "catalog"` — before anything is planned. One account works in as many
 projects as name its delegation. The grant names the account by reference, so an entry
 that names a delegation no entry of `delegations` declares is refused by the transpile,
 which lists the accounts that exist. Entries are bound in the estate, added with
@@ -134,7 +134,7 @@ _None — this pack proves no control by itself._
 
 | version | date | change |
 |---|---|---|
-| 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "rag" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
+| 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "cat" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
 | 2.0 | 2026-11-19 | `delegated_projects_folder` defaults to the workload folder, `google_folder.workload_folder.name`, where it was empty, the organization: a project of an estate that did not bind it moves into the workload folder, in place; another parent is still named by binding it. The list is declared with `entries` where it said `request` (ADR 0096; BREAKING, see Breaking changes) |
 | 1.0 | 2026-11-19 | first version, replacing `project_workload`: one list, `delegated_projects`, each entry naming the `delegation` whose account works in the project; a project has no account, state bucket or group of its own, and the team's calls are billed to the delegation's infrastructure project (ADR 0093) |
 

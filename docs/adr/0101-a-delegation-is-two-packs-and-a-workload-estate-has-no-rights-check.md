@@ -12,7 +12,7 @@ It knew what was delegated only by five export names of the delegation presets:
 `delegated_apis` and `delegated_budgets`. The README of an interface folder and the hints of
 `satz init --from` picked rows and reads by the same names (`delegated_folder`,
 `project_id`, `estate_account`, …). So every delegation had to be one of the shapes the
-presets publish, and a workload with needs of its own — a RAG store whose account needs
+presets publish, and a workload with needs of its own — a product catalog whose account needs
 other roles on a project the organization creates for it — had either to fit those export
 names or be checked against nothing it was given.
 

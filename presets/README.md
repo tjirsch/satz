@@ -1540,7 +1540,7 @@ params {
 
 | list | key | fields |
 |---|---|---|
-| `delegated_projects` | `name` | `name` (the project's name, and its interface's — lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in the project), `display_name` (the name the project is shown under; the entry's name when left out; 4 to 30 letters, digits, spaces, `-`, `'`, `"` and `!`, Google's rule for a project's display name — an entry named `rag` carries one, `display_name = "rag-workload"`), `apis` (the APIs enabled on the project; the five below when left out), `budgets` (`false` when left out) |
+| `delegated_projects` | `name` | `name` (the project's name, and its interface's — lowercase letters, digits and `-`, starting with a letter), `delegation` (the delegation whose account works in the project), `display_name` (the name the project is shown under; the entry's name when left out; 4 to 30 letters, digits, spaces, `-`, `'`, `"` and `!`, Google's rule for a project's display name — an entry named `cat` carries one, `display_name = "catalog"`), `apis` (the APIs enabled on the project; the five below when left out), `budgets` (`false` when left out) |
 
 An entry may say `budgets = true`: the account may then manage budgets for that project,
 and for nothing else ([`delegated-budget-role.satz`](#delegated-budget-rolesatz)). `apis`

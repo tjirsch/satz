@@ -19,7 +19,7 @@ names the file and the line.
 
 **A named use publishes interfaces of its own** (ADR 0109, fifth part). An `interface "<x>" { … }`
 block in a named use's pack is no longer refused: it is the use's own interface, the folder
-`interfaces/outgoing/<use>-<x>/` (`rag-store` for the interface `store` of the use `rag`), never
+`interfaces/outgoing/<use>-<x>/` (`books-project` for the interface `project` of the use `books`), never
 common, its exports resolved inside the use — a param reads the use's value, a reference names the
 use's own resource — and its output in the HCL code `<use>_<x>__<export>`. A `use interface` line
 in it names the use's own interface where the use declares one, else the flat interface; an `each`
@@ -137,9 +137,9 @@ the field, the value and the pattern. A project display name is 4 to 30 letters,
 spaces, hyphens, single and double quotes and exclamation points; a folder display name is at
 most 30 letters, digits, spaces, hyphens and underscores, starting and ending with a letter or
 digit. An estate refused here held an entry that `tofu validate` (a project) or the apply (a
-folder) refused already: give the entry a `display_name` that matches, `{ name = "rag"
-delegation = "rag" display_name = "rag-workload" }`; the project id stays
-`{customer_shortname}-rag-001`. An estate whose entries all match plans as before.
+folder) refused already: give the entry a `display_name` that matches, `{ name = "cat"
+delegation = "cat" display_name = "catalog" }`; the project id stays
+`{customer_shortname}-cat-001`. An estate whose entries all match plans as before.
 
 ### v0.111.0
 
@@ -1743,7 +1743,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
-| `delegated_projects` | 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "rag" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
+| `delegated_projects` | 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "cat" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
 | `delegated_folders` | 1.2 | 2026-11-25 | `display_name` is the entry's `name` when left out, through the list's `defaults`, so one `google_folder` body serves both; the list's pattern holds it to Google's rule for a folder display name — at most 30 letters, digits, spaces, hyphens and underscores, starting and ending with a letter or digit — so an entry whose display name breaks it is refused by the transpile and by `satz add-entry`, where it failed at apply. `terraform.tfvars` carries the filled `display_name` of every entry; nothing a plan shows changes |
 | `billing_export` | 1.2 | 2026-11-25 | the folder question says what its empty answer means, `empty = "the organization itself; the project is created directly under it"`, so `satz questions`, the interview and the decisions sheet show it beside the `""` the pack offers and `--accept-defaults` takes. Nothing emitted changes |
 | `shared_network` | 1.2 | 2026-11-25 | the host project's folder question says what its empty answer means, `empty = "the organization itself; the project is created directly under it"`, so `satz questions`, the interview and the decisions sheet show it beside the `""` the pack offers and `--accept-defaults` takes. Nothing emitted changes |

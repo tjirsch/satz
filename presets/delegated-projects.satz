@@ -14,8 +14,8 @@
 // is one Google project `{customer_shortname}-<name>-001`, shown under its `display_name`, the
 // entry's name when left out. Google takes a project display name of 4 to 30 letters, digits,
 // spaces, hyphens, single and double quotes and exclamation points, so the list's pattern
-// refuses an entry whose display name is not one — `{ name = "rag" … }` needs a
-// `display_name = "rag-workload"` — before anything is planned. One account works in as many
+// refuses an entry whose display name is not one — `{ name = "cat" … }` needs a
+// `display_name = "catalog"` — before anything is planned. One account works in as many
 // projects as name its delegation. The grant names the account by reference, so an entry
 // that names a delegation no entry of `delegations` declares is refused by the transpile,
 // which lists the accounts that exist. Entries are bound in the estate, added with
