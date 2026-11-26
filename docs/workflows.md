@@ -1225,7 +1225,10 @@ organization's estate uses it once per instance, each a named use
 folder `rag-store`, which that instance's workload estate copies; a second use `rag2` writes
 `rag2-store` for a second workload estate. The pack can add the instance's own delegation to
 the flat list `delegations` through `contributes_delegations = [{ name = <param> … }]`, read
-inside the use, so deleting its `use` line removes the instance and its delegation together.
+inside the use, so deleting its `use` line removes the instance and its delegation together. The
+procedure between the two teams — writing the pair, the pack source, the named use, the
+interface folders copied back — is [delegated access: the procedure for both
+sides](tutorial-delegated-access.md).
 
 A workload that creates Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an estate account of its own, never
