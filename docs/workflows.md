@@ -927,8 +927,12 @@ interface "payments" {
 A pack used under a name ([language §6.9](language.md#named--one-pack-used-several-times))
 publishes its core exports under the use's prefix: `export "bucket"` of
 `showcase-bucket.satz`, used as `reports` and as `scratch`, is the outputs `reports__bucket`
-and `scratch__bucket`, each reading its own use's bucket, and every interface carries both. A
-named use declares no `interface` and exports no `all <type>`.
+and `scratch__bucket`, each reading its own use's bucket, and every interface carries both. An
+`interface "<x>"` block of the use's pack is the use's own interface, the folder `<use>-<x>`:
+`interface "bucket"` of `showcase-bucket.satz` writes `interfaces/outgoing/reports-bucket/` and
+`interfaces/outgoing/scratch-bucket/`, each with its use's values, which a workload estate reads
+as `"${{interface.reports-bucket.bucket_name}}"`. A named use's interface is never common, and a
+named use exports no `all <type>`.
 
 A set several workload estates read — the shared network, the DNS zones — is a **common**
 interface: declared once, marked `interface "<name>" common { … }`, or declared by the
@@ -1210,6 +1214,18 @@ is imported into the workload's state. `presets/delegated-folders.satz` and
 `presets/delegated-projects.satz` are the ready-made delegation packs; a workload with needs
 of its own ships its own pair
 ([ADR 0101](adr/0101-a-delegation-is-two-packs-and-a-workload-estate-has-no-rights-check.md)).
+
+A workload's own pair is named after the workload: `<workload>-delegation.satz` for the
+organization's estate and `<workload>-workload.satz` for the workload estate
+(`rag-store-delegation.satz`, `rag-store-workload.satz`). A delegation pack that says `multiple`
+holds one instance of the workload — its project, its grants, its interface — and the
+organization's estate uses it once per instance, each a named use
+([language §6.9](language.md#named--one-pack-used-several-times)):
+`use "packs/rag-store-delegation.satz" named rag`. Its `interface "store"` is then the
+folder `rag-store`, which that instance's workload estate copies; a second use `rag2` writes
+`rag2-store` for a second workload estate. The pack can add the instance's own delegation to
+the flat list `delegations` through `contributes_delegations = [{ name = <param> … }]`, read
+inside the use, so deleting its `use` line removes the instance and its delegation together.
 
 A workload that creates Google projects and folders — with templates of its own, in
 OpenTofu or in Satz, each with its own state — runs as an estate account of its own, never

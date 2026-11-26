@@ -585,7 +585,7 @@ pub(crate) fn review(
 }
 
 /// What a pack whose header says `multiple` is held to at authoring time (ADR 0109):
-/// - nothing a named use refuses (`hcl`, an `action`, `inputs`, an `interface`, an
+/// - nothing a named use refuses (`hcl`, an `action`, `inputs`, a common `interface`, an
 ///   `offers` entry, and what the named use does not take yet) — an error, since no estate
 ///   could use the pack under a name;
 /// - no param of the estate's own vocabulary (`EXAMPLE_PARAMS`) declared again — a warning:

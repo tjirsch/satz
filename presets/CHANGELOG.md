@@ -13,6 +13,21 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**A named use publishes interfaces of its own** (ADR 0109, fifth part). An `interface "<x>" { … }`
+block in a named use's pack is no longer refused: it is the use's own interface, the folder
+`interfaces/outgoing/<use>-<x>/` (`rag-store` for the interface `store` of the use `rag`), never
+common, its exports resolved inside the use — a param reads the use's value, a reference names the
+use's own resource — and its output in the HCL code `<use>_<x>__<export>`. A `use interface` line
+in it names the use's own interface where the use declares one, else the flat interface; an `each`
+around an interface expands over the use's own list. `satz interfaces` gives such an interface the
+new optional field `named`. Refused, each at the `use` line: `interface "<x>" common` in a named
+use's pack; a use's folder that an interface declared outside the use also names; and a use whose
+pack declares an interface and whose name holds `_`. Each of these was refused before as an
+`interface` block in a named use, so no estate that transpiled needs an edit, and nothing a plan
+shows changes.
+
 ### v0.117.0
 
 **A named use exports, and its list params are its own** (ADR 0109, fourth part). An `export`

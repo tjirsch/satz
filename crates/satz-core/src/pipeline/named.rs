@@ -48,12 +48,16 @@ pub(crate) struct NamedPack {
 /// What a file of a named use may not hold, with why: the first one `file` holds, as
 /// `(line, what, why)`. `satz review-preset` holds a pack that says `multiple` to it.
 pub fn refused_in_named(file: &File) -> Option<(usize, &'static str, &'static str)> {
-    let all = file.exports.iter().find(|x| matches!(x.value, satz::ExportValue::All(_))).map(|x| x.line);
+    let all = file.exports.iter().chain(file.interfaces.iter().flat_map(|i| &i.exports)).find(|x| matches!(x.value, satz::ExportValue::All(_))).map(|x| x.line);
     let found: [(Option<usize>, &str, &str); 7] = [
         (file.hcl_blocks.first().map(|h| h.line), "an `hcl` block", "raw HCL is written as it stands, so what it declares cannot take the use's prefix"),
         (file.actions.first().map(|a| a.line), "an `action`", "an action runs once per estate under its name, and two uses would declare one name twice"),
         (file.inputs.first().map(|i| i.line), "an `inputs` block", "an input is a variable of the estate's own, and two uses would declare one variable twice"),
-        (file.interfaces.first().map(|i| i.line), "an `interface` block", "an interface is published under its name, and two uses would publish one name twice"),
+        (
+            file.interfaces.iter().find(|i| i.common).map(|i| i.line),
+            "a common `interface`",
+            "every workload estate's folder carries a common interface, and a use's values reach the workload estate its own interface `<name>-<interface>` is for; leave out `common`",
+        ),
         (file.interface_file.as_ref().map(|i| i.line), "an interface file", "the values of an interface file are the estate's, read by the flat namespace"),
         (all, "an `export … = all <type>`", "it publishes every resource of the type the estate writes, which is not the use's to publish under its name; export each resource of the use by its reference"),
         (file.offers.first().map(|o| o.line), "an `offers` entry", "what the library offers is the map's, which is used once"),
@@ -162,6 +166,12 @@ pub(crate) fn check_bindings(name: &str, path: &str, pack: &NamedPack, bindings:
 /// The name a param of a named use is shown under: `web.vm_zone`, as the estate binds it.
 pub fn bound_name(name: &str, param: &str) -> String {
     format!("{}.{}", name, param)
+}
+
+/// The folder an interface of a named use is published as: `rag-store` for the interface
+/// `store` of the use `rag` — the use's own, never common.
+pub(crate) fn interface_folder(name: &str, interface: &str) -> String {
+    format!("{}-{}", name, interface)
 }
 
 /// The name a param of a named use is written under in the HCL code: `web__vm_zone`,
@@ -683,13 +693,14 @@ claim "cis-gcp" "4.0" "5.1" contributes {
 
     #[test]
     fn what_a_named_use_refuses_in_its_pack() {
-        let cases: [(&str, &str); 6] = [
+        let cases: [(&str, &str); 7] = [
             ("hcl {\n  locals {}\n}\n", "holds an `hcl` block"),
             ("action \"a\" {\n  reason = \"r\"\n  run    = \"x.sh\"\n  phase  = \"after-apply\"\n}\n", "holds an `action`"),
             ("inputs {\n  stage = \"dev\"\n}\n", "holds an `inputs` block"),
-            ("interface \"i\" {\n  export \"x\" = vm_name\n}\n", "holds an `interface` block"),
-            ("each vm_list by name {\n  interface \"{each.name}-i\" {\n    export \"x\" = vm_name\n  }\n}\n", "holds an `interface` block"),
+            ("interface \"i\" common {\n  export \"x\" = vm_name\n}\n", "holds a common `interface`"),
+            ("each vm_list by name {\n  interface \"{each.name}-i\" common {\n    export \"x\" = vm_name\n  }\n}\n", "holds a common `interface`"),
             ("export \"all\" = all google_storage_bucket\n", "holds an `export … = all <type>`"),
+            ("interface \"i\" {\n  export \"all\" = all google_storage_bucket\n}\n", "holds an `export … = all <type>`"),
         ];
         for (extra, what) in cases {
             let pack = format!("{}\n{}", VM, extra);
@@ -806,6 +817,123 @@ claim "cis-gcp" "4.0" "5.1" contributes {
         says(&e, "its export `bucket` (vm.satz:");
         says(&e, "is the output `web__bucket`, and so is the export `bucket` of the interface \"web\"");
         assert_eq!((e.file.as_str(), e.line), ("main.satz", 9), "at the use line");
+    }
+
+    /// A pack that publishes an interface of its own and contributes to a flat list of
+    /// objects, its entry read from the use's params.
+    const STORE: &str = r#"pack store version "1.0" multiple
+
+params {
+  store_name    = none
+  store_topics  = []
+  store_extra   = false
+  contributes_delegations = [{
+    name  = store_name
+    group = "{store_name}-owners@example.com"
+  }]
+}
+
+google_storage_bucket {
+  data {
+    name = "{store_name}-data"
+  }
+  each store_topics by name {
+    name = "{store_name}-{each.name}"
+  }
+}
+
+interface "store" {
+  use interface "base"
+  use interface "extra" when store_extra
+  use interface "audit"
+  export "bucket" = "${{google_storage_bucket.data.name}}" description "The store's bucket"
+  export "name"   = store_name
+}
+
+interface "base" {
+  export "shared" = "${{google_storage_bucket.shared.name}}"
+}
+
+interface "extra" {
+  export "more" = "{store_name}-more"
+}
+
+each store_topics by name {
+  interface "{each.name}-topic" {
+    export "topic" = "${{google_storage_bucket.{each.name}.name}}"
+  }
+}
+"#;
+
+    fn store_estate(body: &str) -> String {
+        estate(&format!("  delegations = []
+{}", body))
+            + "\nuse \"store.satz\" named rag1\nuse \"store.satz\" named rag2\n\ngoogle_storage_bucket {\n  shared {\n    name = \"acme-shared\"\n  }\n}\n\ninterface \"audit\" {\n  export \"audit_bucket\" = \"acme-audit\"\n}\n"
+    }
+
+    /// An interface a named use declares is the use's own: the folder `<use>-<interface>`,
+    /// never common, its exports resolved inside the use, its `use interface` lines reading the
+    /// use's interfaces first and the flat ones beside them.
+    #[test]
+    fn an_interface_of_a_named_use_is_the_folder_use_dash_interface() {
+        let src = store_estate("  rag1.store_name = \"acme-rag1\"\n  rag1.store_extra = true\n  rag1.store_topics = [{ name = \"news\" }]\n  rag2.store_name = \"acme-rag2\"\n");
+        let fe = compile_with(&src, &[("store.satz", STORE)]).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let folders: Vec<(&str, bool, Option<&str>)> = fe.interfaces.iter().map(|i| (i.name.as_str(), i.common, i.named.as_deref())).collect();
+        assert_eq!(
+            folders,
+            [
+                ("audit", false, None),
+                ("rag1-base", false, Some("rag1")),
+                ("rag1-extra", false, Some("rag1")),
+                ("rag1-news-topic", false, Some("rag1")),
+                ("rag1-store", false, Some("rag1")),
+                ("rag2-base", false, Some("rag2")),
+                ("rag2-extra", false, Some("rag2")),
+                ("rag2-store", false, Some("rag2")),
+            ],
+            "two uses, two folders each, none common"
+        );
+        let uses = |n: &str| fe.interfaces.iter().find(|i| i.name == n).unwrap().uses.clone();
+        assert_eq!(uses("rag1-store"), ["rag1-base", "rag1-extra", "audit"], "the use's own interfaces by its folder names, a flat one as it is");
+        assert_eq!(uses("rag2-store"), ["rag2-base", "audit"], "a `when` reads the use's own param");
+        let value = |i: &str, n: &str| {
+            let x = fe.exports.iter().find(|x| x.interface.as_deref() == Some(i) && x.name == n).unwrap_or_else(|| panic!("no export {} of {}", n, i));
+            attr(&serde_yaml::Value::Mapping([("v".into(), x.value.clone())].into_iter().collect()), "v")
+        };
+        assert_eq!(value("rag1-store", "bucket"), "${google_storage_bucket.rag1__data.name}", "a reference to the use's resource is prefixed");
+        assert_eq!(value("rag2-store", "bucket"), "${google_storage_bucket.rag2__data.name}");
+        assert_eq!(value("rag1-store", "name"), "acme-rag1", "a param is read inside the use");
+        assert_eq!(value("rag2-store", "name"), "acme-rag2");
+        assert_eq!(value("rag1-base", "shared"), "${google_storage_bucket.shared.name}", "a reference outside the use stays");
+        assert_eq!(value("rag1-extra", "more"), "acme-rag1-more");
+        assert_eq!(value("rag1-news-topic", "topic"), "${google_storage_bucket.rag1__news.name}", "an `each` expands over the use's list");
+        // the contribution to the flat list reads each use's params
+        let names: Vec<(String, String)> = fe.tfvars["delegations"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|e| (attr(e, "name"), attr(e, "group")))
+            .collect();
+        assert_eq!(names, [("acme-rag1".into(), "acme-rag1-owners@example.com".into()), ("acme-rag2".into(), "acme-rag2-owners@example.com".into())]);
+    }
+
+    #[test]
+    fn an_interface_of_a_named_use_and_a_flat_interface_are_not_one_folder() {
+        let src = store_estate("  rag1.store_name = \"acme-rag1\"\n  rag2.store_name = \"acme-rag2\"\n") + "\ninterface \"rag1-store\" {\n  export \"other\" = \"x\"\n}\n";
+        let e = refused(&src, &[("store.satz", STORE)]);
+        says(&e, "use \"store.satz\" named rag1: its interface \"store\" (store.satz:");
+        says(&e, "is the folder `rag1-store`, and so is the interface \"rag1-store\" (main.satz:");
+        assert_eq!(e.file, "main.satz");
+        assert_eq!(e.line, 11, "at the use line of `rag1`");
+    }
+
+    #[test]
+    fn a_named_use_that_publishes_an_interface_takes_a_name_without_underscore() {
+        let src = estate("  delegations = []\n  my_rag.store_name = \"acme\"\n")
+            + "\nuse \"store.satz\" named my_rag\n\ngoogle_storage_bucket {\n  shared {\n    name = \"acme-shared\"\n  }\n}\n\ninterface \"audit\" {\n  export \"audit_bucket\" = \"acme-audit\"\n}\n";
+        let e = refused(&src, &[("store.satz", STORE)]);
+        says(&e, "use \"store.satz\" named my_rag: store.satz:");
+        says(&e, "so a use that publishes an interface takes a name without `_`");
     }
 
     const DISKS: &str = r#"pack disks version "1.0" multiple

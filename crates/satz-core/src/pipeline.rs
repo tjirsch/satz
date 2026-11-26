@@ -1094,6 +1094,9 @@ pub struct ResolvedInterface {
     pub uses: Vec<String>,
     pub file: String,
     pub line: usize,
+    /// the named use whose interface this is, published as `<use>-<interface>` (ADR 0109);
+    /// `None` for an interface of the flat namespace
+    pub named: Option<String>,
 }
 
 /// An `entries` statement with the file that declares it.
@@ -2460,6 +2463,7 @@ pub fn compile_estate_bound(
         requests: Vec::new(),
         named_requests: Vec::new(),
         interfaces: Vec::new(),
+        named_interfaces: Vec::new(),
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
         declared: BTreeMap::new(),
@@ -2503,6 +2507,7 @@ pub fn compile_estate_bound(
     let walked_requests = w.requests;
     let named_requests = w.named_requests;
     let walked_interfaces = w.interfaces;
+    let named_interfaces = w.named_interfaces;
     let interface_files = merge_interface_files(w.interface_files)?;
     let mut hcl: Vec<HclPassthrough> = file
         .hcl_blocks
@@ -2660,8 +2665,35 @@ pub fn compile_estate_bound(
         }
     }
 
-    let declared_interfaces = own_interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)).chain(walked_interfaces);
-    let interfaces = resolve_interfaces(declared_interfaces.collect(), &exports, &tfvars)?;
+    let declared_interfaces: Vec<(String, satz::InterfaceDecl, bool)> =
+        own_interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)).chain(walked_interfaces).collect();
+    // a named use's interface is its own folder: one of the same name declared outside the
+    // use would merge with it, and the use's values would reach another folder's readers
+    let mut named_folders: BTreeMap<String, String> = BTreeMap::new();
+    for (n, f, i) in &named_interfaces {
+        let u = named_uses.iter().find(|u| &u.name == n).expect("a walked use");
+        if let Some((of, oi, _)) = declared_interfaces.iter().find(|(_, o, _)| o.name == i.name) {
+            return perr(
+                file_name,
+                u.line,
+                format!(
+                    "use \"{}\" named {}: its interface \"{}\" ({}:{}) is the folder `{}`, and so is the interface \"{}\" ({}:{}) — rename the use or the interface",
+                    u.path,
+                    u.name,
+                    i.name.trim_start_matches(&format!("{}-", u.name)),
+                    f,
+                    i.line,
+                    i.name,
+                    oi.name,
+                    of,
+                    oi.line
+                ),
+            );
+        }
+        named_folders.insert(i.name.clone(), n.clone());
+    }
+    let declared_interfaces = declared_interfaces.into_iter().chain(named_interfaces.into_iter().map(|(_, f, i)| (f, i, false))).collect();
+    let interfaces = resolve_interfaces(declared_interfaces, &exports, &tfvars, &named_folders)?;
 
     // the estate's own questions first, then those of the packs it used
     let mut questions = Vec::new();
@@ -2739,6 +2771,7 @@ fn resolve_interfaces(
     declared: Vec<(String, satz::InterfaceDecl, bool)>,
     exports: &[ResolvedExport],
     env: &Env,
+    named: &BTreeMap<String, String>,
 ) -> Result<Vec<ResolvedInterface>, PipelineError> {
     // name -> (first file, first line, direct uses with where each is written)
     type Declared = BTreeMap<String, (String, usize, Vec<(String, String, usize)>)>;
@@ -2857,7 +2890,7 @@ fn resolve_interfaces(
                 seen.insert(x.name.as_str(), x);
             }
         }
-        out.push(ResolvedInterface { name: name.clone(), common: common.contains(name), uses, file: file.clone(), line: *line });
+        out.push(ResolvedInterface { name: name.clone(), common: common.contains(name), uses, file: file.clone(), line: *line, named: named.get(name).cloned() });
     }
     Ok(out)
 }
@@ -3771,7 +3804,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), named_requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new(), named_acks: Env::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), named_requests: Vec::new(), interfaces: Vec::new(), named_interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new(), named_acks: Env::new() };
     w.register_names(&file, file_name)?;
     w.open_frame(&file, file_name)?;
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
@@ -3831,6 +3864,9 @@ struct Walk<'a> {
     /// `interface` blocks of every file the walk visits, for their `use interface` lines,
     /// an `each`'s one per entry, each with whether a pack's declaration makes it common.
     interfaces: Vec<(String, satz::InterfaceDecl, bool)>,
+    /// `interface` blocks of the named uses walked, each with its use and the file that
+    /// declares it, named as the folder `<use>-<interface>` and never common
+    named_interfaces: Vec<(String, String, satz::InterfaceDecl)>,
     /// generated interface files the walk visits
     interface_files: Vec<UsedInterfaceFile>,
     /// Every param a used file declares, by name, with its default and its question — what
@@ -3880,8 +3916,12 @@ struct NamedFrame {
     claims: Vec<PackClaims>,
     /// what each local value of each file of the use reads, by file, which a read of it reads
     locals: BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>>,
-    /// the core exports of the use's files, resolved inside the use, unprefixed
+    /// the exports of the use's files, resolved inside the use, unprefixed, each interface's
+    /// under the name its file gives the interface
     exports: Vec<ResolvedExport>,
+    /// the `interface` blocks of the use's files, an `each`'s one per entry, by file, under the
+    /// names their files give them
+    interfaces: Vec<(String, satz::InterfaceDecl)>,
     /// the lists of the use's files, resolved inside the use, named as the estate binds them
     requests: Vec<ResolvedRequest>,
 }
@@ -4084,12 +4124,13 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// The core exports and the lists of a file of the named use being walked, resolved
-    /// inside the use: its params are all in the namespace from the start (`named_use_env`)
-    /// and nothing contributes to a list the use owns, so what the walk holds now is what
-    /// they read. A list is one the use owns, named as the estate binds it; an `entries`
-    /// statement on a list of the flat namespace is refused — every use would declare one
-    /// list. An `interface` and `all <type>` are refused before the walk (`refused_in_named`).
+    /// The exports, the interfaces and the lists of a file of the named use being walked,
+    /// resolved inside the use: its params are all in the namespace from the start
+    /// (`named_use_env`) and nothing contributes to a list the use owns, so what the walk
+    /// holds now is what they read. An `each`'s interfaces expand over the use's lists. A list
+    /// is one the use owns, named as the estate binds it; an `entries` statement on a list of
+    /// the flat namespace is refused — every use would declare one list. A common interface
+    /// and `all <type>` are refused before the walk (`refused_in_named`).
     fn absorb_named_exports(&mut self, file: &satz::File, file_name: &str) -> Result<(), PipelineError> {
         let frame = self.named.as_ref().expect("called inside a named use");
         let name = frame.name.clone();
@@ -4116,13 +4157,14 @@ impl Walk<'_> {
                 requests.push(x);
             }
         }
+        let interfaces = interfaces_of(file, file_name, &self.genv)?;
         let mut exports = Vec::new();
-        for x in &file.exports {
+        for (_, interface, x) in exports_of(file, file_name, &interfaces) {
             let satz::ExportValue::Value(v) = &x.value else {
                 return perr(file_name, x.line, format!("export \"{}\": `all <type>` publishes every resource of the type the estate writes, which is not a named use's to publish", x.name));
             };
             exports.push(ResolvedExport {
-                interface: None,
+                interface,
                 name: x.name.clone(),
                 value: resolve_value(v, &self.genv, file_name, x.line)?,
                 all: None,
@@ -4136,6 +4178,7 @@ impl Walk<'_> {
         let frame = self.named.as_mut().expect("called inside a named use");
         frame.requests.extend(requests);
         frame.exports.extend(exports);
+        frame.interfaces.extend(interfaces.into_iter().map(|(i, _)| (file_name.to_string(), i)));
         Ok(())
     }
 
@@ -4499,6 +4542,7 @@ impl Walk<'_> {
             claims: Vec::new(),
             locals: BTreeMap::new(),
             exports: Vec::new(),
+            interfaces: Vec::new(),
             requests: Vec::new(),
         });
         let walked = (|| {
@@ -4542,9 +4586,47 @@ impl Walk<'_> {
             }
             self.claims.push(pc);
         }
-        // a core export of the use is the output `<name>__<export>`, reading the use's resources
+        // an interface of the use is the use's own, the folder `<name>-<interface>`; a
+        // `use interface` line names an interface of the use by the name its file gives it,
+        // and reads its `when` inside the use
+        let own: std::collections::BTreeSet<String> = frame.interfaces.iter().map(|(_, i)| i.name.clone()).collect();
+        if let (Some((f, i)), true) = (frame.interfaces.first(), name.contains('_')) {
+            return perr(
+                file_name,
+                line,
+                format!(
+                    "use \"{}\" named {}: {}:{} declares `interface \"{}\"`, which the use publishes as the folder `<use>-{}` — an interface name is lowercase letters, digits and `-`, so a use that publishes an interface takes a name without `_`",
+                    use_path, name, f, i.line, i.name, i.name
+                ),
+            );
+        }
+        let folder = |n: &str| named::interface_folder(name, n);
+        for (f, mut i) in frame.interfaces {
+            i.name = folder(&i.name);
+            let mut uses = Vec::new();
+            for mut u in std::mem::take(&mut i.uses) {
+                if let Some(p) = u.when.take() {
+                    let Some(v) = used.get(&p) else {
+                        return perr(&f, u.line, format!("use interface … when {}: unknown param `{}` — a `when` on a param nobody declares would silently drop the interface", p, p));
+                    };
+                    read_no_value(v, &f, u.line)?;
+                    if !truthy(Some(v)) {
+                        continue;
+                    }
+                }
+                u.names = u.names.iter().map(|n| if own.contains(n) { folder(n) } else { n.clone() }).collect();
+                uses.push(u);
+            }
+            i.uses = uses;
+            self.named_interfaces.push((name.to_string(), f, i));
+        }
+        // a core export of the use is the output `<name>__<export>`, reading the use's
+        // resources; an interface's export keeps its name in the use's folder
         for mut x in frame.exports {
-            x.name = named::variable_name(name, &x.name);
+            match &x.interface {
+                Some(i) => x.interface = Some(folder(i)),
+                None => x.name = named::variable_name(name, &x.name),
+            }
             x.value = prefix.value(&x.value);
             self.exports.push(WalkedExport::Named(x));
         }

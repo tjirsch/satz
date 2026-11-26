@@ -1718,6 +1718,16 @@ used without a name as any other.
   resolved inside the use — a param reads the use's, a reference names the use's resource as the
   addresses above do — and it goes wherever a core export goes: `outputs.tf`, every interface
   folder, `satz interfaces` and the interface READMEs.
+- **Interfaces.** An `interface "<x>" { … }` block in a file of the use (§6.17) is the use's own
+  interface, published as the folder `<name>-<x>` and never common: `interface "store"` in the use
+  `rag` is the folder `rag-store`, which a workload estate reads as
+  `"${{interface.rag-store.project_id}}"`, and a second use `rag2` publishes `rag2-store`. Its
+  exports are resolved inside the use as a core export is, and keep their names in the folder; the
+  output in the HCL code is `rag_store__<export>`. A `use interface "<y>"` line in it names the use's
+  own `<name>-<y>` where a file of the use declares `<y>`, else the interface `<y>` of the flat
+  namespace, and its `when` reads the use's params. An `each` around an interface expands over the
+  use's own list, `<name>-<entry name>`. A use that publishes an interface takes a name without
+  `_`: the folder is an interface name.
 - **Lists.** A list param of the use's pack is the use's own: the estate binds it as
   `<name>.<list>`, an `each` over it writes one resource per entry of that use's list under the
   use's prefix, and the pack's `entries` statement (§6.17) holds that list, named `web.<list>`
@@ -1747,8 +1757,13 @@ Refused, each naming the line:
   `__` or ends in `_`; a name two named uses carry; a name that is a param, an input or a local
   value of the estate; and, where a named use `<name>` exists, a param, an input or a resource
   label of the estate beginning `<name>__`;
-- in a file of the use: `hcl`, an `action`, `inputs`, an `interface` block (an `each` around
-  one too) or an interface file, an `export … = all <type>`, an `offers` entry and a named use;
+- in a file of the use: `hcl`, an `action`, `inputs`, `interface "<x>" common` (an `each` around
+  one too) or an interface file, an `export … = all <type>`, an `offers` entry and a named use —
+  a common interface travels into every workload estate's folder, and a use's values are for the
+  workload estate its own interface is for;
+- a use's interface folder `<name>-<x>` that an interface declared outside the use also names,
+  naming both — two declarations of one name are one interface, and the use's values would
+  reach the other's readers; and a use whose name holds `_` and whose pack declares an interface;
 - an `entries` statement in a file of the use on a list the use does not own;
 - a `contributes_<param>` whose list param a named use declares, and a `contributes_<name>.<list>`
   in any file — the estate binds `<name>.<list>` or adds to it with `satz add-entry`;
@@ -2529,8 +2544,9 @@ interface "archive" {
   starting with a letter; `core` and `common` are refused. An interface declared in two
   files is one interface, and their exports merge; one file declares it once.
 - **Common or one workload estate's.** An interface is **common** when the block says so —
-  `interface "<name>" common { … }` — or when a pack declares it outside an `each`; `core`
-  is common too. The
+  `interface "<name>" common { … }` — or when a pack declares it outside an `each` and outside a
+  named use; `core` is common too. An interface of a named use is the use's own, the folder
+  `<use>-<name>` (§6.9), and `common` is refused there. The
   common interfaces are the **library**: `interfaces/outgoing/common/` holds it alone, and every
   workload estate's folder carries it whole. Every other interface is one workload
   estate's own, and only that workload estate's folder carries it. A common interface uses

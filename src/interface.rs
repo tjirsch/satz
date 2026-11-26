@@ -1522,7 +1522,7 @@ resource "google_cloud_identity_group" "g" {
     fn a_module_carries_the_interfaces_it_uses_and_says_where_each_value_is_from() {
         use satz_core::pipeline::ResolvedInterface;
         let exports = [export("org", "123"), in_interface("network", "vpc", "v"), in_interface("team-a", "own", "1")];
-        let ri = |name: &str, uses: &[&str]| ResolvedInterface { name: name.into(), common: false, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 };
+        let ri = |name: &str, uses: &[&str]| ResolvedInterface { name: name.into(), common: false, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1, named: None };
         let interfaces = [ri("network", &[]), ri("team-a", &["network"]), ri("team-b", &["network"])];
         let i = build("e", &exports, &interfaces, &Manifest::parse(MAIN_TF), "hashicorp/google", None).unwrap();
         assert_eq!(i.modules(), ["core", "network", "team-a", "team-b"], "an interface of uses alone is a module");
@@ -1633,7 +1633,7 @@ resource "google_project_iam_binding" "team_viewers" {
     }
 
     fn ri(name: &str, common: bool, uses: &[&str]) -> satz_core::pipeline::ResolvedInterface {
-        satz_core::pipeline::ResolvedInterface { name: name.into(), common, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1 }
+        satz_core::pipeline::ResolvedInterface { name: name.into(), common, uses: uses.iter().map(|u| u.to_string()).collect(), file: "e.satz".into(), line: 1, named: None }
     }
 
     /// `interfaces/outgoing/` is satz's and `interfaces/incoming/` is never touched: `common/` holds the library, each other interface folder its own

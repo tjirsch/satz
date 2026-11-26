@@ -529,7 +529,7 @@ resource "google_project" "team" {
             x(None, "infra_folder", "${google_folder.infra.name}", &[]),
             x(Some("payments"), "project_id", "${google_project.team.project_id}", &["google_project_iam_member"]),
         ];
-        let interfaces = [ResolvedInterface { name: "payments".into(), common: false, uses: Vec::new(), file: "e.satz".into(), line: 1 }];
+        let interfaces = [ResolvedInterface { name: "payments".into(), common: false, uses: Vec::new(), file: "e.satz".into(), line: 1, named: None }];
         (interface::build("e", &exports, &interfaces, &manifest, "hashicorp/google", None).unwrap(), manifest)
     }
 

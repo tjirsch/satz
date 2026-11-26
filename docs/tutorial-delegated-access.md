@@ -55,6 +55,13 @@ creates stays in the organization's state; the workload estate builds inside it 
 own ships its own pair: a delegation pack for the organization's estate, which the
 organization's team reviews, and a workload pack for the workload estate.
 
+Name the pair after the workload: `<workload>-delegation.satz` and `<workload>-workload.satz`.
+A delegation pack whose header says `multiple` holds one instance of the workload, used once per
+instance under a name (`use "packs/rag-store-delegation.satz" named rag`); its `interface
+"store"` is the folder `rag-store`, the one that instance's workload estate copies, and its
+`contributes_delegations` adds the instance's own delegation, so one `use` line is the whole
+instance ([workflows](workflows.md#delegated-access-a-folder-for-a-team)).
+
 **Every delegation has an infrastructure project of its own.** The account and the state
 bucket stand in it, never in a project the team fills. A delegated project holds no
 account, no state bucket and no group: it is worked by the account of the delegation its

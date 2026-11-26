@@ -2,7 +2,7 @@
 
 - **Status:** accepted; supersedes the deferral of pack instances in [ADR 0071](0071-each-expands-a-list-into-labelled-bodies-at-compile-time.md) and its rejection in [ADR 0075](0075-each-writes-an-interface-per-entry-and-onboarding-is-a-pack.md); option C of [ADR 0104](0104-two-packs-declaring-one-param-must-agree.md)
 - **Date:** 2026-11-26
-- **Shipped in:** the release that follows, in four parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the commands that read every pack — the presets report, the pack lines, `adopt`, notices and the editor; exports and list params of a named use (the fourth part)
+- **Shipped in:** the release that follows, in five parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the commands that read every pack — the presets report, the pack lines, `adopt`, notices and the editor; exports and list params of a named use (the fourth part); interfaces of a named use (the fifth part)
 
 ## Context
 
@@ -79,7 +79,8 @@ params {
    param's question.
 8. **What a named use refuses in this part**, each at the `use` line with the file and line of
    the statement and the reason: a named use outside the estate file or inside another; `hcl`,
-   `action`, `inputs`, an `interface` block (an `each` around one included), an `export` and an
+   `action`, `inputs`, an `interface` block (an `each` around one included; lifted by the fifth
+   part, below, but `common`), an `export` and an
    `entries` statement (lifted by the fourth part, below, but `all <type>`), a `notice` (lifted
    by the third part, below), an `offers` entry; a
    `contributes_<param>` that adds to a list param a named use owns. A `contributes_<param>` from a named use to a flat list is
@@ -168,7 +169,8 @@ Every command reads an estate with a named use; what each does with the `use …
    resource of the use is rewritten to the prefixed address. It is then a core export like any
    other: `outputs.tf`, every interface folder (`satz/interface.satz`, the module, the README's
    table), `satz interfaces` and the comparison of an interface's files between transpiles. An
-   `interface` block, an `each` around one, and `export … = all <type>` stay refused.
+   `interface` block and an `each` around one stay refused in this part (the fifth lifts them);
+   `export … = all <type>` stays refused.
 2. **Lists.** A list param of the use's pack is the use's own, like every param it declares: the
    estate binds `<name>.<list>`, an `each` over it expands per use under the use's prefix, its
    `defaults` are filled per use, and the pack's `entries` statement holds that list, named
@@ -183,12 +185,49 @@ Every command reads an estate with a named use; what each does with the `use …
    declares is refused, naming `<name>.<list>` and `satz add-entry`. `contributes_<name>.<list>`
    is refused by the parser in any file.
 
-What a named use refuses, the limits this record keeps: `hcl`, an `action`, `inputs`, an
-`interface` block (an `each` around one included) or an interface file, an `export … = all
+### The fifth part: interfaces
+
+A delegated workload's pack in the organization's estate holds one instance of the workload — one
+store, one project, one set of grants — and a second instance in the same organization is a second
+named use of the pack. Each instance hands its workload estate an interface folder of its own, so a
+named use publishes interfaces:
+
+1. **The use's own folder.** An `interface "<x>" { … }` block in a file of the use is the use's
+   interface, published as the folder `<use>-<x>` (`rag-store` for the interface `store` of the
+   use `rag`). It is never common, whether the file is a pack or not: the rule that makes a pack's
+   interface outside an `each` common does not reach into a named use. Two uses publish two
+   folders, `rag1-store` and `rag2-store`.
+2. **Exports resolved inside the use.** An interface's export is resolved as a core export of the
+   use is (fourth part): a param reads the use's value, a local value its file's own, and a
+   `${type.label…}` reference that names a resource of the use is rewritten to the prefixed address.
+   The export keeps its name in the folder; its output in the HCL code is `<folder>__<export>`
+   with `-` as `_`, as any interface's (`rag_store__project_id`).
+3. **`use interface` inside the use.** A name that an interface of the use carries — written as its
+   file gives it, `use interface "base"` — names the use's own folder, `<use>-base`; any other name
+   is an interface of the flat namespace, read as it stands, as every other name a use reads is.
+   Its `when` reads the use's params.
+4. **`each` around an interface** expands over the use's own list: `each topics by name {
+   interface "{each.name}-topic" { … } }` writes `<use>-<entry>-topic` per entry of the use's
+   `<use>.topics`.
+5. **Refused.** `interface "<x>" common` in a file of the use, at the `use` line: a common interface
+   travels into every workload estate's folder, and the use's values are for the workload estate
+   its own interface is for. A use's folder that is also the name of an interface declared outside
+   the use (`interface "rag-store"` in the estate beside the use `rag`'s `store`), naming both:
+   two declarations of one interface name merge, and the use's values would reach the other's
+   readers. A use whose pack declares an interface and whose name holds `_`: the folder is an
+   interface name, lowercase letters, digits and `-`.
+6. **Reports.** `satz interfaces` gives a use's interface the new optional field `named`, absent for
+   an interface of the flat namespace; its `name` is the folder. The README, the module and
+   `satz/interface.satz` of the folder are an interface's like any other.
+
+What a named use refuses, the limits this record keeps: `hcl`, an `action`, `inputs`, a common
+`interface` (an `each` around one included) or an interface file, an `export … = all
 <type>`, an `offers` entry; an `entries` statement on a list the use does not own; a
 `contributes_<list>` to a list of a named use, from another pack, a request file or a file of the
-use itself; a core export of a use and an interface's export that are one output; a named use
-in a pack or outside the estate file; and a named use of a preset of the library.
+use itself; a core export of a use and an interface's export that are one output; a use's
+interface folder and an interface of the flat namespace of one name; an interface of a use whose
+name holds `_`; a named use in a pack or outside the estate file; and a named use of a preset of
+the library.
 
 ## Options
 
@@ -226,6 +265,22 @@ twice, which a destroy of either switches off. The identity refusal catches iden
 not a literal name inside otherwise different ones. `multiple` is the author's statement that
 the names come from params. Costs: a pack must be edited and versioned to be used twice.
 *Chosen: the header word.*
+
+**A use's interface folder: `<use>-<x>` / `<use>__<x>` / the interface's own name.** The folder
+is an interface name — lowercase letters, digits and `-` — and the name a workload estate reads it
+by, `${{interface.rag-store.project_id}}`; `__` is no character of it. The interface's own name
+would make two uses publish one folder, which the merge of one interface's declarations would join.
+`<use>-<x>` keeps the use's name in front, as the use's addresses (`<use>__<label>`) and outputs
+(`<use>__<export>`) carry it, and two uses' folders differ because use names do; a use's name holds
+no `-`, so `rag-store` reads back as the use `rag` and the interface `store`. Costs: a folder of the
+use can meet a flat interface of that name, refused; and a use name holding `_` makes no folder
+name, refused for a use that publishes an interface. *Chosen: `<use>-<x>`.*
+
+**A use's interface: its own / common, as a pack's is.** A pack's interface outside an `each` is
+common because a pack used once has one set of values for every workload estate. A named use
+exists to be one of several, and the values of one use are for the workload estate that instance is
+for; a common interface would hand every workload estate every use's values. *Chosen: the use's
+own, `common` refused.*
 
 **The v1 limits.** Exports, list params, actions, raw HCL, inputs and interfaces each need a
 rule of their own for what a second use means — a second export of one name, a second variable
@@ -309,6 +364,16 @@ liftable.*
 - **A use and an interface writing one output** (fourth part). A use's core export `bucket` is
   `web__bucket`, and so is the export `bucket` of an interface `web` (or `web` written `-`).
   Refused at the use's line, naming both, rather than one output silently winning.
+- **A name in `use interface` inside a use** (fifth part) names the use's interface where one of the
+  use's files declares it, else the flat interface of that name. The use reads the flat namespace
+  as it does for params; an interface of the use cannot be named from outside it by the name its
+  file gives it, only by its folder, `<use>-<x>`.
+- **A use's interface and a flat one of the same folder name** (fifth part). Refused at the use's
+  line rather than merged: an interface declared in two files is one interface with their exports
+  merged, and a use's values reaching a folder the estate writes for another workload estate is
+  what the folder per use prevents.
+- **The `_` in a use's name** (fifth part). Writing it as `-` in the folder would let the use `a_b`
+  and the use `a` with an interface `b-…` meet in one folder; a refusal keeps `<use>-<x>` exact.
 - **The property test and the estate's vocabulary** (fourth part). With exports lifted,
   `presets/estate-core.satz` takes a named use, and the property "a named use writes what the
   flat use writes under its prefix" does not hold for it: it declares `customer_shortname` and
@@ -339,6 +404,9 @@ liftable.*
   presets report, on a notice row (whose `param` is dotted for a named use), on an adopt row and
   a scan finding; `named`, a list, on a row of the packs report; `named` on a `list_params` row
   of `satz interfaces`, whose `param` is dotted for a named use.
+- `tests/smoke/yaml/showcase-bucket.satz` declares `interface "bucket"`; the smoke run asserts the
+  folders `reports-bucket` and `scratch-bucket`, each carrying its use's values and the library,
+  and the `named` field of `satz interfaces`.
 - `tests/smoke/yaml/showcase-bucket.satz` exports `bucket` and declares the list
   `bucket_archives`; the smoke run asserts `reports__bucket` and `scratch__bucket` in
   `outputs.tf` and every interface folder, adds an entry with `satz add-entry <estate>
