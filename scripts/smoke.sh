@@ -240,6 +240,9 @@ assert q["reports.bucket_archives"]["named"] == "reports" and q["reports.bucket_
 assert q["scratch.bucket_archives"]["named"] == "scratch" and q["scratch.bucket_archives"]["entries"] == 0, q
 assert "named" not in q["event_topics"], q["event_topics"]
 assert {"reports__bucket", "scratch__bucket"} <= {e["name"] for e in r["exports"] if "interface" not in e}, r["exports"]
+i = {x["name"]: x for x in r["interfaces"]}
+assert i["reports-bucket"]["named"] == "reports" and not i["reports-bucket"]["common"], i
+assert i["scratch-bucket"]["named"] == "scratch" and "named" not in i["archive"], i
 PY2
 printf 'pack team version "1"\n\nparams {\n  contributes_bucket_archives = [{ name = "x" }]\n}\n' > tmp/named-request.satz
 "$satz" --config . check-request tmp/named-request.satz showcase.satz > tmp/named-request.txt 2>&1 && fail "a request to a named use's list passed check-request"
@@ -256,7 +259,15 @@ for m in core audit; do
   [ -f "interfaces/outgoing/common/$m/satz/interface.satz" ] || fail "the library lacks interfaces/outgoing/common/$m/"
 done
 [ -e interfaces/outgoing/common/archive ] && fail "the library carries a project's interface"
-[ "$(ls interfaces/outgoing)" = "$(printf 'archive\nbilling-events\ncommon\norders-events')" ] || fail "interfaces/outgoing/ holds more than the library and the projects:\n$(ls interfaces/outgoing)"
+[ "$(ls interfaces/outgoing)" = "$(printf 'archive\nbilling-events\ncommon\norders-events\nreports-bucket\nscratch-bucket')" ] || fail "interfaces/outgoing/ holds more than the library and the projects:\n$(ls interfaces/outgoing)"
+# a named use's interface is the folder <use>-<interface>, the use's alone, its values read inside the use
+nb=interfaces/outgoing/reports-bucket
+[ "$(ls $nb)" = "$(printf 'README.md\naudit\ncore\nreports-bucket')" ] || fail "the named use's folder does not carry its interface and the library alone:\n$(ls $nb)"
+grep -A1 '^output "bucket_name" {' $nb/reports-bucket/satz/interface.satz | grep -q 'value *= "corp-reports"' || fail "the named use's interface does not read the use's bucket:\n$(cat $nb/reports-bucket/satz/interface.satz)"
+grep -q '^| `bucket_name` | reports-bucket |' $nb/reports-bucket/README.md || fail "the named use's interface README does not list its value:\n$(cat $nb/reports-bucket/README.md)"
+grep -A1 '^output "bucket_name" {' interfaces/outgoing/scratch-bucket/scratch-bucket/satz/interface.satz | grep -q 'value *= "corp-scratch"' || fail "the use scratch's interface does not read its own bucket:\n$(cat interfaces/outgoing/scratch-bucket/scratch-bucket/satz/interface.satz)"
+grep -q 'output "reports_bucket__bucket_name"' tmp/showcase-hcl/outputs.tf || fail "the named use's interface export is not the root output <interface>__<export>:\n$(cat tmp/showcase-hcl/outputs.tf)"
+[ -e interfaces/outgoing/common/reports-bucket ] && fail "the library carries a named use's interface"
 [ "$(ls interfaces)" = "outgoing" ] || fail "interfaces/ holds more than its outgoing half:\n$(ls interfaces)"
 grep -q 'Content hash: `sha256:[0-9a-f]\{64\}`' $si/README.md || fail "the project's folder carries no content hash:\n$(cat $si/README.md)"
 [ -f tmp/showcase-hcl/outputs.tf ] || fail "the showcase exports and outputs.tf was not written"

@@ -49,3 +49,10 @@ google_storage_bucket {
 // A core export of a named use is the output `<name>__bucket`, and its reference names the
 // use's own bucket, `google_storage_bucket.<name>__kept`.
 export "bucket" = "${{google_storage_bucket.kept.name}}" description "The bucket the use keeps"
+
+// An interface of a named use is the use's own: the folder `<name>-bucket`, carried by that
+// folder alone, its values read inside the use.
+interface "bucket" {
+  export "bucket_name"     = "${{google_storage_bucket.kept.name}}" description "The bucket the use keeps"
+  export "bucket_location" = bucket_location description "Where the use keeps it"
+}

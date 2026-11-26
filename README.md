@@ -188,7 +188,7 @@ Every reporting command takes the same two arguments: `--format`, the rendering,
 |---------|---------------------|
 | `init` | `--defaults`, `--providers`, `--tf-tool`, `--customer-id`, `--customer-shortname`, `--billing-account-infra`, `--customer-organization-id`, `--customer-domain`, `--iac-user`, `--default-region`, `--infra-project-name`, `--infra-bucket-name`, `--from <folder>…` with `--name <estate name>` (a workload estate, from the interface folders the organization's estate wrote for a delegation and for each folder and project its account works in), `--force` (rewrite the estate file this run writes instead of merging into it or refusing; `config.toml`, `.gitignore` and the schemas are kept), `--interview` (ask for what is still unbound) |
 | `check-request <FILE> [ESTATE]` | a workload team's request file — a pack of `contributes_<param>` entries for the estate's list params — checked before it is copied into the estate: lists of the estate's flat namespace only — a named use's list takes no request — each entry shaped (its fields, and each value its field's pattern matches), no key the list holds for another entry, and the estate transpiled with the file in place |
-| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a workload estate reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses, and every list param with its key, fields, patterns, defaults and entries — a named use's named as the estate binds it, `reports.bucket_archives`, with `named`; the json form is what satz-studio reads |
+| `interfaces <ESTATE>` | `--format` (`text`\|`json`), `--out` — every export with the interface it stands in, how a workload estate reads it (`static`, `lookup`, `map`), what it names and what may be attached to it, every interface with what it uses — a named use's, the folder `<use>-<interface>`, with `named` — and every list param with its key, fields, patterns, defaults and entries — a named use's named as the estate binds it, `reports.bucket_archives`, with `named`; the json form is what satz-studio reads |
 | `bootstrap <ESTATE>` | `--dry-run` (read-only incl. the prerequisites check), `--greenfield` (materialize an organization for a tenant nobody has signed in to the console with), `--no-default-grants` (never widen the caller's own IAM) |
 | `transpile <INPUT>` | `--output`, `--schema-dir`, `--print-variables`, `--check` (transpile in memory, write nothing), `--input <NAME>=<VALUE>` (repeatable: binds a template's input for the run — see [language §6.3](docs/language.md#inputs--a-templates-contract-the-values-a-reader-binds)), `--format` (`text`\|`json` — `json` prints the transpile as data, see [How a message is printed](#how-a-message-is-printed)), the first line of `main.tf` names the satz that written it, `--plan` / `--apply` (then run the tool in `hcl_dir`), `--scan` (then Checkov). An estate that exports values also gets `outputs.tf` and `interfaces_dir` — `common/` and one folder per workload estate, each interface as an HCL module and a Satz file, each folder stamped with its content hash — written whole, a removed interface's folder with it, and removed when it exports nothing. An estate that `use`s an interface file reads a value by the name of its interface folder, `"${{interface.<folder>.<value>}}"`, and is held to its attach points ([workload estates beside the organization's estate](docs/workflows.md#workload-estates-beside-the-estate)) |
 | `import [SOURCE]` | `--from` (`state`\|`org`\|`hcl`), `--all`, `--only <types>`, `--exclude <types>`, `--output` (default: `discovered.satz`), `--import-config`, `--into <estate>` (live: only the delta), `--as <estate>` (live: read as that estate's estate account), `--on-collision error\|counter`, `--customer-shortname`; state and hcl shapes: `--organization <n>`; live shape: `--generate-unmapped`; hcl shape: `--wrap-all` |
@@ -399,6 +399,13 @@ the organization](docs/tutorial-projects.md) says which delegated resource is fo
 [delegated access: the procedure for both sides](docs/tutorial-delegated-access.md) is the procedure the organization
 team and the workload's team follow, by side; the next section is the project pack in short.
 
+A workload with needs of its own ships its own pair, named after it: `<workload>-delegation.satz`
+for the organization's estate and `<workload>-workload.satz` for the workload estate. A delegation
+pack whose header says `multiple` holds one instance of the workload and is used once per instance,
+`use "packs/rag-store-delegation.satz" named rag`; its `interface "store"` is the folder
+`rag-store`, and its `contributes_delegations` adds the instance's delegation to `delegations`
+([workflows](docs/workflows.md#delegated-access-a-folder-for-a-team)).
+
 ### Delegating a project (`presets/delegated-projects.satz`)
 
 A project is an entry of the list param `delegated_projects` of
@@ -496,7 +503,7 @@ type it writes has a row** in satz's prerequisite table, so the roles and the AP
 are known; it **transpiles**; and every param declared `none` — a value
 the operator must supply — has a **question** in the pack. A pack whose header says
 `multiple` is checked for a named use too: it holds nothing a named use refuses (`hcl`, an
-`action`, `inputs`, an `interface`, an `export … = all <type>`, an `offers` entry), re-declares none of the estate's own
+`action`, `inputs`, a common `interface`, an `export … = all <type>`, an `offers` entry), re-declares none of the estate's own
 params — a warning, since each use would read its own — and every resource whose identity
 attributes (what `satz adopt` finds it by) are all literals is a warning: two uses would create
 it twice. A type `satz adopt` has no rule for (no `import_id:` or

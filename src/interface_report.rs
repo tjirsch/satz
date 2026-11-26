@@ -80,6 +80,7 @@ pub(crate) struct ExportRow {
 pub(crate) struct InterfaceRow {
     pub name: String,
     /// in the library every project's folder carries: marked `common`, or declared in a pack
+    /// outside an `each` and outside a named use
     pub common: bool,
     /// the interfaces its module also carries, directly or through another
     pub uses: Vec<String>,
@@ -87,6 +88,10 @@ pub(crate) struct InterfaceRow {
     pub exports: usize,
     pub file: String,
     pub line: usize,
+    /// the named use whose interface this is, `name` being `<use>-<interface>` (ADR 0109);
+    /// absent for an interface of the flat namespace
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
 }
 
 /// The report of a transpiled estate. `interface` is `None` when the estate exports nothing.
@@ -127,6 +132,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
             exports: declared.iter().filter(|x| x.interface.as_deref() == Some(d.name.as_str())).count(),
             file: d.file.clone(),
             line: d.line,
+            named: d.named.clone(),
         })
         .collect();
     let requests = requests
@@ -227,6 +233,9 @@ pub(crate) fn render_text(r: &InterfacesReport) -> String {
         let mut head = format!("\ninterface {}", i.name);
         if i.common {
             head.push_str(" (common)");
+        }
+        if let Some(n) = &i.named {
+            head.push_str(&format!(" (named use {})", n));
         }
         if !i.uses.is_empty() {
             head.push_str(&format!(" — uses {}", i.uses.join(", ")));
