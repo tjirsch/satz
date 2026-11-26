@@ -2,7 +2,7 @@
 
 - **Status:** accepted; supersedes the deferral of pack instances in [ADR 0071](0071-each-expands-a-list-into-labelled-bodies-at-compile-time.md) and its rejection in [ADR 0075](0075-each-writes-an-interface-per-entry-and-onboarding-is-a-pack.md); option C of [ADR 0104](0104-two-packs-declaring-one-param-must-agree.md)
 - **Date:** 2026-11-26
-- **Shipped in:** the release that follows, in four parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the commands that read every pack — the presets report, the pack lines, `adopt`, notices and the editor; exports and list params of a named use
+- **Shipped in:** the release that follows, in four parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the commands that read every pack — the presets report, the pack lines, `adopt`, notices and the editor; exports and list params of a named use (the fourth part)
 
 ## Context
 
@@ -79,8 +79,9 @@ params {
    param's question.
 8. **What a named use refuses in this part**, each at the `use` line with the file and line of
    the statement and the reason: a named use outside the estate file or inside another; `hcl`,
-   `action`, `inputs`, an `interface` block (an `each` around one included), an `export`, an
-   `entries` statement, a `notice` (lifted by the third part, below), an `offers` entry; a
+   `action`, `inputs`, an `interface` block (an `each` around one included), an `export` and an
+   `entries` statement (lifted by the fourth part, below, but `all <type>`), a `notice` (lifted
+   by the third part, below), an `offers` entry; a
    `contributes_<param>` that adds to a list param a named use owns. A `contributes_<param>` from a named use to a flat list is
    allowed, its entries resolved inside the use, an entry two uses contribute alike added once.
 9. **Gates.** `use … named db when g` reads a flat `g`; a `when` inside the pack reads the
@@ -90,7 +91,7 @@ In the first part the commands that read every pack once refused an estate with 
 rather than misread it: `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz
 packs` and the workload pack commands that read the estate. The pack graph refuses a named use
 of a preset of the library. The second part taught the questions, the third the commands,
-both below; the fourth lifts the refusal of exports and list params.
+both below; the fourth lifted the refusal of exports and list params.
 
 ### The second part: questions, the interview and the gate
 
@@ -158,10 +159,36 @@ Every command reads an estate with a named use; what each does with the `use …
     `satz scan`, `satz_scan_checkov` and `satz_adopt` show it beside the pack line, which
     serves every use, as the new optional field `named`.
 
-What a named use still refuses: an `export`, an `entries` statement, and a `contributes_<param>`
-to a list a named use declares (the fourth part); `hcl`, an `action`, `inputs`, an `interface`
-block or file, an `offers` entry, a named use in a pack or outside the estate file, and a named
-use of a preset of the library — the limits this record keeps.
+### The fourth part: exports and list params
+
+1. **Exports.** A core export of a file of the use is the output `<name>__<export>` — a dot is
+   no character of a Terraform output's name, and `__` is how the use already names what it
+   writes. Its value is resolved inside the use, as the use's resources are: a param reads the
+   use's value, a local value the file's own, and a `${type.label…}` reference that names a
+   resource of the use is rewritten to the prefixed address. It is then a core export like any
+   other: `outputs.tf`, every interface folder (`satz/interface.satz`, the module, the README's
+   table), `satz interfaces` and the comparison of an interface's files between transpiles. An
+   `interface` block, an `each` around one, and `export … = all <type>` stay refused.
+2. **Lists.** A list param of the use's pack is the use's own, like every param it declares: the
+   estate binds `<name>.<list>`, an `each` over it expands per use under the use's prefix, its
+   `defaults` are filled per use, and the pack's `entries` statement holds that list, named
+   `<name>.<list>` in its messages. `satz add-entry <estate> <name>.<list> …` writes the entry
+   into the estate's `<name>.<list> = [ … ]`, checked against the use's `entries` statement as an
+   entry of a flat list is.
+3. **Reports.** A list of a named use is reported as the estate binds it: the `param` of a
+   `list_params` row of `satz interfaces` is `<name>.<list>`, and the new optional field `named`
+   names the use. No field is removed or renamed.
+4. **Contributions stay refused.** A `contributes_<list>` from another pack, and from a request
+   file, adds to a list of the flat namespace by its name; one that names a list only a named use
+   declares is refused, naming `<name>.<list>` and `satz add-entry`. `contributes_<name>.<list>`
+   is refused by the parser in any file.
+
+What a named use refuses, the limits this record keeps: `hcl`, an `action`, `inputs`, an
+`interface` block (an `each` around one included) or an interface file, an `export … = all
+<type>`, an `offers` entry; an `entries` statement on a list the use does not own; a
+`contributes_<list>` to a list of a named use, from another pack, a request file or a file of the
+use itself; a core export of a use and an interface's export that are one output; a named use
+in a pack or outside the estate file; and a named use of a preset of the library.
 
 ## Options
 
@@ -261,6 +288,36 @@ liftable.*
   a notice, a manifest resource — and a list where a row is one pack the estate may use several
   times (`satz packs`). Absent, or empty, for a flat use, so a reader of the flat report reads it
   unchanged.
+- **A contribution to a list of a named use** (fourth part). `contributes_event_topics` names a
+  list by its flat name, and every use of the pack has a list of that name: a contribution to
+  one of them would be a guess. `contributes_web.event_topics` would make a pack, or a workload
+  estate's request file, name a use of the estate it is vendored into, which a pack written for
+  any estate cannot know. Refused both ways; the estate binds `web.event_topics` or runs
+  `satz add-entry`, and a workload estate asks the estate's team. A file of the use that
+  contributes to the use's own list is refused too: the list's value is the estate's binding,
+  else the pack's default, and nothing else adds to it.
+- **A request to a list of a named use** (fourth part). `satz check-request` refuses a
+  `contributes_<list>` whose list is a named use's, naming `<name>.<list>`; the interface README's
+  *What you may request* lists the flat lists alone, so no workload estate is offered a request
+  that the check refuses.
+- **An `entries` statement in a named use on a flat list** (fourth part). Refused: every use
+  would declare the one flat list once more, and `resolve_requests` refuses a list declared
+  twice. The statement stands beside the list, in the file that declares it.
+- **`all <type>` in a named use** (fourth part). It publishes every resource of the type the
+  estate writes; whether a use's map would hold the use's resources, the estate's, or every
+  use's is not the use's to decide. Refused; a use exports each of its resources by reference.
+- **A use and an interface writing one output** (fourth part). A use's core export `bucket` is
+  `web__bucket`, and so is the export `bucket` of an interface `web` (or `web` written `-`).
+  Refused at the use's line, naming both, rather than one output silently winning.
+- **The property test and the estate's vocabulary** (fourth part). With exports lifted,
+  `presets/estate-core.satz` takes a named use, and the property "a named use writes what the
+  flat use writes under its prefix" does not hold for it: it declares `customer_shortname` and
+  the rest of the estate's own params, which a named use owns and does not read from the
+  estate. The test leaves out a pack that declares a param the estate binds — what
+  `review-preset` warns about — rather than bind the use's copies to the estate's values.
+- **The export's value** is resolved when its file is walked, inside the use, against the use's
+  namespace — every param of the use is in it from the start and what the use reads of the flat
+  namespace is fixed at the `use` line — where a flat export is resolved after the whole walk.
 - **What review-preset calls a core param and an identity** (third part). A core param is one of
   the estate's own vocabulary the review binds to its example values (`presets/estate-core.satz`);
   an identity is what `satz adopt` finds a resource by. A resource that writes none of its
@@ -280,4 +337,9 @@ liftable.*
   per-use notice.
 - The new optional JSON fields, none removed or renamed: `named` on an `unmanaged` row of the
   presets report, on a notice row (whose `param` is dotted for a named use), on an adopt row and
-  a scan finding; `named`, a list, on a row of the packs report.
+  a scan finding; `named`, a list, on a row of the packs report; `named` on a `list_params` row
+  of `satz interfaces`, whose `param` is dotted for a named use.
+- `tests/smoke/yaml/showcase-bucket.satz` exports `bucket` and declares the list
+  `bucket_archives`; the smoke run asserts `reports__bucket` and `scratch__bucket` in
+  `outputs.tf` and every interface folder, adds an entry with `satz add-entry <estate>
+  reports.bucket_archives`, reads it back from `satz interfaces` and refuses a request to it.

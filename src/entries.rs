@@ -82,7 +82,8 @@ pub(crate) fn appended(list: &str, entry: &str) -> Result<String, String> {
     Ok(format!("{}{} {}{}", body, comma, entry, tail))
 }
 
-/// Add one entry to `list` in the estate. Refused, with nothing written: a list no pack of
+/// Add one entry to `list` in the estate — a list of the flat namespace, or a named use's,
+/// `web.event_topics`, bound as the estate binds it (ADR 0109). Refused, with nothing written: a list no pack of
 /// the estate declares with `entries`, a field the declaration does not list, a value its
 /// pattern does not match, an entry without its key, a key the list already holds, and an
 /// estate that does not transpile with the entry in it.
@@ -119,19 +120,21 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, list: 
         return Err(format!("`{}` holds an entry `{}` already — an entry is changed in the estate file", list, key));
     }
     let entry = render(request, &fields);
-    // the declaration's own check: the patterns, as a request file is judged
-    let as_request = format!("pack entry version \"1\"\n\nparams {{\n  contributes_{} = [\n    {},\n  ]\n}}\n", list, entry);
-    let found = satz_core::pipeline::check_request_file(&as_request, &compiled.requests, &compiled.env);
-    if let Some((_, msg)) = found.first() {
-        return Err(msg.clone());
-    }
+    // the declaration's own check: the patterns, as a request file's entries are judged
+    let value = serde_yaml::Value::Mapping(fields.iter().map(|(f, v)| (serde_yaml::Value::String(f.clone()), v.clone())).collect());
+    satz_core::pipeline::check_new_entries(request, vec![value])?;
     let before = crate::fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let current = crate::interview::bound_literal(&before, list)?.unwrap_or_else(|| "[]".to_string());
     let after = crate::interview::bind_literal(&before, list, &appended(&current, &entry)?)?;
     crate::fsx::write_edited_satz(estate, &before, &after).map_err(|e| e.to_string())?;
     let proven = crate::pipeline_b_compile(estate, tool, runtime, crate::PrerequisiteFindings::Report, crate::FindingsOutput::Silent);
     let entries = match proven {
-        Ok(c) => c.requests.iter().find(|r| r.param == list).map(|r| r.entries.len()).unwrap_or_default(),
+        Ok(c) => c
+            .requests
+            .iter()
+            .find(|r| r.param == list)
+            .map(|r| r.entries.len())
+            .ok_or_else(|| format!("the estate transpiles with the entry in {}, and no pack declares `{}` with `entries` any more", estate.display(), list))?,
         Err(e) => {
             return Err(match crate::fsx::write_verbatim(estate, &before) {
                 Ok(()) => format!("the entry leaves an estate satz refuses: {} — nothing is written, {} is as it was", e, estate.display()),
@@ -169,6 +172,7 @@ mod tests {
             entries: Vec::new(),
             file: "p.satz".into(),
             line: 1,
+            named: None,
         }
     }
 

@@ -15,6 +15,20 @@ names the file and the line.
 
 ### Unreleased
 
+**A named use exports, and its list params are its own** (ADR 0109, fourth part). An `export`
+in a named use's pack is no longer refused: a core export is the output `<name>__<export>`,
+resolved inside the use, its reference naming the use's own resource
+(`${google_storage_bucket.reports__kept.name}`), and it reaches `outputs.tf`, every interface
+folder and `satz interfaces` as any core export does. An `entries` statement in a named use's
+pack is no longer refused: the list is the use's own, bound as `<name>.<list>`, an `each` over it
+writes per use, and `satz add-entry <estate> <name>.<list> …` adds to it; `satz interfaces`
+reports it with the dotted `param` and the new optional field `named`. Still refused, with the
+message saying why: an `interface` block and `export … = all <type>` in a named use, an
+`entries` statement there on a list the use does not own, a `contributes_<list>` to a named use's
+list — from a pack, a request file (`satz check-request`) or as `contributes_<name>.<list>` — and
+a use's export that is the same output as an interface's (`web__bucket`). Nothing a plan shows
+changes for an estate that transpiled before.
+
 **`satz preset-graph` refuses an offered pack whose header says `multiple`** (ADR 0109, check
 11). The map offers a pack once, to an estate that uses it once; a pack that says `multiple` is
 for named uses, which the pack graph does not read. A library whose map offers such a pack

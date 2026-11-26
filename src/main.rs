@@ -803,7 +803,8 @@ pub(crate) enum Commands {
     AddEntry {
         /// Estate file (.satz, inside yaml_dir if relative)
         input: String,
-        /// The list param, as the pack's `entries` statement names it
+        /// The list param, as the pack's `entries` statement names it; a named use's list as the
+        /// estate binds it, `<name>.<list>`
         list: String,
         /// The entry's fields, each `<field>=<value>`; a list's values are separated by commas
         #[arg(required = true, value_name = "FIELD=VALUE")]
@@ -6615,7 +6616,15 @@ mod named_uses_gate {
     #[test]
     fn a_named_use_writes_what_the_flat_use_writes_under_its_prefix() {
         let mut held = Vec::new();
+        let base = satz_core::satz::parse(BASE).unwrap();
         for (dir, rel) in packs() {
+            // a pack that declares a param the estate binds — the estate's own vocabulary, which
+            // `estate-core.satz` declares — gives a named use a value of its own where the flat
+            // use reads the estate's binding: what review-preset warns about, not this property
+            let declared = satz_core::satz::parse(&std::fs::read_to_string(root().join(&rel)).unwrap()).map(|f| f.params).unwrap_or_default();
+            if declared.iter().any(|(n, _, _)| base.params.iter().any(|(b, _, _)| b == n)) {
+                continue;
+            }
             let flat = format!("{}use \"{}\"\n", BASE, rel);
             let named = format!("{}use \"{}\" named x\n", BASE, rel);
             let Some(a) = emit(&flat, &rel, &dir) else { continue };

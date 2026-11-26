@@ -924,6 +924,12 @@ interface "payments" {
 }
 ```
 
+A pack used under a name ([language §6.9](language.md#named--one-pack-used-several-times))
+publishes its core exports under the use's prefix: `export "bucket"` of
+`showcase-bucket.satz`, used as `reports` and as `scratch`, is the outputs `reports__bucket`
+and `scratch__bucket`, each reading its own use's bucket, and every interface carries both. A
+named use declares no `interface` and exports no `all <type>`.
+
 A set several workload estates read — the shared network, the DNS zones — is a **common**
 interface: declared once, marked `interface "<name>" common { … }`, or declared by the
 pack that builds it, which makes it common without the word. The common interfaces are
@@ -1373,6 +1379,12 @@ list turns the entry into a resource the interface publishes. The file is vendor
 used from the workload repository: a `use` of a path that points there would put the
 workload's team's next edit
  on the next apply of the organization's estate with no review.
+
+A list param of a named use takes no request: it is the use's own, which the organization's
+estate binds as `<name>.<list>` — `satz add-entry <estate> reports.bucket_archives name=old`
+writes `reports.bucket_archives = [{ name = "old" }]` into its `params`. `satz check-request`
+refuses a `contributes_<list>` that names it, naming the list as the estate binds it, and no
+interface's README offers it under *What you may request*.
 
 ### The change notice
 

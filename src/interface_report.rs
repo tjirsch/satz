@@ -24,8 +24,12 @@ pub(crate) struct InterfacesReport {
 
 #[derive(Debug, Serialize, PartialEq)]
 pub(crate) struct RequestRow {
-    /// the list param a contribution adds to, `contributes_<param>`
+    /// the list param a contribution adds to, `contributes_<param>`; a named use's list is
+    /// named as the estate binds it, `web.event_topics`, and takes no contribution
     pub param: String,
+    /// the named use whose list this is (ADR 0109); absent for a list of the flat namespace
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
     pub key: String,
     pub fields: Vec<String>,
     /// per field, the regular expression its whole value matches
@@ -129,6 +133,7 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
         .iter()
         .map(|r| RequestRow {
             param: r.param.clone(),
+            named: r.named.clone(),
             key: r.key.clone(),
             fields: r.fields.clone(),
             patterns: r.patterns.iter().cloned().collect(),
@@ -145,8 +150,10 @@ pub(crate) fn report(estate: &str, interface: Option<&Interface>, declared: &[Re
 }
 
 /// The README section every interface of the estate carries: what a project may ask the
-/// estate for, and how. Empty when the estate declares no list.
+/// estate for, and how. Empty when the estate declares no list a request adds to: a named
+/// use's list takes no request, the estate binds it.
 pub(crate) fn requests_readme(requests: &[ResolvedRequest]) -> String {
+    let requests: Vec<&ResolvedRequest> = requests.iter().filter(|r| r.named.is_none()).collect();
     if requests.is_empty() {
         return String::new();
     }
@@ -230,4 +237,41 @@ pub(crate) fn render_text(r: &InterfacesReport) -> String {
         }
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list(param: &str, named: Option<&str>) -> ResolvedRequest {
+        ResolvedRequest {
+            param: param.into(),
+            key: "name".into(),
+            fields: vec!["name".into()],
+            patterns: Vec::new(),
+            defaults: Vec::new(),
+            field_defaults: Vec::new(),
+            description: Some("An archive bucket".into()),
+            entries: vec![serde_yaml::Value::Mapping([("name".into(), "old".into())].into_iter().collect())],
+            file: "showcase-bucket.satz".into(),
+            line: 1,
+            named: named.map(str::to_string),
+        }
+    }
+
+    /// A named use's list is reported by the name the estate binds, with its use; a flat
+    /// list carries no `named`. A named use's list takes no request, so no README offers it.
+    #[test]
+    fn a_named_use_s_list_is_reported_dotted_and_offered_to_no_request() {
+        let lists = [list("event_topics", None), list("reports.bucket_archives", Some("reports"))];
+        let r = report("showcase", None, &[], &[], &lists);
+        let json = serde_json::to_value(&r).unwrap();
+        let rows = json["list_params"].as_array().unwrap();
+        assert_eq!(rows[1]["param"], "reports.bucket_archives");
+        assert_eq!(rows[1]["named"], "reports");
+        assert!(rows[0].get("named").is_none(), "{}", rows[0]);
+        let readme = requests_readme(&lists);
+        assert!(readme.contains("`event_topics`") && !readme.contains("bucket_archives"), "{}", readme);
+        assert!(requests_readme(&lists[1..]).is_empty());
+    }
 }
