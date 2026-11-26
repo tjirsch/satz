@@ -209,13 +209,16 @@ its grants are not prefixed. Bind each use's names differently: two uses that wr
 resource are refused, naming the params to bind. Its questions are asked once per use:
 `satz_questions` reports `payments.budget_amount` with `named` and `param`, and
 `satz_interview` takes the dotted subject as the key of an answer. A notice of its pack is
-acknowledged per use, `payments.<param> = true`, and a notice row's `param` is that dotted name.
+acknowledged per use, `payments.<param> = true`, and a notice row's `param` is that dotted name. A core export of its pack is the output `<name>__<export>`, reading the use's own resources. A
+list param of its pack is the use's own: `satz_add_entry` takes `payments.<list>` as its `list`,
+`satz interfaces` reports it dotted with `named`, and a `contributes_<list>` from another pack or a
+request file does not reach it — bind `payments.<list>` instead.
 `satz_presets` lists each named use as an `unmanaged` row with its `named`, `satz_packs` gives
 the pack the list `named`, and `satz_adopt` and `satz_scan_checkov` name the use of a resource
 in `named`. `satz_adopt` with `execute` writes no `"import-id"` into a file a named use reads —
 its hint says to run `satz adopt --execute --import` on the command line. A named use stands in
-the estate file only and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or
-`offers`, and no preset of the library takes one
+the estate file only and takes no `hcl`, `action`, `inputs`, `interface`, `export … = all <type>`
+or `offers`, and no preset of the library takes one
 ([language §6.9](language.md#named--one-pack-used-several-times)).
 
 **Provenance by suffix**, and it is enforced:

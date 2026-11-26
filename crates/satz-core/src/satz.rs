@@ -3130,6 +3130,9 @@ fn check_named_uses(file: &File) -> Result<(), SatzError> {
     let names: Vec<&str> = named.iter().map(|(n, _, _)| *n).collect();
     for (name, _, line) in &file.params {
         let Some((use_name, param)) = named_binding(name) else { continue };
+        if let Some(target) = contribution_target(use_name) {
+            return err(*line, format!("params: `{}` — a contribution adds entries to a list of the estate's flat namespace, and the list `{}.{}` of a named use is the use's own, which the estate binds; the estate adds an entry with `satz add-entry <estate> {}.{}`", name, target, param, target, param));
+        }
         if param.is_empty() || param.contains('.') || use_name.is_empty() {
             return err(*line, format!("params: `{}` — a dotted param is `<named use>.<param>`, one dot", name));
         }

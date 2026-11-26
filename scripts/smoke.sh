@@ -181,6 +181,11 @@ awk '/^resource "google_storage_bucket" "reports__kept"/ { inside = 1 } inside &
 grep -A5 '^resource "google_storage_bucket" "scratch__kept"' "$sc" | grep -q 'location = "EU"' || fail "the named use scratch does not take the pack's default"
 grep -q '^reports--bucket-purpose = "reports"$' tmp/showcase-hcl/terraform.tfvars || fail "a named use's param is not <use>--<param> in terraform.tfvars"
 grep -q 'bucket-adopted' tmp/showcase-hcl/variables.tf tmp/showcase-hcl/terraform.tfvars && fail "a named use's acknowledgement became a variable"
+# a named use's export is the output <use>__<export>, reading the use's own bucket
+for u in reports scratch; do
+  grep -q "^output \"${u}__bucket\" {" tmp/showcase-hcl/outputs.tf || fail "the named use $u's export is not the output ${u}__bucket:\n$(cat tmp/showcase-hcl/outputs.tf)"
+  grep -q "${u}__bucket *= google_storage_bucket.${u}__kept.name" tmp/showcase-hcl/outputs.tf || fail "the export of $u does not read its own bucket:\n$(grep -n "${u}__bucket" tmp/showcase-hcl/outputs.tf)"
+done
 "$satz" --config . presets showcase.satz --format text --out - 2>/dev/null | grep -q '^  showcase-bucket.satz named scratch (line ' \
   || fail "satz presets does not list the showcase's named use"
 grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override the pack default"
@@ -210,6 +215,35 @@ grep -q 'audit-bucket' tmp/showcase-hcl/variables.tf tmp/showcase-hcl/terraform.
 if command -v tofu >/dev/null 2>&1; then
   (cd tmp/showcase-hcl && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "showcase does not validate"
 fi
+
+step "named lists: add-entry writes <use>.<list>, satz interfaces reports it dotted, a request to it is refused (ADR 0109)"
+cp yaml/showcase.satz tmp/named-ae.satz
+"$satz" --config . add-entry "$PWD/tmp/named-ae.satz" reports.bucket_archives name=old > tmp/named-ae.txt 2>&1 || fail "add-entry could not add to a named use's list:\n$(cat tmp/named-ae.txt)"
+grep -q '^  reports.bucket_archives *= \[{ name = "old" }\]$' tmp/named-ae.satz || fail "the entry is not bound as reports.bucket_archives:\n$(grep -n bucket_archives tmp/named-ae.satz)"
+cp tmp/named-ae.satz tmp/named-ae-before.satz
+"$satz" --config . add-entry "$PWD/tmp/named-ae.satz" scratch.bucket_archives name=Old > tmp/named-ae-bad.txt 2>&1 && fail "add-entry accepted an entry the use's pattern refuses"
+grep -q 'entries scratch.bucket_archives: entry `Old`' tmp/named-ae-bad.txt || fail "the refusal does not name the use's list:\n$(cat tmp/named-ae-bad.txt)"
+cmp -s tmp/named-ae.satz tmp/named-ae-before.satz || fail "a refused entry changed the estate"
+# --check: a transpile writing interfaces/ here would replace the showcase's, which the steps below read
+"$satz" --config . transpile "$PWD/tmp/named-ae.satz" --check --format json > tmp/named-ae-check.json 2>/dev/null || fail "the estate with the added entry does not transpile:\n$(cat tmp/named-ae-check.json)"
+python3 - tmp/named-ae-check.json <<'PY2' || fail "each over the named use's list did not write reports__old alone:\n$(cat tmp/named-ae-check.json)"
+import json, sys
+text = json.dumps(json.load(open(sys.argv[1]))["addresses"])
+assert "google_storage_bucket.reports__old" in text and "scratch__old" not in text, text
+PY2
+"$satz" --config . interfaces "$PWD/tmp/named-ae.satz" --format json --out tmp/named-ae-interfaces.json >/dev/null 2>&1 || fail "satz interfaces failed on the estate with a named use's list"
+python3 - tmp/named-ae-interfaces.json <<'PY2' || fail "the interfaces report does not name a use's list dotted, with its use:\n$(cat tmp/named-ae-interfaces.json)"
+import json, sys
+r = json.load(open(sys.argv[1]))
+q = {x["param"]: x for x in r["list_params"]}
+assert q["reports.bucket_archives"]["named"] == "reports" and q["reports.bucket_archives"]["entries"] == 1, q
+assert q["scratch.bucket_archives"]["named"] == "scratch" and q["scratch.bucket_archives"]["entries"] == 0, q
+assert "named" not in q["event_topics"], q["event_topics"]
+assert {"reports__bucket", "scratch__bucket"} <= {e["name"] for e in r["exports"] if "interface" not in e}, r["exports"]
+PY2
+printf 'pack team version "1"\n\nparams {\n  contributes_bucket_archives = [{ name = "x" }]\n}\n' > tmp/named-request.satz
+"$satz" --config . check-request tmp/named-request.satz showcase.satz > tmp/named-request.txt 2>&1 && fail "a request to a named use's list passed check-request"
+grep -q '`bucket_archives` is the list `reports.bucket_archives` of the named use `reports`' tmp/named-request.txt || fail "the refusal does not name the use's list:\n$(cat tmp/named-request.txt)"
 
 step "interfaces: the showcase's exports as outputs.tf, the library in interfaces/outgoing/common/, and one folder per project"
 si=interfaces/outgoing/archive
@@ -245,6 +279,12 @@ grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/h
 # the two named uses' buckets are the estate's under their prefixed labels; the pack's private one is left out
 grep -q 'value *= { "audit_logs" = "corp-audit-logs", "reports__kept" = "corp-reports", "scratch__kept" = "corp-scratch" }' $si/core/hcl/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket, or misses a named use's:\n$(cat $si/core/hcl/outputs.tf)"
 grep -q 'keys `infra`' $si/core/README.md || fail "the README does not list the map's keys:\n$(cat $si/core/README.md)"
+# a named use's export is a core export: every interface carries it, under the use's prefix
+for m in core audit archive; do
+  grep -A1 '^output "reports__bucket" {' $si/$m/satz/interface.satz | grep -q 'value *= "corp-reports"' || fail "the $m interface file does not carry the named use's export:\n$(cat $si/$m/satz/interface.satz)"
+  grep -q '^| `scratch__bucket` | core |' $si/$m/README.md || fail "the $m README does not list the named use's export:\n$(cat $si/$m/README.md)"
+done
+grep -q 'bucket_archives' $si/README.md $si/*/README.md && fail "a README offers a named use's list to a request:\n$(grep -n bucket_archives $si/README.md $si/*/README.md)"
 grep -q 'pack_bucket' $si/*/satz/interface.satz && fail "a private resource reached an interface file"
 grep -q 'value *= { "archive" = "corp-archive-001", "infra" = "corp-infra-001" }' $si/core/hcl/outputs.tf || fail "all google_project under google_folder.infra is not the two projects placed in it:\n$(grep -A1 infra_projects $si/core/hcl/outputs.tf)"
 cp yaml/showcase.satz tmp/private-stale.satz
@@ -1082,6 +1122,10 @@ s = open(p, encoding="utf-8").read()
 s = re.sub(r'(?ms)^interface "[^"]*"( common)? \{.*?^\}\n', "", s)
 s = re.sub(r'(?ms)^each [^\n]*\{\n.*?^\}\n', "", s)
 s = re.sub(r'(?m)^export .*\n', "", s)
+# the named uses' pack exports `bucket`: the uses go, and their bindings with them
+s, uses = re.subn(r'(?m)^use "showcase-bucket\.satz" named .*\n', "", s)
+s = re.sub(r'(?m)^  (reports|scratch)\.\S+ *=.*\n', "", s)
+assert uses == 2, uses
 open(p, "w", encoding="utf-8").write(s)
 PY
 "$satz" --config . transpile tmp/no-exports.satz --output "$PWD/tmp/showcase-hcl" >/dev/null 2>tmp/no-exports.err \

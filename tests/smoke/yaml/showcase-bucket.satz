@@ -9,6 +9,16 @@ params {
   bucket_location = "EU"
   // acknowledges the notice below — per use: the estate binds `<name>.bucket_adopted`
   bucket_adopted  = false
+  // archive buckets beside the bucket, one per entry — a list of the use's own:
+  // `satz add-entry <estate> <name>.bucket_archives name=<name>`
+  bucket_archives = []
+}
+
+entries bucket_archives {
+  key         = "name"
+  fields      = ["name"]
+  patterns    = { name = "[a-z][a-z0-9-]*" }
+  description = "An archive bucket beside the use's bucket"
 }
 
 // A notice of a named use is acknowledged once per use, and `satz adopt --execute --import`
@@ -27,4 +37,15 @@ google_storage_bucket {
     location                    = bucket_location
     uniform_bucket_level_access = true
   }
+  each bucket_archives by name {
+    project                     = infra_project_name
+    name                        = "{customer_shortname}-{bucket_purpose}-{each.name}"
+    location                    = bucket_location
+    storage_class               = "ARCHIVE"
+    uniform_bucket_level_access = true
+  }
 }
+
+// A core export of a named use is the output `<name>__bucket`, and its reference names the
+// use's own bucket, `google_storage_bucket.<name>__kept`.
+export "bucket" = "${{google_storage_bucket.kept.name}}" description "The bucket the use keeps"

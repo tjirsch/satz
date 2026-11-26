@@ -387,6 +387,7 @@ fn resolve_requests(declared: &[(String, satz::RequestDecl)], env: &Env, locals_
             entries: entries.clone(),
             file: file.clone(),
             line: r.line,
+            named: None,
         });
     }
     Ok(out)
@@ -483,19 +484,30 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
             out.push((*line, format!("`{}` is no contribution — a request file adds entries through `contributes_<param>`", name)));
             continue;
         };
-        let Some(point) = requests.iter().find(|r| r.param == param) else {
-            out.push((
-                *line,
-                format!(
+        // a list of a named use takes no request: it is the use's own, which the estate binds
+        let flat: Vec<&ResolvedRequest> = requests.iter().filter(|r| r.named.is_none()).collect();
+        let Some(point) = flat.iter().find(|r| r.param == param) else {
+            let of_use = requests.iter().find(|r| r.named.as_ref().is_some_and(|n| r.param == named::bound_name(n, param)));
+            let msg = match of_use {
+                Some(r) => format!(
+                    "`{}`: `{}` is the list `{}` of the named use `{}` — a request adds entries to a list of the estate's flat namespace, and the list of a named use is the use's own: the estate adds to it with `satz add-entry <estate> {}`",
+                    name,
+                    param,
+                    r.param,
+                    r.named.as_deref().unwrap_or_default(),
+                    r.param
+                ),
+                None => format!(
                     "`{}`: the estate declares no list for `{}` — it takes requests for: {}",
                     name,
                     param,
-                    if requests.is_empty() { "nothing".to_string() } else { requests.iter().map(|r| format!("`{}`", r.param)).collect::<Vec<_>>().join(", ") }
+                    if flat.is_empty() { "nothing".to_string() } else { flat.iter().map(|r| format!("`{}`", r.param)).collect::<Vec<_>>().join(", ") }
                 ),
-            ));
+            };
+            out.push((*line, msg));
             continue;
         };
-        let mut entries = match resolve_value(value, env, "", *line) {
+        let entries = match resolve_value(value, env, "", *line) {
             Ok(serde_yaml::Value::Sequence(s)) => s,
             Ok(other) => {
                 out.push((*line, format!("`{}` is {} — a contribution is a list of entries", name, yaml_kind(&other))));
@@ -506,26 +518,32 @@ pub fn check_request_file(src: &str, requests: &[ResolvedRequest], env: &Env) ->
                 continue;
             }
         };
-        // a field the file leaves out takes the list's default, as the estate's
-        // transpile fills it in — so an entry already vendored compares equal to its copy in
-        // the estate's list
-        for e in entries.iter_mut() {
-            fill_entry(e, &point.defaults, &point.field_defaults);
-        }
-        let decl = satz::RequestDecl {
-            param: point.param.clone(),
-            key: point.key.clone(),
-            fields: point.fields.clone(),
-            patterns: point.patterns.clone(),
-            defaults: Vec::new(),
-            description: None,
-            line: point.line,
-        };
-        if let Err(msg) = check_request_entries(&decl, &entries, &point.entries) {
+        if let Err(msg) = check_new_entries(point, entries) {
             out.push((*line, msg));
         }
     }
     out
+}
+
+/// Entries to be added to the list `point`, against it: each shaped as its `entries`
+/// statement says, no key the list holds for another entry. A field an entry leaves out
+/// takes the list's default first, as the estate's transpile fills it in — so an entry
+/// already in the list compares equal to its copy there. What `check-request` holds a
+/// request file's entries to, and `add-entry` the one entry it writes.
+pub fn check_new_entries(point: &ResolvedRequest, mut entries: Vec<serde_yaml::Value>) -> Result<(), String> {
+    for e in entries.iter_mut() {
+        fill_entry(e, &point.defaults, &point.field_defaults);
+    }
+    let decl = satz::RequestDecl {
+        param: point.param.clone(),
+        key: point.key.clone(),
+        fields: point.fields.clone(),
+        patterns: point.patterns.clone(),
+        defaults: Vec::new(),
+        description: None,
+        line: point.line,
+    };
+    check_request_entries(&decl, &entries, &point.entries)
 }
 
 /// The entries of the list param `list` an `each … by <key>` expands, each with its label —
@@ -1096,6 +1114,9 @@ pub struct ResolvedRequest {
     pub entries: Vec<serde_yaml::Value>,
     pub file: String,
     pub line: usize,
+    /// The named use whose list this is (ADR 0109): `param` is then the name the estate
+    /// binds, `web.event_topics`. `None` for a list of the flat namespace.
+    pub named: Option<String>,
 }
 
 /// A `private <type>.<label>` statement of the estate, where it is written.
@@ -2437,6 +2458,7 @@ pub fn compile_estate_bound(
         actions: Vec::new(),
         exports: Vec::new(),
         requests: Vec::new(),
+        named_requests: Vec::new(),
         interfaces: Vec::new(),
         interface_files: Vec::new(),
         use_chain: vec![file_name.to_string()],
@@ -2479,6 +2501,7 @@ pub fn compile_estate_bound(
     let walked_actions = w.actions;
     let walked_exports = w.exports;
     let walked_requests = w.requests;
+    let named_requests = w.named_requests;
     let walked_interfaces = w.interfaces;
     let interface_files = merge_interface_files(w.interface_files)?;
     let mut hcl: Vec<HclPassthrough> = file
@@ -2549,24 +2572,27 @@ pub fn compile_estate_bound(
     // The same interface in two files is one interface.
     let mut exports: Vec<ResolvedExport> = Vec::new();
     let own_interfaces = interfaces_of(&file, file_name, &scoped(&tfvars, &locals_of, file_name))?;
-    let declared = exports_of(&file, file_name, &own_interfaces).into_iter().chain(walked_exports);
-    for (f, interface, x) in declared {
-        let r = ResolvedExport {
-            interface,
-            name: x.name.clone(),
-            value: match &x.value {
-                satz::ExportValue::Value(v) => resolve_value(v, &scoped(&tfvars, &locals_of, &f), &f, x.line)?,
-                satz::ExportValue::All(_) => serde_yaml::Value::Null,
+    let declared = exports_of(&file, file_name, &own_interfaces).into_iter().map(|(f, i, x)| WalkedExport::Declared(f, i, x)).chain(walked_exports);
+    for walked in declared {
+        let r = match walked {
+            WalkedExport::Named(r) => r,
+            WalkedExport::Declared(f, interface, x) => ResolvedExport {
+                interface,
+                name: x.name.clone(),
+                value: match &x.value {
+                    satz::ExportValue::Value(v) => resolve_value(v, &scoped(&tfvars, &locals_of, &f), &f, x.line)?,
+                    satz::ExportValue::All(_) => serde_yaml::Value::Null,
+                },
+                all: match &x.value {
+                    satz::ExportValue::All(t) => Some(t.clone()),
+                    satz::ExportValue::Value(_) => None,
+                },
+                description: x.description.clone(),
+                attach: x.attach.clone(),
+                under: x.under.clone(),
+                file: f,
+                line: x.line,
             },
-            all: match &x.value {
-                satz::ExportValue::All(t) => Some(t.clone()),
-                satz::ExportValue::Value(_) => None,
-            },
-            description: x.description.clone(),
-            attach: x.attach.clone(),
-            under: x.under.clone(),
-            file: f,
-            line: x.line,
         };
         match exports.iter().find(|e| e.name == r.name && e.interface == r.interface) {
             Some(first) if first.value == r.value && first.all == r.all && first.under == r.under && first.description == r.description && first.attach == r.attach => {}
@@ -2605,6 +2631,35 @@ pub fn compile_estate_bound(
         }
     }
 
+    // A named use's core export is the output `<name>__<export>`, and an interface's is
+    // `<interface>__<export>` with `-` as `_`: a use and an interface of one name would
+    // write one output twice.
+    for u in &named_uses {
+        let output = |x: &ResolvedExport| x.interface.as_ref().map(|i| format!("{}{}{}", i.replace('-', "_"), satz::NAMED_SEP, x.name));
+        let prefix = format!("{}{}", u.name, satz::NAMED_SEP);
+        for core in exports.iter().filter(|e| e.interface.is_none() && e.name.starts_with(&prefix)) {
+            if let Some(other) = exports.iter().find(|e| output(e).as_deref() == Some(core.name.as_str())) {
+                return perr(
+                    file_name,
+                    u.line,
+                    format!(
+                        "use \"{}\" named {}: its export `{}` ({}:{}) is the output `{}`, and so is the export `{}` of the interface \"{}\" ({}:{}) — rename the use or the interface",
+                        u.path,
+                        u.name,
+                        core.name.trim_start_matches(&prefix),
+                        core.file,
+                        core.line,
+                        core.name,
+                        other.name,
+                        other.interface.as_deref().unwrap_or_default(),
+                        other.file,
+                        other.line
+                    ),
+                );
+            }
+        }
+    }
+
     let declared_interfaces = own_interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)).chain(walked_interfaces);
     let interfaces = resolve_interfaces(declared_interfaces.collect(), &exports, &tfvars)?;
 
@@ -2623,7 +2678,8 @@ pub fn compile_estate_bound(
     let privates = file.privates.iter().map(|x| ResolvedPrivate { address: x.address.clone(), file: file_name.to_string(), line: x.line }).collect();
     let declared_requests: Vec<(String, satz::RequestDecl)> =
         file.requests.iter().map(|r| (file_name.to_string(), r.clone())).chain(walked_requests).collect();
-    let requests = resolve_requests(&declared_requests, &tfvars, &locals_of)?;
+    let mut requests = resolve_requests(&declared_requests, &tfvars, &locals_of)?;
+    requests.extend(named_requests);
     let inputs: Vec<DeclaredInput> = w.inputs.into_values().collect();
     let config_rendering = w.config_rendering;
     // what satz composes from the params reads each one as its value, the read resolved
@@ -3208,8 +3264,8 @@ fn contribution_seed(
                         &r.file,
                         r.line,
                         format!(
-                            "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution to a list of a named use is not supported yet; bind `{}.{}` in the estate instead",
-                            satz::CONTRIBUTES_PREFIX, r.param, r.param, n, f, l, n, r.param
+                            "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution adds entries to a list of the estate's flat namespace, and the list of a named use is the use's own, which the estate binds: bind `{}.{}` in the estate, or add an entry with `satz add-entry <estate> {}.{}`",
+                            satz::CONTRIBUTES_PREFIX, r.param, r.param, n, f, l, n, r.param, n, r.param
                         ),
                     );
                 }
@@ -3598,8 +3654,8 @@ fn named_use_env(
                 &c.file,
                 c.line,
                 format!(
-                    "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution to a list of a named use is not supported yet",
-                    satz::CONTRIBUTES_PREFIX, c.param, c.param, name, f, l
+                    "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution adds entries to a list of the estate's flat namespace, and the list of a named use is the use's own, which the estate binds: bind `{}.{}` in the estate",
+                    satz::CONTRIBUTES_PREFIX, c.param, c.param, name, f, l, name, c.param
                 ),
             );
         }
@@ -3715,7 +3771,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new(), named_acks: Env::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), named_requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new(), named_acks: Env::new() };
     w.register_names(&file, file_name)?;
     w.open_frame(&file, file_name)?;
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
@@ -3765,10 +3821,13 @@ struct Walk<'a> {
     /// here would judge a pack's argument against a half-built environment.
     actions: Vec<(String, satz::ActionDecl)>,
     /// Exports collected from every file the walk visits, unresolved for the reason
-    /// actions are.
-    exports: Vec<(String, Option<String>, satz::ExportDecl)>,
+    /// actions are — but a named use's, which are resolved inside the use.
+    exports: Vec<WalkedExport>,
     /// `entries` statements of the used files, after the `when` guard
     requests: Vec<(String, satz::RequestDecl)>,
+    /// The lists of the named uses walked, resolved inside each use and named as the estate
+    /// binds them, `web.event_topics`.
+    named_requests: Vec<ResolvedRequest>,
     /// `interface` blocks of every file the walk visits, for their `use interface` lines,
     /// an `each`'s one per entry, each with whether a pack's declaration makes it common.
     interfaces: Vec<(String, satz::InterfaceDecl, bool)>,
@@ -3800,6 +3859,16 @@ struct Walk<'a> {
     named_acks: Env,
 }
 
+/// An export the walk met.
+enum WalkedExport {
+    /// As a file declares it, with the file and the interface it stands in (`None`: core):
+    /// resolved against the estate's params once the walk is done.
+    Declared(String, Option<String>, satz::ExportDecl),
+    /// A named use's core export, resolved inside the use: named `<name>__<export>`, its
+    /// references to the use's resources prefixed.
+    Named(ResolvedExport),
+}
+
 /// What the walk keeps while it walks a named use.
 struct NamedFrame {
     name: String,
@@ -3811,6 +3880,10 @@ struct NamedFrame {
     claims: Vec<PackClaims>,
     /// what each local value of each file of the use reads, by file, which a read of it reads
     locals: BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>>,
+    /// the core exports of the use's files, resolved inside the use, unprefixed
+    exports: Vec<ResolvedExport>,
+    /// the lists of the use's files, resolved inside the use, named as the estate binds them
+    requests: Vec<ResolvedRequest>,
 }
 
 impl NamedFrame {
@@ -3998,13 +4071,71 @@ impl Walk<'_> {
         for r in &file.requests {
             self.fill_defaults(r, file_name)?;
         }
+        if self.named.is_some() {
+            return self.absorb_named_exports(file, file_name);
+        }
         self.requests.extend(file.requests.iter().map(|r| (file_name.to_string(), r.clone())));
         let interfaces = interfaces_of(file, file_name, &self.genv)?;
-        self.exports.extend(exports_of(file, file_name, &interfaces));
+        self.exports.extend(exports_of(file, file_name, &interfaces).into_iter().map(|(f, i, x)| WalkedExport::Declared(f, i, x)));
         self.interfaces.extend(interfaces.into_iter().map(|(i, from_pack)| (file_name.to_string(), i, from_pack)));
         if let Some(i) = &file.interface_file {
             self.interface_files.push(UsedInterfaceFile { file: file_name.to_string(), interface: i.clone() });
         }
+        Ok(())
+    }
+
+    /// The core exports and the lists of a file of the named use being walked, resolved
+    /// inside the use: its params are all in the namespace from the start (`named_use_env`)
+    /// and nothing contributes to a list the use owns, so what the walk holds now is what
+    /// they read. A list is one the use owns, named as the estate binds it; an `entries`
+    /// statement on a list of the flat namespace is refused — every use would declare one
+    /// list. An `interface` and `all <type>` are refused before the walk (`refused_in_named`).
+    fn absorb_named_exports(&mut self, file: &satz::File, file_name: &str) -> Result<(), PipelineError> {
+        let frame = self.named.as_ref().expect("called inside a named use");
+        let name = frame.name.clone();
+        let mut requests = Vec::new();
+        for r in &file.requests {
+            if !frame.owned.contains(&r.param) {
+                return perr(
+                    file_name,
+                    r.line,
+                    format!(
+                        "entries {}: `{}` is no param of the pack used as `{}` — an `entries` statement in a named use describes a list the use owns, and every use would declare the flat list `{}` once more; declare the statement beside the list, in the file that declares it",
+                        r.param, r.param, name, r.param
+                    ),
+                );
+            }
+            let bound = named::bound_name(&name, &r.param);
+            let mut env = self.genv.clone();
+            if let Some(v) = self.genv.get(&r.param) {
+                env.insert(bound.clone(), v.clone());
+            }
+            let decl = satz::RequestDecl { param: bound, ..r.clone() };
+            for mut x in resolve_requests(&[(file_name.to_string(), decl)], &env, &BTreeMap::new())? {
+                x.named = Some(name.clone());
+                requests.push(x);
+            }
+        }
+        let mut exports = Vec::new();
+        for x in &file.exports {
+            let satz::ExportValue::Value(v) = &x.value else {
+                return perr(file_name, x.line, format!("export \"{}\": `all <type>` publishes every resource of the type the estate writes, which is not a named use's to publish", x.name));
+            };
+            exports.push(ResolvedExport {
+                interface: None,
+                name: x.name.clone(),
+                value: resolve_value(v, &self.genv, file_name, x.line)?,
+                all: None,
+                description: x.description.clone(),
+                attach: x.attach.clone(),
+                under: None,
+                file: file_name.to_string(),
+                line: x.line,
+            });
+        }
+        let frame = self.named.as_mut().expect("called inside a named use");
+        frame.requests.extend(requests);
+        frame.exports.extend(exports);
         Ok(())
     }
 
@@ -4361,7 +4492,15 @@ impl Walk<'_> {
         let ne = named_use_env(name, use_path, &self.genv, &self.bindings, self.load, file_name, line)?;
         let flat = std::mem::replace(&mut self.genv, ne.start);
         let flat_declared = std::mem::take(&mut self.declared);
-        self.named = Some(NamedFrame { name: name.to_string(), owned: ne.pack.owned.keys().cloned().collect(), reads: BTreeMap::new(), claims: Vec::new(), locals: BTreeMap::new() });
+        self.named = Some(NamedFrame {
+            name: name.to_string(),
+            owned: ne.pack.owned.keys().cloned().collect(),
+            reads: BTreeMap::new(),
+            claims: Vec::new(),
+            locals: BTreeMap::new(),
+            exports: Vec::new(),
+            requests: Vec::new(),
+        });
         let walked = (|| {
             let (file, saved) = self.enter_use(use_path, file_name, line)?;
             position::used_file_fits(Position::File, &file, use_path, file_name, line, self.types)?;
@@ -4403,6 +4542,18 @@ impl Walk<'_> {
             }
             self.claims.push(pc);
         }
+        // a core export of the use is the output `<name>__<export>`, reading the use's resources
+        for mut x in frame.exports {
+            x.name = named::variable_name(name, &x.name);
+            x.value = prefix.value(&x.value);
+            self.exports.push(WalkedExport::Named(x));
+        }
+        for (i, r) in frame.requests.iter().enumerate() {
+            if let Some(first) = frame.requests[..i].iter().find(|x| x.param == r.param) {
+                return perr(&r.file, r.line, format!("entries {}: declared twice — here and {}:{}; one list has one list", r.param, first.file, first.line));
+            }
+        }
+        self.named_requests.extend(frame.requests);
         let addresses = frame
             .reads
             .into_iter()

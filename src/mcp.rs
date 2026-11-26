@@ -800,7 +800,8 @@ pub(crate) struct AddEntryArgs {
     /// Estate file, e.g. `C0example.satz`. Omit to use the open estate
     #[serde(default)]
     pub estate: Option<String>,
-    /// The list param, as the pack's `entries` statement names it: `delegations`, `delegated_projects`, …
+    /// The list param, as the pack's `entries` statement names it: `delegations`, `delegated_projects`, …;
+    /// a named use's list as the estate binds it, `<name>.<list>`
     pub list: String,
     /// The entry's fields, each as text: `{"name": "payments", "delegation": "payments", "budgets": "true"}`;
     /// a list's values are separated by commas
@@ -1772,7 +1773,8 @@ impl SatzMcp {
                        delegation, a delegated folder or project, a subnet, a budget. The entry is checked \
                        against the declaration — every field declared, each value matching its pattern, the \
                        key not yet in the list — and written into the estate's params; the edited estate is \
-                       transpiled and restored when it does not transpile. The lists an estate declares, with \
+                       transpiled and restored when it does not transpile. A named use's list is named as the \
+                       estate binds it, `<name>.<list>`. The lists an estate declares, with \
                        their fields, patterns and defaults, are in `satz interfaces`. Needs 'write'.",
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]

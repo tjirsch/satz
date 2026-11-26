@@ -1712,6 +1712,20 @@ used without a name as any other.
 - **Contributions.** A file of the use that declares `contributes_<param>` adds its entries to
   the estate's list `<param>`, read inside the use; an entry two uses contribute alike is
   added once.
+- **Exports.** A core export of the use's pack (§6.17) is the output `<name>__<export>`: `export
+  "bucket" = "${{google_storage_bucket.kept.name}}"` in the use `reports` is the output
+  `reports__bucket`, its value `${google_storage_bucket.reports__kept.name}`. Its value is
+  resolved inside the use — a param reads the use's, a reference names the use's resource as the
+  addresses above do — and it goes wherever a core export goes: `outputs.tf`, every interface
+  folder, `satz interfaces` and the interface READMEs.
+- **Lists.** A list param of the use's pack is the use's own: the estate binds it as
+  `<name>.<list>`, an `each` over it writes one resource per entry of that use's list under the
+  use's prefix, and the pack's `entries` statement (§6.17) holds that list, named `web.<list>`
+  in its messages. `satz add-entry <estate> web.<list> name=…` writes the entry into the
+  estate's `web.<list> = [ … ]`; `satz interfaces` and `satz_add_entry` name the list `web.<list>`,
+  with `named`. A `contributes_<list>` from another pack or a request file does not reach it, and
+  no interface's README offers it: a contribution adds to a list of the flat namespace by its
+  name, and every use of the pack has a list of that name.
 - **Questions.** Each question of the use's pack is asked once per use, under the name the
   estate binds (§6.14): `satz questions` reports `web.vm_zone` for the question `vm_zone`,
   answered when the estate binds `web.vm_zone`, its default resolved inside the use, its
@@ -1734,9 +1748,12 @@ Refused, each naming the line:
   value of the estate; and, where a named use `<name>` exists, a param, an input or a resource
   label of the estate beginning `<name>__`;
 - in a file of the use: `hcl`, an `action`, `inputs`, an `interface` block (an `each` around
-  one too) or an interface file, an `export`, an `entries` statement, an `offers` entry and a
-  named use;
-- a `contributes_<param>` whose list param a named use declares;
+  one too) or an interface file, an `export … = all <type>`, an `offers` entry and a named use;
+- an `entries` statement in a file of the use on a list the use does not own;
+- a `contributes_<param>` whose list param a named use declares, and a `contributes_<name>.<list>`
+  in any file — the estate binds `<name>.<list>` or adds to it with `satz add-entry`;
+- a core export of a named use and an interface's export that are one output — the use `web`'s
+  `bucket` and the interface `web`'s `bucket` are both `web__bucket`;
 - a named use of a preset of the library, or of its `.local` fork: the pack graph offers each
   preset once (§6.16).
 
@@ -1752,6 +1769,8 @@ Every command reads an estate with a named use:
   each address. `--execute` writes no `"import-id"` into a file a named use reads — one line
   serves every use — and names `--execute --import` for the resource instead.
 - `satz scan` and the adopt table name the use beside the pack line that declared a resource.
+- `satz add-entry` adds to a named use's list by its dotted name, `satz interfaces` reports
+  the list so with `named`, and `satz check-request` refuses a request to it, naming it.
 - The editor completes `<name>.<param>` in the estate's `params`; hover and go-to-definition
   on `web.vm_zone` reach the pack's declaration.
 
@@ -2536,7 +2555,8 @@ interface "archive" {
   `module.satz.<name>`, one written in Satz as `"${{interface.<folder>.<name>}}"`, by the
   name of the interface folder it took (below). An interface's
   export may not take a core export's name: every interface carries both, and the
-  transpile refuses it naming both files.
+  transpile refuses it naming both files. A core export of a named use is the output
+  `<name>__<export>` (§6.9).
 - **The value** is a param, a literal, a list of them, or a string that carries
   `${{type.label.attribute}}` references to resources the estate writes. An estate that
   reads an interface folder may pass on a value it read: `export "lake_project" =
@@ -2943,7 +2963,9 @@ list already holds for another entry (the same entry again is the file already
 vendored). With the estate named, the check then transpiles the estate with the file in
 place, so what the transpile would refuse once the file is vendored — an entry without a
 field the pack's `each` body reads — is refused before the pull request. `satz interfaces` reports the lists, and every interface's
-`README.md` says what may be requested and how.
+`README.md` says what may be requested and how. A list of a named use (§6.9) is the use's
+own: its `entries` statement holds the list the estate binds as `<name>.<list>`, `satz add-entry`
+adds to it by that name, and it takes no request.
 
 Refused: a list on a param no file declares or that is no list, two `entries`
 statements on one list, a `key` not among the `fields`, a field named twice, a pattern for a
@@ -3372,6 +3394,7 @@ use "vm.satz" named web: the pack `vm` does not say `multiple` in its header —
 params: `web.vm_nmae` binds the param `vm_nmae` of the named use `web`, and vm.satz declares no param `vm_nmae` — its params are `vm_name`, `vm_zone`
 params: `web.vm_zone` binds the param `vm_zone` of a named use `web`, and no `use … named web` stands at the top level of this file — this file has none. A param's name holds no dot otherwise
 use "vm.satz" named web: vm.satz:12 holds an `hcl` block, and a named use takes none — raw HCL is written as it stands, so what it declares cannot take the use's prefix. Use the pack without `named`
+params: `contributes_web.vm_disks` — a contribution adds entries to a list of the estate's flat namespace, and the list `web.vm_disks` of a named use is the use's own, which the estate binds; the estate adds an entry with `satz add-entry <estate> web.vm_disks`
 the named uses `web` and `db` write the same resource — `google_storage_bucket.web__data` (vm.satz:25) and `google_storage_bucket.db__data` (vm.satz:25) have one body, which is one resource in the cloud under two addresses: an apply creates it twice and a destroy of either removes it. Bind `web.vm_name`, `db.vm_name` differently
 use "vm.satz" named web: the param `web__x`, declared in main.satz (line 4) begins with `web__`, which is how the HCL code names a param of the named use `web` — rename the param or the use
 add-preset presets/organization-budget.satz: line 9 uses `presets/organization-budget.satz` named team — a preset of the library is used once, by one line without `named`: no preset says `multiple`, the word a pack says to be used several times. Write `use "presets/organization-budget.satz"` on that line, then switch it
@@ -3429,7 +3452,8 @@ across files it is the fold's conflict above.
 - **A pack used without a name is used once.** Its params join one estate-wide namespace,
   and the same pack used twice without a name is the same resources. A pack used several
   times is a named use (§6.9, ADR 0109), which stands in the estate file only and takes no
-  `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `offers`.
+  `hcl`, `action`, `inputs`, `interface`, `export … = all <type>` or `offers`; its list params
+  take no contribution.
 - **`private` and `suppress` are read from the estate's own files**, never from a used one.
 - **`satz apply` does not run actions.** `run-actions` is a separate verb, and
   `phase` only orders and selects — nothing enforces that a `before-apply`

@@ -48,14 +48,14 @@ pub(crate) struct NamedPack {
 /// What a file of a named use may not hold, with why: the first one `file` holds, as
 /// `(line, what, why)`. `satz review-preset` holds a pack that says `multiple` to it.
 pub fn refused_in_named(file: &File) -> Option<(usize, &'static str, &'static str)> {
-    let found: [(Option<usize>, &str, &str); 8] = [
+    let all = file.exports.iter().find(|x| matches!(x.value, satz::ExportValue::All(_))).map(|x| x.line);
+    let found: [(Option<usize>, &str, &str); 7] = [
         (file.hcl_blocks.first().map(|h| h.line), "an `hcl` block", "raw HCL is written as it stands, so what it declares cannot take the use's prefix"),
         (file.actions.first().map(|a| a.line), "an `action`", "an action runs once per estate under its name, and two uses would declare one name twice"),
         (file.inputs.first().map(|i| i.line), "an `inputs` block", "an input is a variable of the estate's own, and two uses would declare one variable twice"),
         (file.interfaces.first().map(|i| i.line), "an `interface` block", "an interface is published under its name, and two uses would publish one name twice"),
         (file.interface_file.as_ref().map(|i| i.line), "an interface file", "the values of an interface file are the estate's, read by the flat namespace"),
-        (file.exports.first().map(|x| x.line), "an `export`", "an export of a named use is not supported yet: it would be published under the use's prefix"),
-        (file.requests.first().map(|r| r.line), "an `entries` statement", "a list param of a named use is not supported yet: entries and contributions to it would be bound per use"),
+        (all, "an `export … = all <type>`", "it publishes every resource of the type the estate writes, which is not the use's to publish under its name; export each resource of the use by its reference"),
         (file.offers.first().map(|o| o.line), "an `offers` entry", "what the library offers is the map's, which is used once"),
     ];
     found.into_iter().find_map(|(line, what, why)| line.map(|l| (l, what, why)))
@@ -321,7 +321,8 @@ impl Prefix {
         }
     }
 
-    fn value(&self, v: &serde_yaml::Value) -> serde_yaml::Value {
+    /// A value with every reference to a resource of the use rewritten, at any depth.
+    pub(crate) fn value(&self, v: &serde_yaml::Value) -> serde_yaml::Value {
         match v {
             serde_yaml::Value::String(s) => serde_yaml::Value::String(self.text(s)),
             serde_yaml::Value::Sequence(items) => serde_yaml::Value::Sequence(items.iter().map(|i| self.value(i)).collect()),
@@ -687,12 +688,12 @@ claim "cis-gcp" "4.0" "5.1" contributes {
             ("action \"a\" {\n  reason = \"r\"\n  run    = \"x.sh\"\n  phase  = \"after-apply\"\n}\n", "holds an `action`"),
             ("inputs {\n  stage = \"dev\"\n}\n", "holds an `inputs` block"),
             ("interface \"i\" {\n  export \"x\" = vm_name\n}\n", "holds an `interface` block"),
-            ("export \"x\" = vm_name\n", "holds an `export`"),
-            ("entries vm_list {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", "holds an `entries` statement"),
+            ("each vm_list by name {\n  interface \"{each.name}-i\" {\n    export \"x\" = vm_name\n  }\n}\n", "holds an `interface` block"),
+            ("export \"all\" = all google_storage_bucket\n", "holds an `export … = all <type>`"),
         ];
         for (extra, what) in cases {
             let pack = format!("{}\n{}", VM, extra);
-            let pack = if extra.starts_with("entries") { pack.replace("  vm_logs = false\n", "  vm_logs = false\n  vm_list = []\n") } else { pack };
+            let pack = if extra.starts_with("each") { pack.replace("  vm_logs = false\n", "  vm_logs = false\n  vm_list = []\n") } else { pack };
             let src = estate("  web.vm_name = \"acme-web\"\n") + "\nuse \"vm.satz\" named web\n";
             let e = match compile_with(&src, &[("vm.satz", &pack)]) {
                 Ok(_) => panic!("{} must be refused", what),
@@ -734,7 +735,11 @@ claim "cis-gcp" "4.0" "5.1" contributes {
         let adds = "pack a version \"1.0\"\n\nparams {\n  contributes_p_list = [\"x\"]\n}\n";
         let e = refused(&(estate("") + "\nuse \"p.satz\" named web\nuse \"a.satz\"\n"), &[("p.satz", pack), ("a.satz", adds)]);
         says(&e, "`p_list` is a list param of the named use `web`");
-        says(&e, "not supported yet");
+        says(&e, "bind `web.p_list` in the estate, or add an entry with `satz add-entry <estate> web.p_list`");
+        // a contribution that names the use's list by its dotted name is refused where it is written
+        let dotted = "pack a version \"1.0\"\n\nparams {\n  contributes_web.p_list = [\"x\"]\n}\n";
+        let e = satz::parse(dotted).unwrap_err();
+        assert!(e.msg.contains("the list `web.p_list` of a named use is the use's own, which the estate binds"), "{}", e.msg);
     }
 
     #[test]
@@ -772,6 +777,108 @@ claim "cis-gcp" "4.0" "5.1" contributes {
         let (_, notices, env) = estate_questions("main.satz", &src, &load).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
         let open: Vec<String> = notices.iter().flat_map(|p| p.notices.iter().map(move |n| p.acknowledged_by(n))).filter(|k| !acknowledged(&env, k)).collect();
         assert_eq!(open, ["db.vm_adopted"]);
+    }
+
+    /// A core export of a named use is the output `<name>__<export>`, its value resolved
+    /// inside the use and its references to the use's resources prefixed.
+    #[test]
+    fn an_export_of_a_named_use_is_published_under_its_prefix() {
+        let pack = VM.to_string()
+            + "\nexport \"bucket\" = \"${{google_storage_bucket.data.name}}\" description \"The machine's data bucket\"\nexport \"zone\" = vm_zone\nexport \"shared\" = \"${{google_storage_bucket.shared.name}}\"\n";
+        let src = estate("  web.vm_name = \"acme-web\"\n  db.vm_name = \"acme-db\"\n  db.vm_zone = \"europe-west3-b\"\n")
+            + "\nuse \"vm.satz\" named web\nuse \"vm.satz\" named db\n\ngoogle_storage_bucket {\n  shared {\n    name = \"acme-shared\"\n  }\n}\n";
+        let fe = compile_with(&src, &[("vm.satz", &pack)]).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let exports: BTreeMap<&str, (&Option<String>, String)> = fe.exports.iter().map(|x| (x.name.as_str(), (&x.interface, attr(&serde_yaml::Value::Mapping([("v".into(), x.value.clone())].into_iter().collect()), "v")))).collect();
+        assert_eq!(exports.keys().copied().collect::<Vec<_>>(), ["db__bucket", "db__shared", "db__zone", "web__bucket", "web__shared", "web__zone"]);
+        assert_eq!(exports["web__bucket"], (&None, "${google_storage_bucket.web__data.name}".to_string()), "a reference to the use's own resource is prefixed");
+        assert_eq!(exports["db__zone"].1, "europe-west3-b", "a param is read inside the use");
+        assert_eq!(exports["web__zone"].1, "europe-west3-a");
+        assert_eq!(exports["web__shared"].1, "${google_storage_bucket.shared.name}", "a reference outside the use stays");
+        let web = fe.exports.iter().find(|x| x.name == "web__bucket").unwrap();
+        assert_eq!((web.file.as_str(), web.description.as_deref()), ("vm.satz", Some("The machine's data bucket")));
+    }
+
+    #[test]
+    fn an_export_of_a_named_use_and_an_interface_s_export_are_not_one_output() {
+        let pack = VM.to_string() + "\nexport \"bucket\" = vm_name\n";
+        let src = estate("  web.vm_name = \"acme-web\"\n") + "\nuse \"vm.satz\" named web\n\ninterface \"web\" {\n  export \"bucket\" = \"x\"\n}\n";
+        let e = refused(&src, &[("vm.satz", &pack)]);
+        says(&e, "its export `bucket` (vm.satz:");
+        says(&e, "is the output `web__bucket`, and so is the export `bucket` of the interface \"web\"");
+        assert_eq!((e.file.as_str(), e.line), ("main.satz", 9), "at the use line");
+    }
+
+    const DISKS: &str = r#"pack disks version "1.0" multiple
+
+params {
+  disks_name = "acme"
+  disks      = []
+}
+
+entries disks {
+  key      = "name"
+  fields   = ["name", "class"]
+  patterns = { name = "[a-z]+" }
+  defaults = { class = "STANDARD" }
+}
+
+google_storage_bucket {
+  each disks by name {
+    name          = "{disks_name}-{each.name}"
+    storage_class = each.class
+  }
+}
+"#;
+
+    /// A list param of a named use is the use's own: bound per use, its `entries`
+    /// statement named as the estate binds it, an `each` over it expanding per use.
+    #[test]
+    fn a_list_param_of_a_named_use_is_the_use_s_own() {
+        let src = estate("  web.disks_name = \"acme-web\"\n  web.disks = [{ name = \"a\" }]\n  db.disks_name = \"acme-db\"\n  db.disks = [{ name = \"a\" }, { name = \"b\" class = \"COLDLINE\" }]\n")
+            + "\nuse \"disks.satz\" named web\nuse \"disks.satz\" named db\n";
+        let fe = compile_with(&src, &[("disks.satz", DISKS)]).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let b = bodies(&fe);
+        assert_eq!(b.keys().map(String::as_str).collect::<Vec<_>>(), ["google_storage_bucket.db__a", "google_storage_bucket.db__b", "google_storage_bucket.web__a"]);
+        assert_eq!(attr(&b["google_storage_bucket.db__b"], "name"), "acme-db-b");
+        assert_eq!(attr(&b["google_storage_bucket.web__a"], "storage_class"), "STANDARD", "the list's defaults are filled per use");
+        let lists: Vec<(&str, Option<&str>, usize)> = fe.requests.iter().map(|r| (r.param.as_str(), r.named.as_deref(), r.entries.len())).collect();
+        assert_eq!(lists, [("web.disks", Some("web"), 1), ("db.disks", Some("db"), 2)]);
+        assert_eq!(fe.tfvars["db__disks"].as_sequence().map(Vec::len), Some(2));
+        // an entry the list refuses is named by the use's list
+        let src = estate("  web.disks_name = \"acme-web\"\n  web.disks = [{ name = \"A1\" }]\n") + "\nuse \"disks.satz\" named web\n";
+        let e = refused(&src, &[("disks.satz", DISKS)]);
+        says(&e, "entries web.disks: entry `A1` has `name` = \"A1\", which the list's pattern `[a-z]+` does not match");
+    }
+
+    #[test]
+    fn an_entries_statement_in_a_named_use_names_a_list_the_use_owns() {
+        let flat = "pack f version \"1.0\"\n\nparams {\n  shared_list = []\n}\n";
+        let pack = "pack p version \"1.0\" multiple\n\nparams {\n  p_name = \"acme-p\"\n}\n\nentries shared_list {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n\ngoogle_storage_bucket {\n  b {\n    name = p_name\n  }\n}\n";
+        let src = estate("") + "\nuse \"f.satz\"\nuse \"p.satz\" named web\n";
+        let e = refused(&src, &[("f.satz", flat), ("p.satz", pack)]);
+        says(&e, "entries shared_list: `shared_list` is no param of the pack used as `web`");
+    }
+
+    /// A request adds to a list of the flat namespace: one that names a named use's list
+    /// is refused, naming the list as the estate binds it.
+    #[test]
+    fn a_request_to_a_list_of_a_named_use_is_refused() {
+        let src = estate("  web.disks_name = \"acme-web\"\n") + "\nuse \"disks.satz\" named web\n";
+        let fe = compile_with(&src, &[("disks.satz", DISKS)]).unwrap();
+        let request = "pack team version \"1\"\n\nparams {\n  contributes_disks = [{ name = \"x\" }]\n}\n";
+        let found = check_request_file(request, &fe.requests, &fe.tfvars);
+        assert_eq!(found.len(), 1, "{:?}", found);
+        assert!(found[0].1.contains("`disks` is the list `web.disks` of the named use `web`"), "{}", found[0].1);
+        assert!(found[0].1.contains("satz add-entry <estate> web.disks"), "{}", found[0].1);
+        // a list of the flat namespace still takes one, and the use's list is not offered
+        let request = "pack team version \"1\"\n\nparams {\n  contributes_members = [\"user:x@example.com\"]\n}\n";
+        let found = check_request_file(request, &fe.requests, &fe.tfvars);
+        assert!(found[0].1.contains("it takes requests for: nothing"), "{:?}", found);
+        // the entry `add-entry` writes is judged by the use's list
+        let point = fe.requests.iter().find(|r| r.param == "web.disks").unwrap();
+        let entry = |n: &str| serde_yaml::Value::Mapping([("name".into(), serde_yaml::Value::from(n))].into_iter().collect());
+        assert!(check_new_entries(point, vec![entry("c")]).is_ok());
+        assert!(check_new_entries(point, vec![entry("C")]).unwrap_err().contains("entries web.disks"));
     }
 
     #[test]
