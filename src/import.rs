@@ -1466,7 +1466,7 @@ google_organization_iam_member:
             .unwrap_or_else(|e| panic!("discovered estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty());
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
@@ -1528,7 +1528,7 @@ folder:
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("counted estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
@@ -1592,7 +1592,7 @@ project:
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("pinned estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
@@ -1660,7 +1660,7 @@ project:
         let fe = satz_core::pipeline::compile_estate("discovered.satz", &text, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("vocabulary estate does not transpile: {:?}\n{}", e, text));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         for id in [

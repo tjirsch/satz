@@ -1,0 +1,52 @@
+// Corpus case: one pack used three times — as `web`, as `db` behind a gate, and once flat.
+// Each named use is a copy with params of its own, bound here as `web.<param>`: its
+// project, disk and machine are written as `web__<label>`, every reference to them inside
+// the use names the prefixed address, a grant on its project follows the project, and the
+// reference to the estate's network stays as it is. The organization grant every use
+// writes alike is one grant, its roles merged. The contributions of all three uses reach
+// the estate's list, the entry they share once. `terraform.tfvars` carries the uses'
+// params as `web--vm-zone`. Snapshot-gated.
+
+estate corpus_named_uses
+
+params {
+  customer_organization_id = "123456789012"
+  customer_shortname       = "acme"
+  infra_project_name       = "acme-infra-001"
+  billing_account_infra    = "012345-6789AB-CDEF01"
+  want_db                  = true
+  vm_admin_members = [
+    "user:owner@example.com",
+  ]
+
+  // the flat use
+  vm_name         = "acme-vm"
+  vm_machine_type = "e2-small"
+
+  // the two named uses
+  web.vm_name         = "acme-web"
+  web.vm_zone         = "europe-west3-a"
+  web.vm_machine_type = "e2-medium"
+  web.vm_public       = true
+  db.vm_name          = "acme-db"
+  db.vm_zone          = "europe-west3-b"
+  db.vm_machine_type  = "n2-standard-4"
+}
+
+terraform {
+  backend {
+    local { path = "terraform.tfstate" }
+  }
+}
+
+use "vm.satz" named web
+use "vm.satz" named db when want_db
+use "vm.satz"
+
+google_compute_network {
+  shared {
+    name                    = "acme-shared"
+    project                 = infra_project_name
+    auto_create_subnetworks = false
+  }
+}

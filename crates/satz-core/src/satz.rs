@@ -13,9 +13,9 @@
 //!
 //! ```text
 //! file        := { item }
-//! item        := "estate" IDENT
+//! item        := "estate" IDENT | "pack" IDENT [ "version" STRING ] [ "multiple" ]
 //!              | "params" "{" { param } "}"
-//!              | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
+//!              | "use" STRING [ "as" IDENT | "named" IDENT ] [ "when" IDENT ]
 //!              | statement                one of `STATEMENT_KEYWORDS`: claim, question,
 //!                                         action, offers, notice, export, interface,
 //!                                         suppress, private, entries, hcl
@@ -107,7 +107,11 @@ pub enum Entry {
     /// block is written only where the condition holds. Resolved by the walk before
     /// anything reads the body, so nothing after it sees a condition.
     When { cond: Cond, entry: Box<Entry>, line: usize },
-    Use { path: String, as_key: Option<String>, when: Option<String>, line: usize },
+    /// `use "<path>" [as <type>] [named <name>] [when <param>]`. `named` makes the use a
+    /// use of the pack under a name, with params of its own: they are bound in the estate's `params` as
+    /// `<name>.<param>`, and every resource it declares is written as `<name>__<label>`.
+    /// Only at the top level of the estate file, never with `as`.
+    Use { path: String, as_key: Option<String>, named: Option<String>, when: Option<String>, line: usize },
     /// `each <list param> by <field> { … }` inside a resource type map: one labelled body
     /// per entry of the list, labelled by the entry's `<field>`; `{each.x}` and `each.x` in
     /// the body read the entry's fields. `each <list> by <field> when <field> { … }` writes the
@@ -684,6 +688,9 @@ pub struct File {
     /// OUT of the filename (framework/standard versions live in claims and are
     /// orthogonal: multiple internal revisions may implement the same standard).
     pub version: Option<String>,
+    /// `pack <name> … multiple` — the pack's author promises that the cloud names of what
+    /// it creates come from its params, so it may be used several times with `named`.
+    pub multiple: bool,
     pub params: Vec<(String, Value, usize)>,
     /// `inputs { … }` — a template's contract: params the using document or the command
     /// line binds and the emitter writes as variables, in source order
@@ -1311,7 +1318,11 @@ impl P {
                 }
                 Some(Tok::Ident(id)) if id == "use" => {
                     self.next();
-                    out.push(self.use_stmt(line)?);
+                    let u = self.use_stmt(line)?;
+                    if let Entry::Use { path, named: Some(n), .. } = &u {
+                        return err(line, format!("use \"{}\" named {}: a named use stands at the top level of the estate file — inside a block the file is the block's content, and a named use is a pack used under a name, with params of its own", path, n));
+                    }
+                    out.push(u);
                 }
                 // `each <list> by <field> { … }` — `each` alone, or `each <name> { … }`, is an
                 // ordinary label
@@ -2332,9 +2343,20 @@ impl P {
             other => return err(line, format!("use: expected a path string, found {:?}", other)),
         };
         let mut as_key = None;
+        let mut named = None;
         let mut when = None;
         loop {
             match self.peek() {
+                Some(Tok::Ident(id)) if id == "named" => {
+                    self.next();
+                    if named.is_some() {
+                        return err(line, "use ... named: given twice");
+                    }
+                    match self.next() {
+                        Some(Tok::Ident(n)) => named = Some(n),
+                        other => return err(line, format!("use ... named: expected the name of the use, found {:?}", other)),
+                    }
+                }
                 Some(Tok::Ident(id)) if id == "as" => {
                     self.next();
                     if as_key.is_some() {
@@ -2358,8 +2380,49 @@ impl P {
                 _ => break,
             }
         }
-        Ok(Entry::Use { path, as_key, when, line })
+        if let (Some(n), Some(k)) = (&named, &as_key) {
+            return err(line, format!("use \"{}\" as {} named {}: a named use is a pack used under a name at the top level of the estate file, and `as` makes the file the content of a resource type map — write one of the two", path, k, n));
+        }
+        if let Some(n) = &named {
+            check_use_name(n, line)?;
+        }
+        Ok(Entry::Use { path, as_key, named, when, line })
     }
+}
+
+/// The separator between a named use's name and what it prefixes: `web__vm`,
+/// `web__vm_zone`.
+pub const NAMED_SEP: &str = "__";
+
+/// A named use's name: a lowercase letter, then lowercase letters, digits and `_`, and no
+/// `__`, which separates the name from the label it prefixes.
+fn check_use_name(n: &str, line: usize) -> Result<(), SatzError> {
+    let mut chars = n.chars();
+    let shaped = chars.next().is_some_and(|c| c.is_ascii_lowercase()) && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !shaped {
+        return err(line, format!("use … named {}: a use's name is a lowercase letter, then lowercase letters, digits and `_` — it becomes part of every address and variable the use writes", n));
+    }
+    if n.contains(NAMED_SEP) || n.ends_with('_') {
+        return err(line, format!("use … named {}: `__` separates a use's name from the label it prefixes (`{}__<label>`), so the name holds no `__` and does not end in `_`", n, n));
+    }
+    Ok(())
+}
+
+/// The named use a dotted param binding names, and the param: `web.vm_zone` is
+/// `("web", "vm_zone")`. `None` for a name with no dot.
+pub fn named_binding(name: &str) -> Option<(&str, &str)> {
+    name.split_once('.')
+}
+
+/// The named uses at the top level of a file, in file order: `(name, path, line)`.
+pub fn named_uses(file: &File) -> Vec<(&str, &str, usize)> {
+    file.items
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Use { named: Some(n), path, line, .. } => Some((n.as_str(), path.as_str(), *line)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The text of a key for the duplicate check: an identifier as is, a string
@@ -2488,13 +2551,21 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
                         other => return err(line, format!("version: expected string, found {:?}", other)),
                     }
                 }
-                // The header is a name and a version. A word after it on the same line
-                // would otherwise open the next block under a key nobody wrote.
+                // `multiple`: the pack may be used several times, each a named use
+                if matches!(p.peek(), Some(Tok::Ident(m)) if m == "multiple") && p.line() == line {
+                    p.next();
+                    if !is_pack {
+                        return err(line, "estate header: `multiple` is a word of a pack's header — it says the pack may be used several times, each a named use; delete it");
+                    }
+                    file.multiple = true;
+                }
+                // The header is a name, a version and `multiple`. A word after it on the
+                // same line would otherwise open the next block under a key nobody wrote.
                 if let Some(Tok::Ident(m)) = p.peek() {
                     if p.line() == line {
                         return err(
                             line,
-                            format!("{} header: `{}` is not a header word — the header is `{} <name> [version \"…\"]`; delete `{}`", keyword, m, keyword, m),
+                            format!("{} header: `{}` is not a header word — the header is `{} <name> [version \"…\"]{}`; delete `{}`", keyword, m, keyword, if is_pack { " [multiple]" } else { "" }, m),
                         );
                     }
                 }
@@ -2881,6 +2952,8 @@ pub fn parse(src: &str) -> Result<File, SatzError> {
         return interface_file_of(file);
     }
 
+    check_named_uses(&file)?;
+
     // A question must live in the file that declares its param. Questions are
     // absorbed AFTER the `use … when` guard, so a question gating a pack would be
     // invisible until the answer was already yes — the chicken-and-egg is made
@@ -3037,6 +3110,54 @@ pub(crate) fn value_reads(v: &Value, out: &mut Vec<String>) {
 /// question, an `ask_when`, a `use … when`, an `entries` statement, a contribution. The
 /// rules that span files — a name unique in the whole estate, a binding, a contribution
 /// or an `entries` statement of another file — are the walk's (`pipeline`).
+/// What a file's named uses and their bindings must be, read from the file alone: a named
+/// use stands in an estate file — a pack used under a name holds no named use of its own — under a
+/// name no other named use of the file carries; a dotted param binds a param of a named use
+/// of this file, `<name>.<param>`, and nothing else is dotted. What the used pack declares is
+/// the pipeline's to judge.
+fn check_named_uses(file: &File) -> Result<(), SatzError> {
+    let named = named_uses(file);
+    if let Some((n, path, line)) = named.first() {
+        if file.is_pack {
+            return err(*line, format!("use \"{}\" named {}: a named use stands at the top level of the estate file, and this is a pack — a pack used under a name holds no named use of its own", path, n));
+        }
+    }
+    for (i, (n, _, line)) in named.iter().enumerate() {
+        if let Some((_, first_path, first)) = named[..i].iter().find(|(m, _, _)| m == n) {
+            return err(*line, format!("use … named {}: the name is given twice — line {} (\"{}\") and line {}; a use's name is the prefix of what it writes, so each named use has its own", n, first, first_path, line));
+        }
+    }
+    let names: Vec<&str> = named.iter().map(|(n, _, _)| *n).collect();
+    for (name, _, line) in &file.params {
+        let Some((use_name, param)) = named_binding(name) else { continue };
+        if param.is_empty() || param.contains('.') || use_name.is_empty() {
+            return err(*line, format!("params: `{}` — a dotted param is `<named use>.<param>`, one dot", name));
+        }
+        if !names.contains(&use_name) {
+            let known = if names.is_empty() {
+                "this file has none".to_string()
+            } else {
+                format!("this file's are {}", names.iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", "))
+            };
+            return err(*line, format!("params: `{}` binds the param `{}` of a named use `{}`, and no `use … named {}` stands at the top level of this file — {}. A param's name holds no dot otherwise", name, param, use_name, use_name, known));
+        }
+        if contribution_target(param).is_some() {
+            return err(*line, format!("params: `{}` — a contribution belongs in the pack that adds the entries, not in a binding of a named use", name));
+        }
+    }
+    let dotted = |n: &str| n.contains('.');
+    if let Some(i) = file.inputs.iter().find(|i| dotted(&i.name)) {
+        return err(i.line, format!("inputs: `{}` — an input's name holds no dot; a dotted name binds a param of a named use, in `params`", i.name));
+    }
+    if let Some((n, _, line)) = file.locals.iter().find(|(n, _, _)| dotted(n)) {
+        return err(*line, format!("locals: `{}` — a local value's name holds no dot; a dotted name binds a param of a named use, in `params`", n));
+    }
+    if let Some(q) = file.questions.iter().find(|q| dotted(&q.subject)) {
+        return err(q.line, format!("question {}: a question asks a param of the file that declares it — the pack's own question asks `{}` for every named use", q.subject, named_binding(&q.subject).map(|(_, p)| p).unwrap_or_default()));
+    }
+    Ok(())
+}
+
 fn check_locals(file: &File) -> Result<(), SatzError> {
     if file.locals.is_empty() {
         return Ok(());
@@ -3549,6 +3670,10 @@ pub fn canonical_parts(file: &File) -> Canonical {
         (Some(n), true) => {
             body.push_str("pack ");
             body.push_str(n);
+            // `multiple` only where written, so a pack without it keeps its canonical form
+            if file.multiple {
+                body.push_str(" multiple");
+            }
             body.push('\n');
         }
         (Some(n), false) => {
@@ -3774,12 +3899,14 @@ fn canon_entry(e: &Entry, out: &mut String) {
             }
             out.push('}');
         }
-        Entry::Use { path, as_key, when, .. } => {
+        Entry::Use { path, as_key, named, when, .. } => {
+            // `named` only where written, so a use without it keeps its canonical form
             out.push_str(&format!(
-                "use({}|{}|{})",
+                "use({}|{}|{}{})",
                 path,
                 as_key.as_deref().unwrap_or(""),
-                when.as_deref().unwrap_or("")
+                when.as_deref().unwrap_or(""),
+                named.as_deref().map(|n| format!("|named:{}", n)).unwrap_or_default()
             ));
         }
         Entry::When { cond, entry, .. } => {

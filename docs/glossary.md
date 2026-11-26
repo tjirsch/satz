@@ -64,6 +64,7 @@ The spelling is American English.
 | **pack source** | | Where a workload pack is fetched from: the satz repository, a pack repository, or a folder. Each has a name, which the origin record writes. | `[[pack_source]]` in `config.toml`; `satz pack-source`; `satz get-pack --source` |
 | **estate map** | | The preset that holds the questions which decide which other presets an organization's estate switches on. | `presets/estate-map.satz` |
 | **create** | | What a switched-on pack does with the resources it defines: the preset creates a log bucket and a sink. They exist in the cloud once the plan is applied. | `satz presets`, column "Creates" |
+| **named use** | | A pack used under a name, with params of its own, so one pack can be used several times: `use "packs/project-budget.satz" named payments`. The estate binds its params as `payments.<param>`; what it creates is written as `payments__<label>`. Only a pack whose header says `multiple` takes one. | `use … named`; `satz transpile` |
 | **switch on, switch off** | | To make a preset part of an estate, or take it out; satz writes the line. | `satz add-preset`, `satz remove-preset` |
 
 ## Questions and answers
@@ -147,5 +148,6 @@ These names stay as they are: `satz transpile`, `hcl/`, `hcl_dir`, `satz bootstr
 `--no-impersonate`, `--iac-user`, `satz check-consumer`, `workload_folder`,
 `workload_folder_name`, `infra_folder_name`, the project ids `<shortname>-infra-001` and
 `<shortname>-deploy-<name>`, the account ids `svc-iac-001` and `svc-deploy-<name>`,
-`deployment_mode`, the statements `pack` and `locals`, the keyword `none` of a param with no value, the prefix `contributes_` of a request file, `satz get-pack`, `satz packs`,
+`deployment_mode`, the statements `pack` and `locals`, the keyword `none` of a param with no value,
+the keyword `named` of a `use` and the word `multiple` of a pack's header, the prefix `contributes_` of a request file, `satz get-pack`, `satz packs`,
 the export `account_group_roles` of a delegation's interface, and the report fields `packs` and `pack`.

@@ -401,12 +401,13 @@ rather than matched against live state as if the `${…}` text were literal.
 
 ```ebnf
 file    := [ header ] { item }
-header  := ("estate" | "pack") IDENT [ "version" STRING ]
+header  := "estate" IDENT [ "version" STRING ]
+         | "pack" IDENT [ "version" STRING ] [ "multiple" ]   # multiple: used several times (§6.9)
          | "interface" STRING                          # a generated interface file (§6.17)
 item    := "params" "{" { param } "}"
          | "inputs" "{" { param } "}"
          | "locals" "{" { param } "}"
-         | "use" STRING [ "as" IDENT ] [ "when" IDENT ]
+         | "use" STRING [ "as" IDENT | "named" IDENT ] [ "when" IDENT ]   # named: the estate file only
          | "claim" STRING STRING STRING COVERAGE "{" { claim-entry } "}"
          | "question" [ "oneof" ] IDENT "{" { question-entry } "}"
          | "suppress" IDENT STRING [ "role" STRING ]
@@ -446,9 +447,12 @@ pack   monitoring.audit_logsink version "1.1"
 - `estate` — one customer organization. Usually one per repo.
 - `pack` — a reusable unit. `version` is the pack's own revision, **in-file,
   never in the filename** (framework versions live in claims and are independent
-  of it: several pack revisions may implement the same standard).
+  of it: several pack revisions may implement the same standard). `multiple` says the
+  pack may be used several times, each a named use (§6.9):
+  `pack vm version "1.2" multiple`.
 
-The header is a name and a version: another word on its line is an error.
+The header is a name, a version and, in a pack, `multiple`: another word on its line is an
+error, and so is `multiple` in an estate's header.
 
 The header is optional in fragment files that are only ever `use`d.
 
@@ -533,6 +537,14 @@ Resolution rules:
    param carries none. A value a pack only reads itself, and that no estate is meant to
    set, is a local value instead (`locals`, below): no other file sees it, so it
    cannot collide with another pack's param.
+
+   A **named use** (§6.9) is the exception to one namespace: every param its pack declares
+   is the use's own, bound in the estate as `<name>.<param>` (`web.vm_zone`), and every
+   other name it reads is read from the estate's namespace. The agreement above is judged
+   among the files of one named use, and among the files used without a name — a use's
+   `vm_zone` and a flat pack's `vm_zone` are two params. A param's name holds a dot only
+   as such a binding: a dotted name whose first part is no named use of the file is
+   refused.
 4. Overriding a **list replaces it** — Satz has no list concatenation — so an estate
    that adds to a pack's list repeats the entries it keeps. A PACK adds to one instead
    of replacing it, through `contributes_<param>`, below.
@@ -1504,6 +1516,7 @@ use "presets/cis/CIS-GCP-Foundation-4.0.satz" # a pack that carries its own type
 google_essential_contacts_contact { use "presets/essential-contacts-organization.satz" } # inside a map
 use "presets/essential-contacts-organization.satz" as google_essential_contacts_contact # as: same thing
 use "showcase-optional.satz" when want_optional # conditionally
+use "packs/vm.satz" named web # under a name, with params of its own — below
 ```
 
 A `use` stands at the top level of a file, in `google_folder { … }` or in a resource
@@ -1640,6 +1653,84 @@ is absent.
 Composition is a **fold**: two files may contribute to the same resource map
 and the results merge. Two files defining the *same address differently* is a
 conflict and a hard error naming both source locations.
+
+#### `named` — one pack used several times
+
+```
+use "vm.satz" named web
+use "vm.satz" named db when want_db
+
+params {
+  web.vm_name = "acme-web"
+  web.vm_zone = "europe-west3-a"
+  db.vm_name  = "acme-db"
+  db.vm_zone  = "europe-west3-b"
+}
+```
+
+(`tests/corpus/named-uses/`, where the same pack is also used once without a name; the smoke
+run's workload estate uses `packs/project-budget.satz` once per project.)
+
+A **named use** is a pack used under a name, with params of its own, so one pack can be
+used several times. The pack says that it may be: `multiple` is the last word of its header
+(`pack vm version "1.0" multiple`), its author's promise that the cloud names of what it
+creates come from its params — two named uses bound differently create two resources, not
+one resource twice. A named use of a pack without the word is refused; a pack with it is
+used without a name as any other.
+
+- **Where it stands.** At the top level of the estate file, with `when` or without, never
+  with `as`. A pack, and a file a pack uses, holds none.
+- **Its params.** Every param the pack declares — and every param a file it uses declares, at
+  any depth, whatever that file's gate — belongs to the use. The estate binds one as
+  `<name>.<param>` in its `params`; the use reads that binding, else the pack's default,
+  resolved inside the use. A binding of the same name without the prefix does not reach the
+  use. A binding of a param the pack does not declare is refused, naming the pack's params.
+- **What it reads besides.** Every other name is read from the estate's namespace as it
+  stands at the `use` line, and nothing the use declares reaches that namespace:
+  `customer_organization_id`, `default_region` and another pack's param read as they do in a
+  pack used without a name, so a pack works in a named use as it stands.
+- **Per use.** Its local values are its own. A param declared `none` has no value in the use
+  until the estate binds `<name>.<param>`, and the transpile names it so; its shape is read
+  where the use reads it. `use … named db when want_db` reads `want_db` from the estate; a
+  `when` inside the pack reads the use's params.
+- **Addresses.** Every resource the use declares — a resource of a type map, a folder, a
+  project, a labeled grant resource — is written as `<name>__<label>`:
+  `google_compute_instance.web__vm`, `google_project.web__vm_host`. A reference inside the
+  use's files to a resource the use declares names that address —
+  `"${{google_compute_disk.boot.self_link}}"` is written `${google_compute_disk.web__boot.self_link}`
+  — and so does a text that is a dotted path to one (`google_folder.f.name`); a reference to a
+  resource outside the use stays. A claim's witnesses follow the addresses.
+- **Grants.** A grant of a grant map is its member, its role and its scope, and is written
+  without the prefix: two uses that grant one member one role on one scope write one grant,
+  their roles merged. A grant in a folder or a project of the use is on that node.
+- **Cloud names** — a machine's name, a bucket's, a project id — are what the use's params
+  say; satz changes none.
+- **Variables.** A param of the use is written as `<name>__<param>`, with `_` as `-`:
+  `variable "web--vm-zone"` in `variables.tf`, described by the param's question, and
+  `web--vm-zone = "europe-west3-a"` in `terraform.tfvars`.
+- **Contributions.** A file of the use that declares `contributes_<param>` adds its entries to
+  the estate's list `<param>`, read inside the use; an entry two uses contribute alike is
+  added once.
+
+Refused, each naming the line:
+
+- two resources with one body written by two named uses, or by a named use and the estate —
+  one resource in the cloud under two addresses — naming both and the params to bind
+  differently; and two whose `import_id` template in `presets/import-config.yaml` renders one
+  id from what the estate writes;
+- a name that is not a lowercase letter followed by lowercase letters, digits and `_`, holds
+  `__` or ends in `_`; a name two named uses carry; a name that is a param, an input or a local
+  value of the estate; and, where a named use `<name>` exists, a param, an input or a resource
+  label of the estate beginning `<name>__`;
+- in a file of the use: `hcl`, an `action`, `inputs`, an `interface` block (an `each` around
+  one too), an `export`, an `entries` statement, a `notice`, an `offers` entry and a named use;
+- a `contributes_<param>` whose list param a named use declares.
+
+`satz questions`, the interview, the check of open questions before `transpile --apply` and
+`bootstrap`, `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs` and the
+workload pack commands that read the estate refuse an estate with a named use, naming the
+line; `transpile` and `--plan` write it. A named use of a preset of the library is refused by
+the pack graph.
 
 ### 6.10 `suppress` — the subtractive channel
 
@@ -3244,6 +3335,13 @@ use … as google_cloud_identity_group inside `google_org_policy_policy { … }`
 use "old-pack.yaml": a pack is Satz — satz v0.71.0 is the last release that converts the pre-Satz YAML dialect
 use "x.satz": file not found
 cyclic `use`: main.satz → a.satz → b.satz → a.satz
+use "vm.satz" named web: the pack `vm` does not say `multiple` in its header — the word is its author's promise that the cloud names of what the pack creates come from its params, so that two named uses create two resources and not one resource twice. A named use takes a pack whose header is `pack <name> version "…" multiple`; use this one without `named`
+params: `web.vm_nmae` binds the param `vm_nmae` of the named use `web`, and vm.satz declares no param `vm_nmae` — its params are `vm_name`, `vm_zone`
+params: `web.vm_zone` binds the param `vm_zone` of a named use `web`, and no `use … named web` stands at the top level of this file — this file has none. A param's name holds no dot otherwise
+use "vm.satz" named web: vm.satz:12 holds an `hcl` block, and a named use takes none — raw HCL is written as it stands, so what it declares cannot take the use's prefix. Use the pack without `named`
+the named uses `web` and `db` write the same resource — `google_storage_bucket.web__data` (vm.satz:25) and `google_storage_bucket.db__data` (vm.satz:25) have one body, which is one resource in the cloud under two addresses: an apply creates it twice and a destroy of either removes it. Bind `web.vm_name`, `db.vm_name` differently
+use "vm.satz" named web: the param `web__x`, declared in main.satz (line 4) begins with `web__`, which is how the HCL code names a param of the named use `web` — rename the param or the use
+use "vm.satz" named web: named uses are not supported by `satz presets` yet: a named use is a pack used under a name, with params of its own, and this reads every pack once. `satz transpile` writes the estate
 `terraform` is declared twice — one block per estate
 google_org_policy_policy.p is declared twice in this file with different bodies (first at line 7)
 grant: unknown key `description` in a conditional grant object — the keys are `role`, `condition`, "import-id"
@@ -3295,8 +3393,10 @@ across files it is the fold's conflict above.
 - **A condition reads one name.** `… when <param>` and `… when each.<field>` test one param
   or one field for carrying a value; there is no comparison, no `and` and no `or`, and no
   condition inside an object that is a value.
-- **A pack is one instance.** Its params join one estate-wide namespace, and the same pack
-  used twice is the same resources (ADR 0075).
+- **A pack used without a name is used once.** Its params join one estate-wide namespace,
+  and the same pack used twice without a name is the same resources. A pack used several
+  times is a named use (§6.9, ADR 0109), which stands in the estate file only and takes no
+  `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `notice`.
 - **`private` and `suppress` are read from the estate's own files**, never from a used one.
 - **`satz apply` does not run actions.** `run-actions` is a separate verb, and
   `phase` only orders and selects — nothing enforces that a `before-apply`

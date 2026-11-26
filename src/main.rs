@@ -2758,6 +2758,7 @@ fn use_loader(input_path: &Path, runtime_config: &ToolConfig) -> impl Fn(&str) -
 /// interface files it uses, loaded by the transpile's front end. An estate the front end
 /// refuses is an error naming the place.
 pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<crate::workload_packs::Estate, String> {
+    refuse_named_uses(estate, "`satz packs` and the workload pack commands")?;
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).map_err(|e| e.to_string())?;
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
@@ -2876,7 +2877,7 @@ fn pipeline_b_compile_using(
         .collect();
     // computed before the struct below takes ownership of `fe`'s fields, `env` included
     let (customer_id, org_id) = {
-        let ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         (ctx.customer_id.clone(), ctx.org_id.clone())
     };
     let descriptions = question_descriptions(&fe);
@@ -3040,7 +3041,7 @@ pub(crate) fn compile_tail(
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
-    let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+    let mut ctx = crate::emitter::EmitCtx::from_front_end(fe);
     ctx.registry = Some(registry);
     let mut out = match crate::emitter::emit(&folded, &ctx) {
         Ok(o) => o,
@@ -3049,6 +3050,10 @@ pub(crate) fn compile_tail(
             return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
         }
     };
+    if let Some(e) = named_import_ids(fe, &out.manifest, tool_config, presets_dir, estate) {
+        f.push(e);
+        return Tail { folded, out: None, providers_tf: None, interface: None, findings: f };
+    }
     // `private <type>.<label>`: the resource joins the ones the interface publishes nothing of
     for x in &fe.privates {
         if out.manifest.resources.contains_key(&x.address) {
@@ -4863,6 +4868,67 @@ fn emitted_billing(hcl_dir: &Path) -> Result<crate::prerequisites::Billing, Stri
 /// satz reads Satz. A `.yaml` estate or pack is written in the pre-Satz dialect,
 /// which no command reads: name the release that converts it and the two
 /// commands that bring the conversion up to date.
+/// Two resources of named uses — or of a named use and the estate — whose `import_id`
+/// template in `import-config.yaml` renders one id from what the estate writes are one
+/// resource in the cloud under two addresses: refused, naming both. The bodies may differ in
+/// what the id does not read; identical bodies the front end has refused already. Without
+/// the library's `import-config.yaml` there is no template to render and nothing to judge.
+fn named_import_ids(
+    fe: &satz_core::pipeline::FrontEnd,
+    manifest: &crate::manifest::Manifest,
+    tool_config: &ToolConfig,
+    presets_dir: &str,
+    estate: &Path,
+) -> Option<crate::findings::Finding> {
+    use crate::findings::{Finding, Kind, Severity};
+    if fe.named.is_empty() {
+        return None;
+    }
+    let rules = load_import_config(None, tool_config, presets_dir).ok().flatten()?;
+    let owner = |address: &str| {
+        fe.named.iter().find(|u| u.addresses.keys().any(|a| format!("{}.{}", a.tf_type, a.label.replace('-', "_")) == address))
+    };
+    let mut seen: std::collections::BTreeMap<(String, String), (String, Option<&satz_core::pipeline::NamedUse>)> = std::collections::BTreeMap::new();
+    for (address, r) in &manifest.resources {
+        let Some(id) = crate::adopt::offline_import_id(&rules, r, manifest) else { continue };
+        let me = owner(address);
+        match seen.get(&(r.tf_type.clone(), id.clone())) {
+            Some((first, other)) if other.map(|u| &u.name) != me.map(|u| &u.name) && (other.is_some() || me.is_some()) => {
+                let who = |u: Option<&satz_core::pipeline::NamedUse>| u.map(|u| format!("the named use `{}`", u.name)).unwrap_or_else(|| "the estate".to_string());
+                let line = me.or(*other).map(|u| u.line).unwrap_or(0);
+                return Some(
+                    Finding::new(
+                        Severity::Error,
+                        Kind::Conflict,
+                        format!(
+                            "{} and {} write the same resource — `{}` and `{}` are imported by one id, `{}`, which is one resource in the cloud under two addresses: an apply creates it twice and a destroy of either removes it. Bind the params of the pack that name it differently in each named use",
+                            who(*other),
+                            who(me),
+                            first,
+                            address,
+                            id
+                        ),
+                    )
+                    .located(estate.display().to_string(), line as u32),
+                );
+            }
+            Some(_) => {}
+            None => {
+                seen.insert((r.tf_type.clone(), id), (address.clone(), me));
+            }
+        }
+    }
+    None
+}
+
+/// A command that does not read named uses yet, refused on an estate that holds one: it
+/// reads every pack once, and a named use is a pack used under a name, with params of its own (ADR 0109).
+pub(crate) fn refuse_named_uses(estate: &Path, command: &str) -> Result<(), String> {
+    let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
+    let Ok(file) = satz_core::satz::parse(&src) else { return Ok(()) };
+    satz_core::pipeline::refuse_named_uses(&file, &estate.display().to_string(), command).map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))
+}
+
 fn reject_yaml_dialect(input: &Path, what: &str) -> Result<(), Box<dyn std::error::Error>> {
     if input.extension().and_then(|e| e.to_str()) == Some("satz") {
         return Ok(());
@@ -6395,7 +6461,7 @@ mod corpus {
         let read = satz_core::pipeline::resolve_interface_references(&mut folded, &fe.interface_files)
             .unwrap_or_else(|e| panic!("{}: interface references refused: {:?}", name, e.iter().map(|x| &x.msg).collect::<Vec<_>>()));
         let locals = satz_core::pipeline::interface_locals(&read, &fe.interface_files).unwrap_or_else(|e| panic!("{}: {}", name, e.msg));
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         // Same as production: without the registry the emitter drops
         // schema-derived detail (it once silently lost every alert policy's
         // notification_channels).
@@ -6461,6 +6527,156 @@ mod corpus {
             let expected = std::fs::read_to_string(&expected_path).unwrap();
             assert_eq!(expected, got, "{}: emission diverged from the snapshot", name);
         }
+    }
+}
+
+#[cfg(test)]
+mod named_uses_gate {
+    //! A named use (ADR 0109) writes what the flat use of its pack writes, under its prefix:
+    //! the property, over every pack of the library and the corpus that a named use takes;
+    //! the variables the HCL code declares for a use's params; and the refusal of two
+    //! resources that one import id names.
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    const BASE: &str = "estate e\n\nparams {\n  customer_organization_id = \"123456789012\"\n  customer_id              = \"C0example\"\n  customer_domain          = \"example.com\"\n  customer_shortname       = \"acme\"\n  billing_account_infra    = \"012345-6789AB-CDEF01\"\n  default_region           = \"europe-west3\"\n  infra_project_name       = \"acme-infra-001\"\n  infra_bucket_name        = \"acme-infra-001-state\"\n  svc_iac_account          = \"svc-iac-001\"\n}\n\nterraform {\n  backend {\n    local { path = \"terraform.tfstate\" }\n  }\n}\n\n";
+
+    /// `main.tf` and `terraform.tfvars` of `src`, sorted, the pack at `pack` read with
+    /// `multiple` in its header. `None` where the front end or the emitter refuses.
+    fn emit(src: &str, pack: &str, dir: &Path) -> Option<String> {
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let load = |p: &str| -> Result<String, String> {
+            let text = std::fs::read_to_string(dir.join(p)).or_else(|_| std::fs::read_to_string(root().join(p))).map_err(|e| e.to_string())?;
+            if p != pack {
+                return Ok(text);
+            }
+            // the header, `multiple` added
+            Ok(text
+                .lines()
+                .map(|l| if l.starts_with("pack ") && !l.ends_with(" multiple") { format!("{} multiple", l) } else { l.to_string() })
+                .collect::<Vec<_>>()
+                .join("\n"))
+        };
+        let fe = satz_core::pipeline::compile_estate("e.satz", src, &resolver, &load).ok()?;
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        if !folded.conflicts().is_empty() || !fe.interface_files.is_empty() {
+            return None;
+        }
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).ok()?;
+        Some(format!(
+            "{}\n---tfvars---\n{}",
+            crate::corpus::sorted_lines(&out.main_tf).join("\n"),
+            crate::corpus::sorted_lines(&crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs)).join("\n")
+        ))
+    }
+
+    /// A grant's label without its hash: the hash of a grant in a node of a named use reads
+    /// the node, the flat one's does not (`EmitCtx::named`).
+    fn unhashed(text: &str) -> String {
+        text.lines()
+            .map(|l| match l.find("\"iam_") {
+                Some(i) if l.starts_with("resource ") => {
+                    let label = &l[i + 1..];
+                    let end = label.find('"').unwrap_or(label.len());
+                    let cut = label[..end].rfind('_').unwrap_or(end);
+                    format!("{}{}{}", &l[..i + 1], &label[..cut], &label[end..])
+                }
+                _ => l.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn packs() -> Vec<(PathBuf, String)> {
+        let mut out = Vec::new();
+        let mut dirs = vec![root().join("presets"), root().join("packs")];
+        for case in std::fs::read_dir(root().join("tests/corpus")).unwrap().flatten() {
+            dirs.push(case.path());
+        }
+        while let Some(d) = dirs.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() && d.starts_with(root().join("presets")) {
+                    dirs.push(p);
+                } else if p.extension().is_some_and(|x| x == "satz") && p.file_name().is_some_and(|n| n != "main.satz") {
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    if text.lines().any(|l| l.starts_with("pack ")) {
+                        let rel = p.strip_prefix(root()).unwrap().to_string_lossy().into_owned();
+                        out.push((p.parent().unwrap().to_path_buf(), rel));
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn a_named_use_writes_what_the_flat_use_writes_under_its_prefix() {
+        let mut held = Vec::new();
+        for (dir, rel) in packs() {
+            let flat = format!("{}use \"{}\"\n", BASE, rel);
+            let named = format!("{}use \"{}\" named x\n", BASE, rel);
+            let Some(a) = emit(&flat, &rel, &dir) else { continue };
+            let Some(b) = emit(&named, &rel, &dir) else { continue };
+            let renamed = b.replace("x__", "").replace("x--", "");
+            let (mut a, mut renamed): (Vec<String>, Vec<String>) = (unhashed(&a).lines().map(str::to_string).collect(), unhashed(&renamed).lines().map(str::to_string).collect());
+            a.sort();
+            renamed.sort();
+            assert_eq!(a, renamed, "{}: `use … named x` is not the flat use under the prefix `x__`", rel);
+            assert!(b.contains("x__") || !a.iter().any(|l| l.starts_with("resource ")), "{}: the named use wrote no prefixed address", rel);
+            held.push(rel);
+        }
+        assert!(held.len() >= 10, "too few packs qualify to hold the property: {:?}", held);
+    }
+
+    #[test]
+    fn a_param_of_a_named_use_is_a_variable_described_by_its_question() {
+        let case = root().join("tests/corpus/named-uses");
+        let src = std::fs::read_to_string(case.join("main.satz")).unwrap();
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| std::fs::read_to_string(case.join(p)).map_err(|e| e.to_string())).unwrap();
+        let vars = crate::emitter::emit_variables(&fe.tfvars, &question_descriptions(&fe), &fe.inputs);
+        let block = |name: &str| {
+            let at = vars.find(&format!("variable \"{}\"", name)).unwrap_or_else(|| panic!("no variable {}:\n{}", name, vars));
+            vars[at..].split("\n}").next().unwrap().to_string()
+        };
+        assert!(block("web--vm-zone").contains("description = \"The zone the machine runs in\""), "{}", block("web--vm-zone"));
+        assert!(block("db--vm-zone").contains("type = string"));
+        assert!(block("vm-zone").contains("description = \"The zone the machine runs in\""));
+        let tfvars = crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs);
+        assert!(tfvars.contains("web--vm-zone = \"europe-west3-a\"\n") && tfvars.contains("db--vm-zone = \"europe-west3-b\"\n"), "{}", tfvars);
+    }
+
+    #[test]
+    fn two_resources_one_import_id_names_are_refused() {
+        // two buckets of two uses whose bodies differ but whose names — the import id — are one
+        let dir = std::env::temp_dir().join(format!("satz-named-ids-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pack = "pack b version \"1.0\" multiple\n\nparams {\n  b_name     = \"acme-b\"\n  b_location = \"EU\"\n}\n\ngoogle_storage_bucket {\n  b {\n    name     = b_name\n    location = b_location\n    project  = infra_project_name\n  }\n}\n";
+        std::fs::write(dir.join("b.satz"), pack).unwrap();
+        let estate = format!("{}  \nuse \"b.satz\" named one\nuse \"b.satz\" named two\n", BASE).replace("  svc_iac_account          = \"svc-iac-001\"\n", "  svc_iac_account          = \"svc-iac-001\"\n  two.b_location           = \"US\"\n");
+        let reg = crate::corpus::registry();
+        let resolver = crate::EstateResolver { registry: &reg };
+        let fe = satz_core::pipeline::compile_estate("e.satz", &estate, &resolver, &|p| std::fs::read_to_string(dir.join(p)).map_err(|e| e.to_string())).unwrap_or_else(|e| panic!("{}", e));
+        let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
+        ctx.registry = Some(&reg);
+        let out = crate::emitter::emit(&folded, &ctx).unwrap();
+        let presets = root().join("presets").to_string_lossy().into_owned();
+        let f = named_import_ids(&fe, &out.manifest, &toml::from_str::<ToolConfig>("").unwrap(), &presets, Path::new("e.satz")).expect("one import id names both");
+        assert!(f.message.contains("the named use `one` and the named use `two` write the same resource"), "{}", f.message);
+        assert!(f.message.contains("`google_storage_bucket.one__b` and `google_storage_bucket.two__b` are imported by one id"), "{}", f.message);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
@@ -6572,7 +6788,7 @@ google_org_policy_policy {
             .map_err(|e| e.to_string())?;
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty(), "{:?}", folded.conflicts());
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).map_err(|e| format!("write: {}", e))?;
         Ok((out.main_tf, crate::emitter::emit_tfvars(&fe.tfvars, &fe.inputs), fe))
@@ -6967,7 +7183,7 @@ mod manifest_gate {
         })
         .unwrap_or_else(|e| panic!("{}: front-end failed: {}", case.display(), e));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap_or_else(|e| panic!("{}: write failed: {}", case.display(), e));
         (out, fe)
@@ -7888,7 +8104,7 @@ google_cloud_identity_group {
             .expect("front-end");
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty());
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(reg);
         crate::emitter::emit(&folded, &ctx).expect("emit")
     }
@@ -7903,7 +8119,7 @@ google_cloud_identity_group {
             let src = ESTATE.replace("    \"import-id\" = \"acme-infra-001\"\n", &format!("    \"import-id\" = \"acme-infra-001\"\n    private = {}\n", private));
             let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| Err(format!("no use: {}", p))).expect("front-end");
             let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
             ctx.registry = Some(&reg);
             crate::emitter::emit(&folded, &ctx)
         };
@@ -7951,7 +8167,7 @@ google_cloud_identity_group {
         let fe = satz_core::pipeline::compile_estate("main.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
             .expect("front-end");
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         assert!(out.main_tf.contains("deletion_protection = false"), "{}", out.main_tf);
@@ -7971,7 +8187,7 @@ google_cloud_identity_group {
             let fe = satz_core::pipeline::compile_estate("main.satz", src, &resolver, &|p| Err(format!("no use: {}", p)))
                 .expect("front-end");
             let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
             ctx.registry = Some(&reg);
             crate::emitter::emit(&folded, &ctx).expect("emit").main_tf
         };
@@ -8175,7 +8391,7 @@ mod init_template {
             .unwrap_or_else(|e| panic!("init template does not transpile: {:?}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty());
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let addrs = out.manifest.addresses();
@@ -8268,7 +8484,7 @@ mod init_template {
             let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &load)
                 .unwrap_or_else(|e| panic!("{}: {:?}", on, e));
             let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-            let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+            let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
             ctx.registry = Some(&reg);
             let out = crate::emitter::emit(&folded, &ctx).expect("emit");
             assert_eq!(out.manifest.addresses().contains("google_pubsub_topic.interface_notice"), on, "interface_notice_pubsub = {}", on);
@@ -8294,7 +8510,7 @@ mod init_template {
         let fe = satz_core::pipeline::compile_estate("C0example.satz", &src, &resolver, &|p| Err(format!("no use: {}", p)))
             .unwrap_or_else(|e| panic!("{:?}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("emit");
         let i = crate::interface::build("c0example", &fe.exports, &fe.interfaces, &out.manifest, "hashicorp/google", Some("7.14.1")).unwrap();
@@ -8865,7 +9081,7 @@ mod constraint_equivalents {
         })
         .unwrap_or_else(|e| panic!("{}: front-end failed: {}", name, e));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx)
             .unwrap_or_else(|e| panic!("{}: write failed: {}", name, e));

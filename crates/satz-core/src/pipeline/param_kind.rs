@@ -109,6 +109,9 @@ pub struct ParamUses {
     aliases: Vec<(String, String)>,
     declared_none: BTreeSet<String>,
     valued: BTreeSet<String>,
+    /// The named use being walked, with the params it owns: a read of one of them is a read
+    /// of `<name>.<param>`, which is the use's own and no flat param.
+    named: Option<(String, BTreeSet<String>)>,
 }
 
 /// One read whose shape is known, for the message that names it.
@@ -120,6 +123,19 @@ struct Evidence {
 }
 
 impl ParamUses {
+    /// Enters a named use (`Some`) or leaves it (`None`).
+    pub(crate) fn scope(&mut self, named: Option<(String, BTreeSet<String>)>) {
+        self.named = named;
+    }
+
+    /// A param's name as the shapes are kept: a param a named use owns is `<name>.<param>`.
+    fn name(&self, p: &str) -> String {
+        match &self.named {
+            Some((n, owned)) if owned.contains(p) => super::named::bound_name(n, p),
+            _ => p.to_string(),
+        }
+    }
+
     /// The params whose shape is read from their uses: declared `none` and given a value by
     /// no file but the estate itself, whose binding is an answer and no default.
     pub fn without_value(&self) -> BTreeSet<String> {
@@ -213,18 +229,18 @@ impl ParamUses {
             }
             match v {
                 Value::None => {
-                    self.declared_none.insert(name.clone());
+                    self.declared_none.insert(self.name(name));
                 }
                 _ if is_estate => {}
                 _ => {
-                    self.valued.insert(name.clone());
+                    self.valued.insert(self.name(name));
                 }
             }
             match v {
                 Value::Ref(p) => match local(file, p) {
-                    Some(Value::Ref(q)) => self.aliases.push((name.clone(), q.clone())),
+                    Some(Value::Ref(q)) => self.aliases.push((self.name(name), self.name(q))),
                     Some(other) => self.scan_value(other, None, file, file_name, *line, 1),
-                    None => self.aliases.push((name.clone(), p.clone())),
+                    None => self.aliases.push((self.name(name), self.name(p))),
                 },
                 other => self.scan_value(other, None, file, file_name, *line, 0),
             }
@@ -350,7 +366,8 @@ impl ParamUses {
     }
 
     fn read(&mut self, param: &str, file_name: &str, line: usize, site: Site) {
-        self.reads.push(Read { param: param.to_string(), file: file_name.to_string(), line, site });
+        let param = self.name(param);
+        self.reads.push(Read { param, file: file_name.to_string(), line, site });
     }
 }
 

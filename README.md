@@ -380,7 +380,10 @@ is asked for in the delegation's `apis`.
 An entry of either target pack may say `budgets = true`: the account then manages budgets
 for that project or folder, with nothing on the billing account
 ([`delegated-budget-role`](presets/README.md#delegated-budget-rolesatz)); the workload pack
-`packs/project-budget.satz` is the budget itself.
+`packs/project-budget.satz` is the budget itself. A workload estate given several projects
+uses it once per project, each a named use that binds the project it counts —
+`use "packs/project-budget.satz" named payments`, `payments.budget_project_id = …` — whose
+resources are written as `payments__<label>` ([language §6.9](docs/language.md#named--one-pack-used-several-times)).
 
 Each pack publishes what it delegated in an interface the workload estate reads —
 `delegation-<name>` for the base, `<name>` for each delegated resource. The two packs are the

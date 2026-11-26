@@ -1628,7 +1628,9 @@ its grant names a role the estate does not declare.
 The workload's side is the workload pack `packs/project-budget.satz` (`satz get-pack
 project-budget`): it reads the project and the billing account from the interface folder,
 asks for the amount, the currency and an address to tell, and creates the budget. The
-interface says whether budgets were delegated (`delegated_budgets`).
+interface says whether budgets were delegated (`delegated_budgets`). Its header says
+`multiple`: an estate given several projects uses it once per project, each a named use that
+binds the project it counts (`docs/language.md` §6.9).
 
 | Param | Default | Meaning |
 |---|---|---|

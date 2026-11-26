@@ -21,6 +21,10 @@ pub(crate) struct EmitCtx<'a> {
     /// be enabled on whatever the resource's own scope is. Empty when unbound.
     pub infra_project: String,
     pub registry: Option<&'a crate::schema::ResourceRegistry>,
+    /// The names of the estate's named uses: a grant in a folder or a project one of them
+    /// declares is named by its node too, since two named uses of one pack grant the same member the
+    /// same role on nodes of their own.
+    pub named: Vec<String>,
 }
 
 impl EmitCtx<'_> {
@@ -33,7 +37,20 @@ impl EmitCtx<'_> {
             billing_fallback: env.get("billing_account_infra").cloned(),
             infra_project: get("infra_project_name"),
             registry: None,
+            named: Vec::new(),
         }
+    }
+
+    /// `from_env` of the front end's namespace, with the front end's named uses.
+    pub(crate) fn from_front_end(fe: &satz_core::pipeline::FrontEnd) -> Self {
+        let mut ctx = Self::from_env(&fe.env);
+        ctx.named = fe.named.iter().map(|u| u.name.clone()).collect();
+        ctx
+    }
+
+    /// Whether a structural path runs through a folder or a project of a named use.
+    fn in_named_node(&self, path: &[String]) -> bool {
+        path.iter().filter_map(|s| s.split_once(':').map(|(_, l)| l)).any(|l| self.named.iter().any(|n| l.starts_with(&format!("{}{}", n, satz_core::satz::NAMED_SEP))))
     }
 }
 
@@ -984,7 +1001,11 @@ fn build(folded: &Folded, ctx: &EmitCtx, rendered: bool) -> Result<Built, String
                         t, t
                     ));
                 };
-                let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or("");
+                // A grant in a node of a named use is named by the node: two named uses of one pack
+                // grant one member one role on nodes of their own. Every other grant keeps
+                // the label it has always had.
+                let node_key = if pin.is_none() && ctx.in_named_node(&grant_path) { prefix.unwrap_or("") } else { "" };
+                let scope_key = pin.as_ref().map(|(_, v)| v.as_str()).unwrap_or(node_key);
                 let parent_expr = match (scope_view, &pin) {
                     (Some(written), Some(_)) => crate::emit_shared::reference_expr(written),
                     _ => crate::emit_shared::parse_expr(parent.as_deref().unwrap_or("")),
@@ -2600,6 +2621,7 @@ mod billing_grant_tests {
             billing_fallback: fallback.map(serde_yaml::Value::from),
             infra_project: String::new(),
             registry: None,
+            named: Vec::new(),
         }
     }
 

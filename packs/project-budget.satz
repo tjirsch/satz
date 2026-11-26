@@ -2,6 +2,18 @@
 //
 //   use "packs/project-budget.satz"
 //
+// An estate given several projects uses it once per project, each a named use that binds
+// the project it counts — two uses that count one project would switch its API on twice,
+// which the transpile refuses:
+//
+//   use "packs/project-budget.satz" named payments
+//   params {
+//     payments.budget_project_id     = "${{interface.payments.project_id}}"
+//     payments.budget_project_number = "${{interface.payments.project_number}}"
+//     payments.budget_amount         = "300"
+//     payments.budget_currency       = "EUR"
+//   }
+//
 // A workload pack: an estate that works in a delegated project takes it with
 // `satz get-pack project-budget` and answers the two questions below. It needs the
 // organization to have delegated budgets for that project — `budgets = true` on the
@@ -22,7 +34,7 @@
 // budget names no channel, and Google writes to the billing account's administrators —
 // who are not the team.
 
-pack project_budget version "1.1"
+pack project_budget version "1.2" multiple
 
 params {
   // The project the budget counts, its number, and the billing account it is linked to.

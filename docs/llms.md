@@ -194,11 +194,23 @@ use "presets/cis/CIS-GCP-Foundation-4.0.satz" // top level
 google_org_policy_policy { use "presets/x.satz" } // as a map's content
 use "presets/x.satz" as google_org_policy_policy // same, written flat
 use "presets/cis/shielded-vm.satz" when cis_require_shielded_vm
+use "packs/project-budget.satz" named payments // under a name, with params of its own
 ```
 
 `when` takes a **boolean param that must exist** — an unknown one is an error, never
 false by default. An exclusive choice is two booleans and two `use … when` lines; where a
 pack declares a `question oneof` over them, satz refuses two true branches by name.
+
+**A pack used several times is a named use**, and only a pack whose header ends in
+`multiple` takes one. Bind its params in the estate's `params` as `<name>.<param>`
+(`payments.budget_amount = "300"`); every other name it reads comes from the estate. Its
+resources are written as `<name>__<label>` and its params as the variables `<name>--<param>`;
+its grants are not prefixed. Bind each use's names differently: two uses that write one
+resource are refused, naming the params to bind. A named use stands in the estate file only
+and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `notice`;
+`satz_questions`, `satz_interview`, `satz_presets`, `satz_add_preset`, `satz_remove_preset`,
+`satz_adopt` and `satz_packs` refuse an estate with one — say so rather than working around it
+([language §6.9](language.md#named--one-pack-used-several-times)).
 
 **Provenance by suffix**, and it is enforced:
 
@@ -492,6 +504,9 @@ each message's whole `message` is in the JSON, and the counts are of messages.
 | unknown key in a resource body | the attribute is not in the provider schema for that type — invented or misspelled |
 | the same address declared twice | two files write one address with different bodies; the fold refuses and names both |
 | `use … when X: unknown param` | `when` names a param nobody declares |
+| ``use "…" named x: the pack … does not say `multiple` in its header`` | a named use takes only a pack whose header ends in `multiple`; use it without `named`, or ask for a pack that says it |
+| ``the named uses `a` and `b` write the same resource`` | two named uses (or a named use and the estate) write one body; bind the params the message names differently in each use |
+| `named uses are not supported by … yet` | the tool reads every pack once and refuses an estate with a named use; `satz_transpile_check` reads it |
 | a suppression matched nothing | the thing you are removing is not there — a stale suppression |
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |
