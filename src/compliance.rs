@@ -3872,7 +3872,7 @@ mod prowler_ocsf_tests {
 
 // ---------------------------------------------------------------------------
 // I3 — triage: every Prowler FAIL sorted into the bucket that says who fixes
-// it and how (docs/security-toolset-integration.md)
+// it and how
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, schemars::JsonSchema)]
