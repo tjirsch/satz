@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.115.0
 
 **A dotted param binds a param of a named use, and nothing else** (ADR 0109). `use "<path>"
 named <name>` uses a pack that says `multiple` in its header under a name, with params of its own,
