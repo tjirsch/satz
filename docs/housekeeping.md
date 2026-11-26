@@ -41,7 +41,7 @@ ships it).
 | `.github/workflows/release.yml` | `dist generate`, run with the cargo-dist version `dist-workspace.toml` pins | `dist-workspace.toml` changes; the `cargo-dist-version` pin moves | the `release-workflow` job of `smoke.yml`: `dist generate --check`, which prints the diff |
 | `assets/fonts/` — eight faces and the two license texts | by hand, copied out of the `typst-assets` crate in the dependency tree | the `typst` pin moves | a missing face: `cargo test` (`each_family_carries_all_four_styles`); a face behind the crate: **nothing** |
 | `src/privacy_shapes.rs` (the gate's content rules, a second copy of `scripts/check-names.sh`'s) | by hand, in the same change as the script | a rule of the gate changes | `cargo test` (`the_gate_script_and_satz_flag_the_same_tokens_in_every_corpus_file`): both copies over `tests/privacy-shapes/`, token by token |
-| `docs/competitive.md` | a battle review | quarterly, or a phase gate | **nothing** |
+| `docs/competitive.md` | a competitive re-audit, by hand | quarterly, or a phase gate | **nothing** |
 | `editors/zed/extension.toml` (the pinned tree-sitter grammar) | by hand: a commit in the grammar repository, then the pin | the language changes (`crates/satz-core/src/satz.rs`) | `scripts/check-grammar.sh`: the `grammar` job of `smoke.yml` on every push and PR, and the grammar repository's own weekly CI against a fresh clone of this one |
 
 Six have **no** automatic check, and the estate account's role table has none for a changed
@@ -286,8 +286,9 @@ upstream bytes and upstream license text, written by nobody here.
 
 ## Recurring reviews
 
-- **Competitive re-audit** — quarterly or at a phase gate, appended as a dated entry
-  to `docs/competitive.md`. Keeps the framework inputs, never replaces them.
+- **Competitive re-audit** — quarterly or at a phase gate, brings the landscape and
+  the differences in `docs/competitive.md` up to date. Keeps the framework inputs,
+  never replaces them.
 - **Fleet re-transpile after every satz release** — the estates live outside this
   repository; the check is in it: [`fleet-v1.sh`](#fleet-v1sh--every-estate-on-the-current-binary).
   An estate whose transpiled HCL code differs from what the current binary produces blocks the
