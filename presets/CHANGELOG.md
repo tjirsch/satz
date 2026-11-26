@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.119.0
 
 **`get-pack` prints the named line for a pack that says `multiple`:** `use "…" named <name>`, the estate writing the use's name in place of `<name>`; the same in the `use_line` of `satz packs` and `satz_get_pack`.
 
