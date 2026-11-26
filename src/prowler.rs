@@ -414,7 +414,7 @@ google_project {
         let fe = satz_core::pipeline::compile_estate("mixed.satz", src, &resolver, &|p| Err(format!("{p}: no packs here")))
             .expect("the estate transpiles");
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).expect("the estate writes");
 

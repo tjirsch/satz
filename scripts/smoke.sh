@@ -750,6 +750,61 @@ grep -q 'prerequisites\|roles/' tmp/bud-plain.txt && fail "a workload estate is 
 "$satz" --config tmp/bud/plain update-prerequisites team.satz --report-only > tmp/bud-plain-report.txt 2>&1 || fail "the report of a workload estate is an error:\n$(cat tmp/bud-plain-report.txt)"
 grep -q '^  roles/billing.admin or roles/billing.costsManager on the billing account — for google_billing_budget' tmp/bud-plain-report.txt \
   || fail "the report does not list the billing role the budget needs:\n$(cat tmp/bud-plain-report.txt)"
+step "named uses: the budget pack used once per project, each under a name, with params of its own (ADR 0109)"
+# the workload estate of the budgets step, given the folder of a second project: one named use
+# of the budget pack per project, each binding the project it counts
+nb=tmp/bud/named
+bud_estate "$nb" payments
+cp -R "$bi/plain" "$nb/interfaces/incoming/"
+python3 - "$nb/satz/team.satz" <<'PY2'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+old = '  budget_amount      = "300"\n  budget_currency    = "EUR"\n  budget_email       = "payments-team@example.com"\n'
+assert s.count(old) == 1
+s = s.replace(old, """  team_a.budget_project_id     = "${{interface.payments.project_id}}"
+  team_a.budget_project_number = "${{interface.payments.project_number}}"
+  team_a.budget_amount         = "300"
+  team_a.budget_currency       = "EUR"
+  team_a.budget_email          = "team-a@example.com"
+  team_b.budget_project_id     = "${{interface.plain.project_id}}"
+  team_b.budget_project_number = "${{interface.plain.project_number}}"
+  team_b.budget_amount         = "120"
+  team_b.budget_currency       = "EUR"
+""")
+old = 'use "packs/project-budget.satz"\n'
+assert s.count(old) == 1
+s = s.replace(old, 'use "interfaces/incoming/plain/plain/satz/interface.satz"\nuse "packs/project-budget.satz" named team_a\nuse "packs/project-budget.satz" named team_b\n')
+open(p, "w", encoding="utf-8").write(s)
+PY2
+"$satz" --config "$nb" transpile team.satz > tmp/named.txt 2>&1 || fail "the estate with two named uses of the budget pack does not transpile:\n$(cat tmp/named.txt)"
+nm="$nb/hcl/main.tf"
+for a in 'google_billing_budget" "team_a__project' 'google_billing_budget" "team_b__project' 'google_project_service" "team_a__budget_api' 'google_project_service" "team_b__budget_api' 'google_monitoring_notification_channel" "team_a__budget'; do
+  grep -q "^resource \"$a\"" "$nm" || fail "a named use's resource is not written under its prefix: $a\n$(grep '^resource' "$nm")"
+done
+grep -q '^resource "google_monitoring_notification_channel" "team_b__budget"' "$nm" && fail "team_b binds no address and still writes a channel"
+grep -q 'google_monitoring_notification_channel.team_a__budget.name' "$nm" || fail "the budget's reference to its channel does not name the use's channel:\n$(grep -A20 'team_a__project' "$nm")"
+grep -q '"projects/${local.interface.plain__project_number}"' "$nm" || fail "team_b's budget does not count its own project:\n$(grep -A12 'team_b__project' "$nm")"
+grep -q '^team-a--budget-amount = "300"$' "$nb/hcl/terraform.tfvars" && grep -q '^team-b--budget-amount = "120"$' "$nb/hcl/terraform.tfvars" \
+  || fail "the uses' params are not in terraform.tfvars as <use>--<param>:\n$(cat "$nb/hcl/terraform.tfvars")"
+grep -A3 '^variable "team-a--budget-amount"' "$nb/hcl/variables.tf" | grep -q 'description = "The monthly budget of the project' || fail "a use's variable is not described by its question:\n$(cat "$nb/hcl/variables.tf")"
+if command -v tofu >/dev/null 2>&1; then
+  (cd "$nb/hcl" && tofu init -backend=false -input=false -no-color >/dev/null && tofu validate -no-color >/dev/null) || fail "the estate with two named uses does not validate"
+fi
+# two uses that count one project write one API switch twice: refused, naming what to bind
+sed 's|^  team_b.budget_project_id .*||; s|^  team_b.budget_project_number .*||' "$nb/satz/team.satz" > "$nb/satz/same.satz"
+sed -i.bak 's|^  team_a.budget_project_id .*||; s|^  team_a.budget_project_number .*||' "$nb/satz/same.satz" && rm -f "$nb/satz/same.satz.bak"
+sed -i.bak 's|^use "interfaces/incoming/plain/plain/satz/interface.satz"$||' "$nb/satz/same.satz" && rm -f "$nb/satz/same.satz.bak"
+"$satz" --config "$nb" transpile same.satz --check > tmp/named-same.txt 2>&1 && fail "two named uses that count one project transpiled"
+grep -q 'the named uses `team_a` and `team_b` write the same resource' tmp/named-same.txt && grep -q 'team_a.budget_project_id' tmp/named-same.txt \
+  || fail "the refusal does not name the two uses and the param to bind:\n$(cat tmp/named-same.txt)"
+# a command that reads every pack once refuses a named use, naming it
+rm -f "$nb/satz/same.satz"
+for c in "questions team.satz --format text --out -" "presets team.satz --format text --out -" "packs --local --format json --out -"; do
+  "$satz" --config "$nb" $c > tmp/named-refused.txt 2>&1 && fail "satz $c read an estate with a named use"
+  grep -q 'named team_a: named uses are not supported by' tmp/named-refused.txt || fail "satz $c does not say why it refuses:\n$(cat tmp/named-refused.txt)"
+done
+
 step "publish-pack: a pack the repository wrote goes to a folder source, recorded as fetched from it, and update-pack and packs follow the source (ADR 0099)"
 # the workload estate of the budgets step, with the budget pack as its own: no row, under another id
 bud_estate tmp/pub payments
@@ -770,12 +825,12 @@ cmp -s tmp/pub/packs/team/budget.satz tmp/pub-shared/team/budget.satz || fail "p
 python3 - <<'PYEOF' || fail "publish-pack did not report what it did:\n$(cat tmp/pub-published.json)"
 import json
 p = json.load(open("tmp/pub-published.json"))
-assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.1", "shared", "../pub-shared", "copied"), p
+assert (p["id"], p["version"], p["source"], p["location"], p["action"]) == ("team/budget", "1.2", "shared", "../pub-shared", "copied"), p
 assert p["path"].endswith("pub-shared/team/budget.satz") and p["estate"].endswith("team.satz"), p
 PYEOF
 grep -q '^source = "shared"$' tmp/pub/packs/origin.toml && grep -q '^folder = "../../pub-shared"$' tmp/pub/packs/origin.toml || fail "publish-pack wrote no row naming the source and its folder:\n$(cat tmp/pub/packs/origin.toml)"
 pub update-pack team/budget > tmp/pub-update.txt 2>&1 || fail "update-pack failed on a published pack:\n$(cat tmp/pub-update.txt)"
-grep -q '^team/budget  1.1  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
+grep -q '^team/budget  1.2  from shared  current$' tmp/pub-update.txt || fail "a published pack is not current against its source:\n$(cat tmp/pub-update.txt)"
 pub packs --source shared --format json --out tmp/pub-packs.json > /dev/null 2>&1 || fail "satz packs --source failed on the publishing estate"
 python3 - <<'PYEOF' || fail "satz packs does not list the published pack:\n$(cat tmp/pub-packs.json)"
 import json

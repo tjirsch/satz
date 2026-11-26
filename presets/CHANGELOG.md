@@ -13,6 +13,25 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**A dotted param binds a param of a named use, and nothing else** (ADR 0109). `use "<path>"
+named <name>` uses a pack that says `multiple` in its header under a name, with params of its own,
+bound in the estate's `params` as `<name>.<param>`. A param whose name holds a dot is refused
+unless its first part is the name of a named use at the top level of the same file, and a
+dotted name in `inputs` or `locals` is refused. Before, `web.x = …` was a param named
+`web.x`; no estate the library or its tutorials write has one. Rename such a param without
+the dot. Where an estate has a named use `<name>`, a param, an input or a resource label of
+its own beginning `<name>__` is refused, and so is a param or a local value named `<name>`:
+rename the one or the other. Nothing a plan shows changes for an estate without a named use.
+
+The workload pack `project_budget` 1.2 (`packs/project-budget.satz`) is the first pack that
+says `multiple`: an estate given several projects uses it once per project, each a named use
+— `use "packs/project-budget.satz" named payments` — that binds the project it counts as
+`payments.budget_project_id` and `payments.budget_project_number`, and its amount and
+currency. Its resources are written as `payments__budget_api`, `payments__project` and so on,
+its params as `payments--budget-amount`. An estate that uses it once plans as before.
+
 ### v0.114.0
 
 **A row of `origin.toml` records a folder source's folder relative to the packs folder, and

@@ -284,7 +284,7 @@ pub(crate) mod tests {
         let fe = satz_core::pipeline::compile_estate("e.satz", src, &resolver, loader).unwrap_or_else(|e| panic!("front-end: {}\n{}", e, src));
         let folded = satz_core::pipeline::fold_fragments(&resolver, &fe.fragments);
         assert!(folded.conflicts().is_empty(), "{:?}", folded.conflicts());
-        let mut ctx = crate::emitter::EmitCtx::from_env(&fe.env);
+        let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap();
         let i = crate::interface::build("e", &fe.exports, &fe.interfaces, &out.manifest, "hashicorp/google", None)

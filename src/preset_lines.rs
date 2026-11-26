@@ -715,6 +715,14 @@ pub(crate) fn compile_findings(
             return (Vec::new(), vec![Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{} — no pack line is checked against the pack graph", e))]);
         }
     };
+    // The pack graph knows each preset once: a named use of one is a use the graph's
+    // requirements and exclusions do not read yet, so it is refused rather than misread.
+    if let Ok(file) = satz_core::satz::parse(src) {
+        if let Some((n, path, line)) = satz_core::satz::named_uses(&file).into_iter().find(|(_, path, _)| node_of(graph, path).is_some()) {
+            let msg = format!("use \"{}\" named {}: a named use of a preset of the library is not supported by the pack graph yet — the graph reads each preset once, and a named use is a pack used under a name, with params of its own. Use the preset without `named`", path, n);
+            return (vec![Finding::new(Severity::Error, Kind::PackRequirement, msg).located(label.to_string(), line as u32)], Vec::new());
+        }
+    }
     let view = match View::new(graph, &lib, src) {
         Ok(v) => v,
         Err(e) => return (Vec::new(), vec![Finding::new(Severity::Warning, Kind::UnadoptedPack, format!("{}: {}", label, e))]),
@@ -948,6 +956,7 @@ fn no_graph(dir: &Path) -> String {
 
 /// `satz presets <estate>`: every pack the graph offers, as this estate has it.
 pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport, BoxErr> {
+    crate::refuse_named_uses(estate, "`satz presets`")?;
     let src = crate::fsx::read_to_string(estate)?;
     let label = estate.display().to_string();
     let dir = PathBuf::from(&runtime.presets_dir);
@@ -1462,6 +1471,7 @@ fn write_proven(estate: &Path, before: &str, after: &str, tool: &ToolConfig, run
 
 /// `satz add-preset <estate> <gate|path>`.
 pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, with_requirements: bool) -> Result<PackChange, BoxErr> {
+    crate::refuse_named_uses(estate, "`satz add-preset`")?;
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
     let before = crate::fsx::read_to_string(estate)?;
@@ -1597,6 +1607,7 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
 /// `satz remove-preset <estate> <gate|path>`: the gate bound false, the line left as it
 /// is — a gated line with a false gate creates nothing.
 pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, cascade: bool) -> Result<PackChange, BoxErr> {
+    crate::refuse_named_uses(estate, "`satz remove-preset`")?;
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
     let before = crate::fsx::read_to_string(estate)?;

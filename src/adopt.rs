@@ -156,6 +156,17 @@ pub(crate) fn render_rule(rules: &ImportConfig, r: &EmittedResource, manifest: &
     })
 }
 
+/// The id an `import_id` rule renders for `r` from the estate alone, where every placeholder
+/// is a literal the estate writes; `None` for a type without a template rule, or a template a
+/// placeholder of which only the cloud answers.
+pub(crate) fn offline_import_id(rules: &ImportConfig, r: &EmittedResource, manifest: &Manifest) -> Option<String> {
+    let Rule::Template(template) = rule_for(rules, &r.tf_type) else { return None };
+    match render_template(&template, r, manifest, &Known::default()) {
+        (_, Outcome::Resolved { id, .. }) if !id.contains("${") && !id.contains("local.") && !id.contains("var.") => Some(id),
+        _ => None,
+    }
+}
+
 /// What the run has decided about the resources it has already reached: the live
 /// id of each one that has one, and the verdict of every one — a later resource
 /// that references an earlier one reads both here.
@@ -2523,6 +2534,9 @@ pub(crate) async fn adopt_plan(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
+    // An id is written back into the file that declares the resource, which the named
+    // uses of a pack share.
+    crate::refuse_named_uses(input_path, "`satz adopt`")?;
     // Same transpile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;

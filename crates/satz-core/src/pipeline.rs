@@ -16,8 +16,11 @@ use crate::satz::{self, Entry, File, Key, StrPart, Value};
 use crate::{Address, MergeClass, Scope, Span};
 use std::collections::BTreeMap;
 
+mod named;
 mod param_kind;
 mod position;
+pub use named::NamedUse;
+use named::{NamedBindings, NamedPack};
 pub use param_kind::{AttrType, ParamUses, Shape};
 use param_kind::{map_seg, Seg};
 use position::Position;
@@ -981,6 +984,57 @@ pub struct FrontEnd {
     /// an organization's estate — each with the path it was used by. Their values are what
     /// `${{interface.<export>}}` reads.
     pub interface_files: Vec<UsedInterfaceFile>,
+    /// The named uses the walk passed, `when` applied, in file order: each with the
+    /// addresses it wrote, prefixed, and its params as `terraform.tfvars` writes them.
+    pub named: Vec<NamedUse>,
+}
+
+/// A named use's name is the prefix of what it writes, so nothing of the estate's flat
+/// namespace may carry it: a param, an input or a local value named as the use, and — where
+/// a named use `<name>` exists — a param, an input or a resource label beginning `<name>__`,
+/// which would read as one of the use's.
+fn check_named_names(
+    uses: &[NamedUse],
+    tfvars: &Env,
+    inputs: &BTreeMap<String, DeclaredInput>,
+    names: &BTreeMap<String, Vec<NameSite>>,
+    own: &Fragment,
+    all: &[Fragment],
+    file_name: &str,
+) -> Result<(), PipelineError> {
+    for u in uses {
+        if let Some(site) = names.get(&u.name).and_then(|s| s.iter().find(|s| s.kind == LOCAL)) {
+            return perr(file_name, u.line, format!(
+                "use \"{}\" named {}: `{}` is also the name of the {} declared in {} (line {}) — `{}.<param>` would read as a param of either; rename the use",
+                u.path, u.name, u.name, site.kind, site.file, site.line, u.name
+            ));
+        }
+        if tfvars.contains_key(&u.name) || inputs.contains_key(&u.name) {
+            let site = names.get(&u.name).and_then(|s| s.first()).map(|s| format!(", declared in {} (line {})", s.file, s.line)).unwrap_or_default();
+            return perr(file_name, u.line, format!("use \"{}\" named {}: `{}` is also a param of the estate{} — `{}.<param>` would read as a param of either; rename the use", u.path, u.name, u.name, site, u.name));
+        }
+        let prefix = format!("{}{}", u.name, satz::NAMED_SEP);
+        let flat_param = tfvars.keys().chain(inputs.keys()).find(|k| k.starts_with(&prefix));
+        if let Some(k) = flat_param {
+            let site = names.get(k).and_then(|s| s.first()).map(|s| format!(", declared in {} (line {})", s.file, s.line)).unwrap_or_default();
+            return perr(file_name, u.line, format!(
+                "use \"{}\" named {}: the param `{}`{} begins with `{}`, which is how the HCL code names a param of the named use `{}` — rename the param or the use",
+                u.path, u.name, k, site, prefix, u.name
+            ));
+        }
+        let named = |a: &Address| uses.iter().any(|u| u.addresses.contains_key(a));
+        let flat = std::iter::once(own).chain(all.iter()).flat_map(|f| f.entities.iter());
+        for (addr, e) in flat {
+            if named::declares(addr, e) && !named(addr) && addr.label.starts_with(&prefix) {
+                let site = e.provenance.first().map(|s| format!(" ({}:{})", s.file, s.line)).unwrap_or_default();
+                return perr(file_name, u.line, format!(
+                    "use \"{}\" named {}: `{}.{}`{} begins with `{}`, which is how the HCL code names a resource of the named use `{}` — rename the resource or the use",
+                    u.path, u.name, addr.tf_type, addr.label, site, prefix, u.name
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// One interface file an estate uses, with the path of the `use`.
@@ -2320,14 +2374,15 @@ pub fn compile_estate_bound(
     file_name: &str,
     src: &str,
     extra_uses: &[&str],
-    bindings: &[(String, String)],
+    input_bindings: &[(String, String)],
     types: &dyn TypeResolver,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<FrontEnd, PipelineError> {
     let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    let bindings = NamedBindings::take(&mut file);
     for path in extra_uses {
-        file.items.push(Entry::Use { path: path.to_string(), as_key: None, when: None, line: 0 });
+        file.items.push(Entry::Use { path: path.to_string(), as_key: None, named: None, when: None, line: 0 });
     }
     if let Some(i) = &file.interface_file {
         return perr(
@@ -2339,8 +2394,8 @@ pub fn compile_estate_bound(
             ),
         );
     }
-    let (seed, contributions, declared_inputs, deferred) = seed_or_deferred(&file, file_name, load);
-    let mut outer = bind_inputs(&file, &declared_inputs, bindings, file_name)?;
+    let (seed, contributions, declared_inputs, deferred) = seed_or_deferred(&file, file_name, &bindings, load);
+    let mut outer = bind_inputs(&file, &declared_inputs, input_bindings, file_name)?;
     for (k, v) in seed {
         outer.entry(k).or_insert(v);
     }
@@ -2369,6 +2424,10 @@ pub fn compile_estate_bound(
         frame: Env::new(),
         locals_of: BTreeMap::new(),
         names: BTreeMap::new(),
+        bindings,
+        named: None,
+        named_uses: Vec::new(),
+        named_tfvars: Env::new(),
     };
     w.note_inputs(&file, file_name)?;
     w.register_names(&file, file_name)?;
@@ -2389,6 +2448,9 @@ pub fn compile_estate_bound(
     for n in notices.iter().flat_map(|p| &p.notices) {
         tfvars.remove(&n.param);
     }
+    let named_uses = w.named_uses;
+    check_named_names(&named_uses, &tfvars, &w.inputs, &w.names, &own, &all, file_name)?;
+    tfvars.extend(w.named_tfvars);
     let config = w.config;
     let config_sites = w.config_sites;
     let walked_actions = w.actions;
@@ -2423,6 +2485,7 @@ pub fn compile_estate_bound(
         });
     }
     all.insert(0, own);
+    named::refuse_identical(&named_uses, &all, file_name)?;
     // The estate's own claims come first: an estate may claim a control it
     // implements inline, exactly as a pack does.
     let mut claims = Vec::new();
@@ -2546,7 +2609,7 @@ pub fn compile_estate_bound(
     drop_no_values(&mut tfvars);
     resolve_interface_in_params(&mut env, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
     resolve_interface_in_tfvars(&mut tfvars, &inputs, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
-    Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files })
+    Ok(FrontEnd { fragments: all, env, config, config_sites, config_rendering, inputs, tfvars, suppressions, privates, requests, hcl, claims, actions, questions, notices, contributions, exports, interfaces, estate: file.estate.clone(), interface_files, named: named_uses })
 }
 
 /// The interface files the estate uses, each once. The same file used twice is one. Two
@@ -2811,6 +2874,25 @@ fn pack_questions(file: &satz::File, file_name: &str) -> PackQuestions {
     }
 }
 
+/// A named use's questions under the names the HCL code gives its params: `web__vm_zone`
+/// for `vm_zone`, so the description of `variable "web--vm-zone"` is the question's prompt
+/// and a choice is judged against the use's own params.
+fn named_questions(mut pq: PackQuestions, name: &str, owned: &std::collections::BTreeSet<String>) -> PackQuestions {
+    let rename = |p: &mut String| {
+        if owned.contains(p.as_str()) {
+            *p = named::variable_name(name, p);
+        }
+    };
+    for q in &mut pq.questions {
+        rename(&mut q.subject);
+        q.options.iter_mut().for_each(|o| rename(&mut o.param));
+        if let Some(w) = q.ask_when.as_mut() {
+            rename(w);
+        }
+    }
+    pq
+}
+
 fn pack_claims(file: &satz::File, file_name: &str) -> PackClaims {
     PackClaims {
         pack: file.estate.clone().unwrap_or_default(),
@@ -2841,14 +2923,15 @@ pub fn estate_params(
     src: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<Env, PipelineError> {
-    let file = satz::parse(src)
+    let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, load);
+    let bindings = NamedBindings::take(&mut file);
+    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, &bindings, load);
     let mut env = build_env(&file, &seed, file_name)?;
     let mut sink = Vec::new();
     let mut inputs = Vec::new();
     let mut used = Vec::new();
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs, &mut used, &mut Vec::new())?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut sink, &mut inputs, &mut used, &mut Vec::new(), Some(&bindings))?;
     if let Some(e) = deferred {
         return Err(e);
     }
@@ -2897,6 +2980,9 @@ struct RawContribution {
     value: Value,
     /// the contributing file's local values as written, which the value may read
     locals: Vec<(String, Value, usize)>,
+    /// the namespace of the named use the contributing file belongs to, which the value is
+    /// resolved against; `None` for the estate's flat namespace
+    scope: Option<Env>,
 }
 
 fn take_contributions(file: &File, file_name: &str, out: &mut Vec<RawContribution>) {
@@ -2910,6 +2996,7 @@ fn take_contributions(file: &File, file_name: &str, out: &mut Vec<RawContributio
                 line: *line,
                 value: value.clone(),
                 locals: file.locals.clone(),
+                scope: None,
             });
         }
     }
@@ -2945,9 +3032,10 @@ fn contributed_entry(v: &serde_yaml::Value) -> String {
 fn seed_or_deferred(
     file: &File,
     file_name: &str,
+    bindings: &NamedBindings,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> (Env, Vec<Contribution>, Vec<RawInput>, Option<PipelineError>) {
-    match contribution_seed(file, file_name, load) {
+    match contribution_seed(file, file_name, bindings, load) {
         Ok((seed, records, inputs)) => (seed, records, inputs, None),
         Err(e) => (Env::new(), Vec::new(), Vec::new(), Some(e)),
     }
@@ -3020,13 +3108,14 @@ pub struct RawInput {
 fn contribution_seed(
     file: &File,
     file_name: &str,
+    bindings: &NamedBindings,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<(Env, Vec<Contribution>, Vec<RawInput>), PipelineError> {
     let mut raw = Vec::new();
     let mut inputs = Vec::new();
     let mut env = build_env(file, &Env::new(), file_name)?;
     let mut filled = Vec::new();
-    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs, &mut Vec::new(), &mut filled)?;
+    collect_params(&file.items, file_name, load, &mut env, 0, &mut raw, &mut inputs, &mut Vec::new(), &mut filled, Some(bindings))?;
     // A param one file declares `none` and a later file gives a default has that default
     // from the start: a file walked before the default's is read with it, not without. One
     // no file gives a value has its every declaration from the start, so a read names them.
@@ -3053,8 +3142,8 @@ fn contribution_seed(
             );
         }
         // the contributing file's local values, resolved against the params as the seed
-        // pass holds them
-        let mut scope = std::borrow::Cow::Borrowed(&env);
+        // pass holds them — a named use's, for a file of one
+        let mut scope = std::borrow::Cow::Borrowed(r.scope.as_ref().unwrap_or(&env));
         for (name, v, line) in satz::sort_params_by_deps(&r.locals) {
             let resolved = resolve_value(v, &scope, &r.file, *line)?;
             scope.to_mut().insert(name.clone(), resolved);
@@ -3066,6 +3155,22 @@ fn contribution_seed(
         };
         let values: Vec<String> = entries.iter().map(contributed_entry).collect();
         let base = seed.get(&r.param).or_else(|| env.get(&r.param)).cloned();
+        if base.is_none() {
+            // a list only a named use declares is the use's: entries to it are bound per use
+            for (n, path, line) in satz::named_uses(file) {
+                let pack = named::named_pack(n, path, file_name, line, load)?;
+                if let Some((f, l)) = pack.owned.get(&r.param) {
+                    return perr(
+                        &r.file,
+                        r.line,
+                        format!(
+                            "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution to a list of a named use is not supported yet; bind `{}.{}` in the estate instead",
+                            satz::CONTRIBUTES_PREFIX, r.param, r.param, n, f, l, n, r.param
+                        ),
+                    );
+                }
+            }
+        }
         if let Some((_, declared, _)) = base.as_ref().and_then(no_value_of) {
             return perr(
                 &r.file,
@@ -3130,7 +3235,8 @@ pub fn estate_questions(
     src: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env), PipelineError> {
-    estate_questions_and_uses(file_name, src, load).map(|(q, n, env, _)| (q, n, env))
+    let file = satz::parse(src).map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    questions_walk(file, file_name, load).map(|(q, n, env, _)| (q, n, env))
 }
 
 /// `estate_questions`, with every read of a param the walk passed: what the shape of a
@@ -3143,7 +3249,36 @@ pub fn estate_questions_and_uses(
 ) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env, ParamUses), PipelineError> {
     let file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, load);
+    refuse_named_uses(&file, file_name, "the questions of the estate — `satz questions`, the interview and the check before `transpile --apply` and `bootstrap` —")?;
+    questions_walk(file, file_name, load)
+}
+
+/// A named use, refused by a command that does not read one yet: its questions, its params
+/// and its pack line are per use, and the command would report them as the flat ones.
+pub fn refuse_named_uses(file: &File, file_name: &str, command: &str) -> Result<(), PipelineError> {
+    match satz::named_uses(file).first() {
+        Some((n, path, line)) => perr(
+            file_name,
+            *line,
+            format!(
+                "use \"{}\" named {}: named uses are not supported by {} yet: a named use is a pack used under a name, with params of its own, and this reads every pack once. `satz transpile` writes the estate",
+                path, n, command
+            ),
+        ),
+        None => Ok(()),
+    }
+}
+
+/// The walk behind `estate_questions_and_uses`, which a named use does not stop: the
+/// transpile reads the shapes off it (`check_param_shapes`), each named use's reads under its
+/// own params.
+fn questions_walk(
+    mut file: File,
+    file_name: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<(Vec<PackQuestions>, Vec<PackNotices>, Env, ParamUses), PipelineError> {
+    let bindings = NamedBindings::take(&mut file);
+    let (seed, _, _, deferred) = seed_or_deferred(&file, file_name, &bindings, load);
     let mut env = build_env(&file, &seed, file_name)?;
     let mut out = (Vec::new(), Vec::new());
     if !file.questions.is_empty() {
@@ -3151,7 +3286,7 @@ pub fn estate_questions_and_uses(
     }
     let mut uses = ParamUses::default();
     uses.note_params(&file, file_name, true);
-    let mut walk = QuestionsWalk { load, env: &mut env, out: &mut out, uses: &mut uses };
+    let mut walk = QuestionsWalk { load, env: &mut env, out: &mut out, uses: &mut uses, bindings: &bindings, named: None };
     walk.items(&file.items, &file, file_name, &mut Vec::new(), 0)?;
     // Contradictions only: a required choice nobody has made yet is what this
     // report is for.
@@ -3171,7 +3306,8 @@ fn check_param_shapes(
     types: &dyn TypeResolver,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<(), PipelineError> {
-    let (_, _, _, uses) = estate_questions_and_uses(file_name, src, load)?;
+    let file = satz::parse(src).map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    let (_, _, _, uses) = questions_walk(file, file_name, load)?;
     uses.shapes(types).map(|_| ())
 }
 
@@ -3184,9 +3320,10 @@ pub fn estate_contributions(
     src: &str,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<Vec<Contribution>, PipelineError> {
-    let file = satz::parse(src)
+    let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
-    Ok(contribution_seed(&file, file_name, load)?.1)
+    let bindings = NamedBindings::take(&mut file);
+    Ok(contribution_seed(&file, file_name, &bindings, load)?.1)
 }
 
 /// The `use` walk of `collect_params`, gathering questions and notices on the way. A
@@ -3196,6 +3333,9 @@ struct QuestionsWalk<'a, 'b> {
     env: &'b mut Env,
     out: &'b mut (Vec<PackQuestions>, Vec<PackNotices>),
     uses: &'b mut ParamUses,
+    bindings: &'b NamedBindings,
+    /// the named use being walked: its name and the params it owns
+    named: Option<(String, std::collections::BTreeSet<String>)>,
 }
 
 impl QuestionsWalk<'_, '_> {
@@ -3216,7 +3356,7 @@ impl QuestionsWalk<'_, '_> {
                     segs.pop();
                 }
                 Entry::When { entry, .. } => self.items(std::slice::from_ref(entry), file, file_name, segs, depth)?,
-                Entry::Use { path, as_key, when, line } => {
+                Entry::Use { path, as_key, named, when, line } => {
                     if let Some(p) = when {
                         self.uses.note_use_gate(p, file_name, *line);
                         if let Some(e) = renamed_param(p, file_name, *line) {
@@ -3232,6 +3372,24 @@ impl QuestionsWalk<'_, '_> {
                             continue;
                         }
                     }
+                    if let Some(n) = named {
+                        if depth != 0 || self.named.is_some() {
+                            return perr(file_name, *line, format!("use \"{}\" named {}: a named use stands at the top level of the estate file", path, n));
+                        }
+                        let ne = named_use_env(n, path, self.env, self.bindings, self.load, file_name, *line)?;
+                        let owned: std::collections::BTreeSet<String> = ne.pack.owned.keys().cloned().collect();
+                        let mut env = ne.start;
+                        std::mem::swap(self.env, &mut env);
+                        self.named = Some((n.clone(), owned.clone()));
+                        self.uses.scope(Some((n.clone(), owned)));
+                        let entry = Entry::Use { path: path.clone(), as_key: None, named: None, when: None, line: *line };
+                        let walked = self.items(std::slice::from_ref(&entry), file, file_name, segs, depth + 1);
+                        self.uses.scope(None);
+                        self.named = None;
+                        std::mem::swap(self.env, &mut env);
+                        walked?;
+                        continue;
+                    }
                     let src = (self.load)(path)
                         .map_err(|e| PipelineError { file: file_name.to_string(), line: *line, msg: e })?;
                     let used = satz::parse(&src)
@@ -3239,7 +3397,11 @@ impl QuestionsWalk<'_, '_> {
                     absorb(&used, path, self.env)?;
                     self.uses.note_params(&used, path, false);
                     if !used.questions.is_empty() {
-                        self.out.0.push(pack_questions(&used, path));
+                        let pq = pack_questions(&used, path);
+                        self.out.0.push(match &self.named {
+                            Some((n, owned)) => named_questions(pq, n, owned),
+                            None => pq,
+                        });
                     }
                     if !used.notices.is_empty() {
                         self.out.1.push(pack_notices(&used, path));
@@ -3273,6 +3435,7 @@ fn collect_params(
     inputs: &mut Vec<RawInput>,
     interface_files: &mut Vec<UsedInterfaceFile>,
     filled: &mut Vec<String>,
+    bindings: Option<&NamedBindings>,
 ) -> Result<(), PipelineError> {
     if depth > MAX_USE_DEPTH {
         return perr(file_name, 0, format!("`use` nested more than {} deep — cyclic?", MAX_USE_DEPTH));
@@ -3281,7 +3444,7 @@ fn collect_params(
         match item {
             // an `each` body declares no param, asks no question and uses no pack
             Entry::Attr { .. } | Entry::Each { .. } | Entry::When { .. } => {}
-            Entry::Use { path, when, line, .. } => {
+            Entry::Use { path, when, line, named, .. } => {
                 if let Some(p) = when {
                     if let Some(e) = renamed_param(p, file_name, *line) {
                         return Err(e);
@@ -3298,6 +3461,15 @@ fn collect_params(
                     if !truthy(env.get(p)) {
                         continue;
                     }
+                }
+                // a named use adds nothing to the flat namespace; what its files contribute
+                // to a flat list is resolved inside it
+                if let Some(n) = named {
+                    let Some(bindings) = bindings.filter(|_| depth == 0) else {
+                        return perr(file_name, *line, format!("use \"{}\" named {}: a named use stands at the top level of the estate file", path, n));
+                    };
+                    contributions.extend(named_use_env(n, path, env, bindings, load, file_name, *line)?.contributions);
+                    continue;
                 }
                 if path.ends_with(".yaml") || path.ends_with(".yml") {
                     return perr(file_name, *line, format!("use \"{}\": a pack is Satz — satz {} is the last release that converts the pre-Satz YAML dialect", path, crate::LAST_YAML_CONVERTING_RELEASE));
@@ -3318,12 +3490,85 @@ fn collect_params(
                         env.insert(i.name.clone(), resolved);
                     }
                 }
-                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs, interface_files, filled)?;
+                collect_params(&used.items, path, load, env, depth + 1, contributions, inputs, interface_files, filled, None)?;
             }
-            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs, interface_files, filled)?,
+            Entry::Map { body, .. } => collect_params(body, file_name, load, env, depth, contributions, inputs, interface_files, filled, bindings)?,
         }
     }
     Ok(())
+}
+
+/// A named use's namespace, before and after its files are read.
+struct NamedEnv {
+    pack: NamedPack,
+    /// What the walk of the use starts with: the flat namespace without the params the use
+    /// owns, the estate's bindings `<name>.<param>` in their place, and — as in the estate
+    /// — a param one file of the use declares `none` and a later one gives a default, with
+    /// that default from the start.
+    start: Env,
+    /// What the use's files contribute to flat lists, resolved inside the use.
+    contributions: Vec<RawContribution>,
+}
+
+/// The namespace of `use "<path>" named <name>`, standing at `file_name`:`line` where the
+/// estate's flat namespace is `flat`: the pack read whole (`named_pack`), the bindings
+/// checked against what it declares, and its params read once without a schema, as the
+/// seed pass reads the estate's.
+fn named_use_env(
+    name: &str,
+    path: &str,
+    flat: &Env,
+    bindings: &NamedBindings,
+    load: &dyn Fn(&str) -> Result<String, String>,
+    file_name: &str,
+    line: usize,
+) -> Result<NamedEnv, PipelineError> {
+    let pack = named::named_pack(name, path, file_name, line, load)?;
+    named::check_bindings(name, path, &pack, bindings, file_name)?;
+    let mut start = flat.clone();
+    for p in pack.owned.keys() {
+        start.remove(p);
+    }
+    for (p, v, l) in bindings.of(name) {
+        // `<name>.<param> = none` binds nothing: the pack's default applies
+        if *v == Value::None {
+            continue;
+        }
+        let resolved = match v {
+            Value::Ref(r) if flat.get(r).is_some_and(is_no_value) => flat[r].clone(),
+            v => resolve_value(v, flat, file_name, *l)?,
+        };
+        start.insert(p.clone(), resolved);
+    }
+    let mut env = start.clone();
+    let (mut raw, mut inputs, mut filled) = (Vec::new(), Vec::new(), Vec::new());
+    let entry = Entry::Use { path: path.to_string(), as_key: None, named: None, when: None, line };
+    collect_params(std::slice::from_ref(&entry), file_name, load, &mut env, 1, &mut raw, &mut inputs, &mut Vec::new(), &mut filled, None)?;
+    for (p, v) in &env {
+        if !pack.owned.contains_key(p) || !(filled.contains(p) || is_no_value(v)) {
+            continue;
+        }
+        // a param of the use with no value is named as the estate binds it
+        let v = match no_value_of(v) {
+            Some((param, declared, asked)) => no_value(&named::bound_name(name, &param), declared, asked),
+            None => v.clone(),
+        };
+        start.entry(p.clone()).or_insert(v);
+    }
+    for c in &mut raw {
+        if let Some((f, l)) = pack.owned.get(&c.param) {
+            return perr(
+                &c.file,
+                c.line,
+                format!(
+                    "{}{}: `{}` is a list param of the named use `{}` ({}:{}) — a contribution to a list of a named use is not supported yet",
+                    satz::CONTRIBUTES_PREFIX, c.param, c.param, name, f, l
+                ),
+            );
+        }
+        c.scope = Some(env.clone());
+    }
+    Ok(NamedEnv { pack, start, contributions: raw })
 }
 
 /// A Satz resource key as its Terraform type name.
@@ -3427,12 +3672,13 @@ pub fn fragments_from_source(
     types: &dyn TypeResolver,
     load: &dyn Fn(&str) -> Result<String, String>,
 ) -> Result<Vec<Fragment>, PipelineError> {
-    let file = satz::parse(src)
+    let mut file = satz::parse(src)
         .map_err(|e| PipelineError { file: file_name.to_string(), line: e.line, msg: e.msg })?;
+    let bindings = NamedBindings::take(&mut file);
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new() };
     w.register_names(&file, file_name)?;
     w.open_frame(&file, file_name)?;
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
@@ -3504,6 +3750,40 @@ struct Walk<'a> {
     /// Every param, input and local value a walked file declares, by name — what a local
     /// value's name is held unique against.
     names: BTreeMap<String, Vec<NameSite>>,
+    /// The estate's bindings of its named uses' params, `<name>.<param>`.
+    bindings: NamedBindings,
+    /// The named use being walked, while it is.
+    named: Option<NamedFrame>,
+    /// Every named use walked, in file order.
+    named_uses: Vec<NamedUse>,
+    /// The params of every named use walked, as the HCL code names them: `web__vm_zone`.
+    named_tfvars: Env,
+}
+
+/// What the walk keeps while it walks a named use.
+struct NamedFrame {
+    name: String,
+    /// the params the use owns
+    owned: std::collections::BTreeSet<String>,
+    /// every address the use writes, unprefixed, with the params of the use it reads
+    reads: BTreeMap<Address, std::collections::BTreeSet<String>>,
+    /// the claims of the use's files, witnesses unprefixed
+    claims: Vec<PackClaims>,
+    /// what each local value of each file of the use reads, by file, which a read of it reads
+    locals: BTreeMap<String, BTreeMap<String, std::collections::BTreeSet<String>>>,
+}
+
+impl NamedFrame {
+    /// Notes what the resource at `addr` reads of the use's params.
+    fn note(&mut self, addr: &Address, entries: &[Entry], file_name: &str) {
+        let mut reads = std::collections::BTreeSet::new();
+        named::reads_of_entries(entries, &mut reads);
+        let locals = self.locals.get(file_name);
+        let through: Vec<String> = reads.iter().filter_map(|r| locals.and_then(|l| l.get(r))).flatten().cloned().collect();
+        reads.extend(through);
+        reads.retain(|p| self.owned.contains(p));
+        self.reads.entry(addr.clone()).or_default().extend(reads);
+    }
 }
 
 /// `kind` of a `NameSite` that is a local value.
@@ -3626,7 +3906,11 @@ impl Walk<'_> {
         if file.claims.is_empty() {
             return;
         }
-        self.claims.push(pack_claims(file, file_name));
+        match self.named.as_mut() {
+            // the witnesses are prefixed once the use's addresses are known
+            Some(f) => f.claims.push(pack_claims(file, file_name)),
+            None => self.claims.push(pack_claims(file, file_name)),
+        }
     }
 
     /// Called from the same place as `absorb_claims` — after the `use … when`
@@ -3637,7 +3921,11 @@ impl Walk<'_> {
         if file.questions.is_empty() {
             return;
         }
-        self.questions.push(pack_questions(file, file_name));
+        let pq = pack_questions(file, file_name);
+        self.questions.push(match &self.named {
+            Some(f) => named_questions(pq, &f.name, &f.owned),
+            None => pq,
+        });
     }
 
     /// A list's `defaults` written into the list it names: every entry that does
@@ -4016,6 +4304,68 @@ impl Walk<'_> {
         Ok((file, saved))
     }
 
+    /// `use "<path>" named <name>`: the pack walked under its name. Its namespace is
+    /// the estate's flat one, read-only, with every param the pack owns taken out and
+    /// replaced by the estate's binding `<name>.<param>`, else the pack's default as the use
+    /// resolves it; a param declared `none` and given a default by a later file of the use
+    /// has it from the start, as in the estate (`named_use_env`). The declarations the
+    /// ADR 0104 comparison holds are the use's own. What it writes takes the prefix
+    /// `<name>__`, its params go to `terraform.tfvars` as `<name>__<param>`, and its claims'
+    /// witnesses follow the addresses.
+    fn named_use(&mut self, name: &str, use_path: &str, file_name: &str, line: usize, all: &mut Vec<Fragment>) -> Result<(), PipelineError> {
+        if self.use_chain.len() != 1 || self.named.is_some() {
+            return perr(file_name, line, format!("use \"{}\" named {}: a named use stands at the top level of the estate file — {} is used by {}", use_path, name, file_name, self.use_chain.first().map(String::as_str).unwrap_or_default()));
+        }
+        // the estate's local values are no part of what the use reads
+        let estate_frame = self.stash_frame();
+        let ne = named_use_env(name, use_path, &self.genv, &self.bindings, self.load, file_name, line)?;
+        let flat = std::mem::replace(&mut self.genv, ne.start);
+        let flat_declared = std::mem::take(&mut self.declared);
+        self.named = Some(NamedFrame { name: name.to_string(), owned: ne.pack.owned.keys().cloned().collect(), reads: BTreeMap::new(), claims: Vec::new(), locals: BTreeMap::new() });
+        let walked = (|| {
+            let (file, saved) = self.enter_use(use_path, file_name, line)?;
+            position::used_file_fits(Position::File, &file, use_path, file_name, line, self.types)?;
+            let mut frags = Vec::new();
+            let mut child_own = Fragment::default();
+            self.items(&file.items, use_path, &mut child_own, &mut frags, &[])?;
+            self.leave_use(saved);
+            frags.push(child_own);
+            Ok::<_, PipelineError>(frags)
+        })();
+        let used = std::mem::replace(&mut self.genv, flat);
+        self.declared = flat_declared;
+        for (k, v) in &estate_frame {
+            self.genv.insert(k.clone(), v.clone());
+        }
+        self.frame = estate_frame;
+        let frame = self.named.take().expect("set above");
+        let frags = walked?;
+        let prefix = named::Prefix::new(name, &frags);
+        let frags = prefix.apply(frags);
+        let mut params = Vec::new();
+        for p in &frame.owned {
+            if let Some(v) = used.get(p) {
+                let var = named::variable_name(name, p);
+                self.named_tfvars.insert(var.clone(), v.clone());
+                params.push(var);
+            }
+        }
+        for mut pc in frame.claims {
+            for c in &mut pc.claims {
+                c.resources = c.resources.iter().map(|w| prefix.witness(w)).collect();
+            }
+            self.claims.push(pc);
+        }
+        let addresses = frame
+            .reads
+            .into_iter()
+            .map(|(a, r)| (Address { label: format!("{}{}{}", name, satz::NAMED_SEP, a.label), tf_type: a.tf_type }, r))
+            .collect();
+        self.named_uses.push(NamedUse { name: name.to_string(), path: use_path.to_string(), file: file_name.to_string(), line, addresses, params });
+        all.extend(frags);
+        Ok(())
+    }
+
     /// Back from a used file: its local values leave the namespace, the using file's return.
     fn leave_use(&mut self, saved: Env) {
         self.use_chain.pop();
@@ -4041,6 +4391,17 @@ impl Walk<'_> {
     fn open_frame(&mut self, file: &File, file_name: &str) -> Result<(), PipelineError> {
         debug_assert!(self.frame.is_empty());
         let inputs: Vec<&str> = self.inputs.keys().map(|k| k.as_str()).collect();
+        if let Some(f) = self.named.as_mut() {
+            // what a local value reads, through the local values it reads
+            let locals = f.locals.entry(file_name.to_string()).or_default();
+            for (name, v, _) in satz::sort_params_by_deps(&file.locals) {
+                let mut reads = std::collections::BTreeSet::new();
+                named::reads_of_value(v, &mut reads);
+                let through: Vec<String> = reads.iter().filter_map(|r| locals.get(r)).flatten().cloned().collect();
+                reads.extend(through);
+                locals.insert(name.clone(), reads);
+            }
+        }
         for (name, v, line) in satz::sort_params_by_deps(&file.locals) {
             if let Some(i) = satz::reads_any(v, &inputs) {
                 return perr(file_name, *line, format!("local value `{}` reads the input `{}` — a local value is fixed at transpile time, and an input is a variable the plan reads; write the value", name, i));
@@ -4049,7 +4410,10 @@ impl Walk<'_> {
             self.genv.insert(name.clone(), resolved.clone());
             self.frame.insert(name.clone(), resolved);
         }
-        self.locals_of.entry(file_name.to_string()).or_insert_with(|| self.frame.clone());
+        // a named use's local values are its own; what is read after the walk reads none
+        if self.named.is_none() {
+            self.locals_of.entry(file_name.to_string()).or_insert_with(|| self.frame.clone());
+        }
         Ok(())
     }
 
@@ -4129,7 +4493,7 @@ impl Walk<'_> {
                 Entry::When { line, .. } => {
                     return perr(file_name, *line, "a `when` reached the walk at the top level of a file");
                 }
-                Entry::Use { path: use_path, as_key, when, line } => {
+                Entry::Use { path: use_path, as_key, named, when, line } => {
                     // Before the `when` guard: a line gated off still points at a
                     // stale copy, and the fleet migrates once.
                     if let Some(e) = moved_pack(use_path, file_name, *line) {
@@ -4139,6 +4503,10 @@ impl Walk<'_> {
                         if !self.when_holds(p, file_name, *line)? {
                             continue;
                         }
+                    }
+                    if let Some(n) = named {
+                        self.named_use(n, use_path, file_name, *line, all)?;
+                        continue;
                     }
                     let (file, saved) = self.enter_use(use_path, file_name, *line)?;
                     let mut child_own = Fragment::default();
@@ -4243,7 +4611,7 @@ impl Walk<'_> {
                         }
                         // `google_folder { use "…" }` — the pack's items are folder-map
                         // content (named folder nodes), in their own fragment.
-                        Entry::Use { path: use_path, as_key, when, line } => {
+                        Entry::Use { path: use_path, as_key, when, line, .. } => {
                             if let Some(e) = moved_pack(use_path, file_name, *line) {
                                 return Err(e);
                             }
@@ -4305,6 +4673,9 @@ impl Walk<'_> {
         // resource type (or `folder`/`project`/`use`) are children; everything
         // else — attrs, labels-style maps — is folder body.
         let (attrs, children, rendering) = self.split_body(body, file_name, "google_folder", fname, line)?;
+        if let Some(f) = self.named.as_mut() {
+            f.note(&Address { tf_type: "google_folder".to_string(), label: fname.to_string() }, body, file_name);
+        }
         insert_entity(
             own,
             Address { tf_type: "google_folder".to_string(), label: fname.to_string() },
@@ -4432,6 +4803,9 @@ impl Walk<'_> {
         };
         for (pname, pbody, pline) in named {
             let (mut attrs, children, mut rendering) = self.split_body(pbody, file_name, "google_project", &pname, pline)?;
+            if let Some(f) = self.named.as_mut() {
+                f.note(&Address { tf_type: "google_project".to_string(), label: pname.clone() }, pbody, file_name);
+            }
             // project_service may arrive as an Attr list (already in attrs) or as
             // a Map — split_body routed non-resource maps into attrs already.
             if !attrs.contains_key(serde_yaml::Value::String("project_id".into())) {
@@ -4612,7 +4986,7 @@ impl Walk<'_> {
                             insert_grant(own, rt, &member, &roles, file_name, *line, path, pin)?;
                             continue;
                         }
-                        Entry::Use { path: use_path, as_key, when, line } => {
+                        Entry::Use { path: use_path, as_key, when, line, .. } => {
                             if let Some(e) = moved_pack(use_path, file_name, *line) {
                                 return Err(e);
                             }
@@ -4661,6 +5035,9 @@ impl Walk<'_> {
                 let twin = resolve_obj(entries, &self.render_env(), file_name)?;
                 self.rendering_of(&real, twin, &rt.tf_type, file_name, line)?
             };
+            if let Some(f) = self.named.as_mut() {
+                f.note(&Address { tf_type: rt.tf_type.clone(), label: label.clone() }, entries, file_name);
+            }
             insert_entity(
                 own,
                 Address { tf_type: rt.tf_type.clone(), label },
@@ -5068,7 +5445,7 @@ params {
         #[test]
         fn a_target_nobody_declares_is_dropped_and_named_in_the_record() {
             let file = satz::parse("estate e\nuse \"one.satz\"\n").unwrap();
-            let (seed, records, _) = contribution_seed(&file, "main.satz", &load).unwrap();
+            let (seed, records, _) = contribution_seed(&file, "main.satz", &NamedBindings::default(), &load).unwrap();
             assert!(seed.is_empty(), "nothing to add to, so nothing is added");
             assert_eq!(records.len(), 1);
             assert_eq!((records[0].param.as_str(), records[0].applied), ("subjects", false));

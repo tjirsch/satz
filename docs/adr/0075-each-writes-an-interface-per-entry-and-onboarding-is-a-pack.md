@@ -56,7 +56,8 @@ since an interface declared in two files is one.
 
 **Pack instances** (`use "…" as payments { params { … } }`, deferred in ADR 0071).
 *Rejected again:* one expansion point covers the case, and instances would need a param
-scope per instance in every tool that reads pack lines.
+scope per instance in every tool that reads pack lines. *Built as named uses by [ADR
+0109](0109-a-named-use-is-a-pack-used-under-a-name-with-params-of-its-own.md), for packs that are a unit of their own.*
 
 **Normalise `-` in every `${{…}}` reference** rather than in the text an `each` writes.
 *Rejected:* it would change how hand-written references are read and reach the emitter's

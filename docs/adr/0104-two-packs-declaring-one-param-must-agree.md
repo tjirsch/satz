@@ -1,6 +1,6 @@
 # 0104 — two packs declaring one param must agree, and a pack's own param carries its name
 
-- **Status:** accepted; amended by [ADR 0106](0106-none-declares-a-param-without-a-value.md) — a declaration `none` agrees with any default
+- **Status:** accepted; amended by [ADR 0106](0106-none-declares-a-param-without-a-value.md) — a declaration `none` agrees with any default; option C built by [ADR 0109](0109-a-named-use-is-a-pack-used-under-a-name-with-params-of-its-own.md) as named uses, the refusal judged within each use
 - **Date:** 2026-11-25
 
 ## Context

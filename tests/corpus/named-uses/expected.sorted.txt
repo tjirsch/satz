@@ -1,0 +1,143 @@
+      network_tier = "PREMIUM"
+    access_config {
+    network = "${google_compute_network.shared.self_link}"
+    network = "${google_compute_network.shared.self_link}"
+    network = "${google_compute_network.shared.self_link}"
+    source = "${google_compute_disk.boot.self_link}"
+    source = "${google_compute_disk.db__boot.self_link}"
+    source = "${google_compute_disk.web__boot.self_link}"
+    }
+  auto_create_subnetworks = false
+  billing_account = "012345-6789AB-CDEF01"
+  billing_account = "012345-6789AB-CDEF01"
+  billing_account = "012345-6789AB-CDEF01"
+  boot_disk {
+  boot_disk {
+  boot_disk {
+  machine_type = "e2-medium"
+  machine_type = "e2-small"
+  machine_type = "n2-standard-4"
+  member = "group:vm-admins@example.com"
+  member = "group:vm-admins@example.com"
+  member = "group:vm-admins@example.com"
+  member = "group:vm-admins@example.com"
+  name = "acme-db"
+  name = "acme-db-001"
+  name = "acme-db-boot"
+  name = "acme-shared"
+  name = "acme-vm"
+  name = "acme-vm-001"
+  name = "acme-vm-boot"
+  name = "acme-web"
+  name = "acme-web-001"
+  name = "acme-web-boot"
+  network_interface {
+  network_interface {
+  network_interface {
+  org_id = "123456789012"
+  org_id = "123456789012"
+  org_id = "123456789012"
+  org_id = "123456789012"
+  project = "acme-infra-001"
+  project = google_project.db__vm_host.project_id
+  project = google_project.db__vm_host.project_id
+  project = google_project.db__vm_host.project_id
+  project = google_project.vm_host.project_id
+  project = google_project.vm_host.project_id
+  project = google_project.vm_host.project_id
+  project = google_project.web__vm_host.project_id
+  project = google_project.web__vm_host.project_id
+  project = google_project.web__vm_host.project_id
+  project_id = "acme-db-001"
+  project_id = "acme-vm-001"
+  project_id = "acme-web-001"
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.google
+  provider = google.project_db__vm_host
+  provider = google.project_db__vm_host
+  provider = google.project_db__vm_host
+  provider = google.project_vm_host
+  provider = google.project_vm_host
+  provider = google.project_vm_host
+  provider = google.project_web__vm_host
+  provider = google.project_web__vm_host
+  provider = google.project_web__vm_host
+  role = "roles/compute.instanceAdmin.v1"
+  role = "roles/compute.instanceAdmin.v1"
+  role = "roles/compute.instanceAdmin.v1"
+  role = "roles/compute.viewer"
+  size = 10
+  size = 10
+  size = 10
+  zone = "europe-west3-a"
+  zone = "europe-west3-a"
+  zone = "europe-west3-b"
+  zone = "europe-west3-b"
+  zone = "europe-west3-c"
+  zone = "europe-west3-c"
+  }
+  }
+  }
+  }
+  }
+  }
+resource "google_compute_disk" "boot" {
+resource "google_compute_disk" "db__boot" {
+resource "google_compute_disk" "web__boot" {
+resource "google_compute_instance" "db__vm" {
+resource "google_compute_instance" "vm" {
+resource "google_compute_instance" "web__vm" {
+resource "google_compute_network" "shared" {
+resource "google_organization_iam_member" "iam_group_vm_admins_example_com_f17b2c72889f3baa" {
+resource "google_project" "db__vm_host" {
+resource "google_project" "vm_host" {
+resource "google_project" "web__vm_host" {
+resource "google_project_iam_member" "iam_group_vm_admins_example_com_5017b77525d10c46" {
+resource "google_project_iam_member" "iam_group_vm_admins_example_com_6d408cc59c3a834d" {
+resource "google_project_iam_member" "iam_group_vm_admins_example_com_82b13c859e7fa19b" {
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+}
+---tfvars---
+  "group:vm-admins@example.com",
+  "serviceAccount:acme-db@acme-infra-001.iam.gserviceaccount.com",
+  "serviceAccount:acme-vm@acme-infra-001.iam.gserviceaccount.com"
+  "serviceAccount:acme-web@acme-infra-001.iam.gserviceaccount.com",
+  "user:owner@example.com",
+]
+billing-account-infra = "012345-6789AB-CDEF01"
+customer-organization-id = "123456789012"
+customer-shortname = "acme"
+db--vm-machine-type = "n2-standard-4"
+db--vm-name = "acme-db"
+db--vm-project-id = "acme-db-001"
+db--vm-public = false
+db--vm-zone = "europe-west3-b"
+infra-project-name = "acme-infra-001"
+vm-admin-members = [
+vm-machine-type = "e2-small"
+vm-name = "acme-vm"
+vm-project-id = "acme-vm-001"
+vm-public = false
+vm-zone = "europe-west3-c"
+want-db = true
+web--vm-machine-type = "e2-medium"
+web--vm-name = "acme-web"
+web--vm-project-id = "acme-web-001"
+web--vm-public = true
+web--vm-zone = "europe-west3-a"
+---imports---

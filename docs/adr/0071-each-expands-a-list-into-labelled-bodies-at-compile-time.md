@@ -48,7 +48,9 @@ depend on a value only Terraform resolves.
 **Pack instances** (`use "x.satz" as payments { params { … } }`). *Deferred.* A second
 param scope per instance, labels prefixed per instance, and every tool that reads pack
 lines (the interview, the pack graph, `merge-presets`) learning instances. `each` covers
-the cases that arose — a list of projects, subnets, folders — with one expansion point.
+the cases that arose — a list of projects, subnets, folders — with one expansion point. *Built
+as named uses by [ADR 0109](0109-a-named-use-is-a-pack-used-under-a-name-with-params-of-its-own.md): `use "x.satz" named payments`, bound in the
+estate's `params` as `payments.<param>`.*
 
 **Two request forms** (entries in one resource, and whole resources a request file may
 declare). *Superseded* before it was built: with `each`, a request is always entries

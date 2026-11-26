@@ -1,0 +1,65 @@
+// A machine in a project of its own: the pack the corpus case uses three times. Every
+// cloud name reads `vm_name`, so each use names its own.
+
+pack corpus_vm version "1.0" multiple
+
+params {
+  vm_name         = "{customer_shortname}-vm"
+  vm_zone         = "europe-west3-c"
+  vm_machine_type = none
+  vm_public       = false
+  vm_project_id   = "{vm_name}-001"
+  contributes_vm_admin_members = [
+    "group:vm-admins@example.com",
+    "serviceAccount:{vm_name}@{infra_project_name}.iam.gserviceaccount.com",
+  ]
+}
+
+locals {
+  vm_disk_name = "{vm_name}-boot"
+}
+
+question vm_zone {
+  prompt   = "The zone the machine runs in"
+  why      = "A machine moved to another zone is a new machine."
+  reversal = recreate
+  blast    = low
+}
+
+google_project {
+  vm_host {
+    name            = vm_project_id
+    project_id      = vm_project_id
+    billing_account = billing_account_infra
+    google_compute_disk {
+      boot {
+        name = vm_disk_name
+        zone = vm_zone
+        size = 10
+      }
+    }
+    google_compute_instance {
+      vm {
+        name         = vm_name
+        zone         = vm_zone
+        machine_type = vm_machine_type
+        boot_disk {
+          source = "${{google_compute_disk.boot.self_link}}"
+        }
+        network_interface {
+          network = "${{google_compute_network.shared.self_link}}"
+          access_config when vm_public {
+            network_tier = "PREMIUM"
+          }
+        }
+      }
+    }
+    google_project_iam_member {
+      "group:vm-admins@example.com" = ["roles/compute.instanceAdmin.v1"]
+    }
+  }
+}
+
+google_organization_iam_member {
+  "group:vm-admins@example.com" = ["roles/compute.viewer"]
+}
