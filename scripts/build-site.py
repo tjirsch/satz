@@ -55,7 +55,6 @@ SITE_DOCS: list[str] = [
 # Not published, and why. These stay in the repository and stay linkable — a link
 # to one from a published page is rewritten to GitHub rather than left dead.
 SITE_DOCS_EXCLUDED: dict[str, str] = {
-    "security-toolset-integration": "proposal under rework; it describes an audit loop that is not what satz does today",
     "fast-delta": "source material for the competitive matrix, which carries the conclusions",
     "stage-b": "how the pipeline was built. The language reference is how it is used, and the migration commands are in `docs/language.md` §12.3",
 }

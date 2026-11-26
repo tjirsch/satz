@@ -4,8 +4,7 @@ Rust tool (bin `satz`, crate `crates/satz-core`) that transpiles estates written
 resource types and attributes are the Terraform provider's, to the underscore —
 to OpenTofu/Terraform HCL, with a compliance plane on top: claims → catalogs →
 `require` (goal view, declared) → `report-compliance` (evidence, verified live,
-by value). `docs/language.md` is the language reference;
-`docs/security-toolset-integration.md` is the proposal for the audit loop.
+by value). `docs/language.md` is the language reference.
 
 This file holds the rules that apply to every contributor. The maintainer's
 private working state (fleet, customers, runbooks, task list) lives OUTSIDE

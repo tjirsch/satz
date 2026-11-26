@@ -648,7 +648,6 @@ Excluded, and why:
 
 | doc | why not published |
 |---|---|
-| `security-toolset-integration.md` | a proposal under rework; it describes an audit loop satz does not implement |
 | `fast-delta.md` | source material for the competitive matrix, which carries the conclusions |
 | `stage-b.md` | how the pipeline was built. The language reference is how it is used, and the migration commands are in the README |
 
