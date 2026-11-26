@@ -1,6 +1,6 @@
 # 0097 — pack sources live in config.toml
 
-- **Status:** accepted
+- **Status:** accepted, amended 2026-11-26 (one packs folder, several estates)
 - **Date:** 2026-11-20
 
 ## Context
@@ -100,3 +100,53 @@ Option 1 for the sources and option 1 for the library.
   the `sources` of the pack reports.
 - A pack the repository wrote is copied into a folder source by `satz publish-pack`, which
   writes its row as `get-pack --source` does ([ADR 0099](0099-a-pack-the-repository-wrote-is-published-to-a-folder-source.md)).
+
+## Amendment: one packs folder, several estates (2026-11-26)
+
+### Context
+
+Several estates may share one packs folder: a repository with `packs/` at its top and one
+estate per customer under `estates/<customer>/`, each with its own `config.toml`. Every
+estate declares the sources the shared `origin.toml` names, each in its own `config.toml`.
+Nothing held those declarations to agree: an estate that lacked a source was refused with
+`satz pack-source add` and no hint of what to add, and a `dir` source was compared by its
+text. A row wrote its folder as the fetching estate's `config.toml` writes it, relative to
+that file, so a second estate one level deeper — whose `dir` names the same folder as
+`../../shared-packs` — was refused, and one whose `dir` happened to read the same text from
+another place was followed to another folder.
+
+### Options
+
+1. **Keep repeating the sources in each `config.toml`, and check the repetition.** A row
+   records what every estate can compare — the repository and its folder, or the folder
+   relative to the folder that holds `origin.toml` — and each command that reads the record
+   with an estate's `config.toml` refuses a row whose source that `config.toml` does not
+   declare, or declares elsewhere, comparing a `dir` as a resolved folder on disk. Cost: the
+   sources are written once per estate, and an existing row's folder is rewritten once.
+2. **Declare the sources in the packs folder**, beside `origin.toml`, for every estate that
+   shares it. Cost: a second place an estate's configuration is kept; `config.toml` would no
+   longer say where an estate reads its packs from, and `satz pack-source` would edit one
+   file or the other depending on the layout.
+
+### Decision
+
+Option 1. A row of a folder source writes `folder`, the folder relative to the one that
+holds `origin.toml`, in place of `dir`; a row that writes `dir` is refused with the
+`folder` to write, computed from the `config.toml` of the estate that reads it. `get-pack`,
+`update-pack`, `publish-pack` and `satz packs` refuse, before they read or write anything, a
+row whose source the estate's `config.toml` does not declare — naming the row, the
+`config.toml` and the `[[pack_source]]` table to add — and a row whose repository, folder of
+the repository or resolved folder differs from what the estate declares — naming both
+places, the line of `config.toml` to write, and the edit to the row for a source that moved.
+`satz packs` refuses as it refuses a row whose file is missing; it lists nothing it cannot
+follow.
+
+### Consequences
+
+- Every estate that shares a packs folder declares the same sources, by name and place, in
+  its own `config.toml`; the check finds one that does not.
+- A `dir` spelled differently from each estate is the same source when it resolves to the
+  same folder.
+- An `origin.toml` written before this change is edited once: `dir = "<folder>"` becomes
+  `folder = "<the same folder relative to the packs folder>"`; the refusal names the value
+  (`presets/CHANGELOG.md`, Breaking changes).

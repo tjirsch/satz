@@ -1607,8 +1607,8 @@ another), and that folder holds two kinds:
 `origin.toml` is the origin record: one row per fetched pack, with its id, the name of the
 pack source it came from, for a GitHub source the repository (`github`), the folder of it
 where that is not `packs` (`path`) and the commit the file was read at, for a folder source
-the folder as `config.toml` writes it (`dir`), the version it stated and the SHA-256 of the
-file as fetched. It is committed with the estate. The row decides whose a pack is; its name
+the folder relative to the folder that holds `origin.toml` (`folder`), the version it stated
+and the SHA-256 of the file as fetched. It is committed with the estate. The row decides whose a pack is; its name
 does not, so a pack the repository wrote stays its own when a source gains a pack of the
 same id.
 
@@ -1624,21 +1624,64 @@ sha256 = "…"
 [[pack]]
 id = "data/warehouse"
 source = "shared"
-dir = "../shared-packs"
+folder = "../../shared-packs"
 version = "2.1"
 sha256 = "…"
 ```
 
 A row names a source by its name, and `config.toml` says where that source is, so every
-clone of the repository follows the row to the same place. A row whose source
-`config.toml` does not name is refused with the command that adds it; so is a row whose
-repository, folder of the repository or folder differs from what `config.toml` now names
-for its source, with the edit to the row, and a row of the form
-`source = "github:…"` or `source = "dir"`, which names no repository or folder, with the edit
-that turns it into a row of the form above.
+clone of the repository follows the row to the same place. `get-pack`, `update-pack`,
+`publish-pack` and `satz packs` hold every row to the `config.toml` of the estate they run
+in, before they read or write anything, and refuse:
+
+- a row whose source that `config.toml` does not declare — naming the row's pack, the
+  `config.toml` and the `[[pack_source]]` table to add, with the repository or the folder
+  the row records, written as that `config.toml` reaches it;
+- a row whose repository or folder of the repository differs from what `config.toml`
+  declares for its source, or whose folder is another folder on disk than the one the
+  source's `dir` resolves to from that `config.toml` — naming both places, the line of
+  `config.toml` that names where the row was fetched from, and the edit to the row for the
+  case where the source moved;
+- a row of the form `source = "github:…"` or `source = "dir"`, which names no repository or
+  folder, and a row that writes its folder as `dir`, relative to the `config.toml` that
+  fetched it — each with the edit that turns it into a row of the form above.
+
+`detach-pack` and `pack-source remove` read the record without that check.
 
 A pack's **id** is its path under its source's folder without `.satz`:
 `packs/workload-project.satz` is `workload-project`.
+
+#### One packs folder, several estates
+
+Several estates may share one packs folder — a repository with `packs/` at its top and
+one estate per customer under `estates/<customer>/`, each with its own `config.toml`:
+
+```text
+packs/                  origin.toml and the packs
+shared-packs/           a folder source
+estates/acme/config.toml
+estates/example/config.toml
+```
+
+Each estate names the packs folder and declares the sources in its own `config.toml`, the
+one place its configuration is kept:
+
+```toml
+packs_dir = "../../packs"
+
+[[pack_source]]
+name = "shared"
+dir  = "../../shared-packs"    # relative to this config.toml
+```
+
+The record is one file for all of them, so its rows have to mean the same from each estate.
+A row writes a folder source's folder relative to the folder that holds `origin.toml` —
+`folder = "../shared-packs"` here — and that is the same folder whichever estate fetched
+the pack. Every estate that reads the record declares each source a row names, under the
+same name, pointing at the same repository or, for a `dir`, at a folder that resolves to the
+same folder on disk; `../../shared-packs` and `../.././shared-packs/` are the same folder,
+and `../other-packs` is another. An estate that lacks a source, or points it elsewhere, is
+refused by the commands above, naming the row and the line of its `config.toml` to fix.
 
 ### The pack sources
 
@@ -1807,7 +1850,7 @@ becomes `../shared-packs/data/warehouse.satz`, its folders created. Before anyth
 copied, the pack clears `review-pack`'s bar inside the estate it was tested in — the one
 `--estate` names, or the one estate in `yaml_dir`: it is formatted, the estate transpiles
 with it and writes resources from it, and the rest of that bar holds. Then `publish-pack`
-writes the pack's row in `origin.toml` — `source`, `dir`, `version` and `sha256`, the row
+writes the pack's row in `origin.toml` — `source`, `folder`, `version` and `sha256`, the row
 `get-pack --source shared` writes — so from then on the pack is a fetched one:
 `update-pack` compares it with the source, an edit here is reported as `edited`, and the
 next change is made in the source's folder, or here and published again after

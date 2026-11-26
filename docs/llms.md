@@ -233,8 +233,8 @@ lists only `packs_dir`. `satz_get_pack` fetches one (`source` names where from) 
 `satz_publish_pack` copies one of the repository's own into a folder source and records it
 as fetched from there, and `satz_review_pack` judges one. A pack with no row in `origin.toml` is the repository's own:
 no tool writes it, and you edit it as you edit the estate. A source is added with `satz
-pack-source add`, which the human runs; a refusal that names a source `config.toml` lacks is
-theirs to resolve.
+pack-source add`, which the human runs; a refusal that names a source `config.toml` lacks, or
+declares elsewhere than a row of `origin.toml` records, is theirs to resolve.
 
 ## Removing something a pack contributes
 
