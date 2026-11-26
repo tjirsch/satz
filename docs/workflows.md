@@ -119,7 +119,9 @@ Five steps, in this order. Each one is a section below.
    POLICY_ALREADY_EXISTS`. satz prints that notice when the pack goes on, the transpile warns
    at its `use` line, and `transpile --apply` and `bootstrap` refuse until the estate binds
    the notice's param `true` — which `adopt --execute --import` does itself when the run
-   covers every type and nothing is left unresolved.
+   covers every type and nothing is left unresolved. A pack used under several names asks
+   once per use: the estate binds `<name>.<param> = true` for each, and `adopt --execute
+   --import` binds every use's.
 
 ![The five steps of an estate's life, each as satz commands in the terminal and as satz studio: write the estate, bootstrap, apply as yourself, switch to the service account, add packs one at a time; steps 1–3 run as the logged-in user with a local state, steps 4–5 as the estate account with the state in the bucket](workflow-lifecycle.svg)
 
@@ -807,6 +809,14 @@ lookups for folders, groups, memberships and organization policies, IAM grants a
 live IAM policy of what they are granted on, `import_id`/`match_on`
 rules for the rest — and never guesses: one candidate resolves, several is
 ambiguous.
+
+A pack the estate uses under names writes each resource once per use, as `<name>__<label>`;
+`satz adopt` resolves each address, and the table names the use. `--execute` writes no
+`"import-id"` into the pack: one line serves every use, so the resource is listed with
+`--execute --import`, which imports each address into the state. A pack used without a name
+and then under one moves every address it writes from `<label>` to `<name>__<label>`: adopt
+reads that as a state move, the same live object under a new address, and `--execute
+--import` runs the `state mv`.
 
 ### Let satz take over
 
@@ -1783,7 +1793,9 @@ transpile's own rule:
   all carry the same value; two folders that carry it differently give it to no bare read,
   and the pack's param is bound to a named read in the estate;
 - a read in a param the estate binds is not made: `bound_by_estate` is true and nothing is
-  matched.
+  matched. For a pack the estate uses under names (`use "packs/…" named <name>`), `named`
+  lists the names, and the read is not made where every use binds the param as
+  `<name>.<param>` and a flat line beside them binds it by its name.
 
 `met_by` lists the folders that give the value, and `description` is the description of
 the export that gives it — of the first folder in `met_by` where several give it — or `null`
@@ -2112,7 +2124,8 @@ satz --config . merge-presets --report-only   # preview every planned action
 satz --config . merge-presets
 ```
 
-Afterwards you have `X.local.satz` (your content, now the thing the estate uses), a
+Afterwards you have `X.local.satz` (your content, now the thing the estate uses — a repointed
+line keeps its `named <name>` and its `when`), a
 refreshed pristine `X.satz`, and `X.diff.satz` telling you exactly what adopting
 upstream would change. Read the diff; adopt when you are ready by pointing the
 estate's `use` back at the pristine name and deleting the fork.

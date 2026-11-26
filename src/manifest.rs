@@ -66,6 +66,11 @@ pub(crate) struct EmittedResource {
     /// the `label {` line). `None` for resources derived from another block
     /// (memberships, exploded grants, project services).
     pub origin: Option<(String, u32)>,
+    /// The named use that wrote the resource, `web` for `google_x.web__y` (ADR 0109): the
+    /// pack line `origin` names serves every use of the pack, and this says which one. `None`
+    /// for what the estate writes flat, and for a grant of a grant map, whose identity is the
+    /// member, the role and the scope.
+    pub named: Option<String>,
     /// Every attribute the block writes, top-level and one nested block down
     /// (`status.resources`, `lifecycle.ignore_changes`), with its value as HCL text; the
     /// first occurrence of a repeated key wins. What the interface's attach points are
@@ -205,6 +210,15 @@ impl Manifest {
         }
     }
 
+    /// Mark every resource a named use wrote with the use's name: its label is
+    /// `<name>__<label>`, which nothing else of the estate may begin with (ADR 0109).
+    pub fn set_named<'a>(&mut self, names: impl IntoIterator<Item = &'a str>) {
+        let names: Vec<&str> = names.into_iter().collect();
+        for r in self.resources.values_mut() {
+            r.named = names.iter().find(|n| r.label.starts_with(&format!("{}{}", n, satz_core::satz::NAMED_SEP))).map(|n| n.to_string());
+        }
+    }
+
     /// Record where a resource was declared. Called by the emitter per fold
     /// entity for the block(s) that entity produced directly.
     pub fn set_origin(&mut self, address: &str, file: &str, line: u32) {
@@ -340,6 +354,7 @@ fn resource_from_block(b: &hcl::Block) -> Option<EmittedResource> {
         condition_expressions,
         import_id: None,
         origin: None,
+        named: None,
         set,
     })
 }

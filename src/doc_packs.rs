@@ -111,10 +111,13 @@ fn entry_text(e: &Entry) -> String {
             let n = name.as_ref().map(|n| format!(" {}", key_text(n))).unwrap_or_default();
             format!("{}{} {{ {} }}", key_text(key), n, body.iter().map(entry_text).collect::<Vec<_>>().join(" "))
         }
-        Entry::Use { path, as_key, when, .. } => {
+        Entry::Use { path, as_key, named, when, .. } => {
             let mut s = format!("use \"{}\"", path);
             if let Some(a) = as_key {
                 s.push_str(&format!(" as {}", a));
+            }
+            if let Some(n) = named {
+                s.push_str(&format!(" named {}", n));
             }
             if let Some(w) = when {
                 s.push_str(&format!(" when {}", w));
@@ -945,6 +948,9 @@ fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Res
     }
     md.push_str(&inv);
     md.push_str("\n```\n\n");
+    if let (true, Some(rest)) = (file.multiple, inv.strip_prefix("use ")) {
+        md.push_str(&named_use_it(rest, &params));
+    }
 
     if let Some(g) = &gate {
         let by = lib.get(g).map(|packs| {
@@ -979,6 +985,29 @@ fn use_it(rel: &Path, file: &File, sh: &Shape, h: &Header, lib: &Library) -> Res
         md.push('\n');
     }
     Ok(md)
+}
+
+/// For a pack whose header says `multiple`: the line that uses it under a name, `rest`
+/// being the invocation after `use `, and the params each use binds as `<name>.<param>`
+/// (ADR 0109).
+fn named_use_it(rest: &str, params: &[&(String, Value, usize)]) -> String {
+    let (path, gate) = match rest.split_once(" when ") {
+        Some((p, g)) => (p, format!(" when {}", g)),
+        None => (rest, String::new()),
+    };
+    let mut md = String::from(
+        "The header says `multiple`: an estate uses the pack several times, each a named use with params of its own, bound as `<name>.<param>`:\n\n```\n",
+    );
+    if !params.is_empty() {
+        md.push_str("params {\n");
+        for (n, v, _) in params {
+            md.push_str(&value_block(&format!("web.{}", n), v, "  "));
+            md.push('\n');
+        }
+        md.push_str("}\n\n");
+    }
+    md.push_str(&format!("use {} named web{}\n```\n\n", path, gate));
+    md
 }
 
 /// Which contributed resources no claim on this page witnesses — and, of those,
@@ -1637,6 +1666,14 @@ mod tests {
         assert!(md.contains("| 1.3 | 2026-09-04 | the bucket |"), "{}", md);
         assert!(md.contains("Keep me."), "the notes region must survive regeneration:\n{}", md);
         assert!(!md.contains("Converted by"));
+        assert!(!md.contains("named web"), "a pack that does not say `multiple` is used once:\n{}", md);
+
+        // a pack that says `multiple` is shown used under a name too
+        let multiple = src.replace("version \"1.3\"", "version \"1.3\" multiple");
+        let file = satz::parse(&multiple).unwrap();
+        let md = render(rel, &file, &header(&multiple, rel).unwrap(), None, &cats, &hist, &Library::new()).unwrap();
+        assert!(md.contains("use \"presets/monitoring/x.satz\" named web\n"), "{}", md);
+        assert!(md.contains("  web.bucket_location = \"EU\""), "{}", md);
     }
 
     /// A `use interface` line is no pack line: the page's `use` block does not print it,

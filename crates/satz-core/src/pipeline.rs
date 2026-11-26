@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 mod named;
 mod param_kind;
 mod position;
-pub use named::{bound_name as named_bound_name, NamedUse};
+pub use named::{bound_name as named_bound_name, named_use_params, reads_of_value as value_reads, refused_in_named, NamedUse};
 use named::{NamedBindings, NamedPack};
 pub use param_kind::{AttrType, ParamUses, Shape};
 use param_kind::{map_seg, Seg};
@@ -1112,6 +1112,20 @@ pub struct PackNotices {
     pub pack: String,
     pub file: String,
     pub notices: Vec<satz::NoticeDecl>,
+    /// The named use whose notices these are (ADR 0109): each is acknowledged per use, by
+    /// `<name>.<param>`. `None` for a flat use.
+    pub named: Option<String>,
+}
+
+impl PackNotices {
+    /// The param the estate binds `true` to acknowledge `n`: the notice's own, or for a
+    /// named use the name the estate binds it under, `web.<param>`.
+    pub fn acknowledged_by(&self, n: &satz::NoticeDecl) -> String {
+        match &self.named {
+            Some(u) => named::bound_name(u, &n.param),
+            None => n.param.clone(),
+        }
+    }
 }
 
 /// A notice is acknowledged when the estate binds its param `true` — the pack declares
@@ -1120,8 +1134,8 @@ pub fn acknowledged(env: &Env, param: &str) -> bool {
     env.get(param) == Some(&serde_yaml::Value::Bool(true))
 }
 
-fn pack_notices(file: &satz::File, file_name: &str) -> PackNotices {
-    PackNotices { pack: file.estate.clone().unwrap_or_default(), file: file_name.to_string(), notices: file.notices.clone() }
+fn pack_notices(file: &satz::File, file_name: &str, named: Option<&str>) -> PackNotices {
+    PackNotices { pack: file.estate.clone().unwrap_or_default(), file: file_name.to_string(), notices: file.notices.clone(), named: named.map(str::to_string) }
 }
 
 /// One file's declared claims, carried with the file that declared them.
@@ -2434,6 +2448,7 @@ pub fn compile_estate_bound(
         named: None,
         named_uses: Vec::new(),
         named_tfvars: Env::new(),
+        named_acks: Env::new(),
     };
     w.note_inputs(&file, file_name)?;
     w.register_names(&file, file_name)?;
@@ -2451,9 +2466,11 @@ pub fn compile_estate_bound(
     // refuses a pack that does), so it is no variable, and binding it moves no line of
     // the emission.
     let notices = w.notices;
-    for n in notices.iter().flat_map(|p| &p.notices) {
+    for n in notices.iter().filter(|p| p.named.is_none()).flat_map(|p| &p.notices) {
         tfvars.remove(&n.param);
     }
+    // a named use's acknowledgements, as the estate binds them: what its notices are read by
+    let named_acks = std::mem::take(&mut w.named_acks);
     let named_uses = w.named_uses;
     check_named_names(&named_uses, &tfvars, &w.inputs, &w.names, &own, &all, file_name)?;
     tfvars.extend(w.named_tfvars);
@@ -2611,6 +2628,7 @@ pub fn compile_estate_bound(
     let config_rendering = w.config_rendering;
     // what satz composes from the params reads each one as its value, the read resolved
     let mut env = env;
+    env.extend(named_acks);
     drop_no_values(&mut env);
     drop_no_values(&mut tfvars);
     resolve_interface_in_params(&mut env, &interface_files).map_err(|(param, msg)| param_error(&file, file_name, &param, msg))?;
@@ -3280,22 +3298,6 @@ pub fn estate_questions_and_uses(
     questions_walk(file, file_name, load)
 }
 
-/// A named use, refused by a command that does not read one yet: its questions, its params
-/// and its pack line are per use, and the command would report them as the flat ones.
-pub fn refuse_named_uses(file: &File, file_name: &str, command: &str) -> Result<(), PipelineError> {
-    match satz::named_uses(file).first() {
-        Some((n, path, line)) => perr(
-            file_name,
-            *line,
-            format!(
-                "use \"{}\" named {}: named uses are not supported by {} yet: a named use is a pack used under a name, with params of its own, and this reads every pack once. `satz transpile` writes the estate",
-                path, n, command
-            ),
-        ),
-        None => Ok(()),
-    }
-}
-
 /// The walk behind `estate_questions_and_uses`: the transpile reads the shapes off it
 /// (`check_param_shapes`), each named use's reads under its own params.
 fn questions_walk(
@@ -3439,7 +3441,7 @@ impl QuestionsWalk<'_, '_> {
                         });
                     }
                     if !used.notices.is_empty() {
-                        self.out.1.push(pack_notices(&used, path));
+                        self.out.1.push(pack_notices(&used, path, self.named.as_ref().map(|(n, _)| n.as_str())));
                     }
                     // `use "…" as <type>`: the file's entries are the content of that map
                     let pushed = as_key.as_ref().map(|k| segs.push(Seg::Map { key: k.clone(), named: false, name: None })).is_some();
@@ -3713,7 +3715,7 @@ pub fn fragments_from_source(
     let env = build_env(&file, outer_env, file_name)?;
     let mut own = Fragment::default();
     let mut all = Vec::new();
-    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new() };
+    let mut w = Walk { types, load, genv: env, config: BTreeMap::new(), config_sites: BTreeMap::new(), config_rendering: BTreeMap::new(), inputs: BTreeMap::new(), hcl: Vec::new(), claims: Vec::new(), questions: Vec::new(), notices: Vec::new(), actions: Vec::new(), exports: Vec::new(), requests: Vec::new(), interfaces: Vec::new(), interface_files: Vec::new(), use_chain: vec![file_name.to_string()], declared: BTreeMap::new(), frame: Env::new(), locals_of: BTreeMap::new(), names: BTreeMap::new(), bindings, named: None, named_uses: Vec::new(), named_tfvars: Env::new(), named_acks: Env::new() };
     w.register_names(&file, file_name)?;
     w.open_frame(&file, file_name)?;
     w.items(&file.items, file_name, &mut own, &mut all, &[])?;
@@ -3793,6 +3795,9 @@ struct Walk<'a> {
     named_uses: Vec<NamedUse>,
     /// The params of every named use walked, as the HCL code names them: `web__vm_zone`.
     named_tfvars: Env,
+    /// The acknowledgements of the named uses' notices, as the estate binds them:
+    /// `web.<param>`. No variable: nothing but the notice reads one.
+    named_acks: Env,
 }
 
 /// What the walk keeps while it walks a named use.
@@ -4008,7 +4013,7 @@ impl Walk<'_> {
         if file.notices.is_empty() {
             return;
         }
-        self.notices.push(pack_notices(file, file_name));
+        self.notices.push(pack_notices(file, file_name, self.named.as_ref().map(|f| f.name.as_str())));
     }
 
     /// A param two used files declare is one value in the whole estate, so their defaults
@@ -4377,9 +4382,16 @@ impl Walk<'_> {
         let frags = walked?;
         let prefix = named::Prefix::new(name, &frags);
         let frags = prefix.apply(frags);
+        // an acknowledgement is no variable: it is read by the use's notices, as `<name>.<param>`
+        let acks: std::collections::BTreeSet<&str> =
+            self.notices.iter().filter(|n| n.named.as_deref() == Some(name)).flat_map(|n| n.notices.iter().map(|x| x.param.as_str())).collect();
         let mut params = Vec::new();
         for p in &frame.owned {
             if let Some(v) = used.get(p) {
+                if acks.contains(p.as_str()) {
+                    self.named_acks.insert(named::bound_name(name, p), v.clone());
+                    continue;
+                }
                 let var = named::variable_name(name, p);
                 self.named_tfvars.insert(var.clone(), v.clone());
                 params.push(var);

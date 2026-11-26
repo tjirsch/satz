@@ -896,6 +896,7 @@ impl ScanReport {
                     .get(&f.resource)
                     .and_then(|r| r.origin.as_ref())
                     .map(|(file, line)| format!("{}:{}", file, line)),
+                named: manifest.resources.get(&f.resource).and_then(|r| r.named.clone()),
                 guideline: f.guideline.clone(),
             })
             .collect();
@@ -921,6 +922,10 @@ pub(crate) struct ScanFinding {
     pub resource: String,
     /// the Satz file and line that declared the resource, when the transpile knows it
     pub declared_at: Option<String>,
+    /// the named use that wrote the resource (ADR 0109): the line `declared_at` names serves
+    /// every use of its pack; absent for what the estate writes flat
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
     pub guideline: Option<String>,
 }
 
@@ -1664,7 +1669,7 @@ impl SatzMcp {
                        `acknowledged`), what it `contributes` to another pack's list params while it creates resources (each \
                        `param` with its `values` — an external principal added to the CIS baseline's \
                        `allowed_policy_member_subjects`, for one), and the transpile's messages about it. A `use` the \
-                       graph does not know is `unmanaged`. With no pack-graph.json in the presets, `note` says so. \
+                       graph does not know is `unmanaged`, a named use with its `named`, one row per use. With no pack-graph.json in the presets, `note` says so. \
                        Offline and schema-free.",
         annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
@@ -2016,8 +2021,9 @@ impl SatzMcp {
                        makes (`folder` null for the bare form, `param` whose value it is) matched against the \
                        interface folders the estate uses: `met_by` the folders that give it, `description` that of the \
                        export that gives it (the first folder's), `unmet_reason` the \
-                       transpile's refusal where none does, `bound_by_estate` where the estate binds the param. \
-                       `interface_folders` lists the folders the estate uses: `name`, `estate` (the organization's \
+                       transpile's refusal where none does, `bound_by_estate` where the estate binds the param — \
+                       for a pack the estate uses under names, `named` lists them and every use binds it as \
+                       `<name>.<param>`. `interface_folders` lists the folders the estate uses: `name`, `estate` (the organization's \
                        estate that wrote it), `exports` (each value's `name` and `description`). Reads every pack source \
                        `satz_pack_sources` lists, or the one `source` names; `local` reads none (no network), lists \
                        only packs_dir, `sources` empty.",
@@ -2454,7 +2460,9 @@ impl SatzMcp {
                        parent does not exist yet), or cannot be resolved. With `execute` (needs \
                        'write') it writes the verified ids into the estate as \"import-id\". Running `tofu \
                        import`, a state move or activating a managed constraint stays on the command line \
-                       (`satz adopt --execute --import`). Runs as the estate's service account. The table \
+                       (`satz adopt --execute --import`). A resource of a named use carries its `named`; its \
+                       id is never written into the pack, whose line serves every use — a hint names \
+                       `--execute --import` instead. Runs as the estate's service account. The table \
                        has a row per declared resource and an estate declares hundreds, so `rows` carries \
                        only the rows that ask for something — an import, a state move, a decision — most \
                        urgent first and capped; `rows_total`, `rows_omitted` and `note` say what is left \
@@ -2542,7 +2550,7 @@ impl SatzMcp {
                     conflicts.len()
                 ))));
             }
-            match crate::adopt::write_import_ids(&plan.resolutions, Some(std::path::Path::new(&open.runtime.presets_dir))) {
+            match crate::adopt::write_import_ids(&plan.resolutions, Some(std::path::Path::new(&open.runtime.presets_dir)), &plan.named) {
                 Ok((written, hints)) => {
                     report.written_total = written.len();
                     report.written = written;
@@ -2719,7 +2727,8 @@ impl SatzMcp {
         name = "satz_scan_checkov",
         output_schema = rmcp::handler::server::tool::schema_for_output::<ScanReport>(),
         description = "Run Checkov over the estate's transpiled HCL code (the hcl_dir satz_transpile writes) and return \
-                       every failed check with the Satz block that declared the resource. Scans what is written: \
+                       every failed check with the Satz block that declared the resource, and for a resource of a named use \
+                       the use's `named`. Scans what is written: \
                        transpile first. Needs the 'exec' capability — it runs an external tool (checkov on PATH, \
                        else uvx checkov). `out` also writes Checkov's JSON report to that path under the root, \
                        for satz_remediation_items and satz_remediation_annotate to read as `checkov`, and needs \
@@ -3110,6 +3119,7 @@ mod tests {
                 move_from: None,
                 note: None,
                 declared_at: Some(format!("presets/a-pack-with-a-name.satz:{}", 100 + i)),
+                named: None,
             })
             .collect()
     }

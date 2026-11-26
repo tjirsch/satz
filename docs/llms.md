@@ -208,10 +208,14 @@ resources are written as `<name>__<label>` and its params as the variables `<nam
 its grants are not prefixed. Bind each use's names differently: two uses that write one
 resource are refused, naming the params to bind. Its questions are asked once per use:
 `satz_questions` reports `payments.budget_amount` with `named` and `param`, and
-`satz_interview` takes the dotted subject as the key of an answer. A named use stands in the
-estate file only and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or
-`notice`; `satz_presets`, `satz_add_preset`, `satz_remove_preset`, `satz_adopt` and
-`satz_packs` refuse an estate with one — say so rather than working around it
+`satz_interview` takes the dotted subject as the key of an answer. A notice of its pack is
+acknowledged per use, `payments.<param> = true`, and a notice row's `param` is that dotted name.
+`satz_presets` lists each named use as an `unmanaged` row with its `named`, `satz_packs` gives
+the pack the list `named`, and `satz_adopt` and `satz_scan_checkov` name the use of a resource
+in `named`. `satz_adopt` with `execute` writes no `"import-id"` into a file a named use reads —
+its hint says to run `satz adopt --execute --import` on the command line. A named use stands in
+the estate file only and takes no `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or
+`offers`, and no preset of the library takes one
 ([language §6.9](language.md#named--one-pack-used-several-times)).
 
 **Provenance by suffix**, and it is enforced:
@@ -508,7 +512,7 @@ each message's whole `message` is in the JSON, and the counts are of messages.
 | `use … when X: unknown param` | `when` names a param nobody declares |
 | ``use "…" named x: the pack … does not say `multiple` in its header`` | a named use takes only a pack whose header ends in `multiple`; use it without `named`, or ask for a pack that says it |
 | ``the named uses `a` and `b` write the same resource`` | two named uses (or a named use and the estate) write one body; bind the params the message names differently in each use |
-| `named uses are not supported by … yet` | the tool reads every pack once and refuses an estate with a named use; `satz_transpile_check` reads it |
+| ``uses `presets/…` named x — a preset of the library is used once`` | `satz_add_preset` / `satz_remove_preset` switch a preset by its one flat line; write the line without `named` |
 | a suppression matched nothing | the thing you are removing is not there — a stale suppression |
 | `claim: resources = [...] is required` | a positive claim without witnesses |
 | two branches of a choice are true | a `question oneof` has more than one option set |

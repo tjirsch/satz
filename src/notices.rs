@@ -34,8 +34,12 @@ pub(crate) enum Doing {
 /// One notice of a pack the estate uses.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct NoticeRow {
-    /// the param the estate binds `true` to acknowledge it
+    /// the param the estate binds `true` to acknowledge it: for a named use the name the
+    /// estate binds it under, `web.<param>`
     pub param: String,
+    /// the named use the notice is acknowledged for, `web`; absent for a flat use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
     /// the file that declares it, as the `use` that reached it names it
     pub pack: String,
     /// what to do and why
@@ -50,6 +54,16 @@ pub(crate) struct NoticeRow {
 }
 
 impl NoticeRow {
+    /// The pack the notice is of, as a message names it — `` `packs/vm.satz` ``, and for a
+    /// named use `` `packs/vm.satz` named web `` — or, `quoted` false, without the quotes.
+    pub(crate) fn source(&self, quoted: bool) -> String {
+        let q = if quoted { "`" } else { "" };
+        match &self.named {
+            Some(u) => format!("{q}{}{q} named {}", self.pack, u),
+            None => format!("{q}{}{q}", self.pack),
+        }
+    }
+
     /// The severity the pack declared, as the language spells it.
     pub(crate) fn declared(&self) -> Declared {
         Declared::parse(&self.severity).unwrap_or_default()
@@ -61,12 +75,13 @@ pub(crate) fn rows(notices: &[PackNotices], env: &Env) -> Vec<NoticeRow> {
         .iter()
         .flat_map(|p| {
             p.notices.iter().map(|n| NoticeRow {
-                param: n.param.clone(),
+                param: p.acknowledged_by(n),
+                named: p.named.clone(),
                 pack: p.file.clone(),
                 text: n.text.clone(),
                 run: n.run.clone(),
                 severity: n.severity.to_string(),
-                acknowledged: acknowledged(env, &n.param),
+                acknowledged: acknowledged(env, &p.acknowledged_by(n)),
             })
         })
         .collect()
@@ -130,7 +145,7 @@ fn severity(declared: Declared, doing: Doing) -> Severity {
 pub(crate) fn render(rows: &[NoticeRow]) -> String {
     let mut s = String::new();
     for n in rows {
-        s.push_str(&format!("\nnotice — {}\n  {}\n  {}\n", n.pack, n.text, then(n)));
+        s.push_str(&format!("\nnotice — {}\n  {}\n  {}\n", n.source(false), n.text, then(n)));
     }
     s
 }
@@ -194,7 +209,7 @@ pub(crate) fn compile_findings(
             let f = Finding::new(
                 severity(n.declared(), doing),
                 Kind::Notice,
-                format!("`{}`: {}\nOnce the command has run, bind `{} = true` in the estate's params{}.", n.pack, n.text, n.param, held),
+                format!("{}: {}\nOnce the command has run, bind `{} = true` in the estate's params{}.", n.source(true), n.text, n.param, held),
             )
             // what is this notice's own is its pack and its param, and the first line
             // carries both — the `use` line and the subject. What is left is the pack's
@@ -204,15 +219,15 @@ pub(crate) fn compile_findings(
             .in_group(header)
             .about(n.param.clone())
             .fix_in(&n.run, estate_arg);
-            match scan.uses.iter().find(|l| !l.commented && l.written == n.pack) {
+            match scan.uses.iter().find(|l| !l.commented && l.written == n.pack && l.named == n.named) {
                 Some(l) => f.located(label.clone(), l.index as u32 + 1),
                 None => {
                     let line = notices
                         .iter()
-                        .filter(|p| p.file == n.pack)
-                        .flat_map(|p| &p.notices)
-                        .find(|x| x.param == n.param)
-                        .map(|x| x.line as u32);
+                        .filter(|p| p.file == n.pack && p.named == n.named)
+                        .flat_map(|p| p.notices.iter().map(move |x| (p.acknowledged_by(x), x.line)))
+                        .find(|(param, _)| *param == n.param)
+                        .map(|(_, l)| l as u32);
                     f.maybe_at(n.pack.clone(), line)
                 }
             }
@@ -227,6 +242,7 @@ mod tests {
     fn row(param: &str, acknowledged: bool) -> NoticeRow {
         NoticeRow {
             param: param.into(),
+            named: None,
             pack: "presets/p.satz".into(),
             text: "t".into(),
             run: "satz adopt <estate> --execute --import".into(),
@@ -246,6 +262,7 @@ mod tests {
                 severity,
                 line: 7,
             }],
+            named: None,
         }]
     }
 
@@ -313,6 +330,40 @@ mod tests {
         // and a second run says the same thing
         acknowledge(&estate, &["cis_baseline_adopted".to_string()]).unwrap();
         assert_eq!(crate::fsx::read_to_string(&estate).unwrap(), after);
+    }
+
+    /// A notice of a named use is acknowledged per use (ADR 0109): its row's param is the
+    /// name the estate binds, `web.<param>`, its message stands at that use's line, and
+    /// acknowledging it binds the dotted param.
+    #[test]
+    fn a_notice_of_a_named_use_is_acknowledged_by_its_dotted_param() {
+        let mut notices = decl("vm_adopted", Declared::Error);
+        notices[0].file = "packs/vm.satz".into();
+        notices.push(PackNotices { named: Some("db".into()), ..notices[0].clone() });
+        notices[0].named = Some("web".into());
+        let env = Env::from([("web.vm_adopted".to_string(), serde_yaml::Value::Bool(true))]);
+        let got: Vec<(String, Option<String>, bool)> = rows(&notices, &env).into_iter().map(|n| (n.param, n.named, n.acknowledged)).collect();
+        assert_eq!(got, [("web.vm_adopted".into(), Some("web".into()), true), ("db.vm_adopted".into(), Some("db".into()), false)]);
+        let json = serde_json::to_value(&rows(&notices, &env)[0]).unwrap();
+        assert_eq!((json["param"].as_str(), json["named"].as_str()), (Some("web.vm_adopted"), Some("web")));
+        assert!(serde_json::to_value(row("a", false)).unwrap().get("named").is_none(), "a flat notice carries no `named`");
+
+        let src = "estate e\nuse \"packs/vm.satz\" named web\nuse \"packs/vm.satz\" named db\n";
+        let f = compile_findings(&notices, &env, Path::new("yaml/e.satz"), "e.satz", src, Doing::Writing);
+        assert_eq!(f.len(), 1, "web is acknowledged");
+        assert_eq!((f[0].subject.as_deref(), f[0].line), (Some("db.vm_adopted"), Some(3)));
+        assert!(f[0].message.starts_with("`packs/vm.satz` named db: Adopt what is live."), "{}", f[0].message);
+        assert!(f[0].message.contains("bind `db.vm_adopted = true`"), "{}", f[0].message);
+
+        // `satz adopt --execute --import` binds the dotted param in the estate's params
+        let dir = std::env::temp_dir().join(format!("satz-ack-named-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let estate = dir.join("e.satz");
+        crate::fsx::write_verbatim(&estate, "estate e\n\nparams {\n  web.vm_name = \"acme-web\"\n}\n\nuse \"packs/vm.satz\" named web\n").unwrap();
+        acknowledge(&estate, &["web.vm_adopted".to_string()]).unwrap();
+        let after = crate::fsx::read_to_string(&estate).unwrap();
+        assert!(after.contains("web.vm_adopted = true"), "{after}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

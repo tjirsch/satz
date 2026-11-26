@@ -1,0 +1,30 @@
+// A bucket an estate keeps once per purpose. The header says `multiple`: an estate uses the
+// pack several times, each a named use with params of its own (docs/language.md §6.9), and
+// the bucket's name comes from a param, so two uses bound differently are two buckets.
+pack showcase_bucket version "1.0" multiple
+
+params {
+  // what the bucket keeps: the last part of its name
+  bucket_purpose  = "data"
+  bucket_location = "EU"
+  // acknowledges the notice below — per use: the estate binds `<name>.bucket_adopted`
+  bucket_adopted  = false
+}
+
+// A notice of a named use is acknowledged once per use, and `satz adopt --execute --import`
+// acknowledges it for every use it covered.
+notice bucket_adopted {
+  text     = "The bucket may already exist in the project — creating it again fails. Import what is live first."
+  run      = "satz adopt <estate> --execute --import"
+  severity = error
+}
+
+// `infra_project_name` is no param of this pack: a named use reads it from the estate.
+google_storage_bucket {
+  kept {
+    project                     = infra_project_name
+    name                        = "{customer_shortname}-{bucket_purpose}"
+    location                    = bucket_location
+    uniform_bucket_level_access = true
+  }
+}

@@ -174,6 +174,15 @@ grep -q 'showcase-action' "$sc" && fail "an action leaked into main.tf — nothi
 grep -q 'showcase-step' "$sc" && fail "an action name leaked into main.tf"
 grep -q 'optional-001' "$sc" && fail "a \`when\`=false pack was pulled in"
 grep -q 'corp-pack-bucket-001' "$sc" || fail "top-level pack resource missing"
+# `named`: one pack used twice, each under its prefix with params of its own
+awk '/^resource "google_storage_bucket" "reports__kept"/ { inside = 1 } inside && /^}/ { exit }
+     inside && /name = "corp-reports"/ { n = 1 } inside && /location = "europe-west3"/ { l = 1 } END { exit !(n && l) }' "$sc" \
+  || fail "the named use reports is not written under its prefix with its params:\n$(grep -A6 reports__kept "$sc")"
+grep -A5 '^resource "google_storage_bucket" "scratch__kept"' "$sc" | grep -q 'location = "EU"' || fail "the named use scratch does not take the pack's default"
+grep -q '^reports--bucket-purpose = "reports"$' tmp/showcase-hcl/terraform.tfvars || fail "a named use's param is not <use>--<param> in terraform.tfvars"
+grep -q 'bucket-adopted' tmp/showcase-hcl/variables.tf tmp/showcase-hcl/terraform.tfvars && fail "a named use's acknowledgement became a variable"
+"$satz" --config . presets showcase.satz --format text --out - 2>/dev/null | grep -q '^  showcase-bucket.satz named scratch (line ' \
+  || fail "satz presets does not list the showcase's named use"
 grep -q 'location = "europe-west3"' "$sc" || fail "estate param did not override the pack default"
 grep -q 'groups/01abcdef2ghijk3' tmp/showcase-hcl/imports.tf || fail "import-id did not reach imports.tf"
 grep -q 'num_newer_versions' "$sc" || fail "list-of-objects lifecycle rules missing"
@@ -233,7 +242,8 @@ for m in core audit archive; do
   [ "$(grep -c '^output ' $si/$m/satz/interface.satz)" = "$(grep -c '^output ' $si/$m/hcl/outputs.tf)" ] || fail "the $m Satz form does not carry every output:\n$(cat $si/$m/satz/interface.satz)"
 done
 grep -q 'value *= { "infra" = data.google_active_folder.infra.name }' $si/core/hcl/outputs.tf || fail "all google_folder is not a map of the folders keyed by label:\n$(cat $si/core/hcl/outputs.tf)"
-grep -q 'value *= { "audit_logs" = "corp-audit-logs" }' $si/core/hcl/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket:\n$(cat $si/core/hcl/outputs.tf)"
+# the two named uses' buckets are the estate's under their prefixed labels; the pack's private one is left out
+grep -q 'value *= { "audit_logs" = "corp-audit-logs", "reports__kept" = "corp-reports", "scratch__kept" = "corp-scratch" }' $si/core/hcl/outputs.tf || fail "all google_storage_bucket does not leave out the private bucket, or misses a named use's:\n$(cat $si/core/hcl/outputs.tf)"
 grep -q 'keys `infra`' $si/core/README.md || fail "the README does not list the map's keys:\n$(cat $si/core/README.md)"
 grep -q 'pack_bucket' $si/*/satz/interface.satz && fail "a private resource reached an interface file"
 grep -q 'value *= { "archive" = "corp-archive-001", "infra" = "corp-infra-001" }' $si/core/hcl/outputs.tf || fail "all google_project under google_folder.infra is not the two projects placed in it:\n$(grep -A1 infra_projects $si/core/hcl/outputs.tf)"
@@ -827,11 +837,25 @@ grep -q '^  team_b.budget_amount *= "120"$' "$nb/satz/open.satz" && grep -q '^  
 grep -q '^## team_a — packs/project-budget.satz$' tmp/named-decisions.md && grep -q '^## team_b — packs/project-budget.satz$' tmp/named-decisions.md \
   || fail "the decisions sheet has no section per use:\n$(cat tmp/named-decisions.md)"
 rm -f "$nb/satz/open.satz"
-# a command that reads every pack once refuses a named use, naming it
-for c in "presets team.satz --format text --out -" "packs --local --format json --out -"; do
-  "$satz" --config "$nb" $c > tmp/named-refused.txt 2>&1 && fail "satz $c read an estate with a named use"
-  grep -q 'named team_a: named uses are not supported by' tmp/named-refused.txt || fail "satz $c does not say why it refuses:\n$(cat tmp/named-refused.txt)"
-done
+# the presets report lists a pack line per use, with its name
+"$satz" --config "$nb" presets team.satz --format json --out tmp/named-presets.json > /dev/null 2>tmp/named-presets.err || fail "satz presets failed on an estate with named uses:\n$(cat tmp/named-presets.err)"
+python3 - tmp/named-presets.json <<'PY2' || fail "satz presets does not report a line per named use:\n$(cat tmp/named-presets.json)"
+import json, sys
+rows = [(u["path"], u.get("named")) for u in json.load(open(sys.argv[1]))["unmanaged"]]
+assert rows == [("packs/project-budget.satz", "team_a"), ("packs/project-budget.satz", "team_b")], rows
+PY2
+"$satz" --config "$nb" presets team.satz --format text --out - 2>/dev/null | grep -q '^  packs/project-budget.satz named team_b (line ' || fail "the presets text does not name the use"
+# the workload pack list names the uses, and a read is not made where every use binds its param
+"$satz" --config "$nb" packs --local --format json --out tmp/named-packs.json > /dev/null 2>tmp/named-packs.err || fail "satz packs failed on an estate with named uses:\n$(cat tmp/named-packs.err)"
+python3 - tmp/named-packs.json <<'PY2' || fail "satz packs does not read the named uses:\n$(cat tmp/named-packs.json)"
+import json, sys
+budget = {p["id"]: p for p in json.load(open(sys.argv[1]))["packs"]}["project-budget"]
+assert budget["named"] == ["team_a", "team_b"], budget
+reads = {r["value"]: r for r in budget["reads"]}
+assert reads["project_id"]["bound_by_estate"] and reads["project_number"]["bound_by_estate"], reads
+assert not reads["billing_account"]["bound_by_estate"], reads
+PY2
+"$satz" --config "$nb" packs --local --format text --out - 2>/dev/null | grep -q '^      used named team_a, team_b$' || fail "satz packs does not name the uses in its text"
 
 step "publish-pack: a pack the repository wrote goes to a folder source, recorded as fetched from it, and update-pack and packs follow the source (ADR 0099)"
 # the workload estate of the budgets step, with the budget pack as its own: no row, under another id
@@ -3249,6 +3273,16 @@ if "$satz" --config . --silence notice transpile "$PWD/tmp/nt/open-notice.satz" 
   fail "--silence of an error-severity notice was not refused"
 fi
 grep -q 'an error is never silenced' tmp/nt/silenced.txt || fail "silencing an error must be refused by name:\n$(cat tmp/nt/silenced.txt)"
+# a notice of a named use is acknowledged per use: `scratch` open, `reports` acknowledged
+sed 's/scratch.bucket_adopted   = true/scratch.bucket_adopted   = false/' yaml/showcase.satz > tmp/nt/open-named.satz
+grep -q 'scratch.bucket_adopted   = false' tmp/nt/open-named.satz || fail "the showcase's acknowledgement for scratch moved; adjust the step"
+if "$satz" --config . transpile "$PWD/tmp/nt/open-named.satz" --apply --output "$PWD/tmp/nt/hcl" > tmp/nt/apply-named.txt 2>&1; then
+  fail "apply with an open notice of a named use was not refused"
+fi
+grep -qE '^error +notice +.*scratch\.bucket_adopted$' tmp/nt/apply-named.txt && grep -q '`showcase-bucket.satz` named scratch:' tmp/nt/apply-named.txt \
+  || fail "the refusal does not name the use's acknowledgement:\n$(cat tmp/nt/apply-named.txt)"
+grep -q 'reports.bucket_adopted' tmp/nt/apply-named.txt && fail "the acknowledged use is still open:\n$(cat tmp/nt/apply-named.txt)"
+grep -q 'bucket-adopted' tmp/nt/hcl/variables.tf tmp/nt/hcl/terraform.tfvars 2>/dev/null && fail "an acknowledgement of a named use is a variable"
 
 step "silence: a message is left out of the printed output by its kind and subject, stays in the machine stream, and a rule nothing answers to reads stale"
 # The shape this exists for: the CIS extensions all on at once produce eleven messages

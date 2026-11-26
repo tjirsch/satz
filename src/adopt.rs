@@ -144,6 +144,30 @@ pub(crate) fn adoptable(rules: &ImportConfig, tf_type: &str) -> bool {
     NATIVE.contains(&tf_type) || !matches!(rule_for(rules, tf_type), Rule::None)
 }
 
+/// The attributes that make a resource of `tf_type` the one it is in the cloud — what
+/// adopt finds it by: the natural key of a type it looks up itself, the placeholders of
+/// its `import_id` template, its `match_on` attributes, each by its top-level attribute.
+/// Empty for a type without a rule.
+pub(crate) fn identity_attrs(rules: &ImportConfig, tf_type: &str) -> Vec<String> {
+    let top = |k: &str| k.split('.').next().unwrap_or(k).to_string();
+    let mut out: Vec<String> = match tf_type {
+        "google_folder" => vec!["display_name".into(), "parent".into()],
+        "google_project" => vec!["project_id".into()],
+        "google_cloud_identity_group" => vec!["group_key".into()],
+        "google_cloud_identity_group_membership" => vec!["group".into(), "preferred_member_key".into()],
+        "google_org_policy_policy" => vec!["name".into()],
+        "google_billing_budget" => vec!["billing_account".into(), "display_name".into()],
+        _ => match rule_for(rules, tf_type) {
+            Rule::Template(t) => t.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(k, _)| top(k))).collect(),
+            Rule::Match(on, _) => on.iter().map(|k| top(k)).collect(),
+            Rule::None => Vec::new(),
+        },
+    };
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The id an `import_id` rule renders for `r` offline, or why it cannot; `None` for a
 /// type without a template rule. What the library gate holds each template to.
 #[cfg(test)]
@@ -1062,6 +1086,10 @@ pub(crate) struct AdoptRow {
     pub note: Option<String>,
     /// the Satz file and line that declared the resource
     pub declared_at: Option<String>,
+    /// the named use that wrote the resource (ADR 0109): the line `declared_at` names serves
+    /// every use of its pack; absent for what the estate writes flat
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
 }
 
 /// The rows that ask for something, most urgent first, at most `limit` of them —
@@ -1092,6 +1120,7 @@ pub(crate) fn rows(
         move_from: None,
         note: None,
         declared_at: r.origin.as_ref().map(|(f, l)| format!("{}:{}", f, l)),
+        named: manifest.resources.get(&r.address).and_then(|m| m.named.clone()),
     };
     let mut out = Vec::new();
     for r in resolutions {
@@ -1225,7 +1254,12 @@ type Edit = (u32, String, String, (String, String));
 /// `presets_dir`: a pristine pack there (no `.local.` in its name) is
 /// upstream-owned and never edited — its resources are reported with the
 /// remedy (`--execute --import`, or fork the pack) instead.
-pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&std::path::Path>) -> Result<(Vec<String>, Vec<String>), String> {
+///
+/// `named`: the files the estate's named uses read, each with the uses that read it
+/// (`named_use_files`). A line there serves every use of the pack and the flat use too, so
+/// an id written into it would be every use's: its resources are reported with
+/// `--execute --import` instead (ADR 0109).
+pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&std::path::Path>, named: &NamedFiles) -> Result<(Vec<String>, Vec<String>), String> {
     let mut by_file: BTreeMap<String, Vec<Edit>> = BTreeMap::new();
     let mut hints = Vec::new();
     for r in resolutions {
@@ -1236,6 +1270,14 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
             _ => continue,
         };
         match &r.origin {
+            Some((file, _)) if named.contains_key(file) => hints.push(format!(
+                "{}: declared in {}, which the named use{} {} read{} — one line of a pack serves every use of it; import it with `--execute --import`",
+                r.address,
+                file,
+                if named[file].len() == 1 { "" } else { "s" },
+                named[file].iter().map(|n| format!("`{}`", n)).collect::<Vec<_>>().join(", "),
+                if named[file].len() == 1 { "s" } else { "" }
+            )),
             Some((file, _)) if is_pristine_pack(file, presets_dir) => hints.push(format!(
                 "{}: declared in the pristine pack {} — packs are upstream-owned; import it with `--execute --import`, or fork the pack (`merge-presets`) and re-run",
                 r.address, file
@@ -1294,6 +1336,29 @@ pub(crate) fn write_import_ids(resolutions: &[Resolution], presets_dir: Option<&
         crate::fsx::write_edited_satz(&file, &text, &out).map_err(|e| format!("{}: {}", file, e))?;
     }
     Ok((written, hints))
+}
+
+/// The files an estate's named uses read, as their `use` lines name them, each with the
+/// uses that read it.
+pub(crate) type NamedFiles = BTreeMap<String, BTreeSet<String>>;
+
+/// The files the named uses of `src` read — the pack each names and every file that pack
+/// uses, at any depth — with the uses that read each. Empty for an estate without one.
+pub(crate) fn named_use_files(src: &str, load: &dyn Fn(&str) -> Result<String, String>) -> Result<NamedFiles, String> {
+    let mut out = NamedFiles::new();
+    let file = satz_core::satz::parse(src).map_err(|e| format!("line {}: {}", e.line, e.msg))?;
+    for (name, path, _) in satz_core::satz::named_uses(&file) {
+        let mut todo = vec![path.to_string()];
+        while let Some(p) = todo.pop() {
+            if !out.entry(p.clone()).or_default().insert(name.to_string()) {
+                continue;
+            }
+            let text = load(&p)?;
+            let used = satz_core::satz::parse(&text).map_err(|e| format!("{}:{}: {}", p, e.line, e.msg))?;
+            todo.extend(satz_core::satz::use_paths(&used));
+        }
+    }
+    Ok(out)
 }
 
 fn is_pristine_pack(file: &str, presets_dir: Option<&std::path::Path>) -> bool {
@@ -2012,7 +2077,7 @@ resource "google_project_iam_member" "fresh_writer" {
             Resolution { address: "google_folder_iam_member.g".into(), tf_type: "google_folder_iam_member".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "folders/111 r m".into(), verified: false }, origin: None, org_policy: None, note: None },
             Resolution { address: "google_org_policy_policy.x".into(), tf_type: "google_org_policy_policy".into(), natural_key: String::new(), outcome: Outcome::Resolved { id: "organizations/1/policies/compute.x".into(), verified: false }, origin: Some((pack.to_string_lossy().to_string(), 3)), org_policy: None, note: None },
         ];
-        let (written, hints) = write_import_ids(&rs, Some(&presets)).unwrap();
+        let (written, hints) = write_import_ids(&rs, Some(&presets), &NamedFiles::new()).unwrap();
         let text = std::fs::read_to_string(&tmp).unwrap();
         assert_eq!(text, "google_folder {\n  workloads {\n    \"import-id\"  = \"folders/111\"\n    display_name = \"Workloads\"\n  }\n  one { display_name = \"x\" }\n}\n", "written after the declaring line, and the formatted file stays formatted");
         assert_eq!(written.len(), 1);
@@ -2313,7 +2378,7 @@ mod state_aware_tests {
     //! happen. On one organization the table read as 25 resources to import when
     //! 22 were already managed and the three that mattered — the ones failing
     //! `apply` with "already exists" — were indistinguishable in the list.
-    use super::{Outcome, Resolution, move_conflicts, moved_from, render_table, summary, unanswered};
+    use super::{Outcome, Resolution, move_conflicts, moved_from, named_use_files, render_table, rows, summary, unanswered, write_import_ids};
 
     fn res(address: &str, outcome: Outcome) -> Resolution {
         Resolution {
@@ -2399,6 +2464,53 @@ mod state_aware_tests {
         let rs = vec![res(NEW, Outcome::Resolved { id: LIVE_ID.into(), verified: true })];
         let state = crate::bootstrap::StateIndex::from_objects(&[(OLD, "google_org_policy_policy", LIVE_ID)]);
         (rs, state)
+    }
+
+    /// A flat use turned into a named use renames every address the pack writes —
+    /// `google_storage_bucket.kept` becomes `google_storage_bucket.reports__kept` — and the
+    /// live object the state manages under the old one is a move, never an import (ADR 0109).
+    #[test]
+    fn a_flat_use_made_a_named_use_is_a_move_of_each_address() {
+        let mut r = res("google_storage_bucket.reports__kept", Outcome::Resolved { id: "corp-reports".into(), verified: true });
+        r.tf_type = "google_storage_bucket".into();
+        let state = crate::bootstrap::StateIndex::from_objects(&[("google_storage_bucket.kept", "google_storage_bucket", "corp-reports")]);
+        assert_eq!(moved_from(&r, &state), Some("google_storage_bucket.kept"));
+        let rows = rows(std::slice::from_ref(&r), &state, &crate::manifest::Manifest::default());
+        assert_eq!((rows[0].verdict.as_str(), rows[0].move_from.as_deref()), ("MOVE", Some("google_storage_bucket.kept")));
+        // the second use's bucket is another object, which the state does not hold: an import
+        let mut other = res("google_storage_bucket.scratch__kept", Outcome::Resolved { id: "corp-scratch".into(), verified: true });
+        other.tf_type = "google_storage_bucket".into();
+        assert_eq!(moved_from(&other, &state), None);
+        // and the flat declaration gone, nothing is declared twice
+        assert!(move_conflicts(&[r, other], &state).is_empty());
+    }
+
+    /// An id is never written into a line a named use reads: the line serves every use of
+    /// the pack, so the resource is reported with `--execute --import` (ADR 0109). The
+    /// files are the pack each use names and every file that pack uses.
+    #[test]
+    fn no_id_is_written_into_a_file_a_named_use_reads() {
+        let dir = std::env::temp_dir().join(format!("satz-adopt-named-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pack = dir.join("vm.satz");
+        let body = "pack vm version \"1.0\" multiple\n\ngoogle_storage_bucket {\n  kept {\n    name = \"x\"\n  }\n}\n";
+        std::fs::write(&pack, body).unwrap();
+        // a `use` path as an estate writes it: `/` between segments on every platform, which
+        // is the form the transpile's origin of a resource carries too
+        let file = crate::fsx::slash(&pack);
+        let src = format!("estate e\nuse \"{}\" named web\nuse \"{}\" named db\n", file, file);
+        let load = |p: &str| std::fs::read_to_string(p).map_err(|e| e.to_string());
+        let named = named_use_files(&src, &load).unwrap();
+        assert_eq!(named.get(&file).map(|u| u.iter().cloned().collect::<Vec<_>>()), Some(vec!["db".to_string(), "web".to_string()]));
+        let mut r = res("google_storage_bucket.web__kept", Outcome::Resolved { id: "x".into(), verified: true });
+        r.origin = Some((file.clone(), 4));
+        let (written, hints) = write_import_ids(&[r], None, &named).unwrap();
+        assert!(written.is_empty(), "{:?}", written);
+        assert!(hints[0].contains("which the named uses `db`, `web` read") && hints[0].contains("--execute --import"), "{:?}", hints);
+        assert_eq!(std::fs::read_to_string(&pack).unwrap(), body, "the pack is not edited");
+        assert!(named_use_files("estate e\nuse \"vm.satz\"\n", &load).unwrap().is_empty(), "a flat use reads no file under a name");
+        assert!(named_use_files("estate e\nuse \"vm.satz", &load).is_err(), "an estate that does not parse is an error, never no named use");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The defect itself: adopt imported the live policy a second time, and the
@@ -2514,6 +2626,8 @@ mod state_aware_tests {
 pub(crate) struct AdoptPlan {
     pub out: PipelineBOut,
     pub resolutions: Vec<crate::adopt::Resolution>,
+    /// the files the estate's named uses read: no id is written into one
+    pub named: crate::adopt::NamedFiles,
     pub live: crate::adopt::RealLive,
     /// What the state already manages, read ONCE and used by both halves of the
     /// command. The dry run has to know it: `--execute --import` skips those
@@ -2534,9 +2648,6 @@ pub(crate) async fn adopt_plan(
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
 ) -> Result<AdoptPlan, Box<dyn std::error::Error>> {
-    // An id is written back into the file that declares the resource, which the named
-    // uses of a pack share.
-    crate::refuse_named_uses(input_path, "`satz adopt`")?;
     // Same transpile the emitter uses, so the adopted addresses are exactly the
     // ones `apply` will act on.
     let out = pipeline_b_generate(input_path, tool_config, runtime_config)?;
@@ -2547,7 +2658,8 @@ pub(crate) async fn adopt_plan(
     let mut live = crate::adopt::RealLive::new(&out.customer_id).await?;
     let resolutions = crate::adopt::resolve(&out.manifest, &rules, &opts, &mut live).await;
     let state = crate::bootstrap::state_index(&runtime_config.tf_tool, Path::new(&runtime_config.hcl_dir));
-    Ok(AdoptPlan { out, resolutions, live, state })
+    let named = crate::adopt::named_use_files(&crate::fsx::read_to_string(input_path)?, &crate::questions::loader(input_path, runtime_config))?;
+    Ok(AdoptPlan { out, resolutions, named, live, state })
 }
 
 // ── the command line's own arm ─────────────────────────────────────────────
@@ -2574,7 +2686,7 @@ pub(crate) async fn run_adopt(
     configure_estate_impersonation(&input_path, runtime_config)?;
     // a run over every declared resource is the one a notice naming `satz adopt` asks for
     let whole = only.is_empty();
-    let AdoptPlan { out, resolutions, mut live, state } =
+    let AdoptPlan { out, resolutions, named, mut live, state } =
         adopt_plan(&input_path, only, activate, tool_config, runtime_config).await?;
     let in_state = state.clone().unwrap_or_default();
 
@@ -2758,7 +2870,7 @@ pub(crate) async fn run_adopt(
             }
         }
     } else {
-        let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)))?;
+        let (written, hints) = adopt::write_import_ids(&resolutions, Some(Path::new(&runtime_config.presets_dir)), &named)?;
         for w in &written {
             println!("  wrote {}", w);
         }

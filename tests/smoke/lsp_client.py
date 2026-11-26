@@ -124,6 +124,23 @@ col = l.index('"') + 2
 r = response(send("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": n, "character": col}}))
 assert r and r["uri"].startswith("file://") and r["uri"].endswith(".satz"), f"definition: {r}"
 
+# a named use's params, bound as `<name>.<param>`: completed in the estate's params, hovered
+# and followed to the pack's declaration
+n, l = line_of("scratch.bucket_purpose")
+r = response(send("textDocument/completion", {"textDocument": {"uri": uri}, "position": {"line": n, "character": len(l) - len(l.lstrip())}}))
+items = r if isinstance(r, list) else r["items"]
+labels = [i["label"] for i in items]
+for want in ("reports.bucket_location", "scratch.bucket_location", "scratch.bucket_purpose"):
+    assert want in labels, f"completion in params lacks the named use's {want}: {labels[:30]}"
+n, l = line_of("reports.bucket_location")
+col = l.index("reports.bucket_location") + 9
+r = response(send("textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": n, "character": col}}))
+assert r and "bucket_location" in r["contents"]["value"] and "named use `reports`" in r["contents"]["value"], f"hover on a named use's param: {r}"
+r = response(send("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": n, "character": col}}))
+assert r and r["uri"].endswith("showcase-bucket.satz"), f"definition of a named use's param: {r}"
+pack = open(os.path.join(os.path.dirname(estate), "showcase-bucket.satz"), encoding="utf-8").read().split("\n")
+assert "bucket_location" in pack[r["range"]["start"]["line"]], f"definition is not the declaration: {r}"
+
 # formatting a formatted file is no edit
 r = response(send("textDocument/formatting", {"textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": True}}))
 assert r == [], f"a formatted estate got edits: {r}"
@@ -164,4 +181,4 @@ wait_for(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["p
 response(send("shutdown"))
 send("exit", request=False)
 proc.wait(timeout=10)
-print("lsp: OK — initialize, messages (parse, pipeline, emitter), completion, hover, definition, formatting")
+print("lsp: OK — initialize, messages (parse, pipeline, emitter), completion, hover, definition, a named use's params, formatting")

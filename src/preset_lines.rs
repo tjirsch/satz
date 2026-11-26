@@ -39,6 +39,8 @@ pub(crate) struct UseLine {
     pub written: String,
     pub commented: bool,
     pub alias: Option<String>,
+    /// the name of a named use, `use "…" named <name>` (ADR 0109)
+    pub named: Option<String>,
     pub when: Option<String>,
     /// the blocks the line sits in, outermost first: `["google_folder", "infra_folder"]`
     pub blocks: Vec<String>,
@@ -69,8 +71,18 @@ pub(crate) struct Scan {
     pub header: Option<usize>,
 }
 
-/// `use "<path>" [as <key>] [when <param>] [// comment]` — `None` for anything else.
-fn parse_use(body: &str) -> Option<(String, Option<String>, Option<String>, String)> {
+/// What `parse_use` reads off one line.
+struct Parsed {
+    written: String,
+    alias: Option<String>,
+    named: Option<String>,
+    when: Option<String>,
+    trailing: String,
+}
+
+/// `use "<path>" [as <key>] [named <name>] [when <param>] [// comment]` — `None` for
+/// anything else.
+fn parse_use(body: &str) -> Option<Parsed> {
     let rest = body.strip_prefix("use")?;
     if !rest.starts_with(char::is_whitespace) {
         return None;
@@ -85,17 +97,18 @@ fn parse_use(body: &str) -> Option<(String, Option<String>, Option<String>, Stri
         tail = &tail[..i];
     }
     let words: Vec<&str> = tail.split_whitespace().collect();
-    let (mut alias, mut when) = (None, None);
+    let (mut alias, mut named, mut when) = (None, None, None);
     let mut i = 0;
     while i < words.len() {
         match (words[i], words.get(i + 1)) {
             ("as", Some(k)) => alias = Some(k.to_string()),
+            ("named", Some(n)) => named = Some(n.to_string()),
             ("when", Some(p)) => when = Some(p.to_string()),
             _ => return None,
         }
         i += 2;
     }
-    Some((written, alias, when, trailing))
+    Some(Parsed { written, alias, named, when, trailing })
 }
 
 /// Every `use` line of `src`, with the blocks it sits in. Brace counting steps over
@@ -108,22 +121,22 @@ pub(crate) fn scan(src: &str) -> Scan {
         let t = raw.trim_start();
         let indent = raw[..raw.len() - t.len()].to_string();
         if let Some(body) = t.strip_prefix("//") {
-            if let Some((written, alias, when, trailing)) = parse_use(body.trim_start()) {
+            if let Some(Parsed { written, alias, named, when, trailing }) = parse_use(body.trim_start()) {
                 if written == CORE && stack.is_empty() {
                     out.core = Some(index);
                 }
-                out.uses.push(UseLine { index, written, commented: true, alias, when, blocks: stack.clone(), indent, trailing });
+                out.uses.push(UseLine { index, written, commented: true, alias, named, when, blocks: stack.clone(), indent, trailing });
             }
             continue;
         }
         if stack.is_empty() && out.header.is_none() && t.starts_with("estate ") {
             out.header = Some(index);
         }
-        if let Some((written, alias, when, trailing)) = parse_use(t) {
+        if let Some(Parsed { written, alias, named, when, trailing }) = parse_use(t) {
             if written == CORE && stack.is_empty() {
                 out.core = Some(index);
             }
-            out.uses.push(UseLine { index, written, commented: false, alias, when, blocks: stack.clone(), indent, trailing });
+            out.uses.push(UseLine { index, written, commented: false, alias, named, when, blocks: stack.clone(), indent, trailing });
         }
         // the braces of the code on this line
         let mut seg = String::new();
@@ -274,7 +287,9 @@ impl<'a> View<'a> {
 
     /// The node's lines: the first active one, the first commented one.
     fn lines_of(&self, path: &str) -> (Option<&UseLine>, Option<&UseLine>) {
-        let named = |l: &&UseLine| node_of(self.graph, &l.written).is_some_and(|(n, _)| n.path == path);
+        // a named use of a preset is refused by the transpile (`compile_findings`): the
+        // graph's line for a node is a flat one
+        let named = |l: &&UseLine| l.named.is_none() && node_of(self.graph, &l.written).is_some_and(|(n, _)| n.path == path);
         let active = self.scan.uses.iter().filter(named).find(|l| !l.commented);
         let commented = self.scan.uses.iter().filter(named).find(|l| l.commented);
         (active, commented)
@@ -666,6 +681,7 @@ impl<'a> View<'a> {
                 .iter()
                 .map(|x| crate::notices::NoticeRow {
                     param: x.param.clone(),
+                    named: None,
                     pack: path.clone(),
                     text: x.text.clone(),
                     run: x.run.clone(),
@@ -678,6 +694,7 @@ impl<'a> View<'a> {
                 .iter()
                 .map(|x| crate::notices::NoticeRow {
                     param: x.param.clone(),
+                    named: None,
                     pack: n.path.clone(),
                     text: x.text.clone(),
                     run: x.run.clone(),
@@ -693,7 +710,7 @@ impl<'a> View<'a> {
             .uses
             .iter()
             .filter(|l| !l.commented && node_of(self.graph, &l.written).is_none())
-            .map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 })
+            .map(Unmanaged::of)
             .collect()
     }
 }
@@ -846,6 +863,16 @@ pub(crate) struct Unmanaged {
     pub path: String,
     #[serde(rename = "at")]
     pub at_line: usize,
+    /// the name of a named use, `use "…" named <name>`: one pack line per use (ADR 0109);
+    /// absent for a flat use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
+}
+
+impl Unmanaged {
+    fn of(l: &UseLine) -> Unmanaged {
+        Unmanaged { path: l.written.clone(), at_line: l.index + 1, named: l.named.clone() }
+    }
 }
 
 /// Which kind of estate it is: an organization's estate, or a workload estate — one that reads
@@ -956,14 +983,13 @@ fn no_graph(dir: &Path) -> String {
 
 /// `satz presets <estate>`: every pack the graph offers, as this estate has it.
 pub(crate) fn report(estate: &Path, runtime: &ToolConfig) -> Result<PacksReport, BoxErr> {
-    crate::refuse_named_uses(estate, "`satz presets`")?;
     let src = crate::fsx::read_to_string(estate)?;
     let label = estate.display().to_string();
     let dir = PathBuf::from(&runtime.presets_dir);
     let Some(graph) = crate::pack_graph::read(&dir)? else {
         // every `use` is one the graph does not know, because there is none
         let s = scan(&src);
-        let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(|l| Unmanaged { path: l.written.clone(), at_line: l.index + 1 }).collect());
+        let (interfaces, unmanaged) = interface_files(estate, runtime, s.uses.iter().filter(|l| !l.commented).map(Unmanaged::of).collect());
         let works_in = works_in(&interfaces);
         let delegated_by = delegated_by(estate, runtime, &interfaces);
         return Ok(PacksReport { estate: label, works_in, note: Some(no_graph(&dir)), packs: Vec::new(), unmanaged, interfaces, delegated_by, findings: Vec::new() });
@@ -1072,7 +1098,10 @@ pub(crate) fn render_text(r: &PacksReport, width: crate::findings::Width) -> Str
     if !r.unmanaged.is_empty() {
         s.push_str("\nunmanaged — used here, unknown to the pack graph:\n");
         for u in &r.unmanaged {
-            s.push_str(&format!("  {} (line {})\n", u.path, u.at_line));
+            match &u.named {
+                Some(n) => s.push_str(&format!("  {} named {} (line {})\n", u.path, n, u.at_line)),
+                None => s.push_str(&format!("  {} (line {})\n", u.path, u.at_line)),
+            }
         }
     }
     if !r.interfaces.is_empty() {
@@ -1131,7 +1160,10 @@ pub(crate) fn render_markdown(r: &PacksReport) -> String {
     if !r.unmanaged.is_empty() {
         s.push_str("\n## Unmanaged\n\n");
         for u in &r.unmanaged {
-            s.push_str(&format!("- `{}` (line {})\n", u.path, u.at_line));
+            match &u.named {
+                Some(n) => s.push_str(&format!("- `{}` named `{}` (line {})\n", u.path, n, u.at_line)),
+                None => s.push_str(&format!("- `{}` (line {})\n", u.path, u.at_line)),
+            }
         }
     }
     if !r.interfaces.is_empty() {
@@ -1298,7 +1330,7 @@ pub(crate) struct LineEdit {
 /// refuses, and satz does not move an estate's lines for it.
 pub(crate) fn line_on(src: &str, graph: &PackGraph, n: &Node) -> Result<(String, Option<LineEdit>), String> {
     let s = scan(src);
-    let named = |l: &&UseLine| node_of(graph, &l.written).is_some_and(|(m, _)| m.path == n.path);
+    let named = |l: &&UseLine| l.named.is_none() && node_of(graph, &l.written).is_some_and(|(m, _)| m.path == n.path);
     if s.uses.iter().filter(named).any(|l| !l.commented) {
         return Ok((src.to_string(), None));
     }
@@ -1456,6 +1488,26 @@ fn resolve<'g>(graph: &'g PackGraph, arg: &str) -> Result<Vec<&'g Node>, String>
     Ok(on_gate)
 }
 
+/// A preset of the library is switched by its one flat line: a line that uses one of
+/// `nodes` under a name is refused, naming it. No preset says `multiple`, the word a pack
+/// says to be used several times (ADR 0109), so the transpile refuses such a line too.
+fn refuse_named_line(s: &Scan, graph: &PackGraph, nodes: &[&Node], command: &str, arg: &str) -> Result<(), String> {
+    for n in nodes {
+        if let Some(l) = s.uses.iter().find(|l| l.named.is_some() && node_of(graph, &l.written).is_some_and(|(m, _)| m.path == n.path)) {
+            return Err(format!(
+                "{} {}: line {} uses `{}` named {} — a preset of the library is used once, by one line without `named`: no preset says `multiple`, the word a pack says to be used several times. Write `use \"{}\"` on that line, then switch it",
+                command,
+                arg,
+                l.index + 1,
+                l.written,
+                l.named.as_deref().unwrap_or_default(),
+                l.written
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The estate written, transpiled, and restored when the transpile refuses: an edit that
 /// leaves the estate broken is never left behind (ADR 0023's rule).
 fn write_proven(estate: &Path, before: &str, after: &str, tool: &ToolConfig, runtime: &ToolConfig) -> Result<(), BoxErr> {
@@ -1471,12 +1523,12 @@ fn write_proven(estate: &Path, before: &str, after: &str, tool: &ToolConfig, run
 
 /// `satz add-preset <estate> <gate|path>`.
 pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, with_requirements: bool) -> Result<PackChange, BoxErr> {
-    crate::refuse_named_uses(estate, "`satz add-preset`")?;
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
     let before = crate::fsx::read_to_string(estate)?;
     let view = View::new(&graph, &lib, &before).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let mut targets = resolve(&graph, arg)?;
+    refuse_named_line(&view.scan, &graph, &targets, "add-preset", arg)?;
     for n in &targets {
         match n.role {
             Role::Core => return Err(format!("`{}` is the bootstrap pack every estate starts with — it is not switched", n.path).into()),
@@ -1607,12 +1659,12 @@ pub(crate) fn add(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &
 /// `satz remove-preset <estate> <gate|path>`: the gate bound false, the line left as it
 /// is — a gated line with a false gate creates nothing.
 pub(crate) fn remove(estate: &Path, tool: &ToolConfig, runtime: &ToolConfig, arg: &str, cascade: bool) -> Result<PackChange, BoxErr> {
-    crate::refuse_named_uses(estate, "`satz remove-preset`")?;
     let (graph, dir) = graph_for(runtime)?;
     let lib = Library::load(&graph, &dir)?;
     let before = crate::fsx::read_to_string(estate)?;
     let view = View::new(&graph, &lib, &before).map_err(|e| format!("{}: {}", estate.display(), e))?;
     let named = resolve(&graph, arg)?;
+    refuse_named_line(&view.scan, &graph, &named, "remove-preset", arg)?;
     let mut off: Vec<&Node> = Vec::new();
     for n in named {
         let Some(g) = &n.gate else {
@@ -1769,6 +1821,44 @@ mod tests {
         assert_eq!((l.when.as_deref(), l.trailing.as_str(), l.commented), (Some("g"), "// note", false));
     }
 
+    /// A named use is a pack line of its own (ADR 0109): the scanner reads its name beside
+    /// the path, the report lists one row per use with it, and a graph line is never one.
+    #[test]
+    fn a_named_use_is_a_line_per_use_with_its_name() {
+        let src = format!("{}use \"packs/vm.satz\" named web\nuse \"packs/vm.satz\" named db when want_db  // db\nuse \"packs/vm.satz\"\n", HEAD.replace("x = 1", "want_db = true"));
+        let s = scan(&src);
+        let vm: Vec<(Option<&str>, Option<&str>, &str)> =
+            s.uses.iter().filter(|l| l.written == "packs/vm.satz").map(|l| (l.named.as_deref(), l.when.as_deref(), l.trailing.as_str())).collect();
+        assert_eq!(vm, [(Some("web"), None, ""), (Some("db"), Some("want_db"), "// db"), (None, None, "")]);
+        let g = graph();
+        let lib = lib(&g);
+        let view = View::new(&g, &lib, &src).unwrap();
+        let rows: Vec<(String, Option<String>)> = view.unmanaged().into_iter().map(|u| (u.path, u.named)).collect();
+        assert_eq!(
+            rows,
+            [("packs/vm.satz".to_string(), Some("web".to_string())), ("packs/vm.satz".to_string(), Some("db".to_string())), ("packs/vm.satz".to_string(), None)]
+        );
+        let json = serde_json::to_value(view.unmanaged()).unwrap();
+        assert_eq!(json[0]["named"], "web");
+        assert!(json[2].get("named").is_none(), "a flat line carries no `named`: {}", json[2]);
+    }
+
+    /// `add-preset` and `remove-preset` switch a preset by its one flat line: a line that
+    /// uses the preset under a name is refused, saying why; every other named use leaves
+    /// them be.
+    #[test]
+    fn a_switch_refuses_a_named_line_of_a_preset() {
+        let g = graph();
+        let src = format!("{}use \"presets/organization-budget.satz\" named team when use_budget\nuse \"packs/vm.satz\" named web\n", HEAD);
+        let s = scan(&src);
+        let n = resolve(&g, "presets/organization-budget.satz").unwrap();
+        let e = refuse_named_line(&s, &g, &n, "add-preset", "presets/organization-budget.satz").unwrap_err();
+        assert!(e.contains("uses `presets/organization-budget.satz` named team"), "{e}");
+        assert!(e.contains("no preset says `multiple`"), "{e}");
+        let other = resolve(&g, "presets/estate-map.satz").unwrap();
+        assert!(refuse_named_line(&s, &g, &other, "add-preset", "presets/estate-map.satz").is_ok(), "a named use of another pack is no line of this preset");
+    }
+
     /// `use interface` names an interface, not a pack: the scanner reads no line from it,
     /// the transpile reports no unmanaged pack for it, and switching a gate on leaves it be.
     #[test]
@@ -1776,7 +1866,7 @@ mod tests {
         let block = "\ninterface \"team-a\" {\n  use interface \"network\" when use_budget\n  use interface [\"dns\", \"logs\"]\n}\n";
         let src = format!("{}{}", HEAD.replace("x = 1", "use_budget = false"), block);
         assert!(scan(&src).uses.iter().all(|l| !l.written.contains("network") && !l.written.contains("dns")), "{:?}", scan(&src).uses);
-        assert_eq!(parse_use("use interface \"network\""), None);
+        assert!(parse_use("use interface \"network\"").is_none());
         assert!(messages(&src).iter().all(|m| !m.contains("network") && !m.contains("interface")), "{:?}", messages(&src));
         let on = src.replace("use_budget = false", "use_budget = true");
         let (out, _) = gate_on(&on, &graph(), "use_budget").unwrap();

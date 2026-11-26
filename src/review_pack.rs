@@ -297,6 +297,14 @@ pub(crate) fn review(
     // repository's privacy gate's (`src/privacy_shapes.rs`).
     f.extend(private_shapes(&pack, &src));
 
+    // a pack that says `multiple` is used several times, each a named use (ADR 0109): what
+    // a named use refuses, a core param it would own per use, and a resource every use
+    // would write alike are found here, where its author writes it
+    if file.multiple {
+        let rules = crate::load_import_config(None, tool_config, &runtime_config.presets_dir).ok().flatten();
+        f.extend(multiple_findings(&pack, &file, rules.as_ref()));
+    }
+
     // The fold: a pack is a fragment, so what it writes is only knowable inside an
     // estate. Everything below reads that estate. The synthetic one lives in a scratch
     // directory this review alone owns, removed on every return below.
@@ -574,6 +582,103 @@ pub(crate) fn review(
         emits: mine.iter().map(|r| r.address()).collect(),
         findings: f,
     })
+}
+
+/// What a pack whose header says `multiple` is held to at authoring time (ADR 0109):
+/// - nothing a named use refuses (`hcl`, an `action`, `inputs`, an `interface`, an
+///   `offers` entry, and what the named use does not take yet) — an error, since no estate
+///   could use the pack under a name;
+/// - no param of the estate's own vocabulary (`EXAMPLE_PARAMS`) declared again — a warning:
+///   a named use owns every param its pack declares, so the estate's value never reaches it;
+/// - every resource with an identity — what `satz adopt` finds it by, `rules` — that reads a
+///   param or a reference of the use — a warning for one whose identity attributes are all
+///   literals: two uses would create one resource twice.
+fn multiple_findings(pack: &Path, file: &satz_core::satz::File, rules: Option<&crate::config::ImportConfig>) -> Vec<Finding> {
+    use satz_core::satz::{Entry, Key, Value};
+    let mut f = Vec::new();
+    if let Some((line, what, why)) = satz_core::pipeline::refused_in_named(file) {
+        f.push(at(
+            pack,
+            Some(line as u32),
+            Severity::Error,
+            format!("the header says `multiple`, and the pack holds {} — a named use takes none: {}. Drop the word, or the {}", what, why, what.trim_start_matches("an ").trim_start_matches("a ")),
+        ));
+    }
+    for (name, _, line) in &file.params {
+        if EXAMPLE_PARAMS.iter().any(|(k, _)| k == name) {
+            f.push(at(
+                pack,
+                Some(*line as u32),
+                Severity::Warning,
+                format!(
+                    "`{}` is a param of the estate's own (presets/estate-core.satz), and the header says `multiple`: a named use owns every param its pack declares, so each use reads its own `<name>.{}` and never the estate's — read it without declaring it",
+                    name, name
+                ),
+            ));
+        }
+    }
+    let Some(rules) = rules else { return f };
+    // a value reads the use when it reads a param or refers to a resource (`${{…}}`)
+    let reads = |v: &Value| {
+        let mut out = std::collections::BTreeSet::new();
+        satz_core::pipeline::value_reads(v, &mut out);
+        !out.is_empty() || matches!(v, Value::Str(parts) if parts.iter().any(|p| matches!(p, satz_core::satz::StrPart::Lit(l) if l.contains("${"))))
+    };
+    let key = |k: &Key| match k {
+        Key::Ident(s) => s.clone(),
+        Key::Str(parts) => parts.iter().map(|p| match p {
+            satz_core::satz::StrPart::Lit(l) => l.clone(),
+            satz_core::satz::StrPart::Param(r) => format!("{{{}}}", r),
+        }).collect(),
+    };
+    let unwrap = |e: &Entry| -> Option<(String, Vec<Entry>, usize)> {
+        let e = match e {
+            Entry::When { entry, .. } => entry.as_ref(),
+            e => e,
+        };
+        match e {
+            Entry::Map { key: k, name: None, body, line } => Some((key(k), body.clone(), *line)),
+            _ => None,
+        }
+    };
+    for item in &file.items {
+        let Entry::Map { key: ty, name: None, body, .. } = item else { continue };
+        let ty = key(ty);
+        if !ty.starts_with("google_") {
+            continue;
+        }
+        let identity = crate::adopt::identity_attrs(rules, &ty);
+        if identity.is_empty() {
+            continue;
+        }
+        for (label, attrs, line) in body.iter().filter_map(unwrap) {
+            let written: Vec<(String, &Value)> = attrs
+                .iter()
+                .filter_map(|a| match a {
+                    Entry::Attr { key: k, value, .. } => Some((key(k), value)),
+                    _ => None,
+                })
+                .filter(|(k, _)| identity.contains(k))
+                .collect();
+            if !written.is_empty() && written.iter().all(|(_, v)| !reads(v)) {
+                let names: Vec<String> = written.iter().map(|(k, _)| format!("`{}`", k)).collect();
+                f.push(at(
+                    pack,
+                    Some(line as u32),
+                    Severity::Warning,
+                    format!(
+                        "`{}.{}`: {} — what makes it the resource it is in the cloud — read{} no param, and the header says `multiple`: every named use creates this one resource again. Make {} from a param",
+                        ty,
+                        label,
+                        names.join(", "),
+                        if names.len() == 1 { "s" } else { "" },
+                        if names.len() == 1 { "it" } else { "one of them" }
+                    ),
+                ));
+            }
+        }
+    }
+    f
 }
 
 /// Every token of the pack shaped like private data that is not a documented example
@@ -897,6 +1002,39 @@ mod tests {
         assert!(!r.passed());
         assert!(!r.findings.iter().any(|f| f.message.contains("not checked here")), "{:?}", r.findings);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pack that says `multiple` is held, at authoring time, to what a named use of it
+    /// needs (ADR 0109): nothing a named use refuses, no param of the estate's own declared
+    /// again, and no resource whose identity is a literal every use would write alike.
+    #[test]
+    fn a_pack_that_says_multiple_is_held_to_what_a_named_use_needs() {
+        let rules = crate::load_import_config(None, &toml::from_str::<ToolConfig>("").unwrap(), &Path::new(env!("CARGO_MANIFEST_DIR")).join("presets").to_string_lossy())
+            .unwrap()
+            .expect("the shipped import-config.yaml");
+        let pack = Path::new("/tmp/x/vm.satz");
+        let says = |src: &str| -> Vec<(Severity, String)> {
+            let file = satz_core::satz::parse(src).unwrap_or_else(|e| panic!("{}: {}", e.line, e.msg));
+            multiple_findings(pack, &file, Some(&rules)).into_iter().map(|f| (f.severity, f.message)).collect()
+        };
+        // the budget pack the repository ships: every identity reads a param
+        let budget = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("packs/project-budget.satz")).unwrap();
+        assert_eq!(says(&budget), [], "the shipped multiple pack passes");
+
+        let head = "pack vm version \"1.0\" multiple\n\nparams {\n  vm_name = \"acme-vm\"\n}\n\n";
+        let f = says(&format!("{}action \"a\" {{\n  reason = \"r\"\n  run    = \"x.sh\"\n  phase  = \"after-apply\"\n}}\n", head));
+        assert!(f.iter().any(|(s, m)| *s == Severity::Error && m.contains("holds an `action` — a named use takes none")), "{:?}", f);
+
+        let f = says(&head.replace("  vm_name = \"acme-vm\"\n", "  vm_name = \"acme-vm\"\n  default_region = \"europe-west3\"\n"));
+        assert!(f.iter().any(|(s, m)| *s == Severity::Warning && m.contains("`default_region` is a param of the estate's own")), "{:?}", f);
+
+        let literal = format!("{}google_storage_bucket {{\n  logs {{\n    name     = \"acme-logs\"\n    location = \"EU\"\n  }}\n  data {{\n    name = \"{{vm_name}}-data\"\n  }}\n}}\n", head);
+        let f = says(&literal);
+        assert_eq!(f.len(), 1, "{:?}", f);
+        assert!(f[0].0 == Severity::Warning && f[0].1.contains("`google_storage_bucket.logs`: `name`") && f[0].1.contains("every named use creates this one resource again"), "{:?}", f);
+        // a pack without the word is used once: none of this applies
+        let file = satz_core::satz::parse(&literal.replace(" multiple", "")).unwrap();
+        assert!(!file.multiple);
     }
 
     #[test]
