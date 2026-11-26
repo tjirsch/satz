@@ -2,7 +2,7 @@
 
 - **Status:** accepted; supersedes the deferral of pack instances in [ADR 0071](0071-each-expands-a-list-into-labelled-bodies-at-compile-time.md) and its rejection in [ADR 0075](0075-each-writes-an-interface-per-entry-and-onboarding-is-a-pack.md); option C of [ADR 0104](0104-two-packs-declaring-one-param-must-agree.md)
 - **Date:** 2026-11-26
-- **Shipped in:** the release that follows, in four parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the presets report, the pack lines, `adopt` and the editor; exports and list params of a named use
+- **Shipped in:** the release that follows, in four parts: the language, the walk and the HCL code (this record's first part); the questions and the interview; the commands that read every pack — the presets report, the pack lines, `adopt`, notices and the editor; exports and list params of a named use
 
 ## Context
 
@@ -80,18 +80,17 @@ params {
 8. **What a named use refuses in this part**, each at the `use` line with the file and line of
    the statement and the reason: a named use outside the estate file or inside another; `hcl`,
    `action`, `inputs`, an `interface` block (an `each` around one included), an `export`, an
-   `entries` statement, a `notice`, an `offers` entry; a `contributes_<param>` that adds to a
-   list param a named use owns. A `contributes_<param>` from a named use to a flat list is
+   `entries` statement, a `notice` (lifted by the third part, below), an `offers` entry; a
+   `contributes_<param>` that adds to a list param a named use owns. A `contributes_<param>` from a named use to a flat list is
    allowed, its entries resolved inside the use, an entry two uses contribute alike added once.
 9. **Gates.** `use … named db when g` reads a flat `g`; a `when` inside the pack reads the
    use's own params, else the flat namespace.
 
-The commands that read every pack once refuse an estate with a named use rather than misread
-it, naming the line: `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs`
-and the workload pack commands that read the estate. The pack graph refuses a named use of a
-preset of the library. The editor's completion and hover show the flat namespace. The third
-part of this change teaches them named uses; the fourth lifts the refusal of exports and list
-params. The second part taught the questions, below.
+In the first part the commands that read every pack once refused an estate with a named use
+rather than misread it: `satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz
+packs` and the workload pack commands that read the estate. The pack graph refuses a named use
+of a preset of the library. The second part taught the questions, the third the commands,
+both below; the fourth lifts the refusal of exports and list params.
 
 ### The second part: questions, the interview and the gate
 
@@ -116,6 +115,53 @@ once per use:
 The internal name of a use's param in the HCL code, `web__vm_zone`, stays the transpile's: the
 questions the transpile carries for a variable's description are renamed so, the questions the
 report carries are renamed to the dotted name. Neither is shown where the other is.
+
+### The third part: the commands that read every pack, and notices
+
+Every command reads an estate with a named use; what each does with the `use … named` line:
+
+1. **The pack lines.** The scanner every pack command shares (`src/preset_lines.rs`) reads
+   `named <name>` on a line. `satz presets` and `satz_presets` list a named use as an
+   `unmanaged` row of its own, with the new optional field `named`; `satz packs` and
+   `satz_packs` give a pack the estate uses under names the new field `named`, the list of
+   names, and a read that is a param's value counts as bound by the estate where every use binds
+   `<name>.<param>` (and a flat line beside them binds the flat name).
+2. **`add-preset`, `remove-preset`** work on an estate with named uses. A line that uses the
+   preset they switch under a name is refused, saying so: no preset of the library says
+   `multiple`.
+3. **`merge-presets`** repoints a named line at a fork as it repoints any line: the path
+   changes, `named <name>` and `when` stay.
+4. **`satz adopt`** reads the prefixed addresses as written. A flat use turned into a named use
+   renames every address its pack writes, and the live object the state holds under the old one
+   is a state move (ADR 0005). `--execute` writes no `"import-id"` into a file a named use
+   reads: the line serves every use of the pack; the resource is reported with `--execute
+   --import` instead, as a pristine pack's is.
+5. **Notices** are acknowledged per use. The acknowledgement of a notice of the use's pack is
+   the estate's `<name>.<param> = true`; it is no variable (no `<name>--<param>` in
+   `terraform.tfvars`), the transpile's message stands at the use's line and names
+   `` `<pack>` named <name> ``, the check before a command that writes to the organization
+   counts each use's open notice, and `satz adopt --execute --import`, run over every resource,
+   binds `<name>.<param> = true` for each use whose notice names `satz adopt`. A notice row's
+   `param` is the dotted name and its new optional field `named` the use.
+6. **The pack graph** is unchanged per pack. `satz preset-graph` refuses an offered pack whose
+   header says `multiple` (check 11): the map offers a pack once, to an estate that uses it once.
+7. **`doc-presets`** prints, for a pack that says `multiple`, the named line beside the flat one
+   in its "Use it" section, with its params as `web.<param>`.
+8. **`review-preset`** holds a pack that says `multiple` to a named use at authoring time: what
+   a named use refuses is an error; a param of the estate's own vocabulary declared again, and a
+   resource whose identity attributes — what `satz adopt` finds it by: its natural key, the
+   placeholders of its `import_id` template, its `match_on` — are all literals, are warnings.
+9. **The editor** completes `<name>.<param>` in the estate's `params`, and hover and
+   go-to-definition on `web.vm_zone` reach the pack's declaration. A bare name follows the flat
+   uses only.
+10. **The manifest** carries the use that wrote each resource, from its `<name>__` prefix:
+    `satz scan`, `satz_scan_checkov` and `satz_adopt` show it beside the pack line, which
+    serves every use, as the new optional field `named`.
+
+What a named use still refuses: an `export`, an `entries` statement, and a `contributes_<param>`
+to a list a named use declares (the fourth part); `hcl`, an `action`, `inputs`, an `interface`
+block or file, an `offers` entry, a named use in a pack or outside the estate file, and a named
+use of a preset of the library — the limits this record keeps.
 
 ## Options
 
@@ -177,13 +223,11 @@ liftable.*
   the node's path, so the grants two uses write on their own nodes are two resources.
 - **An `import_id` check without `presets/import-config.yaml`** in the presets directory has
   no template to render and judges nothing; identical bodies are refused without it.
-- **A notice in a named use** is refused (the decision named no rule for it). The second part
-  keeps the refusal: a notice is closed by running its command — in the library an `adopt
-  --execute --import`, which binds the acknowledgement — and `satz adopt` refuses an estate
-  with a named use until the third part. A notice per use that no command can close would be
-  a gate that only a hand edit opens, and the transpile's warnings, the refusal of a command
-  that writes to the organization and the report of `satz presets` read the notice's param
-  flat. The third part decides it with `adopt`.
+- **A notice in a named use** was refused by the first and second parts: a notice is closed by
+  running its command — in the library an `adopt --execute --import`, which binds the
+  acknowledgement — and `satz adopt` refused an estate with a named use. The third part lifts
+  it, per use (above): a whole `adopt --execute --import` covers every use, so it binds each
+  use's acknowledgement.
 - **A choice's name in a named use** is `web.<choice>`, though a choice's name is no param:
   the subject is what an answer is keyed by, and two uses of one choice need two keys.
 - **The workbook's `use` column** is the last, after `param`, so no column a reader finds by
@@ -194,9 +238,33 @@ liftable.*
 - **The workload pack's changelog.** `presets/CHANGELOG.md`'s table is the library's;
   `project_budget` 1.2 is recorded under `### Unreleased`, as its 1.1 was.
 - **The showcase.** `tests/smoke/yaml/showcase.satz` is read by `satz questions`, the
-  interview and `satz presets` in the smoke run, which refuse a named use in this part; the
-  example lives in `tests/corpus/named-uses/` and in the smoke's workload estate with the
-  budget pack, and joins the showcase when those commands read named uses.
+  interview and `satz presets` in the smoke run, which refused a named use until the third
+  part; it now uses `tests/smoke/yaml/showcase-bucket.satz` twice, each use acknowledging the
+  pack's notice for itself.
+- **Which files an `"import-id"` is not written into** (third part). Every file a named use
+  reads — the pack the line names and every file it uses — and for every resource whose
+  declaring line is in one, a resource of a flat use of the same pack included: an id written
+  into a line every use reads would be every use's. Refused with the hint to `--execute
+  --import`, never guessed per use.
+- **A named use of a preset of the library** stays refused by the pack graph (third part), its
+  `.local` fork included: the graph reads each preset once, the map offers it once, and an
+  offered pack that says `multiple` is a check `preset-graph` fails. `add-preset` and
+  `remove-preset` refuse a named line of the preset they switch rather than switch the flat
+  line beside it.
+- **`satz presets` reports no notice of an unmanaged pack**, named or not (third part): the
+  graph carries the notices it reports. A named use's notice reaches the operator through the
+  transpile's message at the use's line and the check before a command that writes.
+- **`bound_by_estate` of a pack used under names** (third part) holds only where every use
+  binds the param, and a flat line beside them binds the flat name: one use that does not makes
+  the read.
+- **The `named` field's form** (third part). One per row where a row is one line — `unmanaged`,
+  a notice, a manifest resource — and a list where a row is one pack the estate may use several
+  times (`satz packs`). Absent, or empty, for a flat use, so a reader of the flat report reads it
+  unchanged.
+- **What review-preset calls a core param and an identity** (third part). A core param is one of
+  the estate's own vocabulary the review binds to its example values (`presets/estate-core.satz`);
+  an identity is what `satz adopt` finds a resource by. A resource that writes none of its
+  identity attributes is not judged: what the provider derives is not the pack's to say.
 
 ## Consequences
 
@@ -207,5 +275,9 @@ liftable.*
   header; the canonical form carries both only where written, so no pack's form moves.
 - A property test holds every pack of the library and the corpus that a named use takes to
   the flat use's HCL under the prefix; `tests/corpus/named-uses/` is the snapshot.
-- Until the third part ships, an estate with a named use transpiles, plans, applies and is
-  interviewed, and is refused by the commands named above.
+- `tests/smoke/yaml/showcase.satz` uses `showcase-bucket.satz` twice; the smoke run reads it
+  with every command and asserts the presets report, the packs report, the editor and the
+  per-use notice.
+- The new optional JSON fields, none removed or renamed: `named` on an `unmanaged` row of the
+  presets report, on a notice row (whose `param` is dotted for a named use), on an adopt row and
+  a scan finding; `named`, a list, on a row of the packs report.

@@ -340,6 +340,13 @@ impl Server {
                                     }
                                 }
                             }
+                            // the estate binds a named use's params as `<name>.<param>`
+                            if k == "params" && ctx.frames.len() == 1 {
+                                for p in self.named_params_of(&path, &text) {
+                                    let detail = format!("param of the named use `{}` = {}", p.named, p.value);
+                                    items.push(item(&p.bound, CompletionItemKind::VARIABLE, Some(detail), Some(format!("declared in `{}`", p.file)), "0"));
+                                }
+                            }
                             if k != "params" && k != "inputs" && k != "locals" && k != "terraform" && k != "providers" && k != "interface" {
                                 push_types(&mut items, registry.as_deref(), "1");
                             }
@@ -392,6 +399,33 @@ impl Server {
             .collect()
     }
 
+    /// Every param of every named use of this file, as the estate binds it (`web.vm_zone`),
+    /// with the file and line that declare it and its value in the use — the estate's
+    /// binding, else the pack's default resolved inside the use. Empty for a file with
+    /// no named use, and for a named use whose pack does not read.
+    fn named_params_of(&self, path: &Path, text: &str) -> Vec<NamedParam> {
+        let Ok(file) = satz::parse(text) else { return Vec::new() };
+        let uses = satz::named_uses(&file);
+        if uses.is_empty() {
+            return Vec::new();
+        }
+        let dir = find_config_dir(path);
+        let config = dir.as_ref().and_then(|d| self.estates.get(d)).map(|e| e.config.clone());
+        let loader = make_loader(path, config.as_ref(), &self.docs, None);
+        let file_name = path.to_string_lossy();
+        let env = pipeline::estate_questions(&file_name, text, &loader).map(|(_, _, env)| env).unwrap_or_default();
+        let mut out = Vec::new();
+        for (named, pack, line) in uses {
+            let Ok(owned) = pipeline::named_use_params(named, pack, &file_name, line, &loader) else { continue };
+            for (param, (file, at)) in owned {
+                let bound = pipeline::named_bound_name(named, &param);
+                let value = env.get(&bound).map(yaml_text).unwrap_or_else(|| NO_DEFAULT.to_string());
+                out.push(NamedParam { bound, named: named.to_string(), pack: pack.to_string(), param, file, line: at, value });
+            }
+        }
+        out
+    }
+
     // -----------------------------------------------------------------------
     // Hover
     // -----------------------------------------------------------------------
@@ -419,6 +453,14 @@ impl Server {
             }
             _ => return None,
         };
+        // `web.vm_zone`: a param of a named use, as the estate binds it
+        if let Some(p) = self.named_params_of(&path, &text).into_iter().find(|p| p.bound == word) {
+            return Some(markdown(
+                format!("param **{}** of the named use `{}` = {}\n\ndeclared in `{}`, used as `use \"{}\" named {}`", p.param, p.named, p.value, p.file, p.pack, p.named),
+                tok,
+                &text,
+            ));
+        }
         let ctx = context_at(&text, tok.start);
         let registry = find_config_dir(&path).and_then(|d| self.registry(&d));
         // A keyword. `use interface` takes a name, not a pack path.
@@ -512,6 +554,13 @@ impl Server {
                 Some(GotoDefinitionResponse::Scalar(Location { uri: to_uri(&target)?, range: Range::default() }))
             }
             Tok::Ident(name) => {
+                // `web.vm_zone`: the declaration in the pack the named use uses
+                if let Some(p) = self.named_params_of(&path, &text).into_iter().find(|p| &p.bound == name) {
+                    let file = self.resolve_use(&path, &p.file)?;
+                    let src = self.docs.get(&file).cloned().or_else(|| std::fs::read_to_string(&file).ok())?;
+                    let range = line_range(&src, p.line);
+                    return Some(GotoDefinitionResponse::Scalar(Location { uri: to_uri(&file)?, range }));
+                }
                 let ctx = context_at(&text, tok.start);
                 if ctx.position != Slot::Value {
                     return None;
@@ -718,6 +767,23 @@ enum Slot {
     Value,
     /// Inside a string, after a header, mid-statement — nothing to offer.
     Other,
+}
+
+/// One param of a named use, as the editor shows it.
+struct NamedParam {
+    /// as the estate binds it: `web.vm_zone`
+    bound: String,
+    /// the use's name: `web`
+    named: String,
+    /// the pack the `use` line names
+    pack: String,
+    /// as the pack names it: `vm_zone`
+    param: String,
+    /// the file that declares it, as a `use` names it, and the line
+    file: String,
+    line: usize,
+    /// its value in the use, or that it has none
+    value: String,
 }
 
 struct Context {
@@ -1001,11 +1067,14 @@ fn yaml_text(v: &serde_yaml::Value) -> String {
     }
 }
 
+/// The files whose params this file reads by their bare names: every `use` but a named
+/// one, whose params the estate binds as `<name>.<param>` (`named_params_of`).
 fn uses_of(file: &File) -> Vec<String> {
     let mut out = Vec::new();
     fn walk(entries: &[Entry], out: &mut Vec<String>) {
         for e in entries {
             match e {
+                Entry::Use { named: Some(_), .. } => {}
                 Entry::Use { path, .. } => out.push(path.clone()),
                 Entry::Map { body, .. } | Entry::Each { body, .. } => walk(body, out),
                 Entry::When { entry, .. } => walk(std::slice::from_ref(entry.as_ref()), out),
@@ -1206,6 +1275,15 @@ mod tests {
         assert!(hover.starts_with("local value **bucket** = acme-logs"), "{}", hover);
         assert!(hover.contains("local value of this file"), "{}", hover);
         assert!(TOP_LEVEL.iter().any(|(k, _)| *k == "locals"), "`locals` completes at the top level");
+    }
+
+    /// A named use's params are no params of the estate's flat namespace: go-to-definition
+    /// on a bare name follows the flat uses only, and `web.vm_zone` is found through the
+    /// named use (`named_params_of`).
+    #[test]
+    fn a_bare_name_follows_the_flat_uses_and_not_a_named_one() {
+        let file = satz::parse("estate e\nuse \"a.satz\"\nuse \"vm.satz\" named web\ngoogle_folder {\n  use \"f.satz\"\n}\n").unwrap();
+        assert_eq!(uses_of(&file), ["a.satz", "f.satz"]);
     }
 
     #[test]

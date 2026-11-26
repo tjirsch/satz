@@ -1024,6 +1024,9 @@ pub(crate) struct Estate {
     pub path: PathBuf,
     pub bound: std::collections::BTreeSet<String>,
     pub interfaces: Vec<satz_core::pipeline::UsedInterfaceFile>,
+    /// the estate's active `use` lines at its top level: the path each names, and the name
+    /// of a named use (ADR 0109)
+    pub uses: Vec<(String, Option<String>)>,
 }
 
 /// One interface folder the estate uses: its name, the organization's estate that wrote it
@@ -1047,6 +1050,12 @@ pub(crate) struct FolderExport {
 }
 
 impl Estate {
+    /// How the estate uses the pack at `use_path`: `None` for a flat line, the name for a
+    /// named use. Empty where no line uses it.
+    pub(crate) fn uses_of(&self, use_path: &str) -> Vec<Option<String>> {
+        self.uses.iter().filter(|(p, _)| p == use_path).map(|(_, n)| n.clone()).collect()
+    }
+
     pub(crate) fn folders(&self) -> Vec<InterfaceFolder> {
         self.interfaces
             .iter()
@@ -1234,9 +1243,24 @@ pub(crate) fn declarations_of(text: &str, what: &str) -> Result<Declarations, St
 /// read is given by the used interface folder of that name when it carries the value, a
 /// bare one by every used folder that carries it when they agree. A read that is the value
 /// of a param the estate binds is not made.
-pub(crate) fn matched(mut d: Declarations, estate: &Estate) -> Declarations {
+pub(crate) fn matched(d: Declarations, estate: &Estate) -> Declarations {
+    matched_as(d, estate, &[])
+}
+
+/// `matched` for a pack the estate uses as `uses` says (`Estate::uses_of`): a read that is
+/// a param's value is not made where every use binds the param — a flat line by its name,
+/// a named use by `<name>.<param>` (ADR 0109). No use is read as one flat line.
+pub(crate) fn matched_as(mut d: Declarations, estate: &Estate, uses: &[Option<String>]) -> Declarations {
+    let flat = [None];
+    let uses = if uses.is_empty() { &flat[..] } else { uses };
+    let bound = |p: &str| {
+        uses.iter().all(|u| match u {
+            Some(n) => estate.bound.contains(&satz_core::pipeline::named_bound_name(n, p)),
+            None => estate.bound.contains(p),
+        })
+    };
     for r in &mut d.reads {
-        if r.param.as_ref().is_some_and(|p| estate.bound.contains(p)) {
+        if r.param.as_deref().is_some_and(bound) {
             r.bound_by_estate = true;
             continue;
         }
@@ -1279,6 +1303,10 @@ pub(crate) struct PackRow {
     pub commit: Option<String>,
     /// the line an estate reads the pack with; none for a pack that is only available
     pub use_line: Option<String>,
+    /// the names the estate uses the pack under, one per named use (ADR 0109); empty where
+    /// it uses the pack flat or not at all
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub named: Vec<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1336,10 +1364,11 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, 
             Some(Some(t)) => Upstream::Found(t),
         };
         let state = classify(row, Some(&text), upstream).expect("a local pack has a state");
+        let uses = use_path(runtime, id).map(|p| estate.uses_of(&p)).unwrap_or_default();
         packs.push(PackRow {
             id: id.clone(),
             state,
-            declarations: matched(declarations_of(&text, &path.display().to_string())?, estate),
+            declarations: matched_as(declarations_of(&text, &path.display().to_string())?, estate, &uses),
             version: crate::presets::pack_version(&text),
             upstream_version: match upstream {
                 Upstream::Found(t) => crate::presets::pack_version(t),
@@ -1348,6 +1377,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, 
             source: row.map(|r| r.source.clone()),
             commit: row.and_then(|r| r.commit.clone()),
             use_line: use_path(runtime, id).ok().map(|p| format!("use \"{p}\"")),
+            named: uses.into_iter().flatten().collect(),
         });
     }
     for source in sources {
@@ -1365,6 +1395,7 @@ pub(crate) async fn list(runtime: &ToolConfig, only: Option<&str>, local: bool, 
                 source: Some(source.name().to_string()),
                 commit: None,
                 use_line: None,
+                named: Vec::new(),
             });
         }
     }
@@ -1424,6 +1455,9 @@ pub(crate) fn render_list(r: &PacksReport) -> String {
         };
         let source = p.source.as_deref().unwrap_or("-");
         out.push_str(&format!("  {:width$}  {:source_width$}  {:10}  {}\n", p.id, source, version, state));
+        if !p.named.is_empty() {
+            out.push_str(&format!("      used named {}\n", p.named.join(", ")));
+        }
         out.push_str(&render_declarations(&p.declarations, "      "));
     }
     out
@@ -1698,7 +1732,7 @@ mod tests {
                 satz_core::pipeline::UsedInterfaceFile { file: format!("interfaces/{name}/satz/interface.satz"), interface }
             })
             .collect();
-        Estate { path: PathBuf::from("team.satz"), bound: bound.iter().map(|b| b.to_string()).collect(), interfaces }
+        Estate { path: PathBuf::from("team.satz"), bound: bound.iter().map(|b| b.to_string()).collect(), interfaces, uses: Vec::new() }
     }
 
     fn read<'a>(d: &'a Declarations, value: &str) -> &'a ReadDecl {
@@ -1807,6 +1841,27 @@ mod tests {
         assert!(unmet(&d).is_empty(), "{:?}", d.reads);
         let text = render_declarations(&d, "  ");
         assert!(text.contains("  params: region, project, owner (asked), sizes, stores\n") && text.contains("project_id (the estate binds project)"), "{text}");
+    }
+
+    /// A pack used under names (ADR 0109): a read that is a param's value is not made where
+    /// every use binds the param as `<name>.<param>` — and is made while one use, or a flat
+    /// line beside them, does not.
+    #[test]
+    fn a_read_is_bound_by_every_use_of_the_pack() {
+        let decl = || declarations_of(DECLARING, "declaring.satz").unwrap();
+        let folders: &[(&str, &[(&str, &str)])] = &[("delegation-vm", &[("instance_name", "vm-1"), ("zone", "z"), ("project_id", "p")])];
+        let mut e = estate(&["web.project", "db.project"], folders);
+        e.uses = vec![("packs/declaring.satz".into(), Some("web".into())), ("packs/declaring.satz".into(), Some("db".into()))];
+        let uses = e.uses_of("packs/declaring.satz");
+        assert_eq!(uses, [Some("web".to_string()), Some("db".to_string())]);
+        assert!(read(&matched_as(decl(), &e, &uses), "project_id").bound_by_estate, "both uses bind it");
+        assert!(!read(&matched(decl(), &e), "project_id").bound_by_estate, "a flat line reads the flat binding, which there is none of");
+        let e = estate(&["web.project"], folders);
+        let r = read(&matched_as(decl(), &e, &uses), "project_id").clone();
+        assert!(!r.bound_by_estate && r.met_by == ["delegation-vm"], "db does not bind it, so the read is made: {r:?}");
+        let e = estate(&["web.project", "db.project"], folders);
+        let with_flat = [Some("web".to_string()), Some("db".to_string()), None];
+        assert!(!read(&matched_as(decl(), &e, &with_flat), "project_id").bound_by_estate, "the flat line beside the uses binds nothing");
     }
 
     /// The packs the repository ships: the budget reads the project it counts by the bare

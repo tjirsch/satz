@@ -2758,7 +2758,6 @@ fn use_loader(input_path: &Path, runtime_config: &ToolConfig) -> impl Fn(&str) -
 /// interface files it uses, loaded by the transpile's front end. An estate the front end
 /// refuses is an error naming the place.
 pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<crate::workload_packs::Estate, String> {
-    refuse_named_uses(estate, "`satz packs` and the workload pack commands")?;
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).map_err(|e| e.to_string())?;
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
@@ -2766,7 +2765,8 @@ pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<
     let fe = satz_core::pipeline::compile_estate_bound(&estate.to_string_lossy(), &src, &[], &runtime_config.inputs, &resolver, &loader)
         .map_err(|e| format!("{}:{}: {} — the packs are matched against the interface folders this estate uses, and its transpile stops here", e.file, e.line, e.msg))?;
     let bound = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", estate.display(), e.line, e.msg))?.params.into_iter().map(|(name, _, _)| name).collect();
-    Ok(crate::workload_packs::Estate { path: estate.to_path_buf(), bound, interfaces: fe.interface_files })
+    let uses = crate::preset_lines::scan(&src).uses.into_iter().filter(|l| !l.commented && l.blocks.is_empty()).map(|l| (l.written, l.named)).collect();
+    Ok(crate::workload_packs::Estate { path: estate.to_path_buf(), bound, interfaces: fe.interface_files, uses })
 }
 
 /// The transpile every command runs: its messages reported in full, and printed.
@@ -4921,14 +4921,6 @@ fn named_import_ids(
     None
 }
 
-/// A command that does not read named uses yet, refused on an estate that holds one: it
-/// reads every pack once, and a named use is a pack used under a name, with params of its own (ADR 0109).
-pub(crate) fn refuse_named_uses(estate: &Path, command: &str) -> Result<(), String> {
-    let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
-    let Ok(file) = satz_core::satz::parse(&src) else { return Ok(()) };
-    satz_core::pipeline::refuse_named_uses(&file, &estate.display().to_string(), command).map_err(|e| format!("{}:{}: {}", e.file, e.line, e.msg))
-}
-
 fn reject_yaml_dialect(input: &Path, what: &str) -> Result<(), Box<dyn std::error::Error>> {
     if input.extension().and_then(|e| e.to_str()) == Some("satz") {
         return Ok(());
@@ -6673,6 +6665,9 @@ mod named_uses_gate {
         let mut ctx = crate::emitter::EmitCtx::from_front_end(&fe);
         ctx.registry = Some(&reg);
         let out = crate::emitter::emit(&folded, &ctx).unwrap();
+        // the manifest names the use that wrote each resource: one pack line serves both
+        let named: Vec<(&str, Option<&str>)> = out.manifest.resources.values().filter(|r| r.tf_type == "google_storage_bucket").map(|r| (r.label.as_str(), r.named.as_deref())).collect();
+        assert_eq!(named, [("one__b", Some("one")), ("two__b", Some("two"))]);
         let presets = root().join("presets").to_string_lossy().into_owned();
         let f = named_import_ids(&fe, &out.manifest, &toml::from_str::<ToolConfig>("").unwrap(), &presets, Path::new("e.satz")).expect("one import id names both");
         assert!(f.message.contains("the named use `one` and the named use `two` write the same resource"), "{}", f.message);

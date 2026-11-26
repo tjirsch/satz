@@ -163,6 +163,18 @@ pub(crate) fn build(all: &[(PathBuf, File, String)]) -> Result<(PackGraph, Vec<F
             },
             (None, _) => {}
         }
+        // check 11: the map offers each pack once, to an estate that uses it once — a pack
+        // that says `multiple` is for named uses, which the graph does not read (ADR 0109)
+        if file.multiple {
+            findings.push(finding(
+                11,
+                format!(
+                    "{}: offers `{}`, whose header says `multiple` — an offered pack is used once, by the line the graph writes; drop the word, or keep the pack out of the library",
+                    at_map(o.line),
+                    o.path
+                ),
+            ));
+        }
         entries.push(o);
         nodes.push(Node {
             path: o.path.clone(),
@@ -400,7 +412,7 @@ fn check_integrations(g: &PackGraph, declared: &BTreeMap<&str, Vec<(&str, usize,
     out
 }
 
-/// Checks 3, 4, 5, 6 and 8 over a built graph (1 and 2 are found while building it,
+/// Checks 3, 4, 5, 6 and 8 over a built graph (1, 2 and 11 are found while building it,
 /// 9 is `check_notices` and 10 `check_integrations`).
 /// There is no 7: it held that every block a line is placed in exists in the estate satz
 /// writes, and a line now stands at the top level or in a resource type map, which is
@@ -797,6 +809,18 @@ mod tests {
         assert!(g.edges.is_empty(), "{:?}", g.edges);
         let nodes: Vec<&str> = g.nodes.iter().map(|n| n.path.as_str()).collect();
         assert!(nodes.iter().all(|n| *n == "presets/estate-map.satz" || *n == "presets/a.satz"), "{:?}", nodes);
+    }
+
+    /// An offered pack is used once, by the line the graph writes: one whose header says
+    /// `multiple` is refused (ADR 0109).
+    #[test]
+    fn check_11_an_offered_pack_that_says_multiple() {
+        let m = map("  use_a = true", "offers \"presets/a.satz\" {\n  when = use_a\n}\n");
+        assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", A)]), Vec::<u8>::new());
+        let a = A.replace("version \"1.0\"", "version \"1.0\" multiple");
+        assert_eq!(checks(&[("estate-map.satz", &m), ("a.satz", &a)]), vec![11]);
+        let (_, found) = build(&lib(&[("estate-map.satz", &m), ("a.satz", &a)])).unwrap();
+        assert!(found[0].text.contains("offers `presets/a.satz`, whose header says `multiple`"), "{}", found[0].text);
     }
 
     #[test]

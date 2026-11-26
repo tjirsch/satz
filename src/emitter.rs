@@ -675,6 +675,7 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
     for (a, f, l) in &origins {
         manifest.set_origin(a, f, *l);
     }
+    manifest.set_named(ctx.named.iter().map(String::as_str));
     manifest.private.extend(private);
     let missing_required: Vec<MissingRequired> = match ctx.registry {
         Some(registry) => blocks

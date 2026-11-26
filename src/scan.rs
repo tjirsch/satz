@@ -157,11 +157,13 @@ pub(crate) fn render(r: &Report, manifest: Option<&Manifest>) -> String {
     let mut last = String::new();
     for f in &r.findings {
         if f.resource != last {
-            let origin = manifest
-                .and_then(|m| m.resources.get(&f.resource))
-                .and_then(|res| res.origin.as_ref())
-                .map(|(file, line)| format!("  (declared at {}:{})", file, line))
-                .unwrap_or_default();
+            let res = manifest.and_then(|m| m.resources.get(&f.resource));
+            let origin = match (res.and_then(|r| r.origin.as_ref()), res.and_then(|r| r.named.as_deref())) {
+                (Some((file, line)), Some(n)) => format!("  (declared at {}:{}, named use {})", file, line, n),
+                (Some((file, line)), None) => format!("  (declared at {}:{})", file, line),
+                (None, Some(n)) => format!("  (named use {})", n),
+                (None, None) => String::new(),
+            };
             out.push_str(&format!("\n  {}{}\n", f.resource, origin));
             last = f.resource.clone();
         }
@@ -208,6 +210,25 @@ mod tests {
         assert!(text.contains("2 failed"), "{}", text);
         assert!(text.contains("CKV_GCP_62   main.tf:10 — Bucket should log access"), "{}", text);
         assert!(text.contains("https://example.com/g"), "{}", text);
+    }
+
+    /// A finding on a resource of a named use names the use beside the pack line that
+    /// declared it: that line serves every use of the pack (ADR 0109).
+    #[test]
+    fn a_finding_on_a_named_use_names_the_use() {
+        let mut m = Manifest::parse(
+            "resource \"google_storage_bucket\" \"web__kept\" {\n  name = \"acme-web\"\n}\nresource \"google_storage_bucket\" \"kept\" {\n  name = \"acme\"\n}\n",
+        );
+        m.set_origin("google_storage_bucket.web__kept", "packs/vm.satz", 4);
+        m.set_origin("google_storage_bucket.kept", "packs/vm.satz", 4);
+        m.set_named(["web"]);
+        assert_eq!(m.resources["google_storage_bucket.web__kept"].named.as_deref(), Some("web"));
+        assert_eq!(m.resources["google_storage_bucket.kept"].named, None, "a flat use is no named use");
+        let finding = |resource: &str| Finding { check_id: "CKV_GCP_62".into(), check_name: "Bucket should log access".into(), resource: resource.into(), file: "main.tf".into(), line: Some(1), guideline: None };
+        let r = Report { failed: 2, findings: vec![finding("google_storage_bucket.kept"), finding("google_storage_bucket.web__kept")], ..Report::default() };
+        let text = render(&r, Some(&m));
+        assert!(text.contains("google_storage_bucket.web__kept  (declared at packs/vm.satz:4, named use web)"), "{}", text);
+        assert!(text.contains("google_storage_bucket.kept  (declared at packs/vm.satz:4)\n"), "{}", text);
     }
 
     /// The remediation tools read a scan that already ran, so a file that is not

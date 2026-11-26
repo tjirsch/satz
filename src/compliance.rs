@@ -1230,6 +1230,7 @@ mod tests {
             condition_expressions: Vec::new(),
             import_id: None,
             origin: None,
+            named: None,
             set: Default::default(),
         };
         m.resources.insert("google_org_policy_policy.p".to_string(), policy(Some(true)));
@@ -1277,6 +1278,7 @@ mod tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                named: None,
                 set: Default::default(),
             },
         );
@@ -4758,6 +4760,7 @@ mod iam_witness_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                named: None,
                 set: Default::default(),
             },
         );
@@ -4780,6 +4783,7 @@ mod iam_witness_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: None,
+                named: None,
                 set: Default::default(),
             },
         );
@@ -4966,6 +4970,7 @@ mod evidence_facts_tests {
                 condition_expressions: Vec::new(),
                 import_id: None,
                 origin: Some(("presets/x.satz".to_string(), 12)),
+                named: None,
                 set: Default::default(),
             },
         );

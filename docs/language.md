@@ -1668,8 +1668,9 @@ params {
 }
 ```
 
-(`tests/corpus/named-uses/`, where the same pack is also used once without a name; the smoke
-run's workload estate uses `packs/project-budget.satz` once per project.)
+(`tests/corpus/named-uses/`, where the same pack is also used once without a name. The
+showcase, `tests/smoke/yaml/showcase.satz`, uses `showcase-bucket.satz` as `reports` and as
+`scratch`; the smoke run's workload estate uses `packs/project-budget.satz` once per project.)
 
 A **named use** is a pack used under a name, with params of its own, so one pack can be
 used several times. The pack says that it may be: `multiple` is the last word of its header
@@ -1716,6 +1717,11 @@ used without a name as any other.
   answered when the estate binds `web.vm_zone`, its default resolved inside the use, its
   `ask_when` read inside the use; a choice is `web.<choice>` and its options `web.<option>`.
   The interview writes `web.vm_zone = …` into the estate's `params`.
+- **Notices.** A notice of the use's pack (§6.15) is acknowledged per use: the estate binds
+  `web.<param> = true`, which is no variable. The transpile's message about an open one stands
+  at the use's line and names `` `<pack>` named web ``, the check before a command that writes
+  to the organization counts each use's, and `satz adopt --execute --import` run over every
+  resource binds the acknowledgement of each use whose notice names it.
 
 Refused, each naming the line:
 
@@ -1728,13 +1734,26 @@ Refused, each naming the line:
   value of the estate; and, where a named use `<name>` exists, a param, an input or a resource
   label of the estate beginning `<name>__`;
 - in a file of the use: `hcl`, an `action`, `inputs`, an `interface` block (an `each` around
-  one too), an `export`, an `entries` statement, a `notice`, an `offers` entry and a named use;
-- a `contributes_<param>` whose list param a named use declares.
+  one too) or an interface file, an `export`, an `entries` statement, an `offers` entry and a
+  named use;
+- a `contributes_<param>` whose list param a named use declares;
+- a named use of a preset of the library, or of its `.local` fork: the pack graph offers each
+  preset once (§6.16).
 
-`satz presets`, `add-preset`, `remove-preset`, `satz adopt`, `satz packs` and the workload
-pack commands that read the estate refuse an estate with a named use, naming the line;
-`transpile`, `--plan`, `--apply`, `bootstrap`, `satz questions` and the interview read it. A
-named use of a preset of the library is refused by the pack graph.
+Every command reads an estate with a named use:
+
+- `satz presets` lists each named use as an `unmanaged` row of its own with its `named`;
+  `satz packs` gives a pack the estate uses under names the list `named`, and counts a read as
+  bound by the estate where every use binds `<name>.<param>`.
+- `add-preset` and `remove-preset` switch the library's presets in such an estate, and refuse a
+  line that uses the preset they switch under a name.
+- `merge-presets` repoints a named line at a fork, keeping `named <name>` and its `when`.
+- `satz adopt` reads the prefixed addresses; a flat use made a named use is a state move of
+  each address. `--execute` writes no `"import-id"` into a file a named use reads — one line
+  serves every use — and names `--execute --import` for the resource instead.
+- `satz scan` and the adopt table name the use beside the pack line that declared a resource.
+- The editor completes `<name>.<param>` in the estate's `params`; hover and go-to-definition
+  on `web.vm_zone` reach the pack's declaration.
 
 ### 6.10 `suppress` — the subtractive channel
 
@@ -2348,6 +2367,9 @@ or the map, which nothing switches on.
   `--plan` and `--dry-run` transpile, print the message and go on.
 - `satz adopt --execute --import` **acknowledges the notices that name it** when the run
   covers every resource type and nothing failed: it binds their params itself.
+- **In a named use** (§6.9) a notice is acknowledged per use, by `<name>.<param> = true`: the
+  message names `` `<pack>` named <name> `` at the use's line and its subject is the dotted
+  param, and `satz adopt --execute --import` binds it for each use.
 - `satz presets` lists each pack's notices with their state, and `satz doc-presets` gives a
   pack a **Notices** section.
 - `check-presets` reports a pack whose notices changed as **`questions`**, not as drift:
@@ -2396,7 +2418,8 @@ param one pack reads or contributes to and another declares (`data`), a gate a p
 declares for another (`gate`), an `ask_when` (`asks`), the options of one `question oneof`
 (`excludes`) — so
 `requires` and `excludes` on an entry name only what the packs cannot show, and
-`preset-graph` refuses a declared edge it derives. A `data` edge from a READ also puts the
+`preset-graph` refuses a declared edge it derives, and an offered pack whose header says
+`multiple`: the map offers a pack once, to an estate that uses it once. A `data` edge from a READ also puts the
 reading pack's line after the declaring pack's; one from a contribution does not, because
 a contribution is merged before the transpile walks anything. Several `requires` on packs that exclude
 one another are one requirement: any of them meets it.
@@ -2407,7 +2430,7 @@ from it. `satz presets` reports every node as the estate has it: the gate's answ
 default, the line — `active`, `ungated` (active without `when <gate>`), `commented`,
 `absent`, `forked` (naming the `.local` fork) or `misplaced` (outside the block the graph
 places it in) — whether the pack creates anything, what it requires and what requires it; a `use`
-the graph does not know is `unmanaged`. `satz add-preset` and `satz remove-preset` switch a
+the graph does not know is `unmanaged`, a named use with its `named`. `satz add-preset` and `satz remove-preset` switch a
 pack on or off by its gate or its path. A yes in the interview switches a line on as
 `add-preset` does, and `merge-presets` writes the lines the estate lacks from the graph of
 its pristine source. An active line of a gated pack that has no `when` is a transpile
@@ -3351,7 +3374,7 @@ params: `web.vm_zone` binds the param `vm_zone` of a named use `web`, and no `us
 use "vm.satz" named web: vm.satz:12 holds an `hcl` block, and a named use takes none — raw HCL is written as it stands, so what it declares cannot take the use's prefix. Use the pack without `named`
 the named uses `web` and `db` write the same resource — `google_storage_bucket.web__data` (vm.satz:25) and `google_storage_bucket.db__data` (vm.satz:25) have one body, which is one resource in the cloud under two addresses: an apply creates it twice and a destroy of either removes it. Bind `web.vm_name`, `db.vm_name` differently
 use "vm.satz" named web: the param `web__x`, declared in main.satz (line 4) begins with `web__`, which is how the HCL code names a param of the named use `web` — rename the param or the use
-use "vm.satz" named web: named uses are not supported by `satz presets` yet: a named use is a pack used under a name, with params of its own, and this reads every pack once. `satz transpile` writes the estate
+add-preset presets/organization-budget.satz: line 9 uses `presets/organization-budget.satz` named team — a preset of the library is used once, by one line without `named`: no preset says `multiple`, the word a pack says to be used several times. Write `use "presets/organization-budget.satz"` on that line, then switch it
 `terraform` is declared twice — one block per estate
 google_org_policy_policy.p is declared twice in this file with different bodies (first at line 7)
 grant: unknown key `description` in a conditional grant object — the keys are `role`, `condition`, "import-id"
@@ -3406,7 +3429,7 @@ across files it is the fold's conflict above.
 - **A pack used without a name is used once.** Its params join one estate-wide namespace,
   and the same pack used twice without a name is the same resources. A pack used several
   times is a named use (§6.9, ADR 0109), which stands in the estate file only and takes no
-  `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `notice`.
+  `hcl`, `action`, `inputs`, `interface`, `export`, `entries` or `offers`.
 - **`private` and `suppress` are read from the estate's own files**, never from a used one.
 - **`satz apply` does not run actions.** `run-actions` is a separate verb, and
   `phase` only orders and selects — nothing enforces that a `before-apply`

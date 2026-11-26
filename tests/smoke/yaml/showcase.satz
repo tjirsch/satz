@@ -22,6 +22,13 @@ params {
   group_model_flat         = true           # exactly one of these two — see `question oneof` below
   group_model_split        = false
   pack_bucket_adopted      = true           # acknowledges showcase-pack's `notice` — the command has run
+  // A named use's params, bound as `<name>.<param>` — see `use … named` below. `scratch`
+  // binds no `bucket_location` and takes the pack's "EU".
+  reports.bucket_purpose   = "reports"
+  reports.bucket_location  = "europe-west3"
+  reports.bucket_adopted   = true           # acknowledges showcase-bucket's `notice` for `reports`
+  scratch.bucket_purpose   = "scratch"
+  scratch.bucket_adopted   = true
   team_folder_name         = ""             # an empty answer its question gives a meaning — see `empty` below
   // A project's parent, said rather than nested — see the `google_project` below.
   archive_project_folder   = "google_folder.infra.name"
@@ -127,13 +134,17 @@ providers {
   }
 }
 
-// --- `use`, in its three positions. ------------------------------------------
+// --- `use`, in its three positions, and under a name. --------------------------
 // 1. top level: the pack's entries land where they are declared
 use "showcase-pack.satz"
 // 2. `as`: a bare-list pack becomes the CONTENT of a resource map
 use "showcase-policies.satz" as google_org_policy_policy
 // 3. `when`: pulled in only if the (declared) param is truthy — here it is not
 use "showcase-optional.satz" when want_optional
+// 4. `named`: a pack whose header says `multiple`, used once per name, each with params of
+//    its own; what it declares is written as `<name>__<label>` (`google_storage_bucket.reports__kept`)
+use "showcase-bucket.satz" named reports
+use "showcase-bucket.satz" named scratch
 
 // --- `suppress`: decline what a pack provides, without forking it. -----------
 // The pack declares this policy; the estate does not want it. A suppression

@@ -45,9 +45,10 @@ pub(crate) struct NamedPack {
     pub owned: BTreeMap<String, (String, usize)>,
 }
 
-/// What a file of a named use may not hold, with why: the first one `file` holds.
-fn refused_in_named(file: &File) -> Option<(usize, &'static str, &'static str)> {
-    let found: [(Option<usize>, &str, &str); 9] = [
+/// What a file of a named use may not hold, with why: the first one `file` holds, as
+/// `(line, what, why)`. `satz review-preset` holds a pack that says `multiple` to it.
+pub fn refused_in_named(file: &File) -> Option<(usize, &'static str, &'static str)> {
+    let found: [(Option<usize>, &str, &str); 8] = [
         (file.hcl_blocks.first().map(|h| h.line), "an `hcl` block", "raw HCL is written as it stands, so what it declares cannot take the use's prefix"),
         (file.actions.first().map(|a| a.line), "an `action`", "an action runs once per estate under its name, and two uses would declare one name twice"),
         (file.inputs.first().map(|i| i.line), "an `inputs` block", "an input is a variable of the estate's own, and two uses would declare one variable twice"),
@@ -55,7 +56,6 @@ fn refused_in_named(file: &File) -> Option<(usize, &'static str, &'static str)> 
         (file.interface_file.as_ref().map(|i| i.line), "an interface file", "the values of an interface file are the estate's, read by the flat namespace"),
         (file.exports.first().map(|x| x.line), "an `export`", "an export of a named use is not supported yet: it would be published under the use's prefix"),
         (file.requests.first().map(|r| r.line), "an `entries` statement", "a list param of a named use is not supported yet: entries and contributions to it would be bound per use"),
-        (file.notices.first().map(|n| n.line), "a `notice`", "a notice of a named use is not supported yet: its acknowledgement would be bound per use"),
         (file.offers.first().map(|o| o.line), "an `offers` entry", "what the library offers is the map's, which is used once"),
     ];
     found.into_iter().find_map(|(line, what, why)| line.map(|l| (l, what, why)))
@@ -119,6 +119,19 @@ pub(crate) fn named_pack(
         }
     }
     Ok(NamedPack { owned })
+}
+
+/// Every param the pack `path`, used as `name` at `file_name`:`line`, owns — declared by
+/// it or by a file it uses, at any depth — with the file and line of its first declaration:
+/// what the editor completes after `<name>.` and where it finds `<name>.<param>`.
+pub fn named_use_params(
+    name: &str,
+    path: &str,
+    file_name: &str,
+    line: usize,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<BTreeMap<String, (String, usize)>, PipelineError> {
+    named_pack(name, path, file_name, line, load).map(|p| p.owned)
 }
 
 /// The estate's bindings of `name`'s params checked against the params the pack owns: a
@@ -199,7 +212,8 @@ fn reads_of_parts(parts: &[StrPart], out: &mut BTreeSet<String>) {
     }
 }
 
-pub(crate) fn reads_of_value(v: &Value, out: &mut BTreeSet<String>) {
+/// Every param a value reads, by its bare name or inside a string, at any depth.
+pub fn reads_of_value(v: &Value, out: &mut BTreeSet<String>) {
     match v {
         Value::Ref(n) => {
             out.insert(n.clone());
@@ -668,14 +682,13 @@ claim "cis-gcp" "4.0" "5.1" contributes {
 
     #[test]
     fn what_a_named_use_refuses_in_its_pack() {
-        let cases: [(&str, &str); 7] = [
+        let cases: [(&str, &str); 6] = [
             ("hcl {\n  locals {}\n}\n", "holds an `hcl` block"),
             ("action \"a\" {\n  reason = \"r\"\n  run    = \"x.sh\"\n  phase  = \"after-apply\"\n}\n", "holds an `action`"),
             ("inputs {\n  stage = \"dev\"\n}\n", "holds an `inputs` block"),
             ("interface \"i\" {\n  export \"x\" = vm_name\n}\n", "holds an `interface` block"),
             ("export \"x\" = vm_name\n", "holds an `export`"),
             ("entries vm_list {\n  key    = \"name\"\n  fields = [\"name\"]\n}\n", "holds an `entries` statement"),
-            ("params {\n  vm_ack = false\n}\n\nnotice vm_ack {\n  text = \"t\"\n  run  = \"x\"\n}\n", "holds a `notice`"),
         ];
         for (extra, what) in cases {
             let pack = format!("{}\n{}", VM, extra);
@@ -738,6 +751,27 @@ claim "cis-gcp" "4.0" "5.1" contributes {
         assert_eq!(env.get("db.vm_name"), Some(&serde_yaml::Value::String("acme-vm".into())));
         assert!(!env.contains_key("vm_zone"), "a param of a named use is no flat param");
         assert!(!estate_params("main.satz", &src, &load).unwrap().contains_key("vm_name"));
+    }
+
+    /// A notice of a named use is acknowledged per use: `web.<param> = true` in the estate's
+    /// params, read by the transpile under that name, and no variable of the HCL code.
+    #[test]
+    fn a_notice_of_a_named_use_is_acknowledged_per_use() {
+        let pack = VM.replace("  vm_logs = false\n", "  vm_logs = false\n  vm_adopted = false\n")
+            + "\nnotice vm_adopted {\n  text = \"Adopt what is live.\"\n  run  = \"satz adopt <estate> --execute --import\"\n}\n";
+        let src = estate("  web.vm_name = \"acme-web\"\n  web.vm_adopted = true\n  db.vm_name = \"acme-db\"\n") + "\nuse \"vm.satz\" named web\nuse \"vm.satz\" named db\n";
+        let fe = compile_with(&src, &[("vm.satz", &pack)]).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let by: Vec<(Option<&str>, String)> =
+            fe.notices.iter().flat_map(|p| p.notices.iter().map(move |n| (p.named.as_deref(), p.acknowledged_by(n)))).collect();
+        assert_eq!(by, [(Some("web"), "web.vm_adopted".to_string()), (Some("db"), "db.vm_adopted".to_string())]);
+        assert!(acknowledged(&fe.env, "web.vm_adopted"), "web binds it true");
+        assert!(!acknowledged(&fe.env, "db.vm_adopted"), "db does not");
+        assert!(!fe.tfvars.keys().any(|k| k.contains("vm_adopted")), "an acknowledgement is no variable: {:?}", fe.tfvars.keys().collect::<Vec<_>>());
+        // the schema-free walk reads it the same way
+        let load = |p: &str| if p == "vm.satz" { Ok(pack.clone()) } else { Err(p.to_string()) };
+        let (_, notices, env) = estate_questions("main.satz", &src, &load).unwrap_or_else(|e| panic!("{}:{}: {}", e.file, e.line, e.msg));
+        let open: Vec<String> = notices.iter().flat_map(|p| p.notices.iter().map(move |n| p.acknowledged_by(n))).filter(|k| !acknowledged(&env, k)).collect();
+        assert_eq!(open, ["db.vm_adopted"]);
     }
 
     #[test]

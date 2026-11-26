@@ -2285,6 +2285,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A line that points a named use at a fork keeps its name and its gate: the use's
+    /// params, bound as `<name>.<param>`, and its addresses stay the use's (ADR 0109).
+    #[test]
+    fn a_named_line_repointed_at_a_fork_keeps_its_name() {
+        let dir = std::env::temp_dir().join(format!("satz-named-fork-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("vm.satz"), "pack vm version \"1.0\" multiple\n").unwrap();
+        let text = "estate e\n\nuse \"vm.satz\" named web\nuse \"vm.satz\" named db when want_db\nuse \"vm.satz\"\n";
+        let estate = dir.join("e.satz");
+        std::fs::write(&estate, text).unwrap();
+        let out = super::rewrite_estate_uses(text, &estate, &[], &dir.join("vm.satz"), std::path::Path::new("vm.local.satz")).unwrap();
+        assert_eq!(out, "estate e\n\nuse \"vm.local.satz\" named web\nuse \"vm.local.satz\" named db when want_db\nuse \"vm.local.satz\"\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn prow(file: &str, status: &'static str) -> PresetRow {
         PresetRow {
             file: file.into(),

@@ -13,6 +13,31 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**`satz preset-graph` refuses an offered pack whose header says `multiple`** (ADR 0109, check
+11). The map offers a pack once, to an estate that uses it once; a pack that says `multiple` is
+for named uses, which the pack graph does not read. A library whose map offers such a pack
+fails `preset-graph` naming the `offers` entry: drop the word from the pack's header, or keep
+the pack out of the library — a workload pack in `packs/`, as `project_budget` is. No pack of
+the library says it, and nothing a plan shows changes.
+
+**Every command reads an estate with a named use** (ADR 0109, third part). `satz presets`,
+`add-preset`, `remove-preset`, `merge-presets`, `satz adopt`, `satz packs` and the workload pack
+commands no longer refuse it. `satz presets` lists a named use as an `unmanaged` row with the
+new optional field `named`; `satz packs` gives a pack the estate uses under names the list
+`named`, and counts a read as bound where every use binds `<name>.<param>`. `add-preset` and
+`remove-preset` refuse a line that uses the preset they switch under a name — no preset says
+`multiple`. `merge-presets` keeps `named <name>` on a line it points at a fork. `satz adopt`
+writes no `"import-id"` into a file a named use reads and names `--execute --import` for its
+resources; the adopt table, `satz scan` and their JSON name the use (`named`). A `notice` in a
+named use's pack is no longer refused: it is acknowledged per use, `<name>.<param> = true`, its
+message stands at the use's line, its row's `param` is the dotted name with `named` beside it,
+and `satz adopt --execute --import` binds every use's acknowledgement. The editor completes
+`<name>.<param>` in the estate's `params`, and hover and go-to-definition reach the pack's
+declaration. `doc-presets` shows the named line of a pack that says `multiple`, and
+`review-preset` holds such a pack to what a named use needs.
+
 ### v0.115.0
 
 **A dotted param binds a param of a named use, and nothing else** (ADR 0109). `use "<path>"
