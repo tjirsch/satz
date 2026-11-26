@@ -125,7 +125,7 @@ fn check_row(row: &Row, packs_dir: &Path, config_dir: Option<&Path>) -> Result<(
     match (github, &row.folder) {
         (true, Some(_)) => Err(format!("the pack `{id}` records both a repository and `folder` — a GitHub source records `github` and `commit`, a folder source `folder`")),
         (false, None) => Err(format!("the pack `{id}` records neither a repository nor `folder` — a GitHub source records `github` and the `commit` the file was read at, a folder source `folder`")),
-        (false, Some(f)) if f.trim().is_empty() || Path::new(f).is_absolute() => {
+        (false, Some(f)) if f.trim().is_empty() || Path::new(f).has_root() || Path::new(f).is_absolute() => {
             Err(format!("the pack `{id}` records folder = \"{f}\" — a folder source records its folder relative to the one that holds origin.toml"))
         }
         (false, Some(_)) => Ok(()),
