@@ -1346,7 +1346,7 @@ pub(crate) type NamedFiles = BTreeMap<String, BTreeSet<String>>;
 /// uses, at any depth — with the uses that read each. Empty for an estate without one.
 pub(crate) fn named_use_files(src: &str, load: &dyn Fn(&str) -> Result<String, String>) -> Result<NamedFiles, String> {
     let mut out = NamedFiles::new();
-    let Ok(file) = satz_core::satz::parse(src) else { return Ok(out) };
+    let file = satz_core::satz::parse(src).map_err(|e| format!("line {}: {}", e.line, e.msg))?;
     for (name, path, _) in satz_core::satz::named_uses(&file) {
         let mut todo = vec![path.to_string()];
         while let Some(p) = todo.pop() {
@@ -2495,7 +2495,9 @@ mod state_aware_tests {
         let pack = dir.join("vm.satz");
         let body = "pack vm version \"1.0\" multiple\n\ngoogle_storage_bucket {\n  kept {\n    name = \"x\"\n  }\n}\n";
         std::fs::write(&pack, body).unwrap();
-        let file = pack.to_string_lossy().to_string();
+        // a `use` path as an estate writes it: `/` between segments on every platform, which
+        // is the form the transpile's origin of a resource carries too
+        let file = crate::fsx::slash(&pack);
         let src = format!("estate e\nuse \"{}\" named web\nuse \"{}\" named db\n", file, file);
         let load = |p: &str| std::fs::read_to_string(p).map_err(|e| e.to_string());
         let named = named_use_files(&src, &load).unwrap();
@@ -2507,6 +2509,7 @@ mod state_aware_tests {
         assert!(hints[0].contains("which the named uses `db`, `web` read") && hints[0].contains("--execute --import"), "{:?}", hints);
         assert_eq!(std::fs::read_to_string(&pack).unwrap(), body, "the pack is not edited");
         assert!(named_use_files("estate e\nuse \"vm.satz\"\n", &load).unwrap().is_empty(), "a flat use reads no file under a name");
+        assert!(named_use_files("estate e\nuse \"vm.satz", &load).is_err(), "an estate that does not parse is an error, never no named use");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

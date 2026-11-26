@@ -6668,6 +6668,13 @@ mod named_uses_gate {
         // the manifest names the use that wrote each resource: one pack line serves both
         let named: Vec<(&str, Option<&str>)> = out.manifest.resources.values().filter(|r| r.tf_type == "google_storage_bucket").map(|r| (r.label.as_str(), r.named.as_deref())).collect();
         assert_eq!(named, [("one__b", Some("one")), ("two__b", Some("two"))]);
+        // the origin of a use's resource is the `use` path as written — the key `satz adopt`
+        // keeps the files a named use reads by, on every platform — so no id is written into it
+        let files = crate::adopt::named_use_files(&estate, &|p| std::fs::read_to_string(dir.join(p)).map_err(|e| e.to_string())).unwrap();
+        for label in ["one__b", "two__b"] {
+            let (origin, _) = out.manifest.resources[&format!("google_storage_bucket.{label}")].origin.clone().expect("declared in the pack");
+            assert!(files.contains_key(&origin), "origin {origin} is not a key of {files:?}");
+        }
         let presets = root().join("presets").to_string_lossy().into_owned();
         let f = named_import_ids(&fe, &out.manifest, &toml::from_str::<ToolConfig>("").unwrap(), &presets, Path::new("e.satz")).expect("one import id names both");
         assert!(f.message.contains("the named use `one` and the named use `two` write the same resource"), "{}", f.message);
