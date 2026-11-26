@@ -6609,7 +6609,8 @@ mod named_uses_gate {
                 } else if p.extension().is_some_and(|x| x == "satz") && p.file_name().is_some_and(|n| n != "main.satz") {
                     let text = std::fs::read_to_string(&p).unwrap();
                     if text.lines().any(|l| l.starts_with("pack ")) {
-                        let rel = p.strip_prefix(root()).unwrap().to_string_lossy().into_owned();
+                        // a `use` path is written with `/` on every system
+                        let rel = p.strip_prefix(root()).unwrap().to_string_lossy().replace('\\', "/");
                         out.push((p.parent().unwrap().to_path_buf(), rel));
                     }
                 }
