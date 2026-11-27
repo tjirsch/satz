@@ -374,7 +374,9 @@ hash_before=$(grep -o 'sha256:[0-9a-f]*' $si/README.md)
 
 step "examples: the organization's estate transpiles, and each example beside it transpiles against its interface"
 # examples/acme/ is the organization; every subfolder with a config.toml is one example,
-# a workload estate that reads the interfaces copied to its interfaces/incoming/.
+# a workload estate that reads the interfaces it takes with copy-interfaces into its
+# interfaces/incoming/ — shop-dev through the template it uses, so the folders are found in a
+# file the estate uses too.
 ex="$root/examples/acme"
 rm -rf "$ex/hcl" "$ex/interfaces"
 "$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile:\n$(cat tmp/example-org.txt)"
@@ -383,8 +385,9 @@ examples=0
 for cfg in "$ex"/*/config.toml; do
   [ -f "$cfg" ] || continue
   d=$(dirname "$cfg"); n=$(basename "$d"); examples=$((examples + 1))
-  rm -rf "$d/hcl" "$d/interfaces/incoming" && mkdir -p "$d/interfaces/incoming" && cp -R "$ex/interfaces/outgoing/." "$d/interfaces/incoming/"
+  rm -rf "$d/hcl" "$d/interfaces/incoming"
   for e in "$d"/satz/*.satz; do
+    "$satz" --config "$d" copy-interfaces "$(basename "$e")" --from "$ex" > "tmp/example-$n-copy.txt" 2>&1 || fail "copy-interfaces failed for the example $n:\n$(cat "tmp/example-$n-copy.txt")"
     "$satz" --config "$d" transpile "$(basename "$e")" > "tmp/example-$n.txt" 2>&1 || fail "the example $n does not transpile:\n$(cat "tmp/example-$n.txt")"
   done
   if command -v tofu >/dev/null 2>&1; then
@@ -414,6 +417,81 @@ grep -q '^cost_centre = "4711"' "$pt/hcl/terraform.tfvars" && grep -q '^cost_cen
 cmp -s <(sed 1d "$pt/hcl/main.tf") <(sed 1d "$sd/hcl/main.tf") || fail "the thin estate's main.tf differs from the template's:\n$(diff "$pt/hcl/main.tf" "$sd/hcl/main.tf")"
 "$satz" --config "$pt" transpile simple-project.satz --input stage=test --print-variables --check > tmp/template-input.txt 2>&1 || fail "--input refused the template's input:\n$(cat tmp/template-input.txt)"
 grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind the template's input:\n$(cat tmp/template-input.txt)"
+
+step "copy-interfaces: the folders a workload estate reads, each copied whole from the organization's estate, checked before anything is written (ADR 0111)"
+# the organization's estate is the example's, its interfaces/outgoing/ written by the step above;
+# the workload estate is the template, which reads delegation-shop and shop
+ci=tmp/ci; rm -rf "$ci" && mkdir -p "$ci/satz"
+sed "s#\.\./\.\./\.\./#$root/#g" "$pt/config.toml" > "$ci/config.toml"
+cp "$pt/satz/simple-project.satz" "$ci/satz/"
+cic() { "$satz" --config "$ci" copy-interfaces simple-project.satz "$@"; }
+tree_of() { (cd "$1" && find . -type f | LC_ALL=C sort | xargs cksum); }
+cic --from "$ex" > tmp/ci.txt 2>&1 || fail "copy-interfaces failed:\n$(cat tmp/ci.txt)"
+grep -q 'delegation-shop: new' tmp/ci.txt && grep -q 'shop: new' tmp/ci.txt && grep -q 'transpiles with these folders' tmp/ci.txt && grep -q 'copied 2 folder(s)' tmp/ci.txt \
+  || fail "copy-interfaces does not report the two new folders and the check:\n$(cat tmp/ci.txt)"
+[ "$(ls "$ci/interfaces/incoming")" = "$(printf 'delegation-shop\nshop')" ] || fail "copy-interfaces copied more or less than the two folders the estate reads:\n$(ls "$ci/interfaces/incoming")"
+diff -r "$ex/interfaces/outgoing/shop" "$ci/interfaces/incoming/shop" > /dev/null || fail "the copy of shop is not the organization's folder"
+[ -e "$ci/interfaces/outgoing" ] || [ -e "$ci/hcl" ] && fail "copy-interfaces wrote outside interfaces/incoming/"
+"$satz" --config "$ci" transpile simple-project.satz --check > tmp/ci-check.txt 2>&1 || fail "the estate does not transpile with the copied folders:\n$(cat tmp/ci-check.txt)"
+# a value that moved, a stale file, an OS file on the organization's side, a folder nobody reads
+python3 - "$ex/interfaces/outgoing/delegation-shop/delegation-shop/satz/interface.satz" <<'PY2'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s, n = re.subn(r'(output "estate_account_user_group" \{\n\s*value\s*=\s*)"[^"]*"', r'\1"shop-team@example.com"', s)
+assert n == 1, s
+open(p, "w", encoding="utf-8").write(s)
+PY2
+echo stale > "$ci/interfaces/incoming/shop/stale.txt"
+touch "$ex/interfaces/outgoing/shop/.DS_Store"
+mkdir -p "$ci/interfaces/incoming/retired"
+before=$(tree_of "$ci/interfaces")
+cic --from "$ex/satz/C0example.satz" --report-only > tmp/ci-report.txt 2>&1 || fail "copy-interfaces --report-only failed:\n$(cat tmp/ci-report.txt)"
+[ "$(tree_of "$ci/interfaces")" = "$before" ] || fail "copy-interfaces --report-only wrote"
+grep -q 'removed stale.txt' tmp/ci-report.txt && grep -q 'left out .DS_Store' tmp/ci-report.txt \
+  && grep -q "\`delegation-shop\`: \`estate_account_user_group\` has a new value" tmp/ci-report.txt \
+  && grep -q 'retired is read by no `use` line' tmp/ci-report.txt && grep -q -- '--report-only: nothing was written' tmp/ci-report.txt \
+  || fail "copy-interfaces --report-only does not say what would change:\n$(cat tmp/ci-report.txt)"
+cic --from "$ex/config.toml" --format json > tmp/ci.json 2>/dev/null || fail "copy-interfaces --format json failed"
+python3 - tmp/ci.json <<'PY2' || fail "the JSON report of copy-interfaces is not what was copied:\n$(cat tmp/ci.json)"
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["written"] is True and r["check"]["transpiles"] is True, r
+f = {x["folder"]: x for x in r["folders"]}
+assert f["shop"]["state"] == "changed" and f["shop"]["removed"] == ["stale.txt"] and f["shop"]["left_out"] == [".DS_Store"], f["shop"]
+assert any(v["interface"] == "delegation-shop" and "estate_account_user_group" in v["text"] for v in f["delegation-shop"]["values"]), f["delegation-shop"]
+assert r["unread"] == ["retired"], r["unread"]
+PY2
+[ -e "$ci/interfaces/incoming/shop/stale.txt" ] && fail "the copy kept a file the organization's folder lacks"
+[ -e "$ci/interfaces/incoming/shop/.DS_Store" ] && fail "the copy took an OS file"
+[ -d "$ci/interfaces/incoming/retired" ] || fail "the copy removed a folder the estate does not read"
+grep -q 'shop-team@example.com' "$ci/interfaces/incoming/delegation-shop/delegation-shop/satz/interface.satz" || fail "the new value was not copied"
+ls -a "$ci/interfaces/incoming" | grep -q 'satz-copy\|satz-old' && fail "the copy left its working folders:\n$(ls -a "$ci/interfaces/incoming")"
+# a folder the organization does not publish is refused, naming it and those it has
+cp "$ci/satz/simple-project.satz" tmp/ci-estate.bak
+printf '\nuse "interfaces/incoming/ghost/ghost/satz/interface.satz"\n' >> "$ci/satz/simple-project.satz"
+before=$(tree_of "$ci/interfaces")
+cic --from "$ex" > tmp/ci-ghost.txt 2>&1 && fail "copy-interfaces accepted a folder the organization does not publish"
+grep -q '`ghost`' tmp/ci-ghost.txt && grep -q '`delegation-shop`, `shop`' tmp/ci-ghost.txt || fail "the refusal does not name the missing folder and those there are:\n$(cat tmp/ci-ghost.txt)"
+[ "$(tree_of "$ci/interfaces")" = "$before" ] || fail "a refused copy wrote"
+cp tmp/ci-estate.bak "$ci/satz/simple-project.satz"
+# a folder the estate no longer transpiles with: refused before anything is written
+python3 - "$ex/interfaces/outgoing/shop/shop/satz/interface.satz" <<'PY2'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s, n = re.subn(r'\noutput "delegated_folder" \{.*?\n\}\n', '\n', s, flags=re.S)
+assert n == 1, s
+open(p, "w", encoding="utf-8").write(s)
+PY2
+cic --from "$ex" > tmp/ci-broken.txt 2>&1 && fail "copy-interfaces copied folders the estate does not transpile with"
+grep -q 'does not transpile with the organization' tmp/ci-broken.txt && grep -q 'has no value `delegated_folder`' tmp/ci-broken.txt \
+  && grep -q "\`shop\`: \`delegated_folder\` is gone" tmp/ci-broken.txt || fail "the refusal does not say why and what moved:\n$(cat tmp/ci-broken.txt)"
+[ "$(tree_of "$ci/interfaces")" = "$before" ] || fail "a copy the check refused changed interfaces/incoming/"
+# an estate that reads no folder has nothing to copy
+"$satz" --config "$ex" copy-interfaces C0example.satz --from "$ci" > tmp/ci-none.txt 2>&1 && fail "copy-interfaces copied into an estate that reads no folder"
+grep -q 'nothing to copy' tmp/ci-none.txt || fail "the refusal does not say there is nothing to copy:\n$(cat tmp/ci-none.txt)"
+"$satz" --config "$ex" transpile C0example.satz > tmp/example-org.txt 2>&1 || fail "the example organization does not transpile after the copy-interfaces step"
 
 step "delegation and delegated folders: one account per delegation, granted on the folders the pack creates for it and on nothing above them (ADR 0086, ADR 0093)"
 # two delegations, three folders: one delegation with two folders that share no root

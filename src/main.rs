@@ -9,6 +9,7 @@ mod emit_shared;
 mod emitter;
 mod interface;
 mod interface_changes;
+mod copy_interfaces;
 mod project;
 mod entries;
 mod interface_report;
@@ -145,7 +146,7 @@ pub(crate) struct Cli {
 /// way round — fails `command_groups_cover_the_cli`, so the help cannot drift
 /// away from the binary the way a hand-kept list would.
 const COMMAND_GROUPS: &[(&str, &[&str])] = &[
-    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request"]),
+    ("Estate", &["init", "bootstrap", "transpile", "import", "adopt", "update-prerequisites", "presets", "add-preset", "remove-preset", "add-entry", "interfaces", "check-request", "copy-interfaces"]),
     ("HCL", &["hcl-init", "plan", "apply", "migrate", "scan-plan", "generate-migration", "run-actions", "check-consumer"]),
     ("Presets", &["get-presets", "merge-presets", "check-presets", "doc-presets", "preset-graph", "review-preset"]),
     ("Workload packs", &["packs", "get-pack", "update-pack", "detach-pack", "publish-pack", "pack-source", "review-pack"]),
@@ -819,6 +820,28 @@ pub(crate) enum Commands {
         file: PathBuf,
         /// Estate file (.satz, inside yaml_dir if relative); the one estate in yaml_dir when left out
         estate: Option<String>,
+    },
+    /// Copy the interface folders a workload estate reads from the organization's estate, each whole, into its interfaces/incoming/
+    ///
+    /// The folders are the ones the estate's `use` lines read under `interfaces/incoming/`,
+    /// in the estate file and in the files it uses. Each is copied whole from the
+    /// organization's `interfaces/outgoing/`: a file the new copy lacks is removed, and
+    /// `.DS_Store`, `Thumbs.db`, `*~` and `.*.swp` are left out. The estate is transpiled
+    /// against the new folders first; when that check fails nothing is copied. A folder under
+    /// `interfaces/incoming/` the estate does not read is reported and left as it is.
+    CopyInterfaces {
+        /// Estate file of the workload estate (.satz, inside yaml_dir if relative)
+        input: String,
+        /// The organization's estate: its folder, its config.toml or its estate file. Its
+        /// config's `interfaces_dir` says where `outgoing/` is
+        #[arg(long, value_name = "PATH")]
+        from: PathBuf,
+        /// Report what would change and the check's result, and write nothing
+        #[arg(long)]
+        report_only: bool,
+        /// Output format
+        #[arg(long, value_parser = crate::out::formats(&[OutFormat::Text, OutFormat::Json]), default_value = "text")]
+        format: OutFormat,
     },
     /// What the estate publishes to the workload estates beside it: every export, with the interface it stands in, how a workload estate reads it and what may be attached to it, every interface, and every list
     Interfaces {
@@ -2334,10 +2357,33 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             // `each` body reads) is refused here, before the pull request
             let absolute = std::path::absolute(&file).map_err(|e| format!("{}: {}", file.display(), e))?;
             let used = absolute.to_string_lossy().to_string();
-            if let Err(e) = pipeline_b_compile_using(&input_path, &[used.as_str()], &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent) {
+            if let Err(e) = pipeline_b_compile_using(&input_path, &[used.as_str()], &[], &tool_config, &runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent) {
                 return Err(format!("check-request: {} fits the lists of {}, and the estate refuses it once used — {}", file.display(), input_path.display(), e).into());
             }
             eprintln!("check-request: {} fits the lists of {}, and the estate transpiles with it", file.display(), input_path.display());
+            Ok(())
+        }
+        Commands::CopyInterfaces { input, from, report_only, format } => {
+            let input_path = estate_path(PathBuf::from(&input), &runtime_config);
+            reject_yaml_dialect(&input_path, "copy-interfaces")?;
+            let report = crate::copy_interfaces::run(&input_path, &from, report_only, &tool_config, &runtime_config).map_err(|e| format!("copy-interfaces: {}", e))?;
+            match format {
+                OutFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                _ => print!("{}", crate::copy_interfaces::render_text(&report)),
+            }
+            if !report.check.transpiles {
+                if format == OutFormat::Json {
+                    std::process::exit(1);
+                }
+                let why = crate::findings::refusal(&report.check.findings).err().unwrap_or_default();
+                return Err(format!(
+                    "copy-interfaces: {} does not transpile with the organization's folders, so nothing was copied and {} is as it was.\n\n{}",
+                    input_path.display(),
+                    report.incoming,
+                    why
+                )
+                .into());
+            }
             Ok(())
         }
         Commands::Interfaces { input, format, out } => {
@@ -2739,14 +2785,24 @@ fn hcl_target(output: Option<&str>, runtime_config: &ToolConfig) -> PathBuf {
 }
 
 /// What a `use` line reads: the path beside the estate, else under the first include dir
-/// that holds it.
-fn use_loader(input_path: &Path, runtime_config: &ToolConfig) -> impl Fn(&str) -> Result<String, String> {
+/// that holds it. Each `(from, to)` of `redirect` reads a path under `from` — absolute, as
+/// `copy_interfaces::lexical` writes it — at the same place under `to`: `copy-interfaces`
+/// checks the estate against the organization's folders before it copies them.
+fn use_loader(input_path: &Path, runtime_config: &ToolConfig, redirect: &[(PathBuf, PathBuf)]) -> impl Fn(&str) -> Result<String, String> {
     let base_dir = input_path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let include_dirs = runtime_config.include_dirs.clone();
+    let redirect = redirect.to_vec();
+    let redirected = move |c: PathBuf| -> PathBuf {
+        if redirect.is_empty() {
+            return c;
+        }
+        let Ok(at) = crate::copy_interfaces::lexical(&c) else { return c };
+        redirect.iter().find_map(|(from, to)| at.strip_prefix(from).ok().map(|rest| to.join(rest))).unwrap_or(c)
+    };
     move |p: &str| -> Result<String, String> {
         let mut candidates = vec![base_dir.join(p)];
         candidates.extend(include_dirs.iter().map(|d| Path::new(d).join(p)));
-        for c in candidates {
+        for c in candidates.into_iter().map(&redirected) {
             if c.exists() {
                 return std::fs::read_to_string(&c).map_err(|e| e.to_string());
             }
@@ -2762,7 +2818,7 @@ pub(crate) fn pack_estate(estate: &Path, runtime_config: &ToolConfig) -> Result<
     let registry = ResourceRegistry::load_all(&runtime_config.schema_dir).map_err(|e| e.to_string())?;
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(estate).map_err(|e| format!("{}: {}", estate.display(), e))?;
-    let loader = use_loader(estate, runtime_config);
+    let loader = use_loader(estate, runtime_config, &[]);
     let fe = satz_core::pipeline::compile_estate_bound(&estate.to_string_lossy(), &src, &[], &runtime_config.inputs, &resolver, &loader)
         .map_err(|e| format!("{}:{}: {} — the packs are matched against the interface folders this estate uses, and its transpile stops here", e.file, e.line, e.msg))?;
     let bound = satz_core::satz::parse(&src).map_err(|e| format!("{}:{}: {}", estate.display(), e.line, e.msg))?.params.into_iter().map(|(name, _, _)| name).collect();
@@ -2786,7 +2842,25 @@ fn pipeline_b_compile(
     prerequisites: PrerequisiteFindings,
     output: FindingsOutput,
 ) -> Result<PipelineBOut, Box<dyn std::error::Error>> {
-    pipeline_b_compile_using(input_path, &[], tool_config, runtime_config, prerequisites, output)
+    pipeline_b_compile_using(input_path, &[], &[], tool_config, runtime_config, prerequisites, output)
+}
+
+/// `transpile --check` of `input_path` with the paths under each `from` of `redirect` read
+/// under its `to` (`use_loader`): whether it transpiles, and its messages. `Err` is a failure
+/// that is no verdict on the estate — a schema directory that is not there.
+pub(crate) fn check_redirected(
+    input_path: &Path,
+    tool_config: &ToolConfig,
+    runtime_config: &ToolConfig,
+    redirect: Vec<(PathBuf, PathBuf)>,
+) -> Result<(bool, Vec<crate::findings::Finding>), Box<dyn std::error::Error>> {
+    match pipeline_b_compile_using(input_path, &[], &redirect, tool_config, runtime_config, PrerequisiteFindings::Report, FindingsOutput::Silent) {
+        Ok(out) => Ok((true, out.findings)),
+        Err(e) => match crate::findings::as_refusal(e.as_ref()) {
+            Some(r) => Ok((false, r.findings.clone())),
+            None => Err(e),
+        },
+    }
 }
 
 /// `pipeline_b_compile` with files the estate is read as if it `use`d them at its top
@@ -2794,6 +2868,7 @@ fn pipeline_b_compile(
 fn pipeline_b_compile_using(
     input_path: &Path,
     extra_uses: &[&str],
+    redirect: &[(PathBuf, PathBuf)],
     tool_config: &ToolConfig,
     runtime_config: &ToolConfig,
     prerequisites: PrerequisiteFindings,
@@ -2803,7 +2878,7 @@ fn pipeline_b_compile_using(
 
     let resolver = EstateResolver { registry: &registry };
     let src = fsx::read_to_string(input_path)?;
-    let loader = use_loader(input_path, runtime_config);
+    let loader = use_loader(input_path, runtime_config, redirect);
     let graph = crate::pack_graph::shipped(Path::new(&runtime_config.presets_dir));
     let fe = match satz_core::pipeline::compile_estate_bound(&input_path.to_string_lossy(), &src, extra_uses, &runtime_config.inputs, &resolver, &loader) {
         Ok(fe) => fe,
@@ -6079,6 +6154,7 @@ mod command_groups {
         ("hcl-init", Identity::NoGoogleApi),
         ("interfaces", Identity::NoGoogleApi),
         ("check-request", Identity::NoGoogleApi),
+        ("copy-interfaces", Identity::NoGoogleApi),
         // The API prerequisites check: as the identity the written provider impersonates,
         // which is the identity `tofu` is about to act as in the same directory.
         ("plan", Identity::EstateSa),

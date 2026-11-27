@@ -127,7 +127,8 @@ org-policy tools the compliance plane answers for (`export-`, `diff-` and
 agent is handed every message, the silenced ones included and marked), the client
 configuration that sets this server's own ceiling (`mcp-config`), the interface plane's
 commands, which have no tools (`interfaces` is the report satz-studio reads through the CLI, `check-request` runs
-in a workload repository's pipeline on the pull request that vendors the file), and the terminal
+in a workload repository's pipeline on the pull request that vendors the file, `copy-interfaces` reads the
+organization's repository, which lies outside the estate a session opens), and the terminal
 affordances (`completion`, `open-readme`, `self-update`, `help`). Every one of them except the
 terminal affordances, `mcp` itself and `lsp` is named with its reason in the
 `instructions` the server returns at initialize, so an agent asks a human for it. The table in `src/mcp.rs`
@@ -465,7 +466,8 @@ as the signed-in person.
   returns every row's status rather than an exit code.
 - **No progress notifications.** `satz_check_presets` downloads the whole pristine
   library with no feedback to the client.
-- **`satz interfaces` and `satz check-request` have no tool.** `interfaces` is the report satz-studio reads through the CLI; `check-request`
-  runs in a workload repository's pipeline on the pull request that vendors the file.
+- **`satz interfaces`, `satz check-request` and `satz copy-interfaces` have no tool.** `interfaces` is the report satz-studio reads through the CLI; `check-request`
+  runs in a workload repository's pipeline on the pull request that vendors the file; `copy-interfaces` reads the organization's
+  repository, outside the estate a session opens, and writes into the workload repository's `interfaces/incoming/`.
  `satz_check_consumer`
   is the interface plane's one tool, and it reads.

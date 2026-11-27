@@ -986,6 +986,47 @@ it, and a Satz estate reads only the files it `use`s. The folder's `README.md` n
 estate, the satz version that wrote it and a content hash of every other file in it, so
 two copies are the same when their hashes are.
 
+**`satz copy-interfaces` takes the folders.** In the workload repository, with the
+organization's repository on the same disk:
+
+```bash
+satz copy-interfaces payments.satz --from <the organization's estate>
+```
+
+`--from` is the organization's estate folder, its `config.toml` or its estate file; the
+command finds `interfaces/outgoing/` where that config's `interfaces_dir` says. The folders
+are exactly the ones the workload estate reads: every `use` path under
+`interfaces/incoming/<folder>/`, in the estate file and in each file it uses. A folder the
+organization's estate does not publish is refused, naming it and the folders it has; an
+estate that reads none has nothing to copy and is refused. Each folder is copied whole: a file
+the new folder lacks is removed, and `.DS_Store`, `Thumbs.db`, names ending in `~` and
+`.<name>.swp` are left out. Before anything is written the estate is transpiled with the new
+folders; when that check fails nothing is copied and the command exits non-zero with the
+transpile's messages. The new folders are written beside the old ones and then swapped in,
+so a failure on the way leaves the old ones. A folder under `interfaces/incoming/` the
+estate does not read is reported as a warning and left as it is. The report names per folder
+the files added, removed and changed and, for an interface file that changed, the values that
+moved, in the words of `CHANGES.md`:
+
+```text
+copy-interfaces — satz/payments.satz reads 2 interface folder(s) from ../acme/interfaces/outgoing
+  delegation-payments: changed — 1 added, 0 removed, 4 changed
+    added   delegation-payments/CHANGES.md
+    changed README.md
+    changed delegation-payments/README.md
+    changed delegation-payments/hcl/outputs.tf
+    changed delegation-payments/satz/interface.satz
+    value  `delegation-payments`: `estate_account_user_group` has a new value.
+  payments: unchanged
+check: satz/payments.satz transpiles with these folders
+copied 1 folder(s) into interfaces/incoming: delegation-payments
+```
+
+`--report-only` prints the same report and the check, and writes nothing; `--format json` is
+the report as data. A workload repository with no checkout of the organization's repository on
+its disk takes the folders by hand: each `interfaces/outgoing/<folder>/` copied whole over
+`interfaces/incoming/<folder>/`, files the new copy lacks removed.
+
 **What changed, and what to do about it.** When a transpile changes a value of an
 interface, the interface's folder gains `CHANGES.md` beside its `README.md`: the previous
 `satz/interface.satz` on disk against the new one, written as the todo a workload estate follows,
@@ -1200,7 +1241,7 @@ update-prerequisites <estate> --report-only` lists those its resource types need
 organization's team. The interface's `README.md` lists each export with its value and what
 may be attached to; `CHANGES.md` beside
 it, after a change of the organization's estate, says what to do about it. After such a change
-the workload's team copies the folders into `interfaces/incoming/` again.
+the workload's team takes the folders again with `satz copy-interfaces` (below).
 
 ### Delegated access: a folder for a team
 

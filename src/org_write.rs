@@ -84,6 +84,7 @@ pub(crate) fn of(command: &Commands, runtime: &ToolConfig) -> OrgWrite {
         | Commands::AddEntry { .. }
         | Commands::Interfaces { .. }
         | Commands::CheckRequest { .. }
+        | Commands::CopyInterfaces { .. }
         | Commands::RemovePreset { .. }
         | Commands::MergePresets { .. }
         | Commands::GetPresets { .. }
