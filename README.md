@@ -350,7 +350,7 @@ its delegation, and one account works in any number of delegated resources of ei
 
 | pack | one entry is | the organization creates | the account holds |
 |---|---|---|---|
-| [`delegation`](presets/README.md#delegationsatz) | a delegation: the identity of a team | the infrastructure project `<shortname>-deploy-<name>`, the account `svc-deploy-<name>`, its state bucket `<shortname>-deploy-<name>-state`, and the grant that lets the entry's group act as the account | `roles/billing.user` on the billing account and `roles/browser` on the organization, unless the entry says more |
+| [`delegation`](presets/README.md#delegationsatz) | a delegation: the identity of a team | the infrastructure project `<shortname>-deploy-<name>`, the account `svc-deploy-<name>`, its state bucket `<shortname>-deploy-<name>-state`, the estate account user group at the entry's address with the members the entry lists, and the grant that lets that group act as the account | `roles/billing.user` on the billing account and `roles/browser` on the organization, unless the entry says more |
 | [`delegated-folders`](presets/README.md#delegated-folderssatz) | a folder, for a team that creates and applies its own projects | the folder | project and folder creation, project access and APIs **on its own folders only**; no access control on any folder |
 | [`delegated-projects`](presets/README.md#delegated-projectssatz) | a Google project, for a team that works in a project it is given | the project, with no account, state bucket or group of its own | access and APIs **on that project only** |
 

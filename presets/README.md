@@ -135,7 +135,7 @@ use "presets/billing-account-permissions.satz" when use_billing_permissions
 | `use_billing_export` | off | `billing-export` — the project and dataset Cloud Billing exports usage and cost into |
 | `use_shared_network` | off | `shared-network` — a shared VPC in a host project: the network, and the subnets and firewall rules the projects request |
 | `use_delegated_budgets` | off | `delegated-budget-role` — the role an entry of delegated access with `budgets = true` is granted: budgets for its own project or folder, nothing on the billing account |
-| `use_delegation` | off | `delegation` — delegated access, the base; per delegation: an infrastructure project with the account the workload estates run as and its state bucket, and the group that may act as the account |
+| `use_delegation` | off | `delegation` — delegated access, the base; per delegation: an infrastructure project with the account the workload estates run as and its state bucket, and the estate account user group that may act as the account, created with its listed members |
 | `use_delegated_folders` | off | `delegated-folders` — delegated access to folders; per folder a delegation's account works in: the folder, and the account's roles on that folder alone |
 | `use_delegated_projects` | off | `delegated-projects` — delegated access to projects; per Google project a delegation's account works in: the project, and the account's roles on that project alone |
 | `use_project_cis_log_alerts` | off | `monitoring/project-cis-log-alerts` — the CIS log alerts inside one project of its own, beside the central ones |
@@ -304,7 +304,8 @@ compliance evidence), `gcp-billing-admins` (billing, budgets, procurement)
 IAM) — each with the estate account as owner; lifecycle
 ignores `initial_group_config` (imported groups always diff on it). **No pack
 ships human memberships** — presets define groups, humans grant membership
-(in the console or with gcloud, outside satz). Estates that must manage a
+(in the console or with gcloud, outside satz). The one pack that writes memberships,
+[`delegation.satz`](#delegationsatz), writes the ones the estate lists in a delegation's entry. Estates that must manage a
 membership declare it on their own estate-level groups. Every group name is a
 param.
 
@@ -1277,8 +1278,9 @@ Delegated access, the base: one identity per delegation. A delegation gives a te
 product, a service — access to a part of the organization's resources from an estate of its
 own, beside the organization's. This pack is the half every delegation has, whatever is
 delegated: an infrastructure project holding the service account the workload's pipelines run
-as and the bucket its states live in, and the group whose members may act as that account.
-What is delegated is another pack's — folders
+as and the bucket its states live in, and the estate account user group whose members may act
+as that account, created in the customer's directory. What is delegated — the resources a
+workload needs and the account's roles on them — is another pack's — folders
 ([`delegated-folders.satz`](#delegated-folderssatz)), Google projects
 ([`delegated-projects.satz`](#delegated-projectssatz)) — and each of their entries names
 the delegation whose account works there. A team then never runs as the organization's IaC
@@ -1325,7 +1327,7 @@ params {
 
 | list | key | fields |
 |---|---|---|
-| `delegations` | `name` | `name` (the delegation's name — lowercase letters, digits and `-`, starting with a letter), `estate_account_user_group` (the address of the group that may act as the account, `<name>@<domain>`), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
+| `delegations` | `name` | `name` (the delegation's name — lowercase letters, digits and `-`, starting with a letter), `estate_account_user_group` (the address of the estate account user group the pack creates, `<name>@<domain>`), `estate_account_user_group_members` (the e-mail addresses of its members; none when left out), `apis` (the APIs of its infrastructure project; the six below when left out), `billing_roles` (its roles on the billing account; `["roles/billing.user"]` when left out) |
 
 The list's patterns hold the fields: a `name` outside `[a-z][a-z0-9-]*` and an
 `estate_account_user_group` that is not `<name>@<domain>` — `gcp-shop-admins`, or
@@ -1343,7 +1345,22 @@ billing account repeats the six APIs and adds `billingbudgets.googleapis.com`, a
 | `google_service_account.deploy_shop` | `svc-deploy-shop`, the account the workload's pipelines impersonate |
 | `google_storage_bucket.deploy_shop_state` | `{customer_shortname}-deploy-shop-state` in `default_region`, versioned, public access prevented; the account holds `roles/storage.objectAdmin` on it |
 | the account's grants | the entry's `billing_roles` on the billing account, `delegation_organization_roles` on the organization |
-| the group's grants | `roles/viewer` on the project; `delegation_group_roles` on the account alone |
+| `google_cloud_identity_group.deploy_shop_users` | the estate account user group at the entry's `estate_account_user_group` address, in the customer's directory, with one membership per address of `estate_account_user_group_members` |
+| the group's grants | `roles/viewer` on the project; `delegation_group_roles` on the account alone; each waits for the group |
+
+**The estate account user group.** The organization's estate account creates it and is no
+member of it; creating a group needs the Groups Admin role in the Google admin console, which
+`satz update-prerequisites` names and an estate the `init` template wrote holds already. A
+member added in the directory and not listed stays, and is not the estate's. The address is a
+group of the delegation's own: one the estate already declares — its own estate account user
+group, a group of S1 or S2 — is refused at transpile, since the apply would create it twice. A
+group that exists in the directory already is imported once, before the first apply:
+
+```
+satz adopt C0example.satz --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import
+```
+
+which imports the group, and each listed member that is in it, into the organization's state.
 
 **The account's calls are billed to this project.** An API a call of the workload estate needs
 is asked for in the delegation's `apis`, wherever the resource lives; an API a resource

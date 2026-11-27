@@ -35,7 +35,7 @@ params {
   sentinel_project_number             = "123456789012"
   scc_siem_subscriber                 = "serviceAccount:sentinel-service-account@acme-infra-001.iam.gserviceaccount.com"
   access_approval_notification_emails = ["security@example.com"]
-  delegations                         = [{ name = "platform" estate_account_user_group = "gcp-project-admins@example.com" }, { name = "payments" estate_account_user_group = "payments-owners@example.com" }]
+  delegations                         = [{ name = "platform" estate_account_user_group = "platform-owners@example.com" estate_account_user_group_members = ["platform-lead@example.com"] }, { name = "payments" estate_account_user_group = "payments-owners@example.com" }]
   delegated_projects                  = [{ name = "payments" delegation = "payments" budgets = true }, { name = "platform-tools" delegation = "platform" budgets = true }, { name = "platform-portal" delegation = "platform" }]
   delegated_folders                   = [{ name = "platform-apps" delegation = "platform" budgets = true }, { name = "platform-data" delegation = "platform" display_name = "Platform data" }]
 }

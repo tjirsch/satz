@@ -387,6 +387,27 @@ fn order_after_groups(blocks: &mut [hcl::Block]) {
     }
 }
 
+/// Two groups the estate declares with one address are one group in the directory, which
+/// the apply would create twice and Google refuses the second: a delegation's estate
+/// account user group that names a group the estate already declares, a model's group
+/// renamed onto another. Refused at the transpile, naming both.
+fn one_group_per_address(blocks: &[hcl::Block]) -> Result<(), String> {
+    let manifest = crate::manifest::Manifest::from_blocks(blocks.iter());
+    let mut seen: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for r in manifest.of_type("google_cloud_identity_group") {
+        let Some(email) = r.nested.get("group_key.id") else { continue };
+        if let Some(first) = seen.insert(email.clone(), r.address()) {
+            return Err(format!(
+                "`{}` and `{}` are both the group {} — one address is one group in the directory; name another address, or drop one of the two",
+                first,
+                r.address(),
+                email
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// A policy on a custom constraint names the constraint by its string
 /// (`…/policies/custom.x`), so tofu would create the policy beside the
 /// constraint, and the API refuses a policy on a constraint that does not exist
@@ -662,6 +683,8 @@ pub(crate) fn emit(folded: &Folded, ctx: &EmitCtx) -> Result<EmitOut, String> {
             }
         }
     }
+
+    one_group_per_address(&blocks)?;
 
     order_after_service_accounts(&mut blocks);
     order_after_groups(&mut blocks);
@@ -2444,6 +2467,35 @@ resource "google_cloud_identity_group_membership" "nested" {
         // a group the estate does not declare orders nothing
         assert_eq!(depends_on(by("elsewhere")), None);
         assert_eq!(depends_on(by("gcp_auditors")), None);
+    }
+
+    #[test]
+    fn two_groups_with_one_address_are_refused() {
+        let bs = blocks(
+            r#"
+resource "google_cloud_identity_group" "svc_iac_users" {
+  parent = "customers/C0example"
+  group_key {
+    id = "svc-iac-users@example.com"
+  }
+}
+resource "google_cloud_identity_group" "deploy_shop_users" {
+  parent = "customers/C0example"
+  group_key {
+    id = "svc-iac-users@example.com"
+  }
+}
+resource "google_cloud_identity_group" "deploy_rag_users" {
+  parent = "customers/C0example"
+  group_key {
+    id = "gcp-rag-admins@example.com"
+  }
+}
+"#,
+        );
+        let err = one_group_per_address(&bs).unwrap_err();
+        assert!(err.contains("google_cloud_identity_group.svc_iac_users") && err.contains("google_cloud_identity_group.deploy_shop_users") && err.contains("svc-iac-users@example.com"), "{}", err);
+        assert!(one_group_per_address(&bs[1..]).is_ok());
     }
 
     #[test]

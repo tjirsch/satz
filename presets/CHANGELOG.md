@@ -13,6 +13,28 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**`delegation` 2.2 creates each delegation's estate account user group** (ADR 0110). Per entry of
+`delegations` the plan adds a `google_cloud_identity_group` at the entry's
+`estate_account_user_group` address, `google_cloud_identity_group.deploy_<name>_users`, and one
+membership per address of the new optional field `estate_account_user_group_members`; the group's
+grants on the estate account and on the infrastructure project wait for it. An estate whose group
+exists already — created by hand in the directory — would create it a second time, which Google
+refuses: before the first apply on this version, run once
+`satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import`,
+which imports the group, and each listed member that is in it, into the organization's state; the
+plan then shows no group to create. The organization's estate account needs the Groups Admin role
+in the Google admin console to create the group, which every estate the `init` template wrote has
+already for its own estate account user group; `satz update-prerequisites` names it. A member
+added in the directory and not listed stays, and is not the estate's.
+
+**Two groups with one address are refused at the transpile**, naming both resources and the
+address: a delegation whose `estate_account_user_group` is a group the estate declares already —
+its own estate account user group, a group of S1 or S2 — and any two `google_cloud_identity_group`
+blocks whose address is the same. The apply would have created the group twice and Google
+refused the second. Give the delegation a group of its own.
+
 ### v0.119.0
 
 **`get-pack` prints the named line for a pack that says `multiple`:** `use "…" named <name>`, the estate writing the use's name in place of `<name>`; the same in the `use_line` of `satz packs` and `satz_get_pack`.
@@ -1743,6 +1765,7 @@ the private history recorded them.
 
 | pack | version | date | change |
 |---|---|---|---|
+| `delegation` | 2.2 | 2026-11-27 | each delegation's estate account user group is created: a `google_cloud_identity_group` at the entry's `estate_account_user_group` address in the customer's directory, `deploy_<name>_users`, with the members of the new optional entry field `estate_account_user_group_members` (e-mail addresses, `[]` by default), and the group's grants wait for it. A plan shows the group and its memberships created. An estate whose group exists already imports it once, before the first apply: `satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import`. The organization's estate account needs Groups Admin in the Google admin console |
 | `delegated_projects` | 2.1 | 2026-11-25 | an entry takes an optional `display_name`, the project's display name, which is the entry's `name` when left out; the list's pattern holds it to Google's rule for a project display name — 4 to 30 letters, digits, spaces, hyphens, single and double quotes and exclamation points — so an entry such as `{ name = "cat" … }` is refused by the transpile and by `satz add-entry`, naming the entry, the field, the value and the pattern, where it failed at `tofu validate`. Nothing emitted changes for an entry whose name is a valid display name |
 | `delegated_folders` | 1.2 | 2026-11-25 | `display_name` is the entry's `name` when left out, through the list's `defaults`, so one `google_folder` body serves both; the list's pattern holds it to Google's rule for a folder display name — at most 30 letters, digits, spaces, hyphens and underscores, starting and ending with a letter or digit — so an entry whose display name breaks it is refused by the transpile and by `satz add-entry`, where it failed at apply. `terraform.tfvars` carries the filled `display_name` of every entry; nothing a plan shows changes |
 | `billing_export` | 1.2 | 2026-11-25 | the folder question says what its empty answer means, `empty = "the organization itself; the project is created directly under it"`, so `satz questions`, the interview and the decisions sheet show it beside the `""` the pack offers and `--accept-defaults` takes. Nothing emitted changes |

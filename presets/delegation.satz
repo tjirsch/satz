@@ -2,8 +2,9 @@
 // product, a service — access to a part of the organization's resources from an estate of
 // its own, beside this one. This pack is the half every delegation has, whatever is
 // delegated: an infrastructure project with the service account the team's pipelines run
-// as and the bucket its states live in, and the group whose members may act as that
-// account. WHAT is delegated is another pack's: folders
+// as and the bucket its states live in, the estate account user group whose members may act
+// as that account, and that group's right to act as it. WHAT is delegated — the resources a
+// workload needs and the estate account's roles on them — is another pack's: folders
 // (`presets/delegated-folders.satz`), Google projects (`presets/delegated-projects.satz`),
 // each entry of which names the delegation whose account works in it.
 //
@@ -30,6 +31,17 @@
 // among its parent's folders, and that listing needs `resourcemanager.folders.list` on the
 // parent.
 //
+// THE ESTATE ACCOUNT USER GROUP. The group of the entry's `estate_account_user_group`
+// address is created in the customer's directory, labelled `deploy_<name>_users`, with the
+// members of the entry's `estate_account_user_group_members` — e-mail addresses, none by
+// default; a member added in the directory by hand stays and is not the estate's. Creating
+// a group needs the Groups Admin role in the Google admin console for the organization's
+// estate account, as every estate that creates a group does (`satz update-prerequisites`
+// names it). A group that exists already is taken over once, before the first apply that
+// creates it:
+//   satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import
+// which imports the group and each listed member into the organization's state.
+//
 // AN ENTRY THAT ASKS FOR MORE. `apis` and `billing_roles` are lists, and an entry that
 // states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
 // its own.
@@ -45,11 +57,12 @@
 //
 // NO CLAIM. A delegation is an identity, not a control: this pack witnesses nothing.
 
-pack delegation version "2.1"
+pack delegation version "2.2"
 
 params {
-  // One entry per delegation, `{ name estate_account_user_group apis billing_roles }`:
-  // the name, the group that may act as the account, the APIs of its infrastructure
+  // One entry per delegation, `{ name estate_account_user_group
+  // estate_account_user_group_members apis billing_roles }`: the name, the address of the
+  // group that may act as the account and its members, the APIs of its infrastructure
   // project and its roles on the billing account (the defaults of the `entries` statement
   // below when left out).
   delegations = []
@@ -69,7 +82,7 @@ params {
 
 entries delegations {
   key      = "name"
-  fields   = ["name", "estate_account_user_group", "apis", "billing_roles"]
+  fields   = ["name", "estate_account_user_group", "estate_account_user_group_members", "apis", "billing_roles"]
   patterns = { name = "[a-z][a-z0-9-]*" estate_account_user_group = "[^@: ]+@[^@: ]+" }
   defaults = {
     apis = [
@@ -80,9 +93,23 @@ entries delegations {
       "serviceusage.googleapis.com",
       "storage.googleapis.com",
     ]
-    billing_roles = ["roles/billing.user"]
+    billing_roles                     = ["roles/billing.user"]
+    estate_account_user_group_members = []
   }
-  description = "A delegation: its name, the address of the group that may act as its account, the APIs of its infrastructure project and its roles on the billing account"
+  description = "A delegation: its name, the address of the group that may act as its account and the e-mail addresses of that group's members, the APIs of its infrastructure project and its roles on the billing account"
+}
+
+// ---- per delegation: its estate account user group ----------------------------------------
+
+// The group whose members may act as the delegation's estate account. The organization's
+// estate account creates it and is no member of it.
+google_cloud_identity_group {
+  each delegations by name as "deploy_{each.name}_users" {
+    email        = each.estate_account_user_group
+    display_name = "Estate account user group of the delegation {each.name}"
+    description  = "Its members may act as svc-deploy-{each.name}, the estate account of the delegation {each.name}, and read its infrastructure project. Members are listed in the delegation's entry in the organization's estate or added in the directory."
+    member       = each.estate_account_user_group_members
+  }
 }
 
 // ---- per delegation: its infrastructure project, account and state bucket ---------------

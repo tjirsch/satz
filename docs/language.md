@@ -1255,7 +1255,9 @@ google_storage_bucket_iam_member {
 }
 ```
 
-Memberships stay **out of packs**: packs define groups, humans grant membership.
+Memberships stay **out of packs**: packs define groups, humans grant membership. A pack names
+no member; where a pack takes members, as `presets/delegation.satz` does for a delegation's
+estate account user group, they are values the estate binds.
 
 ### 6.6 Folders and hierarchy
 

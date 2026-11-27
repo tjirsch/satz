@@ -1,6 +1,6 @@
 # 0101 — a delegation is two packs, and a workload estate has no prerequisites check for roles
 
-- **Status:** accepted
+- **Status:** accepted; amended by [ADR 0110](0110-the-delegation-base-creates-the-estate-account-user-group.md) — what every delegation needs, its estate account user group included, is created by the base `presets/delegation.satz`; what one workload needs is in its delegation pack
 - **Date:** 2026-11-21
 
 ## Context

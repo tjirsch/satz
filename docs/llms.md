@@ -185,7 +185,9 @@ google_storage_bucket_iam_member {
 ```
 
 **Memberships are not grants.** Presets define groups; humans put people in them. Do
-not add `google_cloud_identity_group_membership` to a pack.
+not add `google_cloud_identity_group_membership` to a pack, and name no member in one. The
+members of a delegation's estate account user group are the estate's: the entry field
+`estate_account_user_group_members` of `delegations`.
 
 ## Packs
 
