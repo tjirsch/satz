@@ -13,7 +13,7 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
-### Unreleased
+### v0.120.0
 
 **`delegation` 2.2 creates each delegation's estate account user group** (ADR 0110). Per entry of
 `delegations` the plan adds a `google_cloud_identity_group` at the entry's
