@@ -1617,6 +1617,10 @@ pub(crate) async fn run_merge_presets(
                 reason: None,
             });
             needs_attention = true;
+            let stem_name = stem.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if let Some(text) = adopt_names_a_fork(adopt, &stem_name, &stem, rel, &fork_rel, &diff_path) {
+                events.push(MergeEvent::Note { text });
+            }
             if report_only { continue; }
             install(&lo_path, &up)?;
             continue;
@@ -1978,6 +1982,26 @@ pub(crate) enum AdoptChoice {
     SkipEdited,
     /// Not selected — the normal fork path applies.
     No,
+}
+
+/// `--adopt <stem>` naming a pack the estate runs as its fork: the fork is the estate's own and
+/// `merge-presets` never changes it or the `use` line that reads it, so the adoption is an edit
+/// the operator makes. Says which: the line, from the fork to the library's file, after reading
+/// the adoption delta. `None` when `--adopt` does not name the pack (`all` included: a fork is
+/// never adopted wholesale).
+fn adopt_names_a_fork(adopt: &[String], stem_name: &str, stem: &Path, rel: &Path, fork_rel: &Path, diff: &Path) -> Option<String> {
+    let named = adopt.iter().any(|a| a == stem_name || Path::new(a) == stem);
+    named.then(|| {
+        format!(
+            "  --adopt {}: the estate uses the fork {}, which merge-presets never changes — the library's {} was updated beside it. To adopt it, read {} and change the estate's `use` line from {} to {}, then transpile and read the plan",
+            stem_name,
+            fork_rel.display(),
+            rel.display(),
+            diff.display(),
+            fork_rel.display(),
+            rel.display()
+        )
+    })
 }
 
 pub(crate) fn adopt_choice(adopt: &[String], stem_name: &str, stem: &Path, behind: bool) -> AdoptChoice {
@@ -2518,6 +2542,17 @@ params {
 
     /// Naming a pack is the deliberate act, so it wins even for an edited pack —
     /// that is how a customer discards their own fork on purpose.
+    #[test]
+    fn adopt_naming_a_forked_pack_says_the_edit_it_leaves_to_the_operator() {
+        let (stem, rel, fork, diff) = (Path::new("delegation"), Path::new("delegation.satz"), Path::new("delegation.local.satz"), Path::new("presets/delegation.diff.satz"));
+        let text = adopt_names_a_fork(&["delegation".to_string()], "delegation", stem, rel, fork, diff).expect("a named fork is reported");
+        assert!(text.contains("the estate uses the fork delegation.local.satz"), "{text}");
+        assert!(text.contains("change the estate's `use` line from delegation.local.satz to delegation.satz"), "{text}");
+        assert!(text.contains("presets/delegation.diff.satz"), "{text}");
+        assert_eq!(adopt_names_a_fork(&["all".to_string()], "delegation", stem, rel, fork, diff), None);
+        assert_eq!(adopt_names_a_fork(&["estate-core".to_string()], "delegation", stem, rel, fork, diff), None);
+    }
+
     #[test]
     fn naming_a_pack_adopts_it_even_when_it_was_edited() {
         let named = vec!["CIS-GCP-Foundation-4.0".to_string()];

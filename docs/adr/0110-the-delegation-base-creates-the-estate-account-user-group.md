@@ -35,12 +35,13 @@ resources belong to the common base and which to each workload's delegation pack
 
 **Who is in the group**
 
-1. **An optional entry field `estate_account_user_group_members`**, a list of e-mail
-   addresses, empty by default; each becomes a membership. The members are values the
-   estate binds — the pack names none — so who is in a group stays the customer's
-   decision. A member added in the directory and not listed stays, unmanaged.
-2. **No member field; members are added in the directory.** Keeps every membership out of
-   the library's packs, as the S1 and S2 models do. The hand step returns for every member.
+1. **Nobody the estate names: the group is created empty**, and someone with directory rights
+   adds the workload team's people to it. Keeps the library's rule that packs define groups
+   and humans grant membership — who may act as an estate account is decided in the
+   company's directory, not in satz.
+2. **An optional entry field listing the members' e-mail addresses**, each a membership.
+   Removes the hand step for the members, but makes a pack write memberships, against the
+   rule and `satz review-pack`'s check of it; rejected by the maintainer.
 
 **The group's address**
 
@@ -60,9 +61,16 @@ resources belong to the common base and which to each workload's delegation pack
 2. **Owner, as in the models.** Gives the organization's estate account the delegation's
    rights for no purpose.
 
+**Estates on the customer's own groups** (ADR 0102)
+
+1. **The group is created there too.** Such an estate assigns its estate account Groups Admin
+   once, in the admin console.
+2. **An opt-out that leaves the group to the directory.** A second path through the pack for
+   one kind of estate; rejected.
+
 ## Decision
 
-Option 1 in all four. The rule behind the first: **what every delegation needs is created by
+Option 1 in all five. The rule behind the first: **what every delegation needs is created by
 the base** — the estate account, its infrastructure project, its state bucket, its basic
 grants and the estate account user group, whose only right is to act as the estate account and
 read its project. **What one workload needs is in that workload's delegation pack** — the
@@ -71,9 +79,9 @@ reviews. The organization's team applies the organization's estate as the organi
 estate account; no member of that team needs to be in a delegation's group.
 
 `delegation` 2.2 writes, per entry, `google_cloud_identity_group.deploy_<name>_users` at the
-entry's `estate_account_user_group`, with one membership per member listed. The group's grants
-still name it by address; the emitter gives every grant on a group the estate declares a
-`depends_on` on it, so the apply creates the group first.
+entry's `estate_account_user_group`, empty. The group's grants still name it by address; the
+emitter gives every grant on a group the estate declares a `depends_on` on it, so the apply
+creates the group first.
 
 Two groups with one address are refused at the transpile: a delegation that names a group the
 estate already declares — its own estate account user group, a group of S1 or S2 — would
@@ -81,14 +89,12 @@ otherwise create it twice, and Google refuses the second.
 
 ## Consequences
 
-- The plan of an estate with delegations adds one group per delegation and one membership
-  per listed member. An existing group is imported once:
-  `satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import`.
+- The plan of an estate with delegations adds one group per delegation. An existing group is
+  imported once, with its members as they are:
+  `satz adopt <estate> --only google_cloud_identity_group --execute --import`.
+- After the apply, someone with directory rights adds the workload team's people to the group.
 - `satz update-prerequisites` names Groups Admin for an estate that uses the base, through
   the row of `google_cloud_identity_group` it already had. An estate on the customer's own
-  groups (ADR 0102) that uses delegations now needs that role as well.
-- The library's rule "memberships stay out of presets" holds in its sense — the library
-  names no member — but a pack now writes memberships the estate lists; the rule's wording in
-  the repository's working rules is the maintainer's to restate.
-- Removing a delegation's entry deletes its group, with its memberships, at the next apply.
+  groups (ADR 0102) that uses delegations assigns that role once.
+- Removing a delegation's entry deletes its group at the next apply.
 - The address stays required; a derived default waits for a template default in `entries`.

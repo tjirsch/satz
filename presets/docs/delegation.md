@@ -37,15 +37,14 @@ among its parent's folders, and that listing needs `resourcemanager.folders.list
 parent.
 
 THE ESTATE ACCOUNT USER GROUP. The group of the entry's `estate_account_user_group`
-address is created in the customer's directory, labelled `deploy_<name>_users`, with the
-members of the entry's `estate_account_user_group_members` — e-mail addresses, none by
-default; a member added in the directory by hand stays and is not the estate's. Creating
-a group needs the Groups Admin role in the Google admin console for the organization's
-estate account, as every estate that creates a group does (`satz update-prerequisites`
-names it). A group that exists already is taken over once, before the first apply that
-creates it:
-satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import
-which imports the group and each listed member into the organization's state.
+address is created, empty, in the customer's directory, labelled `deploy_<name>_users`.
+Who is a member is decided in the directory: someone with directory rights adds the
+workload team's people to it. Creating a group needs the Groups Admin role in the Google
+admin console for the organization's estate account (`satz update-prerequisites` names
+it); an estate on the customer's own groups assigns it once. A group that exists already
+is taken over once, before the first apply that creates it:
+satz adopt <estate> --only google_cloud_identity_group --execute --import
+which imports the group into the organization's state; its members stay as they are.
 
 AN ENTRY THAT ASKS FOR MORE. `apis` and `billing_roles` are lists, and an entry that
 states one states it whole: the six APIs below plus its own, `roles/billing.user` plus
@@ -129,7 +128,7 @@ What a project may add to this pack's lists, through `contributes_<param>` in a 
 
 | list | key | fields | description |
 |---|---|---|---|
-| `delegations` | `name` | `name` matching `[a-z][a-z0-9-]*`, `estate_account_user_group` matching `[^@: ]+@[^@: ]+`, `estate_account_user_group_members`, `apis`, `billing_roles` | A delegation: its name, the address of the group that may act as its account and the e-mail addresses of that group's members, the APIs of its infrastructure project and its roles on the billing account |
+| `delegations` | `name` | `name` matching `[a-z][a-z0-9-]*`, `estate_account_user_group` matching `[^@: ]+@[^@: ]+`, `apis`, `billing_roles` | A delegation: its name, the address of the group that may act as its account, which the delegation creates, the APIs of its infrastructure project and its roles on the billing account |
 
 ## Claims
 
@@ -139,7 +138,7 @@ _None — this pack proves no control by itself._
 
 | version | date | change |
 |---|---|---|
-| 2.2 | 2026-11-27 | each delegation's estate account user group is created: a `google_cloud_identity_group` at the entry's `estate_account_user_group` address in the customer's directory, `deploy_<name>_users`, with the members of the new optional entry field `estate_account_user_group_members` (e-mail addresses, `[]` by default), and the group's grants wait for it. A plan shows the group and its memberships created. An estate whose group exists already imports it once, before the first apply: `satz adopt <estate> --only google_cloud_identity_group,google_cloud_identity_group_membership --execute --import`. The organization's estate account needs Groups Admin in the Google admin console |
+| 2.2 | 2026-11-27 | each delegation's estate account user group is created, empty: a `google_cloud_identity_group` at the entry's `estate_account_user_group` address in the customer's directory, `deploy_<name>_users`, and the group's grants wait for it; its members are added in the directory. A plan shows one group created per delegation. An estate whose group exists already imports it once, before the first apply: `satz adopt <estate> --only google_cloud_identity_group --execute --import`. The organization's estate account needs Groups Admin in the Google admin console |
 | 2.1 | 2026-11-20 | the interface `delegation-<name>` also exports `estate_account_id`, the estate account's id `svc-deploy-<name>`, which a workload estate reads as its `svc_iac_account`; nothing emitted changes |
 | 2.0 | 2026-11-19 | the entry field `owner_group` of `delegations` is `estate_account_user_group`; the exports `iac_account`, `account_group` and `deploy_project_id` are `estate_account`, `estate_account_user_group` and `infrastructure_project_id`; `delegation_project_folder` and its question are gone — every delegation's infrastructure project is created in `google_folder.infra_folder`; the statement is `entries` (ADR 0096; BREAKING, see Breaking changes) |
 | 1.0 | 2026-11-19 | first version, the base of delegated access, from the account half of `folder_workload` and `project_workload`: one entry of `delegations` (`{ name owner_group apis billing_roles }`) is an infrastructure project, the account `svc-deploy-<name>`, its state bucket and the group that may act as it; the interface is `delegation-<name>`; what is delegated is `delegated_folders` and `delegated_projects`, each entry naming its delegation (ADR 0093; BREAKING, see Breaking changes) |

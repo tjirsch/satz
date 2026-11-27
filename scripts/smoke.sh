@@ -417,7 +417,7 @@ grep -q '^stage = "test"' tmp/template-input.txt || fail "--input did not bind t
 
 step "delegation and delegated folders: one account per delegation, granted on the folders the pack creates for it and on nothing above them (ADR 0086, ADR 0093)"
 # two delegations, three folders: one delegation with two folders that share no root
-fw_lists='  delegations = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }, { name = "rag" estate_account_user_group = "gcp-rag-admins@example.com" estate_account_user_group_members = ["rag-lead@example.com", "rag-ops@example.com"] apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
+fw_lists='  delegations = [{ name = "shop" estate_account_user_group = "gcp-shop-admins@example.com" }, { name = "rag" estate_account_user_group = "gcp-rag-admins@example.com" apis = ["iam.googleapis.com", "billingbudgets.googleapis.com"] billing_roles = ["roles/billing.user", "roles/billing.costsManager"] }]\
   delegated_folders = [{ name = "shop" delegation = "shop" display_name = "Shop" }, { name = "shop-data" delegation = "shop" parent = "folders/222222222222" }, { name = "rag-acme" delegation = "rag" }]'
 sed -e '/^  delegations  *= /d' -e '/^  delegated_folders  *= /d' -e "s|^  use_delegation  *= true|&\\
 $fw_lists|" "$ex/satz/C0example.satz" > tmp/fw-org.satz
@@ -437,14 +437,11 @@ grep -A3 '^resource "google_folder" "rag_acme"' "$fwm" | grep -q 'display_name *
 grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a delegation's account holds a role that sets folder IAM, policies or tags"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a delegation's own billing_roles did not reach the billing account"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one delegation's billing role reached another"
-# each delegation creates its estate account user group, with the entry's members and none other,
-# and the group's grants wait for it
+# each delegation creates its estate account user group, empty, and the group's grants wait for it
 for d in shop:gcp-shop-admins rag:gcp-rag-admins; do
   grep -A4 "^resource \"google_cloud_identity_group\" \"deploy_${d%%:*}_users\"" "$fwm" | grep -q "id = \"${d#*:}@example.com\"" || fail "the delegation ${d%%:*} does not create its estate account user group ${d#*:}@example.com"
 done
-[ "$(grep -c 'group = google_cloud_identity_group.deploy_rag_users.id' "$fwm")" = 2 ] || fail "the group of rag does not hold the entry's two members:\n$(grep -A4 'google_cloud_identity_group.deploy_rag_users.id' "$fwm")"
-grep -A3 'group = google_cloud_identity_group.deploy_rag_users.id' "$fwm" | grep -q 'id = "rag-lead@example.com"' || fail "the entry's member is not a member of the group"
-grep -q 'group = google_cloud_identity_group.deploy_shop_users.id' "$fwm" && fail "a delegation without members has a membership"
+grep -q 'group = google_cloud_identity_group.deploy_' "$fwm" && fail "a delegation's estate account user group has a membership: who is a member is decided in the directory"
 grep -A6 'member = "group:gcp-shop-admins@example.com"' "$fwm" | grep -q 'google_cloud_identity_group.deploy_shop_users,' || fail "the group's grants do not wait for the group:\n$(grep -A6 'member = "group:gcp-shop-admins@example.com"' "$fwm")"
 fwi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_apis"' "$fwi/delegation-rag/delegation-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the delegation's interface does not publish its APIs:\n$(cat "$fwi/delegation-rag/delegation-rag/satz/interface.satz")"
