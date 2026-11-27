@@ -486,7 +486,8 @@ account, estate account user group and state bucket — at the next apply (secti
 
 ## 5. The interface folders cross back
 
-**What to do:** copy the two folders the transpile wrote, whole, to the workload repository.
+**What to do:** the workload's team takes the two folders the transpile wrote, whole, with
+`satz copy-interfaces`.
 
 Every transpile writes `interfaces/outgoing/` beside the estate, whole:
 
@@ -495,10 +496,22 @@ Every transpile writes `interfaces/outgoing/` beside the estate, whole:
 | `interfaces/outgoing/delegation-books/` | the delegation: `infrastructure_project_id`, `estate_account`, `estate_account_id`, `state_bucket`, `estate_account_user_group`, `billing_account`, `delegated_apis`, `delegated_billing_roles` |
 | `interfaces/outgoing/books-project/` | the use's interface: `project_id`, `delegated_project_roles` |
 
-The organization's team copies both folders to the workload repository's
-`interfaces/incoming/`, by hand or as a pull request in the workload repository. The
-organization's `interfaces/outgoing/books-project/` is the workload repository's
-`interfaces/incoming/books-project/`. The workload's team needs nothing else of the
+The organization's `interfaces/outgoing/books-project/` is the workload repository's
+`interfaces/incoming/books-project/`. Once the workload estate exists (section 6), its team
+takes the folders in the workload repository, with a checkout of the organization's
+repository on the same disk:
+
+```bash
+satz copy-interfaces books.satz --from <the organization>
+```
+
+It copies exactly the folders the estate's `use` lines read, each whole — a file the new
+folder lacks is removed, `.DS_Store` and editor files are left out — and only after the
+estate transpiled with the new folders; a check that fails copies nothing. It reports per
+folder the files and the values that changed; `--report-only` reports and writes nothing.
+A workload repository without the organization's repository on its disk takes the folders by
+hand — the organization's team sends them, or opens a pull request in the workload
+repository — each copied whole over the folder of the same name in `interfaces/incoming/`. The workload's team needs nothing else of the
 organization's: not its estate file, not its library, not its state. In satz-studio, the
 organization's estate's Estate → Interfaces lists every interface it publishes, with its
 exports.
@@ -609,8 +622,8 @@ satz transpile C0example.satz --apply
 `update-pack` overwrites a pack unchanged since it was fetched and updates its row; a pack
 edited in the organization's repository is left as it is and reported with its difference.
 In satz-studio: Packs, choose the source, **Update** on the pack's row. When the apply
-changed an export, the interface folders are copied again (section 5); `CHANGES.md` in each
-says what moved.
+changed an export, the workload's team takes the folders again, `satz copy-interfaces
+books.satz --from <the organization>` (section 5), which says what moved.
 
 **A new version of the workload pack** concerns the workload's team alone: it changes the
 pack, or `satz update-pack <id>` brings a fetched one up to date, then plan and apply in the
@@ -719,7 +732,7 @@ file.
 | names the estate account user group | yes, as the use's value | proposes it |
 | creates that group | yes, in its state, empty | no |
 | puts people into that group | whoever administers the directory | whoever administers the directory |
-| copies the interface folders | to the workload's team, after every change | — |
+| takes the interface folders | sends them where the workload repository has no checkout of the organization's | `satz copy-interfaces`, after every change |
 | writes the workload estate | no | yes, with `satz init --from` |
 | creates the workload's resources inside what it was given | no | yes, in its state |
 | grants a role outside satz, such as Groups Admin | yes, by hand | asks |

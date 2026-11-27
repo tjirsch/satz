@@ -409,7 +409,10 @@ the block only where the param carries a value — `when not` for the opposite, 
 `each` also `when each.<field>`. A param nobody declares is an error, never `false`.
 
 Over MCP, `satz_check_consumer` checks a workload estate's HCL against the interface it reads.
-`satz interfaces` and `satz check-request` have no tool: ask a human for them. Access is
+`satz interfaces`, `satz check-request` and `satz copy-interfaces` have no tool: ask a human for them.
+`satz copy-interfaces <workload estate> --from <the organization's estate>` copies the folders a
+workload estate's `use` lines read, each whole from `interfaces/outgoing/` into
+`interfaces/incoming/`, after checking that the estate transpiles with them. Access is
 delegated to a team by an entry of `delegations` in `presets/delegation.satz` — its estate
 account, state bucket and estate account user group — and
  one entry per delegated resource that names it: `delegated_folders`

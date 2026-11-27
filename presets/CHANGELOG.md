@@ -13,6 +13,13 @@ satisfies it. Newest first. Each entry says what is refused, how to find it in a
 estate, what to write instead, and whether the plan moves; the error satz prints
 names the file and the line.
 
+### Unreleased
+
+**`satz copy-interfaces <workload estate> --from <the organization's estate>`** (ADR 0111) copies
+the interface folders a workload estate reads, each whole, from the organization's
+`interfaces/outgoing/` into its `interfaces/incoming/`, after checking that the estate
+transpiles with them. A new command: nothing an estate holds changes.
+
 ### v0.120.0
 
 **`delegation` 2.2 creates each delegation's estate account user group** (ADR 0110). Per entry of

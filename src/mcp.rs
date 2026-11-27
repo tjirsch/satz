@@ -169,6 +169,7 @@ pub(crate) const MCP_PARITY: &[(&str, Parity)] = &[
     ("add-preset", Parity::Tools(&["satz_add_preset"])),
     ("add-entry", Parity::Tools(&["satz_add_entry"])),
     ("check-request", Parity::Off("a project's pipeline runs it on the pull request that vendors the file, before the estate's owner reviews it; the interface plane has no tools")),
+    ("copy-interfaces", Parity::Off("it reads a second estate's repository, the organization's, which lies outside the estate a session opens, and writes into the workload repository's interfaces/incoming/; the interface plane has no tools")),
     ("interfaces", Parity::Off("satz-studio reads its json form through the CLI, and an agent reads the interface READMEs the transpile writes; the interface plane has no tools")),
     ("remove-preset", Parity::Tools(&["satz_remove_preset"])),
     ("triage", Parity::Tools(&["satz_triage"])),
