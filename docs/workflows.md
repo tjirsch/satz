@@ -1097,8 +1097,8 @@ estate transpiles.
 
 Per entry of `delegations` the base declares the delegation's infrastructure project
 `{customer_shortname}-deploy-payments`, inside it the estate account
-`svc-deploy-payments` and the state bucket, and the grants (the estate account user group
-reads that project and may act as the estate account), and publishes the interface `delegation-payments`.
+`svc-deploy-payments` and the state bucket, the estate account user group at the entry's
+`estate_account_user_group` address, created empty, and the grants (the group reads that project and may act as the estate account), and publishes the interface `delegation-payments`.
 Per entry of `delegated_projects` the preset declares the Google project
 `{customer_shortname}-payments-001` under `delegated_projects_folder` — the workload
 folder unless the estate names another — with no account and no bucket in it, the grants

@@ -126,6 +126,7 @@ The apply creates, for the delegation `shop`:
 | roles on the folder `Shop`, and on no other | folder and project creation and deletion, the IAM of its projects, their APIs (`delegated_folders_roles`). No access control on a folder, no organization policy, no tag |
 | `roles/billing.user` on the billing account | linking a new project |
 | `roles/browser` on the organization | the one organization-level right: the folder lookups of step 1 list a parent's folders |
+| group `gcp-shop-admins@example.com` | the estate account user group, created empty in the customer's directory; someone with directory rights adds the team's people to it |
 | impersonation for `gcp-shop-admins@example.com` | the group's members may become the account, and nothing else |
 
 A second folder for the same account is a second entry of `delegated_folders` that

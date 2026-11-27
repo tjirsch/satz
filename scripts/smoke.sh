@@ -437,6 +437,12 @@ grep -A3 '^resource "google_folder" "rag_acme"' "$fwm" | grep -q 'display_name *
 grep -B2 -A4 'google_service_account.deploy_' "$fwm" | grep -q 'folderAdmin\|folderIamAdmin\|orgpolicy\|tagAdmin\|roles/owner' && fail "a delegation's account holds a role that sets folder IAM, policies or tags"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-rag@' | grep -q 'roles/billing.costsManager' || fail "a delegation's own billing_roles did not reach the billing account"
 grep -A3 'google_billing_account_iam_member' "$fwm" | grep -B1 'svc-deploy-shop@' | grep -q 'roles/billing.costsManager' && fail "one delegation's billing role reached another"
+# each delegation creates its estate account user group, empty, and the group's grants wait for it
+for d in shop:gcp-shop-admins rag:gcp-rag-admins; do
+  grep -A4 "^resource \"google_cloud_identity_group\" \"deploy_${d%%:*}_users\"" "$fwm" | grep -q "id = \"${d#*:}@example.com\"" || fail "the delegation ${d%%:*} does not create its estate account user group ${d#*:}@example.com"
+done
+grep -q 'group = google_cloud_identity_group.deploy_' "$fwm" && fail "a delegation's estate account user group has a membership: who is a member is decided in the directory"
+grep -A6 'member = "group:gcp-shop-admins@example.com"' "$fwm" | grep -q 'google_cloud_identity_group.deploy_shop_users,' || fail "the group's grants do not wait for the group:\n$(grep -A6 'member = "group:gcp-shop-admins@example.com"' "$fwm")"
 fwi="$ex/interfaces/outgoing"
 grep -A1 '^output "delegated_apis"' "$fwi/delegation-rag/delegation-rag/satz/interface.satz" | grep -q '"iam.googleapis.com", "billingbudgets.googleapis.com"' || fail "the delegation's interface does not publish its APIs:\n$(cat "$fwi/delegation-rag/delegation-rag/satz/interface.satz")"
 grep -A1 '^output "delegated_billing_roles"' "$fwi/delegation-shop/delegation-shop/satz/interface.satz" | grep -q '\["roles/billing.user"\]' || fail "a delegation without billing_roles does not publish the default"

@@ -37,7 +37,7 @@ The spelling is American English.
 | **delegated resource** | | What a delegation's estate account may work in or on: a folder, a project, and whatever kind the preset library adds. One entry of a list param such as `delegated_folders` or `delegated_projects`. A delegation has any number of them. | `satz add-entry <estate> delegated_projects …` |
 | **infrastructure project** | | The project, in the infrastructure folder, that holds an estate's estate account and state bucket: the organization's, created by the bootstrap, or a delegation's. The estate builds nothing else in it. | `<shortname>-infra-001`, `<shortname>-deploy-<name>` |
 | **estate account** | account, where only it can be meant | The service account an estate runs as: not a person, no password, no key. "The organization's estate account" and "the delegation's estate account" where both are in a text. | `svc-iac-001`, `svc-deploy-<name>` |
-| **estate account user group** | | The group whose members may act as the estate account. Who is a member is decided in the company's directory, not in satz. | `estate_account_user_group` |
+| **estate account user group** | | The group whose members may act as the estate account. The estate creates it — a delegation's from its entry; who is a member is decided in the company's directory, not in satz. | `estate_account_user_group` |
 | **act as** | impersonate | A signed-in person uses the estate account's rights for one command, because they are a member of its estate account user group. | cloud mode; `--no-impersonate` |
 
 ## What one estate gives another

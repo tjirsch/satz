@@ -35,8 +35,16 @@ workload `catalog`, used once under the name `books`.
 [`presets/delegation.satz`](../presets/README.md#delegationsatz), in the organization's
 estate, and creates the delegation's infrastructure project `acme-deploy-books`, in it the
 estate account `svc-deploy-books` and the state bucket `acme-deploy-books-state`, and the
-right of the estate account user group to act as the estate account. Its interface folder
-`delegation-books` carries all four to the workload's team.
+estate account user group, in the customer's directory, with its right to act as the estate
+account. Its interface folder `delegation-books` carries all four to the workload's team.
+
+**The base and the delegation pack divide the work.** What every delegation needs — the
+estate account, its infrastructure project, its state bucket, its basic grants and the estate
+account user group — is created by `presets/delegation.satz`. What one workload needs — the
+resources it is given and the estate account's roles on them — is in the workload's delegation
+pack, which the organization's team reviews. The organization's team applies the
+organization's estate as the organization's estate account, `svc-iac-001`, and is not in the
+delegation's group; it never acts as `svc-deploy-books`.
 
 **The pack pair** is the workload's, written by the workload's team and named after the
 workload:
@@ -57,7 +65,8 @@ workload's team to the organization's team, through a **pack source** (section 3
 interface folders go back from the organization's team to the workload's team, copied whole
 (section 5). No key, no password and no state crosses: the interface folders hold names and
 what was granted, and the right to act as the estate account comes from the estate account
-user group, whose members are decided in the directory, not in satz.
+user group, which the organization's estate creates and whose members are decided in the
+directory, not in satz.
 
 **Whoever creates a resource keeps it in its state.** The project `acme-books-001`, the
 estate account's grants on it and the delegation are created by the organization's estate
@@ -117,7 +126,8 @@ pack catalog_delegation version "1.0" multiple
 params {
   // The catalog's name: its project is `{customer_shortname}-<name>-001`, its delegation `<name>`.
   catalog_name                      = none
-  // The group whose members may act as the delegation's estate account.
+  // The group whose members may act as the delegation's estate account, which the
+  // delegation creates.
   catalog_estate_account_user_group = none
 
   // The catalog's delegation, in the organization's list `delegations`.
@@ -147,8 +157,8 @@ question catalog_name {
 
 question catalog_estate_account_user_group {
   prompt   = "The address of the group whose members may act as the delegation's estate account"
-  why      = "Its members plan and apply the catalog's workload estate."
-  reversal = edit
+  why      = "The delegation creates the group at this address; its members plan and apply the catalog's workload estate. Another address is another group."
+  reversal = recreate
   blast    = low
 }
 
@@ -440,12 +450,28 @@ For the use `books` the plan adds:
 | `google_project.books__catalog`, the project `acme-books-001`, and its three services | the project the catalog is built in; every address of the use carries its name, `books__` |
 | three `google_project_iam_member` grants on `acme-books-001` for `svc-deploy-books` | the roles from section 2, on that project only |
 | the project `acme-deploy-books`, the service account `svc-deploy-books`, the bucket `acme-deploy-books-state`, the delegation's seven APIs | the delegation `books`, which the pack's `contributes_delegations` added |
-| grants for `catalog-books-admins@example.com` on the estate account and on `acme-deploy-books` | its members may act as the estate account, and read its infrastructure project |
+| the group `catalog-books-admins@example.com`, `google_cloud_identity_group.deploy_books_users` | the estate account user group, created empty in the customer's directory |
+| grants for `catalog-books-admins@example.com` on the estate account and on `acme-deploy-books` | its members may act as the estate account, and read its infrastructure project; each waits for the group |
 | one grant on the billing account, one on the organization (`roles/browser`) | linking a project, and looking a folder up by its name |
+
+Creating the group needs the Groups Admin role in the Google admin console for the
+organization's estate account, which `satz update-prerequisites` names; an estate the `init`
+template wrote holds it already, and an estate on the customer's own groups assigns it once,
+in the admin console. A group that exists in the directory already — created by
+hand for an earlier version of the delegation — is imported once, before the apply, so the
+plan does not create it a second time:
+
+```bash
+satz adopt C0example.satz --only google_cloud_identity_group --execute --import
+```
 
 A grant the pack does not state, or a role on a folder the teams share, is not in the plan.
 If one is, stop: something other than the pack wrote it. In satz-studio: Apply, then plan
 and apply in its list of steps.
+
+**After the apply**, someone with directory rights adds the workload team's people to
+`catalog-books-admins@example.com` in the Google admin console (Directory, Groups). The
+organization's estate creates the group empty and never manages its members.
 
 **A second instance** is a second named use, with values of its own, and writes its own
 project, delegation and interface folders:
@@ -456,7 +482,7 @@ use "packs/catalog-delegation.satz" named music
 
 **Deleting the `use` line** removes everything that instance has on the organization's side
 — the project, the grants and the delegation with its infrastructure project, estate
-account and state bucket — at the next apply (section 7).
+account, estate account user group and state bucket — at the next apply (section 7).
 
 ## 5. The interface folders cross back
 
@@ -600,8 +626,8 @@ delegation pack allows.
 `use` line, plans and applies, which deletes the bucket, the topic and the API from its
 state. Then the organization's team deletes the `use … named books` line and its
 `books.<param>` values, plans and applies, which removes the project, the grants and the
-delegation — its infrastructure project, estate account and state bucket with every state
-in it. A Google project is protected against deletion unless its body says `deletion_policy
+delegation — its infrastructure project, estate account, estate account user group and
+state bucket with every state in it. A Google project is protected against deletion unless its body says `deletion_policy
 = "DELETE"`; [tear the estate down](workflows.md#tear-the-estate-down) is how that is
 declared and applied before the removal.
 
@@ -622,8 +648,8 @@ account works in it, an entry of `delegations`.
 | creates its own projects | one entry in `delegations`, one in `delegated_folders` per folder | an estate account, a state bucket, and one or more folders it may create projects in |
 
 **What the workload's team asks for:** a name for the delegation (`payments`: lowercase
-letters, digits and `-`, starting with a letter); the estate account user group, which must
-exist in the directory; the folders or projects; the APIs its calls need beyond the standard
+letters, digits and `-`, starting with a letter); the address of its estate account user
+group, which the delegation creates; the folders or projects; the APIs its calls need beyond the standard
 six (`cloudbilling`, `cloudresourcemanager`, `iam`, `iamcredentials`, `serviceusage`,
 `storage`, each `.googleapis.com`); and `budgets = true` for a budget on its own project or
 folder.
@@ -691,6 +717,7 @@ file.
 | writes the `use … named` line and the use's values | yes | agrees on the names |
 | creates the project, the grants and the delegation | yes, in its state | no |
 | names the estate account user group | yes, as the use's value | proposes it |
+| creates that group | yes, in its state, empty | no |
 | puts people into that group | whoever administers the directory | whoever administers the directory |
 | copies the interface folders | to the workload's team, after every change | — |
 | writes the workload estate | no | yes, with `satz init --from` |
