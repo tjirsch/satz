@@ -71,7 +71,7 @@
     },
     {
       "path": "presets/delegation.satz",
-      "version": "2.2",
+      "version": "2.3",
       "role": "pack",
       "gate": "use_delegation",
       "gate_declared_in": "presets/estate-map.satz",
