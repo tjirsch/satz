@@ -1459,7 +1459,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                     return Err("--plan/--apply run in hcl_dir; drop --output".into());
                 }
                 let hcl_dir = Path::new(&runtime_config.hcl_dir);
-                if !hcl_dir.join(".terraform").exists() {
+                if !backend_initialized(hcl_dir) {
                     run_tf(&runtime_config, "init", &["-input=false".to_string()], api_preflight).await?;
                 }
                 run_tf(&runtime_config, if apply { "apply" } else { "plan" }, &[], api_preflight).await?;
@@ -4503,6 +4503,16 @@ fn estate_among_tf_args(sub: &str, args: &[String]) -> Option<String> {
 /// It does NOT transpile first: `hcl/` is generated, but coupling generation to
 /// the apply step would change what `plan` means and hide a diff the operator
 /// should see. Transpile, look, then plan.
+/// Whether the tool has initialized `hcl_dir` for its backend: `.terraform/terraform.tfstate`
+/// is where it records the backend `init` set up. A `.terraform/` folder alone is not that —
+/// it may hold only a provider cache, from an `init` before the estate had its backend (a
+/// workload estate copied or generated before its delegation existed), and a plan there
+/// fails with "Backend initialization required". satz writes a backend for every estate, so
+/// the record is always there after an `init`.
+fn backend_initialized(hcl_dir: &Path) -> bool {
+    hcl_dir.join(".terraform").join("terraform.tfstate").is_file()
+}
+
 async fn run_tf(
     runtime_config: &ToolConfig,
     subcommand: &str,
@@ -4521,7 +4531,7 @@ async fn run_tf(
         )
         .into());
     }
-    if subcommand != "init" && !hcl_dir.join(".terraform").exists() {
+    if subcommand != "init" && !backend_initialized(hcl_dir) {
         return Err(format!(
             "'{}' is not initialized — run `satz hcl-init` (same --config) first",
             hcl_dir.display()
@@ -9964,5 +9974,22 @@ mod tf_pass_through_tests {
             assert!(msg.contains(&format!("try: satz {}", sub)), "{msg}");
             assert!(msg.contains(&format!("`<tf_tool> {}`", sub)), "{msg}");
         }
+    }
+}
+
+#[cfg(test)]
+mod backend_initialized_tests {
+    /// A provider cache alone is not an initialized backend; the backend record is.
+    #[test]
+    fn only_the_backend_record_counts_as_initialized() {
+        let dir = std::env::temp_dir().join(format!("satz-backend-init-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!super::backend_initialized(&dir), "no .terraform");
+        std::fs::create_dir_all(dir.join(".terraform").join("providers")).unwrap();
+        assert!(!super::backend_initialized(&dir), "a provider cache only");
+        std::fs::write(dir.join(".terraform").join("terraform.tfstate"), "{}").unwrap();
+        assert!(super::backend_initialized(&dir), "the backend record");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
