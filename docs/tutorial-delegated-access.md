@@ -450,6 +450,7 @@ For the use `books` the plan adds:
 | `google_project.books__catalog`, the project `acme-books-001`, and its three services | the project the catalog is built in; every address of the use carries its name, `books__` |
 | three `google_project_iam_member` grants on `acme-books-001` for `svc-deploy-books` | the roles from section 2, on that project only |
 | the project `acme-deploy-books`, the service account `svc-deploy-books`, the bucket `acme-deploy-books-state`, the delegation's seven APIs | the delegation `books`, which the pack's `contributes_delegations` added |
+| a grant of `roles/serviceusage.serviceUsageConsumer` for `svc-deploy-books` on `acme-deploy-books` | the workload estate bills every call to its infrastructure project, and Google checks that the account may use that project's services before any call |
 | the group `catalog-books-admins@example.com`, `google_cloud_identity_group.deploy_books_users` | the estate account user group, created empty in the customer's directory |
 | grants for `catalog-books-admins@example.com` on the estate account and on `acme-deploy-books` | its members may act as the estate account, and read its infrastructure project; each waits for the group |
 | one grant on the billing account, one on the organization (`roles/browser`) | linking a project, and looking a folder up by its name |

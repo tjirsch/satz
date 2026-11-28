@@ -56,7 +56,7 @@
 //
 // NO CLAIM. A delegation is an identity, not a control: this pack witnesses nothing.
 
-pack delegation version "2.2"
+pack delegation version "2.3"
 
 params {
   // One entry per delegation, `{ name estate_account_user_group apis billing_roles }`:
@@ -136,9 +136,16 @@ google_project {
       }
     }
     // The estate account user group reads its project; the account writes its states.
+    // The account also uses the project's services: a workload estate bills every call
+    // to its infrastructure project (`billing_project`, `user_project_override`), and
+    // Google checks `serviceusage.services.use` there before any call into the workload's
+    // own projects.
     google_project_iam_member {
       "group:{each.estate_account_user_group}" = [
         "roles/viewer",
+      ]
+      "serviceAccount:svc-deploy-{each.name}@{customer_shortname}-deploy-{each.name}.iam.gserviceaccount.com" = [
+        "roles/serviceusage.serviceUsageConsumer",
       ]
     }
     google_storage_bucket_iam_member {
