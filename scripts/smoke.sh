@@ -2686,6 +2686,8 @@ step "plan/apply replace an organization policy the state holds with rules and t
 # rules under a declaration that says reset; updating that in place is refused by
 # the API. A stand-in tool shows what satz hands to tofu.
 mkdir -p tmp/reset/hcl/.terraform
+# an initialized backend is its record, not the folder alone
+echo '{}' > tmp/reset/hcl/.terraform/terraform.tfstate
 cat > tmp/reset/config.toml <<EOF
 yaml_dir = "."
 hcl_dir = "hcl"
